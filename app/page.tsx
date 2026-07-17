@@ -2,12 +2,14 @@
 
 import {
   AlertTriangle,
+  ArrowUpDown,
   ArrowRight,
   BookOpen,
   CalendarDays,
   CalendarPlus,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -18,6 +20,7 @@ import {
   Download,
   FilePlus2,
   FileText,
+  Filter,
   FolderOpen,
   GraduationCap,
   LayoutDashboard,
@@ -210,6 +213,18 @@ const initialStudents: Student[] = [
   { id: "STU-0194", name: "Lucas Wang", initials: "LW", status: "在读", owner: "Tiffany", course: "IB Mathematics AA HL", timezone: "Australia/Sydney · UTC+10", guardian: "Wang 女士 · 企业微信客户", teacher: "Daniel Wu", next: "发送 LP 给老师", nextTone: "amber", files: 9, examDate: "2026-11-03" },
   { id: "STU-0231", name: "Sophie Liu", initials: "SL", status: "在读", owner: "Abby", course: "VCE Chemistry", timezone: "Australia/Melbourne · UTC+10", guardian: "Liu 女士 · 企业微信客户群", teacher: "Amelia Brown", next: "更新考试节点", nextTone: "blue", files: 7, examDate: "2026-10-29" },
   { id: "STU-0176", name: "Ethan Zhao", initials: "EZ", status: "待续课", owner: "思佳", course: "Year 12 Physics", timezone: "Australia/Perth · UTC+8", guardian: "Zhao 女士 · 企业微信客户", teacher: "Michael Yu", next: "续课 N-8 跟进", nextTone: "amber", files: 6 },
+  { id: "STU-0251", name: "Mia Zhang", initials: "MZ", status: "待排课", owner: "思佳", course: "Year 8 English", timezone: "Australia/Melbourne · UTC+10", guardian: "Zhang 女士 · 企业微信客户群", teacher: "待匹配", next: "匹配试听老师", nextTone: "blue", files: 3 },
+  { id: "STU-0252", name: "Noah Li", initials: "NL", status: "在读", owner: "Tiffany", course: "IB Chemistry HL", timezone: "Australia/Sydney · UTC+10", guardian: "Li 先生 · 企业微信客户", teacher: "Amelia Brown", next: "课后反馈检查", nextTone: "green", files: 8, examDate: "2026-11-06" },
+  { id: "STU-0253", name: "Emma Xu", initials: "EX", status: "试听中", owner: "Abby", course: "Year 11 Mathematics", timezone: "Asia/Shanghai · UTC+8", guardian: "Xu 女士 · 企业微信客户群", teacher: "Grace Lin", next: "确认试听反馈", nextTone: "amber", files: 4 },
+  { id: "STU-0254", name: "Leo Sun", initials: "LS", status: "在读", owner: "思佳", course: "VCE Physics", timezone: "Australia/Melbourne · UTC+10", guardian: "Sun 先生 · 企业微信客户", teacher: "Michael Yu", next: "更新 Learning Plan", nextTone: "blue", files: 10, examDate: "2026-10-30" },
+  { id: "STU-0255", name: "Chloe Yang", initials: "CY", status: "停课", owner: "Tara", course: "Year 9 Science", timezone: "Australia/Brisbane · UTC+10", guardian: "Yang 女士 · 企业微信客户", teacher: "Rachel Song", next: "确认预计复课日", nextTone: "red", files: 6 },
+  { id: "STU-0256", name: "Oscar Hu", initials: "OH", status: "待续课", owner: "Tiffany", course: "IB Economics HL", timezone: "Australia/Sydney · UTC+10", guardian: "Hu 先生 · 企业微信客户群", teacher: "Daniel Wu", next: "续课 N-8 跟进", nextTone: "purple", files: 9 },
+  { id: "STU-0257", name: "Ava Lin", initials: "AL", status: "在读", owner: "Abby", course: "Year 7 English", timezone: "Australia/Perth · UTC+8", guardian: "Lin 女士 · 企业微信客户", teacher: "Grace Lin", next: "作业提交检查", nextTone: "green", files: 7 },
+  { id: "STU-0258", name: "Henry Gao", initials: "HG", status: "待排课", owner: "思佳", course: "HSC Mathematics Advanced", timezone: "Australia/Sydney · UTC+10", guardian: "Gao 先生 · 企业微信客户群", teacher: "待匹配", next: "确认长期时间", nextTone: "blue", files: 2 },
+  { id: "STU-0259", name: "Sophia Wu", initials: "SW", status: "试听中", owner: "Tara", course: "VCE English", timezone: "Australia/Melbourne · UTC+10", guardian: "Wu 女士 · 企业微信客户", teacher: "Amelia Brown", next: "试听前 N-2 检查", nextTone: "red", files: 5 },
+  { id: "STU-0260", name: "Jack Huang", initials: "JH", status: "在读", owner: "Tiffany", course: "IB Mathematics AI", timezone: "Asia/Shanghai · UTC+8", guardian: "Huang 女士 · 企业微信客户群", teacher: "Daniel Wu", next: "确认下月课表", nextTone: "amber", files: 11 },
+  { id: "STU-0261", name: "Ella Zhou", initials: "EZ", status: "在读", owner: "Abby", course: "Year 10 Chemistry", timezone: "Australia/Brisbane · UTC+10", guardian: "Zhou 先生 · 企业微信客户", teacher: "Rachel Song", next: "补充最近成绩单", nextTone: "amber", files: 4 },
+  { id: "STU-0262", name: "William Tang", initials: "WT", status: "待续课", owner: "思佳", course: "HSC English Advanced", timezone: "Australia/Sydney · UTC+10", guardian: "Tang 女士 · 企业微信客户群", teacher: "Amelia Brown", next: "确认新学期目标", nextTone: "purple", files: 8 },
 ];
 
 const initialTeachers: Teacher[] = [
@@ -217,6 +232,12 @@ const initialTeachers: Teacher[] = [
   { id: "TEA-027", name: "Grace Lin", initials: "GL", subjects: ["Year 7-10 English", "写作"], timezone: "Australia/Sydney · UTC+10", availability: "周六 16:00-19:00", load: 10, capacity: 12, acceptsStudents: true, note: "科目匹配，当前负载偏高" },
   { id: "TEA-042", name: "Rachel Song", initials: "RS", subjects: ["Year 9-10 English"], timezone: "Australia/Brisbane · UTC+10", availability: "周六 14:00-17:00", load: 4, capacity: 10, acceptsStudents: false, note: "需确认家长对老师背景的偏好" },
   { id: "TEA-053", name: "Daniel Wu", initials: "DW", subjects: ["IB Mathematics AA HL", "IB Mathematics AI"], timezone: "Australia/Sydney · UTC+10", availability: "周四 17:00-21:00", load: 7, capacity: 10, acceptsStudents: true, note: "IB 课程规划完成，长期时段稳定" },
+  { id: "TEA-061", name: "Michael Yu", initials: "MY", subjects: ["VCE Physics", "Year 10-12 Physics"], timezone: "Australia/Melbourne · UTC+10", availability: "周二、周日 17:00-21:00", load: 9, capacity: 12, acceptsStudents: true, note: "物理课程稳定，可接一位长期学生" },
+  { id: "TEA-067", name: "Olivia Park", initials: "OP", subjects: ["IB Chemistry HL", "VCE Chemistry"], timezone: "Australia/Sydney · UTC+10", availability: "周三、周六 16:00-20:00", load: 5, capacity: 10, acceptsStudents: true, note: "化学方向匹配，可承担试听" },
+  { id: "TEA-071", name: "Kevin Zhang", initials: "KZ", subjects: ["HSC Mathematics Advanced", "Year 7-10 Mathematics"], timezone: "Australia/Brisbane · UTC+10", availability: "周一、周五 18:00-21:00", load: 10, capacity: 10, acceptsStudents: false, note: "当前满载，仅保留代课候选" },
+  { id: "TEA-076", name: "Lily Chen", initials: "LC", subjects: ["IB Economics HL", "VCE Economics"], timezone: "Australia/Melbourne · UTC+10", availability: "周六、周日 10:00-16:00", load: 3, capacity: 9, acceptsStudents: true, note: "经济学方向，周末容量充足" },
+  { id: "TEA-082", name: "Sophie Martin", initials: "SM", subjects: ["HSC English Advanced", "VCE English"], timezone: "Australia/Sydney · UTC+10", availability: "周二、周四 17:30-21:00", load: 6, capacity: 10, acceptsStudents: true, note: "高年级英语与写作经验" },
+  { id: "TEA-088", name: "Andrew Liu", initials: "AL", subjects: ["Year 7-10 Science", "Year 10 Chemistry"], timezone: "Australia/Perth · UTC+8", availability: "周末 13:00-18:00", load: 4, capacity: 8, acceptsStudents: true, note: "西澳时区，适合中国晚间课程" },
 ];
 
 const initialTasks: Task[] = [
@@ -352,6 +373,26 @@ function Dialog({ title, children, onClose }: { title: string; children: ReactNo
   );
 }
 
+function ViewTabs({ value, items, onChange, label = "保存视图" }: { value: string; items: Array<{ id: string; label: string; count?: number }>; onChange: (value: string) => void; label?: string }) {
+  return <div className="view-tabs" role="tablist" aria-label={label}>{items.map((item) => <button className={value === item.id ? "active" : ""} type="button" role="tab" aria-selected={value === item.id} key={item.id} onClick={() => onChange(item.id)}>{item.label}{item.count !== undefined && <span>{item.count}</span>}</button>)}</div>;
+}
+
+function ListToolbar({ query, onQuery, placeholder, count, children }: { query: string; onQuery: (value: string) => void; placeholder: string; count: string; children?: ReactNode }) {
+  return <div className="collection-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={placeholder} aria-label={placeholder} /></div><div className="toolbar-actions">{children}<span className="result-count">{count}</span></div></div>;
+}
+
+function Pagination({ page, total, pageSize, onPage }: { page: number; total: number; pageSize: number; onPage: (page: number) => void }) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const start = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const end = Math.min(safePage * pageSize, total);
+  return <footer className="pagination"><span>{start}-{end} / {total}</span><div><button type="button" aria-label="上一页" disabled={safePage <= 1} onClick={() => onPage(safePage - 1)}><ChevronLeft size={16} /></button><strong>{safePage} / {pageCount}</strong><button type="button" aria-label="下一页" disabled={safePage >= pageCount} onClick={() => onPage(safePage + 1)}><ChevronRight size={16} /></button></div></footer>;
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
+  return <div className="collection-empty"><Search size={22} /><strong>{title}</strong><span>{detail}</span></div>;
+}
+
 export default function Home() {
   const [active, setActive] = useState<Section>("dashboard");
   const [students, setStudents] = usePersistentState("yinling-mvp:students", initialStudents);
@@ -371,6 +412,32 @@ export default function Home() {
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
   const [taskFilter, setTaskFilter] = useState<"all" | "mine" | "overdue">("all");
   const [search, setSearch] = useState("");
+  const [studentView, setStudentView] = useState("all");
+  const [studentPage, setStudentPage] = useState(1);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [teacherQuery, setTeacherQuery] = useState("");
+  const [teacherView, setTeacherView] = useState("available");
+  const [teacherPage, setTeacherPage] = useState(1);
+  const [scheduleMode, setScheduleMode] = useState<"week" | "agenda">("week");
+  const [scheduleFilter, setScheduleFilter] = useState("all");
+  const [selectedBookingId, setSelectedBookingId] = useState("LES-001");
+  const [lpMode, setLpMode] = useState<"board" | "table">("board");
+  const [lpFilter, setLpFilter] = useState("active");
+  const [operationFilter, setOperationFilter] = useState("open");
+  const [selectedOperationId, setSelectedOperationId] = useState("OPS-001");
+  const [renewalFilter, setRenewalFilter] = useState("attention");
+  const [payrollFilter, setPayrollFilter] = useState("all");
+  const [messageFilter, setMessageFilter] = useState("open");
+  const [messageQuery, setMessageQuery] = useState("");
+  const [fileFilter, setFileFilter] = useState("all");
+  const [fileQuery, setFileQuery] = useState("");
+  const [reportOwner, setReportOwner] = useState("all");
+  const [settingsTab, setSettingsTab] = useState("reminders");
+  const [auditQuery, setAuditQuery] = useState("");
+  const [auditFilter, setAuditFilter] = useState("all");
+  const [auditPage, setAuditPage] = useState(1);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalQuery, setGlobalQuery] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
   const [toast, setToast] = useState("");
   const [syncState, setSyncState] = useState<"ready" | "running" | "complete">("ready");
@@ -379,6 +446,8 @@ export default function Home() {
   const selectedStudent = students.find((student) => student.id === selectedStudentId) ?? students[0];
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
   const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? messages[0];
+  const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId) ?? bookings[0];
+  const selectedOperation = operations.find((operation) => operation.id === selectedOperationId) ?? operations[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
   const teacherById = (teacherId: string) => teachers.find((teacher) => teacher.id === teacherId);
 
@@ -406,10 +475,52 @@ export default function Home() {
     return filtered;
   }, [tasks, taskFilter]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setGlobalSearchOpen(true);
+      }
+      if (event.key === "Escape") setGlobalSearchOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [active]);
+
   const filteredStudents = useMemo(() => students.filter((student) => {
-    const haystack = `${student.name} ${student.id} ${student.course} ${student.owner}`.toLowerCase();
-    return haystack.includes(search.trim().toLowerCase());
-  }), [search, students]);
+    const haystack = `${student.name} ${student.id} ${student.course} ${student.owner} ${student.teacher}`.toLowerCase();
+    const matchesSearch = haystack.includes(search.trim().toLowerCase());
+    if (!matchesSearch) return false;
+    if (studentView === "mine") return student.owner === "思佳";
+    if (studentView === "trial") return student.status === "试听中" || student.status === "待排课";
+    if (studentView === "renewal") return student.status === "待续课";
+    if (studentView === "paused") return student.status === "停课";
+    return true;
+  }).sort((a, b) => a.name.localeCompare(b.name)), [search, studentView, students]);
+
+  const pageSize = 7;
+  const safeStudentPage = Math.min(studentPage, Math.max(1, Math.ceil(filteredStudents.length / pageSize)));
+  const pagedStudents = filteredStudents.slice((safeStudentPage - 1) * pageSize, safeStudentPage * pageSize);
+  const teacherMatch = (teacher: Teacher) => teacher.subjects.some((subject) => selectedStudent.course.includes(subject.split(" ").slice(-1)[0])) ? 94 : teacher.subjects.some((subject) => subject.includes("English") && selectedStudent.course.includes("English")) ? 87 : 76;
+  const filteredTeachers = teachers.filter((teacher) => {
+    const matchesSearch = `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")} ${teacher.timezone}`.toLowerCase().includes(teacherQuery.trim().toLowerCase());
+    if (!matchesSearch) return false;
+    if (teacherView === "available") return teacher.acceptsStudents;
+    if (teacherView === "capacity") return teacher.load < teacher.capacity * 0.8;
+    if (teacherView === "matched") return teacherMatch(teacher) >= 85;
+    return true;
+  }).sort((a, b) => teacherMatch(b) - teacherMatch(a));
+  const teacherPageSize = 6;
+  const safeTeacherPage = Math.min(teacherPage, Math.max(1, Math.ceil(filteredTeachers.length / teacherPageSize)));
+  const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
+  const globalResults = globalQuery.trim() ? [
+    ...students.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { setSelectedStudentId(student.id); setActive("students"); setGlobalSearchOpen(false); } })),
+    ...teachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
+  ] : [];
 
   const goToStudent = (studentId: string, section: Section = "students") => {
     setSelectedStudentId(studentId);
@@ -448,6 +559,27 @@ export default function Home() {
     setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, teacher: teacher.name, next: "确认试听排课", nextTone: "amber" } : student));
     addAudit("选择候选老师", `${selectedStudent.name} → ${teacher.name}，等待排课确认`, "green");
     notify(`${teacher.name} 已选为候选老师`);
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudentIds((current) => current.includes(studentId) ? current.filter((idValue) => idValue !== studentId) : [...current, studentId]);
+  };
+
+  const bulkAssignStudents = (owner: string) => {
+    if (!selectedStudentIds.length) return;
+    setStudents((current) => current.map((student) => selectedStudentIds.includes(student.id) ? { ...student, owner } : student));
+    addAudit("批量分配学生", `${selectedStudentIds.length} 位学生 → ${owner}`, "blue");
+    notify(`已将 ${selectedStudentIds.length} 位学生分配给 ${owner}`);
+    setSelectedStudentIds([]);
+  };
+
+  const advanceLp = (item: LpItem) => {
+    const currentIndex = lpStages.indexOf(item.stage);
+    const nextStage = lpStages[Math.min(currentIndex + 1, lpStages.length - 1)];
+    if (nextStage === item.stage) return;
+    setLpItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, stage: nextStage } : entry));
+    addAudit("推进 LP 阶段", `${item.title}：${item.stage} → ${nextStage}`, "green");
+    notify(`已推进到「${nextStage}」`);
   };
 
   const recordMessage = () => {
@@ -521,57 +653,147 @@ export default function Home() {
     </>;
   };
 
-  const renderStudents = () => <>
-    <ViewHeading eyebrow="学生 CRM · 内部唯一 ID" title="学生档案" copy="姓名用于查找；排课、提醒、文件和操作记录都以内部 ID 关联。" actions={<button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button>} />
-    <section className="student-layout"><article className="panel table-panel"><div className="table-toolbar"><div className="search-field"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="查找姓名、ID、课程或负责人" aria-label="查找学生" /></div><span>{filteredStudents.length} 位学生</span></div><div className="student-table"><div className="table-head"><span>学生 / 课程</span><span>当前状态</span><span>负责人</span><span>下一步</span></div>{filteredStudents.map((student) => <button className={`table-row ${selectedStudent.id === student.id ? "selected" : ""}`} type="button" key={student.id} onClick={() => setSelectedStudentId(student.id)}><span className="table-person"><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {student.course}</small></span></span><span><StatusPill tone={statusTone(student.status)}>{student.status}</StatusPill><small>{student.teacher}</small></span><span>{student.owner}</span><span><StatusPill tone={student.nextTone}>{student.next}</StatusPill></span></button>)}</div></article><StudentDetail student={selectedStudent} tasks={tasks} bookings={bookings} files={files} studentById={studentById} teacherById={teacherById} onFiles={() => setActive("files")} onSchedule={() => { setModal("booking"); }} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} /></section>
-  </>;
-
-  const renderTeachers = () => <>
-    <ViewHeading eyebrow="人工确认的老师匹配" title="老师资源库" copy="系统只排序候选人并检查约束；最终老师、时段和对外沟通均由教务确认。" actions={<button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> 查看学生需求</button>} />
-    <section className="matching-banner"><div><p className="eyebrow">当前匹配需求</p><h2>{selectedStudent.name} · {selectedStudent.course}</h2><p><MapPin size={16} /> {selectedStudent.timezone} · 试听 60 分钟 · 长期时间需确认</p></div><button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 确认排课</button></section>
-    <section className="teacher-grid">{teachers.map((teacher) => { const isSelected = selectedTeacher.id === teacher.id; const match = teacher.subjects.some((subject) => selectedStudent.course.includes(subject.split(" ").slice(-1)[0])) ? 94 : teacher.subjects.some((subject) => subject.includes("English") && selectedStudent.course.includes("English")) ? 87 : 76; return <article className={`teacher-card ${isSelected ? "selected" : ""}`} key={teacher.id}><div className="teacher-head"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><div><h2>{teacher.name}</h2><p>匹配度 <strong>{match}%</strong> · {teacher.load}/{teacher.capacity} 节</p></div><StatusPill tone={teacher.acceptsStudents ? "green" : "neutral"}>{teacher.acceptsStudents ? "可接新生" : "暂停接新"}</StatusPill></div><div className="teacher-tags">{teacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><dl><div><dt>可用时间</dt><dd>{teacher.availability}</dd></div><div><dt>时区</dt><dd>{teacher.timezone}</dd></div><div><dt>匹配说明</dt><dd>{teacher.note}</dd></div></dl><button className={isSelected ? "selected-choice" : "choice-button"} type="button" onClick={() => assignTeacher(teacher)}>{isSelected ? <><Check size={16} /> 已选择候选老师</> : "选择为候选老师"}</button><button className="teacher-toggle" type="button" onClick={() => { setTeachers((current) => current.map((item) => item.id === teacher.id ? { ...item, acceptsStudents: !item.acceptsStudents } : item)); addAudit("更新老师接新状态", `${teacher.name}：${teacher.acceptsStudents ? "暂停接新" : "开放接新"}`, "blue"); notify(`${teacher.name} 已${teacher.acceptsStudents ? "暂停" : "开放"}接新`); }}>{teacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></article>; })}</section>
-  </>;
-
-  const renderSchedule = () => {
-    const todayBookings = bookings.filter((booking) => booking.date >= "2026-07-20");
+  const renderStudents = () => {
+    const viewItems = [
+      { id: "all", label: "全部学生", count: students.length },
+      { id: "mine", label: "我负责的", count: students.filter((student) => student.owner === "思佳").length },
+      { id: "trial", label: "试听与待排课", count: students.filter((student) => student.status === "试听中" || student.status === "待排课").length },
+      { id: "renewal", label: "待续课", count: students.filter((student) => student.status === "待续课").length },
+      { id: "paused", label: "停课", count: students.filter((student) => student.status === "停课").length },
+    ];
+    const pageIds = pagedStudents.map((student) => student.id);
+    const pageSelected = pageIds.length > 0 && pageIds.every((studentId) => selectedStudentIds.includes(studentId));
     return <>
-      <ViewHeading eyebrow="统一时点 + IANA 时区" title="排课与时区检查" copy="保存一个准确时间点，再从学生、老师和公司时区显示，避免“澳洲时间”这类含糊记录。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
-      <section className="schedule-workspace"><article className="panel calendar-board"><div className="calendar-toolbar"><div className="segmented"><button className="active" type="button">周视图</button><button type="button" onClick={() => notify("日视图将在后续生产版加入，当前保留周视图以展示完整信息密度")}>日视图</button></div><strong>7 月 20 日 - 25 日</strong><StatusPill tone="blue">公司：Asia/Shanghai · UTC+8</StatusPill></div><div className="week-grid"><div className="week-side"><span>时间</span>{["14:00", "16:00", "18:00", "20:00"].map((time) => <strong key={time}>{time}</strong>)}</div>{["周日 20", "周一 21", "周二 22", "周三 23", "周四 24", "周五 25"].map((day, index) => <div className="day-column" key={day}><span>{day}<small>北京</small></span>{[0, 1, 2, 3].map((slot) => <i key={slot} />)}{todayBookings.filter((booking) => Number(booking.date.slice(-2)) === 20 + index).map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const top = 63 + (["14:00", "16:00", "18:00", "20:00"].indexOf(booking.start) * 96); return <button className={`lesson-block ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} style={{ top }} key={booking.id} type="button" onClick={() => goToStudent(booking.studentId)}><strong>{student?.name}</strong><small>{booking.start} · {teacher?.name}</small><small>{booking.kind} · {booking.status}</small></button>; })}</div>)}</div></article>
-        <aside className="panel booking-panel"><div className="panel-header"><div><p className="eyebrow">当前准备排课</p><h2>{selectedStudent.name}</h2></div><StatusPill tone="amber">待确认</StatusPill></div><TimeLine label="学生时间" time="周六 20 Jul · 16:00" detail={selectedStudent.timezone} /><TimeLine label="老师时间" time="周六 20 Jul · 16:00" detail={selectedTeacher.timezone} /><TimeLine label="公司时间" time="周六 20 Jul · 14:00" detail="Asia/Shanghai · UTC+8" /><div className="check-list"><span><CircleCheck size={16} /> 老师科目与长期 Availability 匹配</span><span><CircleCheck size={16} /> 学生与老师没有已有课程冲突</span><span><CircleCheck size={16} /> 这次时区换算不会跨日</span></div><button className="primary-button full" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 进入排课确认</button><p className="form-footnote">确认排课后，会创建 LP、N-2 与课后检查任务；不会发送真实消息。</p></aside></section>
+      <ViewHeading eyebrow="学生 CRM · 可扩展记录视图" title="学生档案" copy="用视图、筛选和分页定位学生；右侧预览保持在原列表位置，不需要滚到页面底部。" actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> 全局查找</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
+      <section className="panel collection-shell">
+        <ViewTabs value={studentView} items={viewItems} onChange={(value) => { setStudentView(value); setStudentPage(1); setSelectedStudentIds([]); }} label="学生保存视图" />
+        <ListToolbar query={search} onQuery={(value) => { setSearch(value); setStudentPage(1); }} placeholder="搜索姓名、ID、课程、老师或负责人" count={`${filteredStudents.length} 位学生`}>
+          <button className="toolbar-button" type="button" onClick={() => { setSearch(""); setStudentView("all"); setStudentPage(1); }}><Filter size={15} /> 清除筛选</button>
+          <button className="toolbar-button" type="button" onClick={() => notify("当前列配置已保存在此浏览器") }><ArrowUpDown size={15} /> 姓名排序</button>
+        </ListToolbar>
+        {selectedStudentIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedStudentIds.length} 位</strong><span>批量分配负责人</span>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => <button type="button" key={owner} onClick={() => bulkAssignStudents(owner)}>{owner}</button>)}<button className="bulk-clear" type="button" onClick={() => setSelectedStudentIds([])}>取消选择</button></div>}
+        <div className="master-detail-layout">
+          <article className="collection-main">
+            <div className="collection-head student-grid"><input type="checkbox" checked={pageSelected} aria-label="选择本页学生" onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>学生 / 课程</span><span>状态 / 老师</span><span>负责人</span><span>下一步</span></div>
+            <div className="collection-viewport">
+              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${selectedStudent.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} aria-label={`选择 ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => setSelectedStudentId(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {student.course}</small></span></button><button className="row-cell stacked" type="button" onClick={() => setSelectedStudentId(student.id)}><StatusPill tone={statusTone(student.status)}>{student.status}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => setSelectedStudentId(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => setSelectedStudentId(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title="没有符合条件的学生" detail="调整搜索或切换保存视图后再试。" />}
+            </div>
+            <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={setStudentPage} />
+          </article>
+          <StudentDetail student={selectedStudent} tasks={tasks} bookings={bookings} files={files} studentById={studentById} teacherById={teacherById} onFiles={() => setActive("files")} onSchedule={() => setModal("booking")} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} />
+        </div>
+      </section>
     </>;
   };
 
-  const renderLp = () => <>
-    <ViewHeading eyebrow="Learning Plan · 版本与审批" title="试听与 LP 工作流" copy="每一张卡都有负责人和截止时间；阶段变化会留下审计记录，旧版 LP 不会被覆盖。" actions={<button className="primary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加流程任务</button>} />
-    <section className="workflow-header"><div className="workflow-student"><Avatar initials={selectedStudent.initials} tone={statusTone(selectedStudent.status)} /><div><h2>{selectedStudent.name}</h2><p>{selectedStudent.course} · {selectedStudent.status} · {selectedStudent.owner}</p></div></div><button className="secondary-button" type="button" onClick={() => goToStudent(selectedStudent.id)}><Users size={16} /> 查看档案</button></section>
-    <section className="kanban-board">{lpStages.map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{lpItems.filter((item) => item.stage === stage).length}</strong></header>{lpItems.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); const nextStage = lpStages[Math.min(lpStages.indexOf(stage) + 1, lpStages.length - 1)]; return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>截止：{item.due}</span><div className="card-tags"><StatusPill tone={stage === "完成" ? "green" : "amber"}>{stage}</StatusPill></div>{stage !== "完成" && <button className="card-action" type="button" onClick={() => { setLpItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, stage: nextStage } : entry)); addAudit("推进 LP 阶段", `${item.title}：${stage} → ${nextStage}`, "green"); notify(`已推进到「${nextStage}」`); }}><ArrowRight size={15} /> 推进到 {nextStage}</button>}</div>; })}</article>)}</section>
-  </>;
+  const renderTeachers = () => {
+    const viewItems = [
+      { id: "available", label: "可接新生", count: teachers.filter((teacher) => teacher.acceptsStudents).length },
+      { id: "matched", label: "高匹配", count: teachers.filter((teacher) => teacherMatch(teacher) >= 85).length },
+      { id: "capacity", label: "容量充足", count: teachers.filter((teacher) => teacher.load < teacher.capacity * 0.8).length },
+      { id: "all", label: "全部老师", count: teachers.length },
+    ];
+    return <>
+      <ViewHeading eyebrow="资源池 · 列表优先" title="老师资源库" copy="先用科目、容量和可用时间筛选，再在右侧比较当前候选；无需浏览不断变长的卡片墙。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 用当前候选排课</button>} />
+      <section className="matching-context"><div><span>当前匹配学生</span><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {selectedStudent.timezone}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
+      <section className="panel collection-shell">
+        <ViewTabs value={teacherView} items={viewItems} onChange={(value) => { setTeacherView(value); setTeacherPage(1); }} label="老师保存视图" />
+        <ListToolbar query={teacherQuery} onQuery={(value) => { setTeacherQuery(value); setTeacherPage(1); }} placeholder="搜索老师、科目、ID 或时区" count={`${filteredTeachers.length} 位老师`}>
+          <button className="toolbar-button" type="button" onClick={() => { setTeacherQuery(""); setTeacherView("available"); }}><Filter size={15} /> 清除筛选</button>
+        </ListToolbar>
+        <div className="master-detail-layout teacher-layout">
+          <article className="collection-main">
+            <div className="collection-head teacher-grid-row"><span>老师 / 科目</span><span>匹配</span><span>负载</span><span>可用时间</span><span>状态</span></div>
+            <div className="collection-viewport">
+              {pagedTeachers.length ? pagedTeachers.map((teacher) => <button className={`collection-row teacher-grid-row ${selectedTeacher.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => setSelectedTeacherId(teacher.id)}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span>{teacher.load}/{teacher.capacity} 节<small>{Math.max(0, teacher.capacity - teacher.load)} 节余量</small></span><span>{teacher.availability}<small>{teacher.timezone.split(" · ")[0]}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : "neutral"}>{teacher.acceptsStudents ? "可接新生" : "暂停接新"}</StatusPill></button>) : <EmptyState title="没有匹配的老师" detail="切换视图或清除搜索条件。" />}
+            </div>
+            <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={setTeacherPage} />
+          </article>
+          <aside className="record-preview teacher-preview"><div className="detail-top"><Avatar initials={selectedTeacher.initials} tone={selectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{selectedTeacher.id}</p><h2>{selectedTeacher.name}</h2><StatusPill tone={selectedTeacher.acceptsStudents ? "green" : "neutral"}>{selectedTeacher.acceptsStudents ? "可接新生" : "暂停接新"}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(selectedTeacher)}%</strong><small>{selectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{selectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div></div><div className="detail-section split"><div><span>当前负载</span><strong>{selectedTeacher.load}/{selectedTeacher.capacity} 节</strong></div><div><span>时区</span><strong>{selectedTeacher.timezone.split(" · ")[0]}</strong></div></div><div className="detail-section"><span>长期可用时间</span><strong>{selectedTeacher.availability}</strong></div><button className="primary-button full" type="button" disabled={!selectedTeacher.acceptsStudents} onClick={() => assignTeacher(selectedTeacher)}><Check size={16} /> 选择为候选老师</button><button className="secondary-button full" type="button" onClick={() => { setTeachers((current) => current.map((item) => item.id === selectedTeacher.id ? { ...item, acceptsStudents: !item.acceptsStudents } : item)); addAudit("更新老师接新状态", `${selectedTeacher.name}：${selectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}`, "blue"); notify("老师接新状态已更新"); }}>{selectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></aside>
+        </div>
+      </section>
+    </>;
+  };
 
-  const renderOperations = () => <>
-    <ViewHeading eyebrow="结构化异常处理" title="调课、请假与代课" copy="记录原因为后续任务链提供依据；系统提示影响范围，但不自动决定扣费、代课老师或对外沟通。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
-    <section className="two-column"><article className="panel"><div className="panel-header"><div><p className="eyebrow">待处理记录</p><h2>异常队列</h2></div><StatusPill tone="amber">{operations.filter((operation) => operation.status === "待处理").length} 项待确认</StatusPill></div><div className="record-list">{operations.map((operation) => { const student = studentById(operation.studentId); return <div className="record-row" key={operation.id}><div className={`record-icon ${operation.status === "已确认" ? "green" : "amber"}`}><RefreshCw size={17} /></div><div><strong>{operation.type} · {student?.name}</strong><span>{operation.detail}</span><small>{operation.createdAt}</small></div><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill>{operation.status === "待处理" && <button className="compact-button" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === operation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${operation.type} · ${student?.name}`, "green"); notify("已确认，后续子任务已保留在工作台"); }}>确认</button>}</div>; })}</div></article><aside className="panel side-note"><p className="eyebrow">处理规则</p><h2>先记录，再决定</h2><ul><li>调课：确认学生、老师与公司时间，生成通知待办。</li><li>请假：由人工确认是否扣学生课时及老师课时。</li><li>代课：系统只给候选老师，不能自动指派。</li><li>停课：记录开始与预计复课日，再生成复课前提醒。</li></ul><button className="secondary-button full" type="button" onClick={() => setActive("audit")}><ShieldCheck size={16} /> 查看操作记录</button></aside></section>
-  </>;
+  const renderSchedule = () => {
+    const filteredBookings = bookings.filter((booking) => scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : true);
+    const bookingStudent = studentById(selectedBooking.studentId) ?? selectedStudent;
+    const bookingTeacher = teacherById(selectedBooking.teacherId) ?? selectedTeacher;
+    return <>
+      <ViewHeading eyebrow="统一时点 + IANA 时区" title="排课与时区检查" copy="周视图用于发现冲突，日程列表用于高密度查找；选中课程后在右侧直接确认或进入学生档案。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
+      <section className="panel schedule-shell">
+        <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => setScheduleMode("agenda")}>日程列表</button></div><strong>2026 年 7 月 20 日 - 25 日</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option></select><StatusPill tone="blue">公司时区 UTC+8</StatusPill></div></div>
+        <div className="master-detail-layout schedule-layout">
+          <article className="collection-main">
+            {scheduleMode === "week" ? <div className="week-grid"><div className="week-side"><span>时间</span>{["14:00", "16:00", "18:00", "20:00"].map((time) => <strong key={time}>{time}</strong>)}</div>{["周日 20", "周一 21", "周二 22", "周三 23", "周四 24", "周五 25"].map((day, index) => <div className="day-column" key={day}><span>{day}<small>北京</small></span>{[0, 1, 2, 3].map((slot) => <i key={slot} />)}{filteredBookings.filter((booking) => Number(booking.date.slice(-2)) === 20 + index).map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const slotIndex = Math.max(0, ["14:00", "16:00", "18:00", "20:00"].indexOf(booking.start)); const top = 63 + slotIndex * 96; return <button className={`lesson-block ${selectedBooking.id === booking.id ? "selected" : ""} ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} style={{ top }} key={booking.id} type="button" onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); }}><strong>{student?.name}</strong><small>{booking.start} · {teacher?.name}</small><small>{booking.kind} · {booking.status}</small></button>; })}</div>)}</div> : <div className="agenda-list"><div className="collection-head agenda-grid"><span>日期与时间</span><span>学生 / 课程</span><span>老师</span><span>类型</span><span>状态</span></div><div className="collection-viewport">{filteredBookings.map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); return <button className={`collection-row agenda-grid ${selectedBooking.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); }}><span><strong>{booking.date}</strong><small>{booking.start} · {booking.duration} 分钟</small></span><span><strong>{student?.name}</strong><small>{student?.course}</small></span><span>{teacher?.name}<small>{teacher?.timezone.split(" · ")[0]}</small></span><StatusPill tone={booking.kind === "试听" ? "blue" : "green"}>{booking.kind}</StatusPill><StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill></button>; })}</div></div>}
+          </article>
+          <aside className="record-preview booking-panel"><div className="panel-header"><div><p className="eyebrow">课程预览</p><h2>{bookingStudent.name}</h2></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label="学生时间" time={`${selectedBooking.date} · ${selectedBooking.start}`} detail={bookingStudent.timezone} /><TimeLine label="授课老师" time={bookingTeacher.name} detail={`${bookingTeacher.timezone} · ${bookingTeacher.availability}`} /><TimeLine label="公司时间" time={`${selectedBooking.date} · ${selectedBooking.start}`} detail="Asia/Shanghai · 系统将在生产版精确换算" /><div className="check-list"><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 老师当前状态可用</span><span><CircleCheck size={16} /> 课程已关联内部唯一 ID</span></div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${selectedBooking.date} ${selectedBooking.start}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
+        </div>
+      </section>
+    </>;
+  };
 
-  const renderRenewals = () => <>
-    <ViewHeading eyebrow="人工判断续课 · 自动避免遗漏" title="考试与续课" copy="系统从剩余课时与考试节点生成跟进提醒；续课结论和家长沟通仍由负责人确认。" actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加跟进</button>} />
-    <section className="panel data-panel"><div className="data-table renewals-table"><div className="data-head"><span>学生 / 课程</span><span>剩余课时</span><span>预计续课</span><span>状态</span><span>操作</span></div>{renewals.map((renewal) => { const student = studentById(renewal.studentId); return <div className="data-row" key={renewal.id}><span className="table-person"><Avatar initials={student?.initials ?? "?"} tone={statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course} · {renewal.owner}</small></span></span><span>{renewal.remaining} 节</span><span>{renewal.estimate}</span><span><StatusPill tone={statusTone(renewal.status)}>{renewal.status}</StatusPill></span><span>{renewal.status === "待跟进" ? <button className="compact-button" type="button" onClick={() => { setRenewals((current) => current.map((item) => item.id === renewal.id ? { ...item, status: "已联系" } : item)); setMessages((current) => [{ id: id("MSG"), studentId: renewal.studentId, kind: "续课前跟进", recipient: `${student?.guardian ?? "家长"}`, body: `您好，${student?.name} 目前剩余 ${renewal.remaining} 节课。教务正在确认接下来的学习安排，方便时请回复我们。`, status: "待人工确认", createdAt: `今天 ${nowLabel()}` }, ...current]); addAudit("创建续课跟进", `${student?.name} · 已生成消息待确认`, "blue"); notify("已生成续课消息，等待人工确认发送"); }}>创建跟进</button> : <button className="compact-button" type="button" onClick={() => goToStudent(renewal.studentId)}>查看档案</button>}</span></div>; })}</div></section>
-  </>;
+  const renderLp = () => {
+    const visibleLp = lpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
+    const viewItems = [{ id: "active", label: "进行中", count: lpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: lpItems.filter((item) => item.stage === "待审核").length }, { id: "waiting", label: "等待资料/确认", count: lpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: lpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: lpItems.length }];
+    return <>
+      <ViewHeading eyebrow="Learning Plan · 版本与审批" title="试听与 LP 工作流" copy="保存视图用于集中处理，表格适合查找，看板适合推进阶段；所有变化写入审计。" actions={<button className="primary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加流程任务</button>} />
+      <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /><div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div></div>{lpMode === "board" ? <section className="kanban-board">{lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>{visibleLp.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>截止：{item.due}</span><div className="card-tags"><StatusPill tone={item.stage === "完成" ? "green" : "amber"}>{item.stage}</StatusPill></div>{item.stage !== "完成" && <button className="card-action" type="button" onClick={() => advanceLp(item)}><ArrowRight size={15} /> 推进到下一阶段</button>}</div>; })}</article>)}</section> : <div className="collection-main"><div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>负责人</span><span>阶段</span><span>截止时间</span><span>操作</span></div><div className="collection-viewport">{visibleLp.map((item) => { const student = studentById(item.studentId); return <div className="collection-row lp-grid-row" key={item.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(item.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(student?.status ?? "待排课")} /><span><strong>{student?.name}</strong><small>{item.title}</small></span></button><span>{item.owner}</span><StatusPill tone={item.stage === "完成" ? "green" : item.stage === "待审核" ? "amber" : "blue"}>{item.stage}</StatusPill><span>{item.due}</span>{item.stage === "完成" ? <span className="muted-cell">已完成</span> : <button className="compact-button" type="button" onClick={() => advanceLp(item)}>推进</button>}</div>; })}</div></div>}</section>
+    </>;
+  };
 
-  const renderPayroll = () => <>
+  const renderOperations = () => {
+    const visibleOperations = operations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" : true);
+    const operationStudent = studentById(selectedOperation.studentId) ?? selectedStudent;
+    return <>
+      <ViewHeading eyebrow="结构化异常处理" title="调课、请假与代课" copy="按待处理、已确认和请假停课分类；选中记录后在右侧确认，不会在长列表中失去上下文。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
+      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: operations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: operations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与停课", count: operations.filter((item) => item.type === "请假" || item.type === "停课").length }, { id: "all", label: "全部", count: operations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div></article><aside className="record-preview"><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div><div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
+    </>;
+  };
+
+  const renderRenewals = () => {
+    const visibleRenewals = renewals.filter((renewal) => renewalFilter === "attention" ? renewal.status === "待跟进" || renewal.status === "等待家长" : renewalFilter === "contacted" ? renewal.status === "已联系" : renewalFilter === "confirmed" ? renewal.status === "已确认" : true);
+    return <>
+      <ViewHeading eyebrow="人工判断续课 · 自动避免遗漏" title="考试与续课" copy="使用关注视图集中处理临近续课与等待家长的学生，沟通动作会进入消息队列等待确认。" actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加跟进</button>} />
+      <section className="panel collection-shell"><ViewTabs value={renewalFilter} items={[{ id: "attention", label: "需要关注", count: renewals.filter((item) => item.status === "待跟进" || item.status === "等待家长").length }, { id: "contacted", label: "已联系", count: renewals.filter((item) => item.status === "已联系").length }, { id: "confirmed", label: "已确认", count: renewals.filter((item) => item.status === "已确认").length }, { id: "all", label: "全部", count: renewals.length }]} onChange={setRenewalFilter} label="续课保存视图" /><div className="collection-main"><div className="collection-head renewal-grid-row"><span>学生 / 课程</span><span>剩余课时</span><span>预计续课</span><span>负责人</span><span>状态</span><span>操作</span></div><div className="collection-viewport">{visibleRenewals.length ? visibleRenewals.map((renewal) => { const student = studentById(renewal.studentId); return <div className="collection-row renewal-grid-row" key={renewal.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course}</small></span></button><strong>{renewal.remaining} 节</strong><span>{renewal.estimate}</span><span>{renewal.owner}</span><StatusPill tone={statusTone(renewal.status)}>{renewal.status}</StatusPill>{renewal.status === "待跟进" ? <button className="compact-button" type="button" onClick={() => { setRenewals((current) => current.map((item) => item.id === renewal.id ? { ...item, status: "已联系" } : item)); setMessages((current) => [{ id: id("MSG"), studentId: renewal.studentId, kind: "续课前跟进", recipient: `${student?.guardian ?? "家长"}`, body: `您好，${student?.name} 目前剩余 ${renewal.remaining} 节课。教务正在确认接下来的学习安排，方便时请回复我们。`, status: "待人工确认", createdAt: `今天 ${nowLabel()}` }, ...current]); addAudit("创建续课跟进", `${student?.name} · 已生成消息待确认`, "blue"); notify("已生成续课消息，等待人工确认"); }}>创建跟进</button> : <button className="compact-button" type="button" onClick={() => goToStudent(renewal.studentId)}>查看</button>}</div>; }) : <EmptyState title="当前没有续课记录" detail="切换视图查看其他状态。" />}</div></div></section>
+    </>;
+  };
+
+  const renderPayroll = () => {
+    const visiblePayroll = payroll.filter((row) => payrollFilter === "review" ? row.status === "需核对" : payrollFilter === "ready" ? row.status === "可审核" : payrollFilter === "locked" ? row.status === "已锁定" : true);
+    return <>
     <ViewHeading eyebrow="教务宝导入预览 · 人工锁定" title="课时与薪资" copy="导入数据后按已确认费率计算建议金额；所有异常、调整理由和最终确认人都必须可追溯。" actions={<button className="secondary-button" type="button" onClick={() => { setPayroll((current) => current.map((row) => row.status === "需核对" ? { ...row, status: "可审核", note: "模拟导入完成，等待人工审核" } : row)); addAudit("模拟导入教务宝数据", "已更新本地薪资预览，不影响真实教务宝", "blue"); notify("已完成样例导入与异常重算"); }}><Database size={17} /> 导入样例</button>} />
     <section className="metric-grid payroll-metrics"><Metric tone="blue" icon={<FileText size={21} />} value={`${payroll.reduce((total, row) => total + row.lessons + row.trialLessons, 0)}`} label="导入课次" detail="教务宝样例数据" /><Metric tone="amber" icon={<CircleAlert size={21} />} value={`${payroll.filter((row) => row.status === "需核对").length}`} label="需要核对" detail="不会自动锁定" /><Metric tone="green" icon={<Wallet size={21} />} value={`$${payroll.reduce((total, row) => total + row.amount, 0).toLocaleString()}`} label="建议薪资" detail="等待人工审核" /><Metric tone="purple" icon={<ShieldCheck size={21} />} value={`${payroll.filter((row) => row.status === "已锁定").length}`} label="已锁定" detail="已记录确认人" /></section>
-    <section className="panel data-panel"><div className="data-table payroll-table"><div className="data-head"><span>老师</span><span>常规 / 试听课</span><span>建议金额</span><span>状态</span><span>说明与操作</span></div>{payroll.map((row) => { const teacher = teacherById(row.teacherId); return <div className="data-row" key={row.id}><span className="table-person"><Avatar initials={teacher?.initials ?? "?"} tone="blue" /><span><strong>{teacher?.name}</strong><small>{teacher?.subjects.join(" · ")}</small></span></span><span>{row.lessons} / {row.trialLessons}</span><span><strong>${row.amount.toLocaleString()}</strong></span><span><StatusPill tone={statusTone(row.status)}>{row.status}</StatusPill></span><span><small>{row.note}</small>{row.status !== "已锁定" && <button className="compact-button" type="button" onClick={() => { setPayroll((current) => current.map((item) => item.id === row.id ? { ...item, status: "已锁定", note: "已由当前操作员人工锁定" } : item)); addAudit("锁定薪资记录", `${teacher?.name} · $${row.amount.toLocaleString()}`, "green"); notify("已锁定本月演示薪资记录"); }}>人工锁定</button>}</span></div>; })}</div></section>
-  </>;
+    <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={payrollFilter} items={[{ id: "all", label: "全部", count: payroll.length }, { id: "review", label: "需核对", count: payroll.filter((item) => item.status === "需核对").length }, { id: "ready", label: "可审核", count: payroll.filter((item) => item.status === "可审核").length }, { id: "locked", label: "已锁定", count: payroll.filter((item) => item.status === "已锁定").length }]} onChange={setPayrollFilter} label="薪资保存视图" /><button className="secondary-button" type="button" disabled={!payroll.some((row) => row.status === "可审核")} onClick={() => { const count = payroll.filter((row) => row.status === "可审核").length; setPayroll((current) => current.map((row) => row.status === "可审核" ? { ...row, status: "已锁定", note: "已批量人工锁定" } : row)); addAudit("批量锁定薪资", `${count} 条可审核记录`, "green"); notify(`已锁定 ${count} 条可审核记录`); }}><ShieldCheck size={16} /> 批量锁定可审核</button></div><div className="collection-main"><div className="collection-head payroll-grid-row"><span>老师</span><span>常规 / 试听</span><span>建议金额</span><span>状态</span><span>说明</span><span>操作</span></div><div className="collection-viewport">{visiblePayroll.map((row) => { const teacher = teacherById(row.teacherId); return <div className="collection-row payroll-grid-row" key={row.id}><span className="table-person"><Avatar initials={teacher?.initials ?? "?"} tone="blue" /><span><strong>{teacher?.name}</strong><small>{teacher?.subjects.join(" · ")}</small></span></span><span>{row.lessons} / {row.trialLessons}</span><strong>${row.amount.toLocaleString()}</strong><StatusPill tone={statusTone(row.status)}>{row.status}</StatusPill><small>{row.note}</small>{row.status !== "已锁定" ? <button className="compact-button" type="button" onClick={() => { setPayroll((current) => current.map((item) => item.id === row.id ? { ...item, status: "已锁定", note: "已由当前操作员人工锁定" } : item)); addAudit("锁定薪资记录", `${teacher?.name} · $${row.amount.toLocaleString()}`, "green"); notify("已锁定本月演示薪资记录"); }}>人工锁定</button> : <span className="muted-cell">已完成</span>}</div>; })}</div></div></section>
+    </>;
+  };
 
-  const renderMessages = () => <>
-    <ViewHeading eyebrow="企业微信路由预览 · Demo 不发送" title="消息队列" copy="每条提醒先绑定学生、收件对象和负责人；外部消息必须在送出前人工确认。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
-    <section className="routing-layout"><article className="panel routing-list"><div className="panel-header"><div><p className="eyebrow">按学生关系路由</p><h2>待处理消息</h2></div><StatusPill tone="blue">{messages.filter((message) => message.status !== "已记录发送").length} 条</StatusPill></div>{messages.map((message) => { const student = studentById(message.studentId); return <button className={`route-row ${selectedMessage.id === message.id ? "selected" : ""}`} type="button" key={message.id} onClick={() => setSelectedMessageId(message.id)}><span className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}><MessageCircle size={18} /></span><span><strong>{message.kind}</strong><small>{student?.name} · {message.recipient}</small></span><StatusPill tone={message.status === "待人工确认" ? "amber" : message.status === "已记录发送" ? "green" : "blue"}>{message.status}</StatusPill><ChevronRight size={17} /></button>})}<div className="send-log"><strong>安全边界</strong><p><CircleAlert size={15} /> 当前仅记录发送意图和操作日志，未连接企业微信 API。</p></div></article><aside className="panel message-preview"><div className="preview-header"><div><p className="eyebrow">发送前预览</p><h2>{selectedMessage.kind}</h2></div><StatusPill tone={selectedMessage.status === "待人工确认" ? "amber" : "blue"}>{selectedMessage.status}</StatusPill></div><div className="route-summary"><span>关联学生<strong>{studentById(selectedMessage.studentId)?.name}</strong></span><span>收件对象<strong>{selectedMessage.recipient}</strong></span><span>创建时间<strong>{selectedMessage.createdAt}</strong></span></div><div className="message-bubble">{selectedMessage.body}</div><div className="preview-foot"><CircleAlert size={16} /> 真实外部消息需要完成企业微信权限 PoC、收件对象映射及人工确认。</div><button className="primary-button full" type="button" disabled={selectedMessage.status === "已记录发送"} onClick={recordMessage}><Send size={16} /> {selectedMessage.status === "已记录发送" ? "已记录发送" : "记录为已发送"}</button></aside></section>
-  </>;
+  const renderMessages = () => {
+    const visibleMessages = messages.filter((message) => {
+      const matchesQuery = `${message.kind} ${message.recipient} ${studentById(message.studentId)?.name ?? ""}`.toLowerCase().includes(messageQuery.trim().toLowerCase());
+      if (!matchesQuery) return false;
+      if (messageFilter === "open") return message.status !== "已记录发送";
+      if (messageFilter === "confirm") return message.status === "待人工确认";
+      if (messageFilter === "sent") return message.status === "已记录发送";
+      if (messageFilter === "internal") return message.status === "仅内部";
+      return true;
+    });
+    return <>
+      <ViewHeading eyebrow="按学生关系路由 · 发送前确认" title="消息队列" copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
+      <section className="panel collection-shell"><ViewTabs value={messageFilter} items={[{ id: "open", label: "待处理", count: messages.filter((item) => item.status !== "已记录发送").length }, { id: "confirm", label: "待人工确认", count: messages.filter((item) => item.status === "待人工确认").length }, { id: "internal", label: "仅内部", count: messages.filter((item) => item.status === "仅内部").length }, { id: "sent", label: "已记录发送", count: messages.filter((item) => item.status === "已记录发送").length }, { id: "all", label: "全部", count: messages.length }]} onChange={setMessageFilter} label="消息保存视图" /><ListToolbar query={messageQuery} onQuery={setMessageQuery} placeholder="搜索学生、消息类型或收件对象" count={`${visibleMessages.length} 条消息`} /><div className="master-detail-layout message-layout"><article className="collection-main"><div className="collection-viewport message-list">{visibleMessages.length ? visibleMessages.map((message) => { const student = studentById(message.studentId); return <button className={`message-list-row ${selectedMessage.id === message.id ? "selected" : ""}`} type="button" key={message.id} onClick={() => setSelectedMessageId(message.id)}><span className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}><MessageCircle size={18} /></span><span><strong>{message.kind}</strong><small>{student?.name} · {message.recipient}</small><em>{message.body}</em></span><span><StatusPill tone={message.status === "待人工确认" ? "amber" : message.status === "已记录发送" ? "green" : "blue"}>{message.status}</StatusPill><small>{message.createdAt}</small></span></button>; }) : <EmptyState title="没有符合条件的消息" detail="切换视图或清除搜索。" />}</div><div className="send-log"><strong>安全边界</strong><p><CircleAlert size={15} /> 当前只记录发送意图，未连接企业微信 API。</p></div></article><aside className="record-preview message-preview"><div className="preview-header"><div><p className="eyebrow">发送前预览</p><h2>{selectedMessage.kind}</h2></div><StatusPill tone={selectedMessage.status === "待人工确认" ? "amber" : selectedMessage.status === "已记录发送" ? "green" : "blue"}>{selectedMessage.status}</StatusPill></div><div className="route-summary"><span>关联学生<strong>{studentById(selectedMessage.studentId)?.name}</strong></span><span>收件对象<strong>{selectedMessage.recipient}</strong></span><span>创建时间<strong>{selectedMessage.createdAt}</strong></span></div><div className="message-bubble">{selectedMessage.body}</div><div className="preview-foot"><CircleAlert size={16} /> 真实外部消息仍需企业微信权限、收件对象映射与人工确认。</div><button className="primary-button full" type="button" disabled={selectedMessage.status === "已记录发送"} onClick={recordMessage}><Send size={16} /> {selectedMessage.status === "已记录发送" ? "已记录发送" : "记录为已发送"}</button></aside></div></section>
+    </>;
+  };
 
-  const renderFiles = () => <>
-    <ViewHeading eyebrow="资料索引 · 不依赖文件名猜测" title="文件中心" copy="系统保存文件类型、关联对象与来源链接。第一阶段继续使用 Google Drive 等外部存储，不复制真实文件。" actions={<button className="primary-button" type="button" onClick={() => setModal("file")}><FilePlus2 size={17} /> 登记文件</button>} />
-    <section className="files-layout"><article className="panel data-panel"><div className="data-table files-table"><div className="data-head"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div>{files.map((file) => { const student = studentById(file.studentId); return <div className="data-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button></span><span><StatusPill tone={file.type === "Learning Plan" ? "blue" : "neutral"}>{file.type}</StatusPill></span><span><small>{file.source}</small></span><span>{file.addedAt}</span></div>; })}</div></article><aside className="panel side-note"><p className="eyebrow">文件处理原则</p><h2>引用而不复制</h2><ul><li>记录稳定 ID、链接、资料类型和权限来源。</li><li>学生、老师、课程和 LP 都能引用同一份文件。</li><li>文件删除或权限变化应形成数据质量提醒。</li></ul><button className="secondary-button full" type="button" onClick={() => goToStudent(selectedStudent.id)}><Users size={16} /> 返回学生档案</button></aside></section>
-  </>;
+  const renderFiles = () => {
+    const visibleFiles = files.filter((file) => {
+      const matchesQuery = `${file.title} ${file.type} ${file.source} ${studentById(file.studentId)?.name ?? ""}`.toLowerCase().includes(fileQuery.trim().toLowerCase());
+      return matchesQuery && (fileFilter === "all" || file.type === fileFilter);
+    });
+    return <>
+      <ViewHeading eyebrow="资料索引 · 不依赖文件名猜测" title="文件中心" copy="用类型视图和搜索定位资料；每条文件记录直接关联学生，不需要进入不断变长的文件夹树。" actions={<button className="primary-button" type="button" onClick={() => setModal("file")}><FilePlus2 size={17} /> 登记文件</button>} />
+      <section className="panel collection-shell"><ViewTabs value={fileFilter} items={[{ id: "all", label: "全部", count: files.length }, { id: "Learning Plan", label: "Learning Plan", count: files.filter((item) => item.type === "Learning Plan").length }, { id: "成绩单", label: "成绩单", count: files.filter((item) => item.type === "成绩单").length }, { id: "课堂反馈", label: "课堂反馈", count: files.filter((item) => item.type === "课堂反馈").length }, { id: "资料链接", label: "资料链接", count: files.filter((item) => item.type === "资料链接").length }]} onChange={setFileFilter} label="文件保存视图" /><ListToolbar query={fileQuery} onQuery={setFileQuery} placeholder="搜索资料名、学生、类型或来源" count={`${visibleFiles.length} 项资料`} /><div className="collection-main"><div className="collection-head file-grid-row"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div><div className="collection-viewport">{visibleFiles.length ? visibleFiles.map((file) => { const student = studentById(file.studentId); return <div className="collection-row file-grid-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button><StatusPill tone={file.type === "Learning Plan" ? "blue" : "neutral"}>{file.type}</StatusPill><small>{file.source}</small><span>{file.addedAt}</span></div>; }) : <EmptyState title="没有找到资料" detail="调整类型视图或搜索关键词。" />}</div></div></section>
+    </>;
+  };
 
   const renderSync = () => <>
     <ViewHeading eyebrow="过渡期镜像 · 非备份" title="同步与导入" copy="系统将逐步成为主数据源；腾讯表格只保留明确批准的镜像和有限回写字段，并且所有冲突可追溯。" actions={<button className="primary-button" type="button" onClick={runSync} disabled={syncState === "running"}>{syncState === "running" ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}{syncState === "running" ? "同步预览中" : "运行同步预览"}</button>} />
@@ -580,26 +802,37 @@ export default function Home() {
   </>;
 
   const renderReports = () => {
-    const completed = tasks.filter((task) => task.status === "done").length;
-    const trialCount = students.filter((student) => student.status === "试听中").length;
+    const reportTasks = tasks.filter((task) => reportOwner === "all" || task.owner === reportOwner);
+    const reportStudents = students.filter((student) => reportOwner === "all" || student.owner === reportOwner);
+    const completed = reportTasks.filter((task) => task.status === "done").length;
+    const trialCount = reportStudents.filter((student) => student.status === "试听中").length;
     const activeTeachers = teachers.filter((teacher) => teacher.acceptsStudents).length;
-    const missingFiles = students.filter((student) => student.files < 5).length;
+    const missingFiles = reportStudents.filter((student) => student.files < 5).length;
     return <>
-      <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="指标来自本地演示数据。生产版需要经过导入校验和字段口径确认后，才可作为经营数据。" actions={<button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button>} />
-      <section className="report-grid"><ReportCard value={`${completed}/${tasks.length}`} label="任务完成" detail="提醒完成情况" tone="green" /><ReportCard value={`${trialCount}`} label="进行中的试听" detail="需要持续关注" tone="amber" /><ReportCard value={`${activeTeachers}/${teachers.length}`} label="可接新老师" detail="当前可用资源" tone="blue" /><ReportCard value={`${missingFiles}`} label="资料待补" detail="文件索引少于 5 项" tone="red" /></section>
+      <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
+      <section className="report-grid"><ReportCard value={`${completed}/${reportTasks.length}`} label="任务完成" detail={reportOwner === "all" ? "全部负责人" : reportOwner} tone="green" /><ReportCard value={`${trialCount}`} label="进行中的试听" detail="需要持续关注" tone="amber" /><ReportCard value={`${activeTeachers}/${teachers.length}`} label="可接新老师" detail="当前可用资源" tone="blue" /><ReportCard value={`${missingFiles}`} label="资料待补" detail="文件索引少于 5 项" tone="red" /></section>
       <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={syncResolved ? "0 项待处理" : "1 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
     </>;
   };
 
   const renderSettings = () => <>
-    <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="当前设置只影响本地 Demo 的展示与新建工作流；生产版必须为每项规则设定负责人、版本和生效时间。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 恢复示例数据</button>} />
-    <section className="settings-grid"><article className="panel settings-panel"><div className="panel-header"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">草稿</StatusPill></div><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label><button className="primary-button" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、续课 ${rules.renewalDays} 天`, "green"); notify("规则已保存到当前浏览器的 Demo 数据"); }}><Check size={17} /> 保存规则</button></article><article className="panel side-note"><p className="eyebrow">上线前必须确认</p><h2>外部集成边界</h2><ul><li>企业微信：先验证应用权限、员工、客户群和频率限制。</li><li>教务宝：先核对导出字段与薪资口径，不把样例计算当最终工资。</li><li>腾讯表格：定义系统拥有字段、可回写字段与冲突处理规则。</li><li>ClassIn：先做 API/SDK 权限与中澳网络测试。</li></ul><button className="secondary-button full" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步边界</button></article></section>
+    <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 恢复示例数据</button>} />
+    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">本地草稿</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、续课 ${rules.renewalDays} 天`, "green"); notify("规则已保存到当前浏览器"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>本地 MVP 数据</h2></div><StatusPill tone="blue">当前浏览器</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="浏览器 localStorage，仅供单机流程验证" tone="blue" label="本地" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="生产试点前接入并配置权限与恢复点" tone="amber" label="待实施" /></div><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="amber">未连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="镜像字段与冲突策略待批准" tone="purple" label="模拟" /><OwnershipRow title="ClassIn" detail="API/SDK 权限与中澳网络测试待完成" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步设计</button></article>}</section>
   </>;
 
-  const renderAudit = () => <>
-    <ViewHeading eyebrow="完整操作留痕" title="操作审计" copy="每次本地操作都记录时间、操作者、动作和关联结果。生产版还应记录来源系统、IP、权限和不可篡改的保留策略。" actions={<button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button>} />
-    <section className="panel audit-panel"><div className="audit-head"><span>时间</span><span>操作者</span><span>动作</span><span>详情</span></div>{audit.map((entry) => <div className="audit-row" key={entry.id}><span>{entry.time}</span><span>{entry.actor}</span><span><StatusPill tone={entry.tone}>{entry.action}</StatusPill></span><span>{entry.detail}</span></div>)}</section>
-  </>;
+  const renderAudit = () => {
+    const filteredAudit = audit.filter((entry) => {
+      const matchesQuery = `${entry.actor} ${entry.action} ${entry.detail}`.toLowerCase().includes(auditQuery.trim().toLowerCase());
+      return matchesQuery && (auditFilter === "all" || (auditFilter === "system" ? entry.actor === "系统" : auditFilter === "manual" ? entry.actor !== "系统" : entry.tone === auditFilter));
+    });
+    const auditPageSize = 8;
+    const safePage = Math.min(auditPage, Math.max(1, Math.ceil(filteredAudit.length / auditPageSize)));
+    const pagedAudit = filteredAudit.slice((safePage - 1) * auditPageSize, safePage * auditPageSize);
+    return <>
+      <ViewHeading eyebrow="完整操作留痕" title="操作审计" copy="搜索操作者、动作或关联结果；分页后仍保留统一记录口径。" actions={<button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button>} />
+      <section className="panel collection-shell"><ViewTabs value={auditFilter} items={[{ id: "all", label: "全部", count: audit.length }, { id: "manual", label: "人工操作", count: audit.filter((entry) => entry.actor !== "系统").length }, { id: "system", label: "系统事件", count: audit.filter((entry) => entry.actor === "系统").length }, { id: "amber", label: "需关注", count: audit.filter((entry) => entry.tone === "amber").length }]} onChange={(value) => { setAuditFilter(value); setAuditPage(1); }} label="审计保存视图" /><ListToolbar query={auditQuery} onQuery={(value) => { setAuditQuery(value); setAuditPage(1); }} placeholder="搜索操作者、动作或详情" count={`${filteredAudit.length} 条记录`} /><div className="collection-main"><div className="collection-head audit-grid-row"><span>时间</span><span>操作者</span><span>动作</span><span>详情</span></div><div className="collection-viewport">{pagedAudit.length ? pagedAudit.map((entry) => <div className="collection-row audit-grid-row" key={entry.id}><span>{entry.time}</span><span>{entry.actor}</span><span><StatusPill tone={entry.tone}>{entry.action}</StatusPill></span><span>{entry.detail}</span></div>) : <EmptyState title="没有审计记录" detail="调整筛选或搜索条件。" />}</div><Pagination page={safePage} total={filteredAudit.length} pageSize={auditPageSize} onPage={setAuditPage} /></div></section>
+    </>;
+  };
 
   const renderView = () => {
     switch (active) {
@@ -704,7 +937,7 @@ export default function Home() {
         <header className="topbar">
           <div className="breadcrumb"><span>吟领教育</span><ChevronRight size={15} /><strong>{navigation.find((item) => item.id === active)?.label}</strong></div>
           <div className="top-actions">
-            <button className="top-search" type="button" onClick={() => setActive("students")}><Search size={16} /> 搜索学生、老师或 ID</button>
+            <button className="top-search" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={16} /> 搜索学生、老师或 ID <kbd>Cmd K</kbd></button>
             <IconButton label="查看提醒" onClick={() => setActive("dashboard")}><ListTodo size={18} /></IconButton>
             <span className="operator"><Avatar initials="NC" tone="green" /> Nixon</span>
           </div>
@@ -712,6 +945,30 @@ export default function Home() {
         <div className="content">{renderView()}</div>
       </section>
       {toast && <div className="toast"><CheckCircle2 size={17} /> {toast}</div>}
+
+      {globalSearchOpen && <div className="global-search-backdrop" role="presentation" onMouseDown={() => setGlobalSearchOpen(false)}>
+        <section className="global-search-dialog" role="dialog" aria-modal="true" aria-label="全局搜索" onMouseDown={(event) => event.stopPropagation()}>
+          <header>
+            <div><p className="eyebrow">全局搜索</p><h2>快速进入正在处理的记录</h2></div>
+            <IconButton label="关闭搜索" onClick={() => setGlobalSearchOpen(false)}><X size={18} /></IconButton>
+          </header>
+          <label className="global-search-input"><Search size={19} /><input autoFocus value={globalQuery} onChange={(event) => setGlobalQuery(event.target.value)} placeholder="输入学生姓名、老师姓名、课程或编号" /><kbd>Esc</kbd></label>
+          {globalQuery.trim() ? <div className="global-result-list">
+            {globalResults.length ? globalResults.map((result) => <button type="button" key={`${result.type}-${result.id}`} className="global-result" onClick={result.action}>
+              <span className={`global-result-badge ${result.type === "学生" ? "green" : "blue"}`}>{result.type}</span>
+              <span><strong>{result.title}</strong><small>{result.detail}</small></span>
+              <ChevronRight size={17} />
+            </button>) : <EmptyState title="没有找到匹配记录" detail="可以尝试姓名、课程、学生编号或老师编号。" />}
+          </div> : <div className="global-quick-links">
+            <p>常用入口</p>
+            <div>
+              <button type="button" onClick={() => { setActive("students"); setGlobalSearchOpen(false); }}>学生档案</button>
+              <button type="button" onClick={() => { setActive("schedule"); setGlobalSearchOpen(false); }}>排课中心</button>
+              <button type="button" onClick={() => { setActive("operations"); setGlobalSearchOpen(false); }}>运营队列</button>
+            </div>
+          </div>}
+        </section>
+      </div>}
 
       {modal === "student" && <Dialog title="新建学生档案" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitStudent}>
