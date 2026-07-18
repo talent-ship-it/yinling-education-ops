@@ -52,11 +52,13 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(page, /function ViewTabs/);
   assert.match(page, /function Pagination/);
   assert.match(page, /globalSearchOpen/);
+  assert.match(page, /setModal\(null\)/);
   assert.match(page, /const bulkAssignStudents/);
   assert.match(page, /const advanceLp/);
   assert.match(page, /const filteredStudents/);
   assert.match(page, /const filteredTeachers/);
   assert.match(page, /window\.scrollTo\(0, 0\)/);
+  assert.match(page, /setStudentPage\(Math\.floor\(sortedIndex \/ pageSize\) \+ 1\)/);
   assert.match(page, /Demo 不会向真实企业微信发送消息/);
   assert.doesNotMatch(page, /function EmptyModule/);
   assert.match(css, /\.dialog-backdrop/);
@@ -67,6 +69,13 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /\.global-search-dialog/);
   assert.match(css, /\.message-layout/);
   assert.match(css, /--brand:#75C9C2/);
+  assert.match(css, /--ease-out:cubic-bezier\(0\.23, 1, 0\.32, 1\)/);
+  assert.match(css, /--ease-drawer:cubic-bezier\(0\.32, 0\.72, 0, 1\)/);
+  assert.match(css, /@media \(hover:hover\) and \(pointer:fine\)/);
+  assert.match(css, /prefers-reduced-motion:reduce/);
+  assert.match(css, /dialog-enter/);
+  assert.match(css, /toast-enter/);
+  assert.doesNotMatch(css, /transition:\s*all/i);
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);
   assert.match(devServer, /EADDRINUSE/);

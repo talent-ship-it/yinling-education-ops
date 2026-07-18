@@ -481,7 +481,10 @@ export default function Home() {
         event.preventDefault();
         setGlobalSearchOpen(true);
       }
-      if (event.key === "Escape") setGlobalSearchOpen(false);
+      if (event.key === "Escape") {
+        setGlobalSearchOpen(false);
+        setModal(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -518,12 +521,20 @@ export default function Home() {
   const safeTeacherPage = Math.min(teacherPage, Math.max(1, Math.ceil(filteredTeachers.length / teacherPageSize)));
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
   const globalResults = globalQuery.trim() ? [
-    ...students.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { setSelectedStudentId(student.id); setActive("students"); setGlobalSearchOpen(false); } })),
+    ...students.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
     ...teachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
   ] : [];
 
   const goToStudent = (studentId: string, section: Section = "students") => {
     setSelectedStudentId(studentId);
+    if (section === "students") {
+      const sortedIndex = [...students].sort((a, b) => a.name.localeCompare(b.name)).findIndex((student) => student.id === studentId);
+      if (sortedIndex >= 0) {
+        setSearch("");
+        setStudentView("all");
+        setStudentPage(Math.floor(sortedIndex / pageSize) + 1);
+      }
+    }
     setActive(section);
   };
 
