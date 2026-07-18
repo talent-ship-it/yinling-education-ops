@@ -64,4 +64,5 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /\.collection-viewport/);
   assert.match(css, /\.global-search-dialog/);
   assert.match(css, /\.message-layout/);
+  assert.match(css, /--brand:#75C9C2/);
 });
