@@ -31,6 +31,8 @@ test("server-renders the education operations workspace", async () => {
 test("implements the demo workflow instead of placeholder modules", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const devServer = await readFile(new URL("../scripts/dev-fixed-port.mjs", import.meta.url), "utf8");
 
   assert.match(page, /function usePersistentState/);
   assert.match(page, /window\.localStorage/);
@@ -65,4 +67,7 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /\.global-search-dialog/);
   assert.match(css, /\.message-layout/);
   assert.match(css, /--brand:#75C9C2/);
+  assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
+  assert.match(devServer, /const PORT = 3001/);
+  assert.match(devServer, /EADDRINUSE/);
 });
