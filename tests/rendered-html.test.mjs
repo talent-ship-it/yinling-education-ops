@@ -59,6 +59,10 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(page, /const filteredTeachers/);
   assert.match(page, /window\.scrollTo\(0, 0\)/);
   assert.match(page, /setStudentPage\(Math\.floor\(sortedIndex \/ pageSize\) \+ 1\)/);
+  assert.match(page, /const mobilePrimaryNavigation/);
+  assert.match(page, /mobile-bottom-nav/);
+  assert.match(page, /setMobilePreview\("student"\)/);
+  assert.match(page, /setScheduleMode\("agenda"\)/);
   assert.match(page, /Demo 不会向真实企业微信发送消息/);
   assert.doesNotMatch(page, /function EmptyModule/);
   assert.match(css, /\.dialog-backdrop/);
@@ -75,6 +79,10 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.match(css, /dialog-enter/);
   assert.match(css, /toast-enter/);
+  assert.match(css, /@media \(max-width:760px\)/);
+  assert.match(css, /\.mobile-bottom-nav/);
+  assert.match(css, /\.mobile-detail-open/);
+  assert.match(css, /env\(safe-area-inset-bottom\)/);
   assert.doesNotMatch(css, /transition:\s*all/i);
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);
