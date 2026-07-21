@@ -44,6 +44,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import temporaryRealData from "./temporary-real-data.json";
 
 type Section =
   | "dashboard"
@@ -243,6 +244,8 @@ type ImportPayload = {
   audit?: AuditEntry[];
 };
 
+const temporaryRealPayload = temporaryRealData as ImportPayload;
+
 const sourceSnapshot = {
   date: "2026-07-21",
   students: 498,
@@ -331,6 +334,22 @@ const initialTeacherDetails: Record<string, Partial<Teacher>> = {
 
 const initialTeachers: Teacher[] = baseTeachers.map((teacher) => ({ ...teacher, ...initialTeacherDetails[teacher.id] }));
 const sampleTeacherIds = new Set(initialTeachers.map((teacher) => teacher.id));
+const temporaryRealStudents = (temporaryRealPayload.students ?? []).filter((student) => student?.id && student?.name);
+const temporaryRealTeachers = (temporaryRealPayload.teachers ?? []).filter((teacher) => teacher?.id && teacher?.name);
+const defaultStudents = temporaryRealStudents.length ? [...initialStudents, ...temporaryRealStudents] : initialStudents;
+const defaultTeachers = temporaryRealTeachers.length ? [...initialTeachers, ...temporaryRealTeachers] : initialTeachers;
+const defaultDataSnapshot = temporaryRealStudents.length && temporaryRealTeachers.length
+  ? {
+      label: "真实资料线上临时快照",
+      students: temporaryRealStudents.length,
+      teachers: temporaryRealTeachers.length,
+      importedAt: temporaryRealPayload.meta?.createdAt ?? "2026-07-21",
+    }
+  : { label: "脱敏示例数据", students: initialStudents.length, teachers: initialTeachers.length, importedAt: "未导入" };
+const defaultSelectedStudentId = temporaryRealStudents[0]?.id ?? "STU-0248";
+const defaultSelectedTeacherId = temporaryRealTeachers[0]?.id ?? "TEA-011";
+const storagePrefix = temporaryRealStudents.length && temporaryRealTeachers.length ? "yinling-mvp-real-20260722" : "yinling-mvp";
+const storageKey = (key: string) => `${storagePrefix}:${key}`;
 
 const initialTasks: Task[] = [
   { id: "TSK-001", title: "确认 N-2 资料与收费状态", owner: "思佳", studentId: "STU-0248", due: "今天 10:30", status: "overdue", tone: "red", category: "试听", trigger: "试听前 N-2：资料与收费检查" },
@@ -604,21 +623,21 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 
 export default function Home() {
   const [active, setActive] = useState<Section>("dashboard");
-  const [students, setStudents] = usePersistentState("yinling-mvp:students", initialStudents);
-  const [teachers, setTeachers] = usePersistentState("yinling-mvp:teachers", initialTeachers);
-  const [tasks, setTasks] = usePersistentState("yinling-mvp:tasks", initialTasks);
-  const [bookings, setBookings] = usePersistentState("yinling-mvp:bookings", initialBookings);
-  const [lpItems, setLpItems] = usePersistentState("yinling-mvp:lp", initialLp);
-  const [operations, setOperations] = usePersistentState("yinling-mvp:operations", initialOperations);
-  const [renewals, setRenewals] = usePersistentState("yinling-mvp:renewals", initialRenewals);
-  const [payroll, setPayroll] = usePersistentState("yinling-mvp:payroll", initialPayroll);
-  const [messages, setMessages] = usePersistentState("yinling-mvp:messages", initialMessages);
-  const [files, setFiles] = usePersistentState("yinling-mvp:files", initialFiles);
-  const [audit, setAudit] = usePersistentState("yinling-mvp:audit", initialAudit);
-  const [rules, setRules] = usePersistentState("yinling-mvp:rules", defaultRules);
-  const [dataSnapshot, setDataSnapshot] = usePersistentState("yinling-mvp:dataSnapshot", { label: "脱敏示例数据", students: initialStudents.length, teachers: initialTeachers.length, importedAt: "未导入" });
-  const [selectedStudentId, setSelectedStudentId] = useState("STU-0248");
-  const [selectedTeacherId, setSelectedTeacherId] = useState("TEA-011");
+  const [students, setStudents] = usePersistentState(storageKey("students"), defaultStudents);
+  const [teachers, setTeachers] = usePersistentState(storageKey("teachers"), defaultTeachers);
+  const [tasks, setTasks] = usePersistentState(storageKey("tasks"), initialTasks);
+  const [bookings, setBookings] = usePersistentState(storageKey("bookings"), initialBookings);
+  const [lpItems, setLpItems] = usePersistentState(storageKey("lp"), initialLp);
+  const [operations, setOperations] = usePersistentState(storageKey("operations"), initialOperations);
+  const [renewals, setRenewals] = usePersistentState(storageKey("renewals"), initialRenewals);
+  const [payroll, setPayroll] = usePersistentState(storageKey("payroll"), initialPayroll);
+  const [messages, setMessages] = usePersistentState(storageKey("messages"), initialMessages);
+  const [files, setFiles] = usePersistentState(storageKey("files"), initialFiles);
+  const [audit, setAudit] = usePersistentState(storageKey("audit"), initialAudit);
+  const [rules, setRules] = usePersistentState(storageKey("rules"), defaultRules);
+  const [dataSnapshot, setDataSnapshot] = usePersistentState(storageKey("dataSnapshot"), defaultDataSnapshot);
+  const [selectedStudentId, setSelectedStudentId] = useState(defaultSelectedStudentId);
+  const [selectedTeacherId, setSelectedTeacherId] = useState(defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
   const [taskFilter, setTaskFilter] = useState<"all" | "mine" | "overdue">("all");
   const [search, setSearch] = useState("");
@@ -666,7 +685,7 @@ export default function Home() {
   const selectedOperation = operations.find((operation) => operation.id === selectedOperationId) ?? operations[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
   const teacherById = (teacherId: string) => teachers.find((teacher) => teacher.id === teacherId);
-  const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照";
+  const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照" || dataSnapshot.label === "真实资料线上临时快照";
   const recordStudents = useMemo(() => hasRealSnapshot ? students.filter((student) => !sampleStudentIds.has(student.id)) : students, [hasRealSnapshot, students]);
   const recordTeachers = useMemo(() => hasRealSnapshot ? teachers.filter((teacher) => !sampleTeacherIds.has(teacher.id)) : teachers, [hasRealSnapshot, teachers]);
   const activeLowHourStudents = useMemo(() => recordStudents.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [recordStudents, rules.lowHours]);
@@ -877,7 +896,10 @@ export default function Home() {
 
   const resetDemo = () => {
     const keys = ["students", "teachers", "tasks", "bookings", "lp", "operations", "renewals", "payroll", "messages", "files", "audit", "rules", "dataSnapshot"];
-    keys.forEach((key) => window.localStorage.removeItem(`yinling-mvp:${key}`));
+    keys.forEach((key) => {
+      window.localStorage.removeItem(storageKey(key));
+      window.localStorage.removeItem(`yinling-mvp:${key}`);
+    });
     window.location.reload();
   };
 
@@ -1142,7 +1164,7 @@ export default function Home() {
 
   const renderSettings = () => <>
     <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 恢复示例数据</button>} />
-    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">本地草稿</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到当前浏览器"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>本地 MVP 数据</h2></div><StatusPill tone="blue">当前浏览器</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="浏览器 localStorage，仅供单机流程验证" tone="blue" label="本地" /><OwnershipRow title="真实资料导入" detail="通过同步与导入页面选择本地 JSON，不上传到公开站点" tone="green" label="可用" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="生产试点前接入并配置权限与恢复点" tone="amber" label="待实施" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开本地导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="amber">未连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="镜像字段与冲突策略待批准" tone="purple" label="模拟" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步设计</button></article>}</section>
+    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">本地草稿</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到当前浏览器"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>临时真实资料展示</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="真实资料随私有站点加载，并缓存在当前浏览器 localStorage" tone="amber" label="临时" /><OwnershipRow title="真实资料来源" detail="学生总表与教师总表导入包，缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="生产试点前接入 Supabase 并配置权限与恢复点" tone="amber" label="待实施" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开本地导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="amber">未连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="镜像字段与冲突策略待批准" tone="purple" label="模拟" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步设计</button></article>}</section>
   </>;
 
   const renderAudit = () => {
