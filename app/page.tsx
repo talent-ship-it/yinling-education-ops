@@ -67,7 +67,7 @@ type ModalKind = "student" | "task" | "booking" | "operation" | "file" | "templa
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | null;
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
-type LpNeed = "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
+type LpNeed = "待确认" | "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
 
 type AvailabilitySlot = {
   day: number;
@@ -229,7 +229,7 @@ type Rules = {
 };
 
 type ImportPayload = {
-  meta?: { studentCount?: number; teacherCount?: number; createdAt?: string };
+  meta?: { studentCount?: number; teacherCount?: number; createdAt?: string; replaceExisting?: boolean };
   students?: Student[];
   teachers?: Teacher[];
   tasks?: Task[];
@@ -301,6 +301,7 @@ const initialStudentDetails: Record<string, Partial<Student>> = {
 };
 
 const initialStudents: Student[] = baseStudents.map((student) => ({ ...student, ...initialStudentDetails[student.id] }));
+const sampleStudentIds = new Set(initialStudents.map((student) => student.id));
 
 const baseTeachers: Teacher[] = [
   { id: "TEA-011", name: "Amelia Brown", initials: "AB", subjects: ["Year 10 English", "VCE English"], timezone: "Australia/Melbourne · UTC+10", availability: "周六 15:00-20:00", load: 8, capacity: 12, acceptsStudents: true, note: "长期时段匹配，试听经验充足" },
@@ -329,6 +330,7 @@ const initialTeacherDetails: Record<string, Partial<Teacher>> = {
 };
 
 const initialTeachers: Teacher[] = baseTeachers.map((teacher) => ({ ...teacher, ...initialTeacherDetails[teacher.id] }));
+const sampleTeacherIds = new Set(initialTeachers.map((teacher) => teacher.id));
 
 const initialTasks: Task[] = [
   { id: "TSK-001", title: "确认 N-2 资料与收费状态", owner: "思佳", studentId: "STU-0248", due: "今天 10:30", status: "overdue", tone: "red", category: "试听", trigger: "试听前 N-2：资料与收费检查" },
@@ -503,6 +505,10 @@ function isActiveStudent(student: Student) {
   return student.status === "在读" || student.status === "待续课";
 }
 
+function requiresLp(student: Student) {
+  return Boolean(student.lpNeed && student.lpNeed !== "无需LP" && student.lpNeed !== "待确认");
+}
+
 function availabilityInTimezone(teacher: Teacher, targetTimezone: string) {
   if (!teacher.availabilitySlots?.length) return `${teacher.availability}（原文，待结构化）`;
   const weekStart = new Date("2026-07-20T00:00:00Z");
@@ -660,24 +666,27 @@ export default function Home() {
   const selectedOperation = operations.find((operation) => operation.id === selectedOperationId) ?? operations[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
   const teacherById = (teacherId: string) => teachers.find((teacher) => teacher.id === teacherId);
-  const activeLowHourStudents = useMemo(() => students.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [rules.lowHours, students]);
+  const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照";
+  const recordStudents = useMemo(() => hasRealSnapshot ? students.filter((student) => !sampleStudentIds.has(student.id)) : students, [hasRealSnapshot, students]);
+  const recordTeachers = useMemo(() => hasRealSnapshot ? teachers.filter((teacher) => !sampleTeacherIds.has(teacher.id)) : teachers, [hasRealSnapshot, teachers]);
+  const activeLowHourStudents = useMemo(() => recordStudents.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [recordStudents, rules.lowHours]);
   const examReminderStudents = useMemo(() => {
     const now = new Date();
     const threshold = Number(rules.examDays || 30);
-    return students.filter((student) => {
+    return recordStudents.filter((student) => {
       if (!student.examDate || !isActiveStudent(student)) return false;
       const exam = new Date(`${student.examDate}T12:00:00`);
       const days = Math.ceil((exam.getTime() - now.getTime()) / 86400000);
       return days >= 0 && days <= threshold;
     });
-  }, [rules.examDays, students]);
+  }, [recordStudents, rules.examDays]);
   const dstRiskBookings = useMemo(() => bookings.filter((booking) => {
     const student = students.find((item) => item.id === booking.studentId);
     const teacher = teachers.find((item) => item.id === booking.teacherId);
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [bookings, students, teachers]);
-  const ownerOptions = useMemo(() => Array.from(new Set(students.map((student) => student.owner).filter(Boolean))).sort(), [students]);
-  const teacherSubjectOptions = useMemo(() => Array.from(new Set(teachers.flatMap((teacher) => teacher.subjects))).sort(), [teachers]);
+  const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
+  const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
     setAudit((current) => [{ id: id("AUD"), time: `今天 ${nowLabel()}`, actor: "当前操作员", action, detail, tone }, ...current]);
@@ -735,24 +744,24 @@ export default function Home() {
     setRules((current) => ({ ...defaultRules, ...current, lowHours: current.lowHours ?? defaultRules.lowHours, examDays: current.examDays ?? defaultRules.examDays }));
   }, [rules.examDays, rules.lowHours, setRules]);
 
-  const filteredStudents = useMemo(() => students.filter((student) => {
+  const filteredStudents = useMemo(() => recordStudents.filter((student) => {
     const haystack = `${student.name} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
     const matchesSearch = haystack.includes(search.trim().toLowerCase());
     if (!matchesSearch || (studentOwner !== "all" && student.owner !== studentOwner)) return false;
     if (studentView === "mine") return student.owner === "思佳";
     if (studentView === "trial") return student.status === "试听中" || student.status === "待排课";
     if (studentView === "enrolled") return student.segment === "已报名" && isActiveStudent(student);
-    if (studentView === "lp") return student.lpNeed && student.lpNeed !== "无需LP";
+    if (studentView === "lp") return requiresLp(student);
     if (studentView === "renewal") return student.status === "待续课";
     if (studentView === "paused") return student.status === "停课" || student.status === "非在读" || student.status === "不活跃";
     return true;
-  }).sort((a, b) => a.name.localeCompare(b.name)), [search, studentOwner, studentView, students]);
+  }).sort((a, b) => a.name.localeCompare(b.name)), [recordStudents, search, studentOwner, studentView]);
 
   const pageSize = 7;
   const safeStudentPage = Math.min(studentPage, Math.max(1, Math.ceil(filteredStudents.length / pageSize)));
   const pagedStudents = filteredStudents.slice((safeStudentPage - 1) * pageSize, safeStudentPage * pageSize);
   const teacherMatch = (teacher: Teacher) => teacher.subjects.some((subject) => selectedStudent.course.includes(subject.split(" ").slice(-1)[0])) ? 94 : teacher.subjects.some((subject) => subject.includes("English") && selectedStudent.course.includes("English")) ? 87 : 76;
-  const filteredTeachers = teachers.filter((teacher) => {
+  const filteredTeachers = recordTeachers.filter((teacher) => {
     const matchesSearch = `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")} ${teacher.subjectDetail ?? ""} ${teacher.location ?? ""} ${teacher.timezone}`.toLowerCase().includes(teacherQuery.trim().toLowerCase());
     if (!matchesSearch || (teacherSubject !== "all" && !teacher.subjects.includes(teacherSubject))) return false;
     if (teacherView === "available") return teacher.acceptsStudents;
@@ -764,8 +773,8 @@ export default function Home() {
   const safeTeacherPage = Math.min(teacherPage, Math.max(1, Math.ceil(filteredTeachers.length / teacherPageSize)));
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
   const globalResults = globalQuery.trim() ? [
-    ...students.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
-    ...teachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
+    ...recordStudents.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
+    ...recordTeachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
   ] : [];
 
   const goToStudent = (studentId: string, section: Section = "students") => {
@@ -893,14 +902,17 @@ export default function Home() {
       const importedStudents = (payload.students ?? []).filter((student) => student?.id && student?.name);
       const importedTeachers = (payload.teachers ?? []).filter((teacher) => teacher?.id && teacher?.name);
       if (!importedStudents.length || !importedTeachers.length) throw new Error("missing-records");
-      setStudents((current) => {
+      const replaceExisting = payload.meta?.replaceExisting === true;
+      setStudents((current) => replaceExisting ? [...initialStudents, ...importedStudents] : (() => {
         const incomingIds = new Set(importedStudents.map((student) => student.id));
         return [...current.filter((student) => !incomingIds.has(student.id)), ...importedStudents];
-      });
-      setTeachers((current) => {
+      })());
+      setTeachers((current) => replaceExisting ? [...initialTeachers, ...importedTeachers] : (() => {
         const incomingIds = new Set(importedTeachers.map((teacher) => teacher.id));
         return [...current.filter((teacher) => !incomingIds.has(teacher.id)), ...importedTeachers];
-      });
+      })());
+      setSelectedStudentId(importedStudents[0].id);
+      setSelectedTeacherId(importedTeachers[0].id);
       const importedAt = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
       setDataSnapshot({ label: "真实资料本地快照", students: importedStudents.length, teachers: importedTeachers.length, importedAt });
       addAudit("导入真实资料快照", `${importedStudents.length} 位学生、${importedTeachers.length} 位老师；仅保存在当前浏览器`, "green");
@@ -920,7 +932,7 @@ export default function Home() {
     const lowHours = activeLowHourStudents.length;
     const nearestExam = examReminderStudents[0];
     const firstLowHours = activeLowHourStudents[0];
-    const pendingAva = teachers.filter((teacher) => (teacher.availabilityStatus ?? "待确认") === "待确认").length;
+    const pendingAva = recordTeachers.filter((teacher) => (teacher.availabilityStatus ?? "待确认") === "待确认").length;
     const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} title="今天先处理什么" copy={`所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：${dataSnapshot.label}。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
@@ -950,13 +962,13 @@ export default function Home() {
 
   const renderStudents = () => {
     const viewItems = [
-      { id: "all", label: "全部学生", count: students.length },
-      { id: "mine", label: "我负责的", count: students.filter((student) => student.owner === "思佳").length },
-      { id: "trial", label: "试听与待排课", count: students.filter((student) => student.status === "试听中" || student.status === "待排课").length },
-      { id: "enrolled", label: "已报名在读", count: students.filter((student) => student.segment === "已报名" && isActiveStudent(student)).length },
-      { id: "lp", label: "需要 LP", count: students.filter((student) => student.lpNeed && student.lpNeed !== "无需LP").length },
-      { id: "renewal", label: "待续课", count: students.filter((student) => student.status === "待续课").length },
-      { id: "paused", label: "暂停/非在读", count: students.filter((student) => student.status === "停课" || student.status === "非在读" || student.status === "不活跃").length },
+      { id: "all", label: "全部学生", count: recordStudents.length },
+      { id: "mine", label: "我负责的", count: recordStudents.filter((student) => student.owner === "思佳").length },
+      { id: "trial", label: "试听与待排课", count: recordStudents.filter((student) => student.status === "试听中" || student.status === "待排课").length },
+      { id: "enrolled", label: "已报名在读", count: recordStudents.filter((student) => student.segment === "已报名" && isActiveStudent(student)).length },
+      { id: "lp", label: "需要 LP", count: recordStudents.filter(requiresLp).length },
+      { id: "renewal", label: "待续课", count: recordStudents.filter((student) => student.status === "待续课").length },
+      { id: "paused", label: "暂停/非在读", count: recordStudents.filter((student) => student.status === "停课" || student.status === "非在读" || student.status === "不活跃").length },
     ];
     const pageIds = pagedStudents.map((student) => student.id);
     const pageSelected = pageIds.length > 0 && pageIds.every((studentId) => selectedStudentIds.includes(studentId));
@@ -986,10 +998,10 @@ export default function Home() {
 
   const renderTeachers = () => {
     const viewItems = [
-      { id: "available", label: "可接新生", count: teachers.filter((teacher) => teacher.acceptsStudents).length },
-      { id: "matched", label: "高匹配", count: teachers.filter((teacher) => teacherMatch(teacher) >= 85).length },
-      { id: "capacity", label: "容量充足", count: teachers.filter((teacher) => teacher.load < teacher.capacity * 0.8).length },
-      { id: "all", label: "全部老师", count: teachers.length },
+      { id: "available", label: "可接新生", count: recordTeachers.filter((teacher) => teacher.acceptsStudents).length },
+      { id: "matched", label: "高匹配", count: recordTeachers.filter((teacher) => teacherMatch(teacher) >= 85).length },
+      { id: "capacity", label: "容量充足", count: recordTeachers.filter((teacher) => teacher.load < teacher.capacity * 0.8).length },
+      { id: "all", label: "全部老师", count: recordTeachers.length },
     ];
     return <>
       <ViewHeading eyebrow="教师总表 · 中小学与大学合并检索" title="老师资源库" copy="跨部门老师只保留一份主档，可按标准科目、接新状态和 AVA 搜索；原始 AVA 未结构化时明确提示人工确认。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 用当前候选排课</button>} />
@@ -1116,10 +1128,10 @@ export default function Home() {
 
   const renderReports = () => {
     const reportTasks = tasks.filter((task) => reportOwner === "all" || task.owner === reportOwner);
-    const reportStudents = students.filter((student) => reportOwner === "all" || student.owner === reportOwner);
+    const reportStudents = recordStudents.filter((student) => reportOwner === "all" || student.owner === reportOwner);
     const completed = reportTasks.filter((task) => task.status === "done").length;
     const trialCount = reportStudents.filter((student) => student.status === "试听中").length;
-    const activeTeachers = teachers.filter((teacher) => teacher.acceptsStudents).length;
+    const activeTeachers = recordTeachers.filter((teacher) => teacher.acceptsStudents).length;
     const missingFiles = reportStudents.filter((student) => student.files < 5).length;
     return <>
       <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
@@ -1330,7 +1342,7 @@ export default function Home() {
       {modal === "task" && <Dialog title="添加内部任务" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitTask}>
           <label className="span-2">任务内容<input name="title" autoFocus placeholder="例如确认家长是否收到上课链接" required /></label>
-          <label>关联学生<input name="studentId" list="task-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="task-student-options">{students.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          <label>关联学生<input name="studentId" list="task-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="task-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
           <label>负责人<select name="owner"><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select></label>
           <label>截止时间<input name="due" defaultValue="今天" /></label>
           <label>任务分类<select name="category"><option>资料</option><option>试听</option><option>LP</option><option>排课</option><option>课后</option><option>续课</option><option>薪资</option></select></label>
@@ -1340,8 +1352,8 @@ export default function Home() {
 
       {modal === "booking" && <Dialog title="新建排课" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitBooking}>
-          <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{students.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入姓名或老师 ID 搜索" /><datalist id="booking-teacher-options">{teachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>
+          <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入姓名或老师 ID 搜索" /><datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>
           <label>日期<input name="date" type="date" defaultValue="2026-07-20" required /></label>
           <label>开始时间<input name="start" type="time" defaultValue="16:00" required /></label>
           <label>录入时区<select name="timezone" defaultValue={scheduleTimezone}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -1355,7 +1367,7 @@ export default function Home() {
 
       {modal === "operation" && <Dialog title="记录调课、请假或代课" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitOperation}>
-          <label>学生<input name="studentId" list="operation-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="operation-student-options">{students.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.owner}</option>)}</datalist></label>
+          <label>学生<input name="studentId" list="operation-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="operation-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.owner}</option>)}</datalist></label>
           <label>类型<select name="type"><option>调课</option><option>请假</option><option>停课</option><option>代课</option><option>换老师</option></select></label>
           <label className="span-2">处理说明<textarea name="detail" rows={4} placeholder="记录原时间、原因、可选时间或需要的后续确认" required /></label>
           <div className="form-notice span-2"><CircleAlert size={16} /> 系统只创建处理任务；是否扣课、由谁代课和对外通知均保留人工决定。</div>
@@ -1365,7 +1377,7 @@ export default function Home() {
 
       {modal === "file" && <Dialog title="登记资料链接" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitFile}>
-          <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="file-student-options">{students.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
+          <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="file-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
           <label>资料类型<select name="type"><option>Learning Plan</option><option>成绩单</option><option>课堂反馈</option><option>资料链接</option><option>其他</option></select></label>
           <label className="span-2">资料名称<input name="title" autoFocus placeholder="例如 2026 Semester 2 Learning Plan" required /></label>
           <label className="span-2">来源链接或说明<input name="source" placeholder="例如 Google Drive · https://..." /></label>
@@ -1375,7 +1387,7 @@ export default function Home() {
 
       {modal === "template" && <Dialog title="新建消息待确认" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitTemplate}>
-          <label>关联学生<input name="studentId" list="message-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="message-student-options">{students.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
+          <label>关联学生<input name="studentId" list="message-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="message-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
           <label>消息类型<input name="kind" defaultValue="内部提醒" required /></label>
           <label className="span-2">收件对象<input name="recipient" defaultValue="内部负责人" required /></label>
           <label className="span-2">消息正文<textarea name="body" rows={5} placeholder="输入需要人工确认的消息内容" required /></label>

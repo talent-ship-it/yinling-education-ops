@@ -71,6 +71,13 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(page, /bookingHasDstRisk/);
   assert.match(page, /activeLowHourStudents/);
   assert.match(page, /examReminderStudents/);
+  assert.match(page, /function requiresLp/);
+  assert.match(page, /student\.lpNeed !== "待确认"/);
+  assert.match(page, /const recordStudents/);
+  assert.match(page, /const recordTeachers/);
+  assert.match(page, /sampleStudentIds\.has\(student\.id\)/);
+  assert.match(page, /sampleTeacherIds\.has\(teacher\.id\)/);
+  assert.match(page, /payload\.meta\?\.replaceExisting === true/);
   assert.match(page, /currentGrade/);
   assert.match(page, /真实资料本地快照/);
   assert.match(page, /非在读与不活跃学生/);
