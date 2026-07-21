@@ -63,6 +63,17 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(page, /mobile-bottom-nav/);
   assert.match(page, /setMobilePreview\("student"\)/);
   assert.match(page, /setScheduleMode\("agenda"\)/);
+  assert.match(page, /const sourceSnapshot/);
+  assert.match(page, /const importLocalSnapshot/);
+  assert.match(page, /zonedDateTimeToUtc/);
+  assert.match(page, /teacherAvailableAt/);
+  assert.match(page, /if \(!teacher\.availabilitySlots\?\.length\) return false/);
+  assert.match(page, /bookingHasDstRisk/);
+  assert.match(page, /activeLowHourStudents/);
+  assert.match(page, /examReminderStudents/);
+  assert.match(page, /currentGrade/);
+  assert.match(page, /真实资料本地快照/);
+  assert.match(page, /非在读与不活跃学生/);
   assert.match(page, /Demo 不会向真实企业微信发送消息/);
   assert.doesNotMatch(page, /function EmptyModule/);
   assert.match(css, /\.dialog-backdrop/);
@@ -83,6 +94,10 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /\.mobile-bottom-nav/);
   assert.match(css, /\.mobile-detail-open/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(css, /\.student-facts/);
+  assert.match(css, /\.timezone-audit/);
+  assert.match(css, /\.exam-reminder-strip/);
+  assert.match(css, /\.data-snapshot-bar/);
   assert.doesNotMatch(css, /transition:\s*all/i);
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);

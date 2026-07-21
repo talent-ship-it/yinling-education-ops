@@ -432,6 +432,48 @@ body {
   }
 }
 
+/* Operations data upgrade: student profiles, AVA conversion, local imports, and reminder evidence. */
+.visually-hidden { height:1px; margin:-1px; overflow:hidden; padding:0; position:absolute; width:1px; clip:rect(0 0 0 0); white-space:nowrap; }
+.student-facts { background:#f6faf9; border:1px solid #e0ebe7; display:grid; gap:1px; grid-template-columns:1fr 1fr; margin:14px 0 2px; }
+.student-facts > span { background:#fff; display:grid; gap:3px; min-width:0; padding:10px; }
+.student-facts small { color:var(--muted); font-size:10px; }
+.student-facts strong { font-size:12px; overflow-wrap:anywhere; }
+.student-facts em { color:#7b8b83; font-size:9px; font-style:normal; }
+.low-hours { color:var(--red) !important; font-weight:800; }
+.availability-converter select { justify-self:start; margin:2px 0 3px; }
+.availability-converter strong { line-height:1.65; }
+.timezone-audit { align-items:flex-start; background:var(--brand-soft); border-bottom:1px solid var(--brand-line); color:var(--brand-ink); display:flex; gap:9px; padding:10px 14px; }
+.timezone-audit.warning { background:var(--amber-soft); border-color:#ead293; color:#7d530d; }
+.timezone-audit > svg { flex:0 0 auto; margin-top:2px; }
+.timezone-audit > span { display:grid; gap:2px; }
+.timezone-audit strong { font-size:11px; }
+.timezone-audit small { font-size:9px; line-height:1.45; }
+.check-list.warning { background:var(--amber-soft); color:#7d530d; }
+.exam-reminder-strip { align-items:stretch; background:#fff; border:1px solid var(--line); border-radius:8px; display:grid; gap:1px; grid-template-columns:minmax(240px,1.2fr) repeat(4,minmax(150px,.75fr)); margin-bottom:14px; overflow:hidden; }
+.exam-reminder-strip > div,.exam-reminder-strip > button { align-items:center; background:#fff; border:0; border-right:1px solid #e8eeea; display:grid; gap:9px; grid-template-columns:auto 1fr; padding:11px 13px; text-align:left; }
+.exam-reminder-strip > button { cursor:pointer; grid-template-columns:1fr auto; }
+.exam-reminder-strip > button:hover { background:var(--brand-soft); }
+.exam-reminder-strip span { display:grid; gap:3px; }
+.exam-reminder-strip strong { font-size:11px; }
+.exam-reminder-strip small { color:var(--muted); font-size:9px; line-height:1.45; }
+.exam-reminder-strip svg { color:var(--muted); }
+.source-summary { margin-bottom:10px; }
+.data-snapshot-bar { align-items:center; background:#fff; border:1px solid var(--line); border-radius:8px; display:flex; justify-content:space-between; margin-bottom:12px; padding:11px 13px; }
+.data-snapshot-bar > span:first-child { align-items:center; display:grid; gap:4px 9px; grid-template-columns:auto 1fr; }
+.data-snapshot-bar svg { color:var(--brand-deep); grid-row:1 / 3; }
+.data-snapshot-bar strong { font-size:11px; }
+.data-snapshot-bar small { color:var(--muted); font-size:9px; }
+.button-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:13px; }
+.checkbox-field { align-items:center; align-self:end; display:flex !important; flex-direction:row; gap:8px !important; min-height:36px; }
+.checkbox-field input { accent-color:var(--brand-deep); flex:0 0 auto; width:auto; }
+
+@media (min-width:761px) {
+  .nav-item,.primary-button,.secondary-button,.view-copy,.breadcrumb { font-size:13px; }
+  .collection-row,.row-primary strong,.task-copy strong,.schedule-copy strong,.detail-section strong { font-size:12px; }
+  .collection-row small,.row-primary small,.row-cell small,.task-copy span,.task-copy small,.detail-section p { font-size:10px; }
+  .collection-head,.status-pill,.result-count,.filter-select { font-size:10px; }
+}
+
 /* Mobile workspace: task-first navigation, touch-sized controls, and focused record detail. */
 .mobile-bottom-nav,
 .mobile-nav-backdrop,
@@ -569,6 +611,51 @@ body {
   .payroll-metrics {
     gap:9px;
     grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .student-facts {
+    grid-template-columns:1fr 1fr;
+  }
+
+  .student-facts > span {
+    min-height:82px;
+  }
+
+  .timezone-audit {
+    padding:12px;
+  }
+
+  .exam-reminder-strip {
+    display:flex;
+    overflow-x:auto;
+    scroll-snap-type:x proximity;
+  }
+
+  .exam-reminder-strip > div,
+  .exam-reminder-strip > button {
+    border-right:1px solid #e8eeea;
+    flex:0 0 82vw;
+    min-height:76px;
+    scroll-snap-align:start;
+  }
+
+  .data-snapshot-bar {
+    align-items:flex-start;
+    gap:10px;
+  }
+
+  .data-snapshot-bar > span:first-child {
+    min-width:0;
+  }
+
+  .button-row {
+    display:grid;
+    grid-template-columns:1fr;
+  }
+
+  .button-row button {
+    justify-content:center;
+    width:100%;
   }
 
   .metric-card {
