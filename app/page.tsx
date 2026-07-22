@@ -64,11 +64,12 @@ type Section =
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "task" | "booking" | "operation" | "file" | "template" | null;
+type ModalKind = "student" | "task" | "booking" | "operation" | "file" | "template" | "lp" | "ava" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | null;
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
 type LpNeed = "待确认" | "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
+type LpWorkflowType = "试听 LP" | "老生新 LP" | "直报 LP" | "二次试听" | "老生 LP 修改" | "代课 LP";
 
 type AvailabilitySlot = {
   day: number;
@@ -159,18 +160,28 @@ type LpItem = {
   id: string;
   studentId: string;
   title: string;
+  workflowType?: LpWorkflowType;
   stage: "待资料" | "写作中" | "待审核" | "已发老师" | "待备课确认" | "完成";
   owner: string;
   due: string;
+  needsParentFollowUp?: boolean;
+  needsTeacherPrep?: boolean;
+  publishedDate?: string;
 };
 
 type Operation = {
   id: string;
   studentId: string;
-  type: "调课" | "请假" | "停课" | "代课" | "换老师";
+  type: "调课" | "请假" | "停课" | "代课" | "换老师" | "老师离职";
   detail: string;
   status: "待处理" | "已确认";
   createdAt: string;
+  teacherId?: string;
+  eventStart?: string;
+  eventEnd?: string;
+  affectedLessonCount?: number;
+  recommendedTeacherIds?: string[];
+  chosenTeacherId?: string;
 };
 
 type Renewal = {
@@ -367,10 +378,10 @@ const initialBookings: Booking[] = [
 ];
 
 const initialLp: LpItem[] = [
-  { id: "LP-001", studentId: "STU-0248", title: "试听资料与长期时间", stage: "待资料", owner: "思佳", due: "今天 11:00" },
-  { id: "LP-002", studentId: "STU-0194", title: "IB 数学 Learning Plan", stage: "已发老师", owner: "Tiffany", due: "今天 14:00" },
-  { id: "LP-003", studentId: "STU-0231", title: "VCE Chemistry 考试节点更新", stage: "待审核", owner: "Abby", due: "今天 16:30" },
-  { id: "LP-004", studentId: "STU-0176", title: "续课目标与复习节奏", stage: "写作中", owner: "思佳", due: "明天 11:00" },
+  { id: "LP-001", studentId: "STU-0248", title: "试听资料与长期时间", workflowType: "试听 LP", stage: "待资料", owner: "思佳", due: "试听前 N-3", needsParentFollowUp: true, needsTeacherPrep: true },
+  { id: "LP-002", studentId: "STU-0194", title: "IB 数学 Learning Plan", workflowType: "老生新 LP", stage: "已发老师", owner: "Tiffany", due: "今天 14:00", needsTeacherPrep: true },
+  { id: "LP-003", studentId: "STU-0231", title: "VCE Chemistry 考试节点更新", workflowType: "老生 LP 修改", stage: "待审核", owner: "Abby", due: "发布当天", needsParentFollowUp: true, publishedDate: "2026-07-22" },
+  { id: "LP-004", studentId: "STU-0176", title: "续课目标与复习节奏", workflowType: "直报 LP", stage: "写作中", owner: "思佳", due: "明天 11:00", needsTeacherPrep: true },
 ];
 
 const initialOperations: Operation[] = [
@@ -410,6 +421,14 @@ const initialAudit: AuditEntry[] = [
 
 const defaultRules: Rules = { lpDays: "N-3", feedbackHours: "24", renewalDays: "8", escalation: "逾期 4 小时后通知主管", lowHours: "5", examDays: "30" };
 const lpStages: LpItem["stage"][] = ["待资料", "写作中", "待审核", "已发老师", "待备课确认", "完成"];
+const lpWorkflowOptions: Array<{ id: LpWorkflowType; lpNeed: LpNeed; title: string; detail: string }> = [
+  { id: "试听 LP", lpNeed: "试听LP", title: "试听 LP", detail: "试听资料、老师备课、收费与试听后跟进" },
+  { id: "老生新 LP", lpNeed: "老生新LP", title: "老生新 LP", detail: "老生新增课程或新老师的交接" },
+  { id: "直报 LP", lpNeed: "新生LP", title: "学生报名（直报）", detail: "直报学生的课程、频率、来源与交接" },
+  { id: "二次试听", lpNeed: "试听LP", title: "二次试听", detail: "记录重听原因、注意事项与备课要求" },
+  { id: "老生 LP 修改", lpNeed: "LP修改", title: "老生 LP 修改", detail: "课程或课时安排变动后的强提醒" },
+  { id: "代课 LP", lpNeed: "代课LP", title: "代课 LP", detail: "原老师指定内容、资料和新老师交接" },
+];
 
 function usePersistentState<T>(key: string, initialValue: T) {
   const [value, setValue] = useState<T>(initialValue);
@@ -509,6 +528,36 @@ function formatInstant(date: Date, timezone: string) {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function formatClock(date: Date, timezone: string) {
+  const parts = zonedParts(date, cleanTimezone(timezone));
+  return `${parts.hour}:${parts.minute}`;
+}
+
+const avaWeekDates = Array.from({ length: 7 }, (_, index) => {
+  const date = new Date(Date.UTC(2026, 6, 20 + index));
+  return { date: date.toISOString().slice(0, 10), label: new Intl.DateTimeFormat("zh-CN", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(date) };
+});
+
+function displayAvaSlots(teacher: Teacher, targetTimezone: string) {
+  const sourceTimezone = cleanTimezone(teacher.availabilityTimezone ?? teacher.timezone);
+  return (teacher.availabilitySlots ?? []).map((slot) => {
+    const dayOffset = slot.day === 0 ? 6 : slot.day - 1;
+    const sourceDate = avaWeekDates[dayOffset]?.date ?? avaWeekDates[0].date;
+    const start = zonedDateTimeToUtc(sourceDate, slot.start, sourceTimezone);
+    const end = zonedDateTimeToUtc(sourceDate, slot.end, sourceTimezone);
+    const displayed = zonedParts(start, cleanTimezone(targetTimezone));
+    return { date: `${displayed.year}-${displayed.month}-${displayed.day}`, start: formatClock(start, targetTimezone), end: formatClock(end, targetTimezone) };
+  });
+}
+
+function lpPublishedDay(item: LpItem) {
+  if (!item.publishedDate) return null;
+  const published = new Date(`${item.publishedDate}T00:00:00`);
+  const today = new Date();
+  const elapsed = Math.max(0, Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(published.getFullYear(), published.getMonth(), published.getDate())) / 86400000));
+  return `已发布第 ${elapsed + 1} 天`;
 }
 
 function currentGrade(student: Student) {
@@ -833,6 +882,56 @@ export default function Home() {
     });
   };
 
+  const substitutionCandidates = (booking: Booking, unavailableTeacherId: string) => {
+    const unavailableTeacher = teacherById(unavailableTeacherId);
+    const student = studentById(booking.studentId);
+    if (!unavailableTeacher || !student) return [];
+    return teachers.filter((teacher) => {
+      if (teacher.id === unavailableTeacherId || !teacher.availabilitySlots?.length) return false;
+      const sharesSubject = teacher.subjects.some((subject) => unavailableTeacher.subjects.includes(subject))
+        || teacher.subjects.some((subject) => student.course.includes(subject.split(" ").slice(-1)[0]));
+      return sharesSubject && teacherAvailableAt(teacher, booking.date, booking.start, booking.duration, booking.timezone);
+    }).slice(0, 5);
+  };
+
+  const createLpWorkflow = (studentId: string, workflowType: LpWorkflowType, needsParentFollowUp: boolean, needsTeacherPrep: boolean) => {
+    const student = studentById(studentId);
+    if (!student) return;
+    const option = lpWorkflowOptions.find((item) => item.id === workflowType) ?? lpWorkflowOptions[0];
+    const item: LpItem = {
+      id: id("LP"),
+      studentId,
+      title: `${option.title} · ${student.name}`,
+      workflowType,
+      stage: "待资料",
+      owner: student.owner,
+      due: workflowType === "老生 LP 修改" ? "发布当天" : workflowType === "试听 LP" || workflowType === "二次试听" ? "试听前 N-3" : "发布后 24 小时",
+      needsParentFollowUp,
+      needsTeacherPrep,
+      publishedDate: workflowType === "老生 LP 修改" ? new Date().toISOString().slice(0, 10) : undefined,
+    };
+    const generated: Task[] = [
+      { id: id("TSK"), title: `${option.title}：核对交接信息`, owner: student.owner, studentId, due: "发布后立即", status: "today", tone: "blue", category: "LP", trigger: `${option.title} 创建后自动生成` },
+    ];
+    if (workflowType === "老生 LP 修改") generated.push({ id: id("TSK"), title: "确认 LP 修改已发布", owner: student.owner, studentId, due: "发布当天", status: "today", tone: "red", category: "LP", trigger: "老生 LP 修改强提醒" });
+    if (needsParentFollowUp) generated.push(
+      { id: id("TSK"), title: "跟进家长指定内容", owner: student.owner, studentId, due: "发布后立即", status: "today", tone: "red", category: "资料", trigger: `${option.title}：需要跟进家长指定内容` },
+      { id: id("TSK"), title: "确认家长在 48 小时内完成指定资料/试卷", owner: student.owner, studentId, due: "发布后 48 小时", status: "upcoming", tone: "amber", category: "资料", trigger: `${option.title}：家长指定内容时限` },
+    );
+    if (needsTeacherPrep) generated.push({ id: id("TSK"), title: "确认老师备课内容与资料", owner: student.owner, studentId, due: "课前 N-1", status: "upcoming", tone: "amber", category: "LP", trigger: `${option.title}：需要跟进老师备课` });
+    if (workflowType === "试听 LP" || workflowType === "二次试听") {
+      generated.push(
+        { id: id("TSK"), title: "最迟 24 小时内完成试听排课", owner: student.owner, studentId, due: "发布后 24 小时", status: "today", tone: "red", category: "排课", trigger: `${option.title} 排课时限` },
+        { id: id("TSK"), title: "将 LP 发审核群并发给老师", owner: student.owner, studentId, due: "试听前 N-2", status: "upcoming", tone: "amber", category: "LP", trigger: `${option.title} 课前资料交接` },
+        { id: id("TSK"), title: "试听收费与课后跟进提醒", owner: student.planner ?? "Tara", studentId, due: "试听前 N-3 / 试听当天（墨尔本时间）", status: "upcoming", tone: "blue", category: "试听", trigger: `${option.title} 收费与试听后跟进` },
+      );
+    }
+    setLpItems((current) => [item, ...current]);
+    setTasks((current) => [...generated, ...current]);
+    setStudents((current) => current.map((entry) => entry.id === studentId ? { ...entry, lpNeed: option.lpNeed, next: `${option.title} 已创建`, nextTone: "amber" } : entry));
+    addAudit("创建 LP 工作流", `${student.name} · ${option.title} · ${generated.length} 项强提醒`, "green");
+  };
+
   const createWorkflowTasks = (studentId: string, isTrial: boolean) => {
     const prefix = isTrial ? "试听" : "新课程";
     const generated: Task[] = [
@@ -1028,6 +1127,7 @@ export default function Home() {
     return <>
       <ViewHeading eyebrow="教师总表 · 中小学与大学合并检索" title="老师资源库" copy="跨部门老师只保留一份主档，可按标准科目、接新状态和 AVA 搜索；原始 AVA 未结构化时明确提示人工确认。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 用当前候选排课</button>} />
       <section className="matching-context"><div><span>当前匹配学生</span><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {selectedStudent.timezone}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
+      <TeacherAvaBoard teacher={selectedTeacher} teachers={recordTeachers} bookings={bookings} studentById={studentById} targetTimezone={scheduleTimezone} onTeacherChange={setSelectedTeacherId} onAddAva={() => setModal("ava")} />
       <section className="panel collection-shell">
         <ViewTabs value={teacherView} items={viewItems} onChange={(value) => { setTeacherView(value); setTeacherPage(1); }} label="老师保存视图" />
         <ListToolbar query={teacherQuery} onQuery={(value) => { setTeacherQuery(value); setTeacherPage(1); }} placeholder="搜索老师、科目、ID 或时区" count={`${filteredTeachers.length} 位老师`}>
@@ -1077,17 +1177,20 @@ export default function Home() {
     const visibleLp = lpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
     const viewItems = [{ id: "active", label: "进行中", count: lpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: lpItems.filter((item) => item.stage === "待审核").length }, { id: "waiting", label: "等待资料/确认", count: lpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: lpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: lpItems.length }];
     return <>
-      <ViewHeading eyebrow="Learning Plan · 版本与审批" title="试听与 LP 工作流" copy="保存视图用于集中处理，表格适合查找，看板适合推进阶段；所有变化写入审计。" actions={<button className="primary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加流程任务</button>} />
-      <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /><div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div></div>{lpMode === "board" ? <section className="kanban-board">{lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>{visibleLp.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>截止：{item.due}</span><div className="card-tags"><StatusPill tone={item.stage === "完成" ? "green" : "amber"}>{item.stage}</StatusPill></div>{item.stage !== "完成" && <button className="card-action" type="button" onClick={() => advanceLp(item)}><ArrowRight size={15} /> 推进到下一阶段</button>}</div>; })}</article>)}</section> : <div className="collection-main"><div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>负责人</span><span>阶段</span><span>截止时间</span><span>操作</span></div><div className="collection-viewport">{visibleLp.map((item) => { const student = studentById(item.studentId); return <div className="collection-row lp-grid-row" key={item.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(item.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(student?.status ?? "待排课")} /><span><strong>{student?.name}</strong><small>{item.title}</small></span></button><span>{item.owner}</span><StatusPill tone={item.stage === "完成" ? "green" : item.stage === "待审核" ? "amber" : "blue"}>{item.stage}</StatusPill><span>{item.due}</span>{item.stage === "完成" ? <span className="muted-cell">已完成</span> : <button className="compact-button" type="button" onClick={() => advanceLp(item)}>推进</button>}</div>; })}</div></div>}</section>
+      <ViewHeading eyebrow="Learning Plan · 类型、时限与审批" title="试听与 LP 工作流" copy="创建时选择业务类型，系统按模板生成强提醒。每个任务仍可由人工审核、推进和留痕。" actions={<button className="primary-button" type="button" onClick={() => setModal("lp")}><Plus size={17} /> 创建 LP 工作流</button>} />
+      <section className="lp-template-strip" aria-label="LP 模板说明">{lpWorkflowOptions.map((option) => <article key={option.id}><strong>{option.title}</strong><span>{option.detail}</span></article>)}</section>
+      <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /><div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div></div>{lpMode === "board" ? <section className="kanban-board">{lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>{visibleLp.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span><div className="card-tags"><StatusPill tone={item.stage === "完成" ? "green" : "amber"}>{item.stage}</StatusPill>{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>{item.stage !== "完成" && <button className="card-action" type="button" onClick={() => advanceLp(item)}><ArrowRight size={15} /> 推进到下一阶段</button>}</div>; })}</article>)}</section> : <div className="collection-main"><div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>类型</span><span>负责人</span><span>阶段</span><span>截止时间</span><span>操作</span></div><div className="collection-viewport">{visibleLp.map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="collection-row lp-grid-row" key={item.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(item.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(student?.status ?? "待排课")} /><span><strong>{student?.name}</strong><small>{item.title}</small></span></button><span>{item.workflowType ?? "历史 LP"}{publishedDay && <small className="inline-meta">{publishedDay}</small>}</span><span>{item.owner}</span><StatusPill tone={item.stage === "完成" ? "green" : item.stage === "待审核" ? "amber" : "blue"}>{item.stage}</StatusPill><span>{item.due}</span>{item.stage === "完成" ? <span className="muted-cell">已完成</span> : <button className="compact-button" type="button" onClick={() => advanceLp(item)}>推进</button>}</div>; })}</div></div>}</section>
     </>;
   };
 
   const renderOperations = () => {
-    const visibleOperations = operations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" : true);
+    const visibleOperations = operations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" || operation.type === "老师离职" : true);
     const operationStudent = studentById(selectedOperation.studentId) ?? selectedStudent;
+    const operationTeacher = selectedOperation.teacherId ? teacherById(selectedOperation.teacherId) : undefined;
+    const recommendedTeachers = (selectedOperation.recommendedTeacherIds ?? []).map((teacherId) => teacherById(teacherId)).filter((teacher): teacher is Teacher => Boolean(teacher));
     return <>
-      <ViewHeading eyebrow="结构化异常处理" title="调课、请假与代课" copy="按待处理、已确认和请假停课分类；选中记录后在右侧确认，不会在长列表中失去上下文。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
-      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: operations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: operations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与停课", count: operations.filter((item) => item.type === "请假" || item.type === "停课").length }, { id: "all", label: "全部", count: operations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout operations-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); setMobilePreview("operation"); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div>{visibleOperations.length < 4 && <div className="operations-queue-insight"><div><span>当前视图</span><strong>{visibleOperations.length} 条待处理记录</strong><small>切换上方状态标签即可查看其他异常。</small></div><div><span>队列概览</span><strong>{operations.filter((item) => item.status === "待处理").length} 待处理 · {operations.filter((item) => item.status === "已确认").length} 已确认</strong><small>每次确认都会保留在操作审计中。</small></div><div><span>处理顺序</span><strong>先确认时间，再核对课时与薪资</strong><small>需要对外沟通时，生成待确认消息而不直接发送。</small></div></div>}</article><aside className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭异常详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回异常列表</button><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div><div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
+      <ViewHeading eyebrow="结构化异常处理" title="调课、请假、代课与离职" copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
+      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: operations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: operations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与离职", count: operations.filter((item) => item.type === "请假" || item.type === "停课" || item.type === "老师离职").length }, { id: "all", label: "全部", count: operations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout operations-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); setMobilePreview("operation"); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div>{visibleOperations.length < 4 && <div className="operations-queue-insight"><div><span>当前视图</span><strong>{visibleOperations.length} 条待处理记录</strong><small>切换上方状态标签即可查看其他异常。</small></div><div><span>队列概览</span><strong>{operations.filter((item) => item.status === "待处理").length} 待处理 · {operations.filter((item) => item.status === "已确认").length} 已确认</strong><small>每次确认都会保留在操作审计中。</small></div><div><span>处理顺序</span><strong>先确认老师影响，再处理代课与沟通</strong><small>请假和离职会自动生成负责人截止任务。</small></div></div>}</article><aside className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭异常详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回异常列表</button><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div>{operationTeacher && <div className="detail-section"><span>原老师与影响范围</span><strong>{operationTeacher.name} · {selectedOperation.affectedLessonCount ?? 0} 节受影响课程</strong><p>{selectedOperation.eventStart || "日期待确认"} 至 {selectedOperation.eventEnd || "日期待确认"}</p></div>}{operationTeacher && <div className="detail-section"><span>代课候选</span>{recommendedTeachers.length ? <div className="operation-recommendations">{recommendedTeachers.map((teacher) => <button className={selectedOperation.chosenTeacherId === teacher.id ? "selected-choice" : "choice-button"} type="button" key={teacher.id} onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, chosenTeacherId: teacher.id } : entry)); addAudit("选择代课推荐老师", `${operationStudent.name} · ${teacher.name}`, "green"); notify(`${teacher.name} 已标记为推荐老师，尚未自动排课`); }}><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")}</small></span>{selectedOperation.chosenTeacherId === teacher.id ? <Check size={16} /> : <ChevronRight size={16} />}</button>)}</div> : <p>没有找到同时满足科目和结构化 AVA 的候选。请先补全 AVA 后再选择，不会猜测老师可用时间。</p>}</div>}<div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
     </>;
   };
 
@@ -1228,6 +1331,41 @@ export default function Home() {
     setTasks((current) => [task, ...current]); addAudit("创建内部任务", `${title} · ${studentById(studentId)?.name}`, "blue"); setModal(null); notify("任务已加入强提醒队列");
   };
 
+  const submitLp = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const studentId = String(data.get("studentId") ?? selectedStudent.id);
+    const workflowType = String(data.get("workflowType") ?? "试听 LP") as LpWorkflowType;
+    createLpWorkflow(studentId, workflowType, data.get("parentFollowUp") === "on", data.get("teacherPrep") === "on");
+    setSelectedStudentId(studentId);
+    setModal(null);
+    setActive("lp");
+    notify("已创建 LP 工作流和对应强提醒");
+  };
+
+  const submitAva = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const teacherId = String(data.get("teacherId") ?? selectedTeacher.id);
+    const day = Number(data.get("day") ?? 1);
+    const start = String(data.get("start") ?? "16:00");
+    const end = String(data.get("end") ?? "18:00");
+    if (!teacherById(teacherId)) { notify("请从老师清单中选择需要录入 AVA 的老师"); return; }
+    if (!start || !end || start >= end) { notify("请填写有效的 AVA 起止时间"); return; }
+    setTeachers((current) => current.map((teacher) => teacher.id === teacherId ? {
+      ...teacher,
+      availabilitySlots: [...(teacher.availabilitySlots ?? []), { day, start, end }],
+      availabilityStatus: "可接新生",
+      availabilityUpdated: `手动结构化 · 今天 ${nowLabel()}`,
+      availability: `${teacher.availability === "AVA 待确认" ? "" : `${teacher.availability}；`}${["周日", "周一", "周二", "周三", "周四", "周五", "周六"][day]} ${start}-${end}`,
+    } : teacher));
+    const teacher = teacherById(teacherId);
+    setSelectedTeacherId(teacherId);
+    addAudit("结构化老师 AVA", `${teacher?.name ?? teacherId} · ${start}-${end}`, "green");
+    setModal(null);
+    notify("AVA 已加入可约日历，可参与排课和代课筛选");
+  };
+
   const submitBooking = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -1249,10 +1387,52 @@ export default function Home() {
   };
 
   const submitOperation = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const type = String(data.get("type") ?? "调课") as Operation["type"]; const detail = String(data.get("detail") ?? "").trim(); if (!detail) return;
-    const operation: Operation = { id: id("OPS"), studentId, type, detail, status: "待处理", createdAt: `今天 ${nowLabel()}` };
-    setOperations((current) => [operation, ...current]); setTasks((current) => [{ id: id("TSK"), title: `${type}：${detail}`, owner: studentById(studentId)?.owner ?? "待分配", studentId, due: "待人工确认", status: "today", tone: "amber", category: "排课", trigger: `${type}记录后自动生成` }, ...current]);
-    addAudit("记录教务异常", `${studentById(studentId)?.name} · ${type}`, "amber"); setModal(null); setActive("operations"); notify("异常已记录，并生成后续处理任务");
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const studentId = String(data.get("studentId") ?? selectedStudent.id);
+    const type = String(data.get("type") ?? "调课") as Operation["type"];
+    const detail = String(data.get("detail") ?? "").trim();
+    const teacherId = String(data.get("teacherId") ?? "");
+    const eventStart = String(data.get("eventStart") ?? "");
+    const eventEnd = String(data.get("eventEnd") ?? "");
+    if (!detail) return;
+    if ((type === "请假" || type === "老师离职") && !teacherById(teacherId)) { notify("请从老师清单选择涉及老师后再记录请假或离职"); return; }
+
+    const teacherAbsence = Boolean(teacherId && (type === "请假" || type === "老师离职"));
+    const affectedBookings = teacherAbsence ? bookings.filter((booking) => booking.teacherId === teacherId && (!eventStart || booking.date >= eventStart) && (!eventEnd || booking.date <= eventEnd)) : [];
+    const affectedStudentIds = Array.from(new Set(affectedBookings.map((booking) => booking.studentId)));
+    const targetStudentIds = affectedStudentIds.length ? affectedStudentIds : [studentId];
+    const createdAt = `今天 ${nowLabel()}`;
+    const generatedOperations = targetStudentIds.map((targetId) => {
+      const relatedBookings = affectedBookings.filter((booking) => booking.studentId === targetId);
+      const candidateIds = Array.from(new Set(relatedBookings.flatMap((booking) => substitutionCandidates(booking, teacherId).map((teacher) => teacher.id))));
+      return { id: id("OPS"), studentId: targetId, type, detail, status: "待处理" as const, createdAt, teacherId: teacherAbsence ? teacherId : undefined, eventStart: teacherAbsence ? eventStart : undefined, eventEnd: teacherAbsence ? eventEnd : undefined, affectedLessonCount: relatedBookings.length || undefined, recommendedTeacherIds: candidateIds };
+    });
+    const generatedTasks = targetStudentIds.flatMap((targetId) => {
+      const student = studentById(targetId);
+      if (teacherAbsence && type === "请假") return [
+        { id: id("TSK"), title: "选择可代课老师", owner: "Tiffany", studentId: targetId, due: "请假录入后立即", status: "today" as const, tone: "red" as const, category: "排课" as const, trigger: "老师请假：候选代课老师筛选" },
+        { id: id("TSK"), title: "确认最终推荐老师并交龙老师确认", owner: "思佳", studentId: targetId, due: "请假前 N-2 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师请假：最终推荐确认" },
+        { id: id("TSK"), title: "完成家长沟通并记录请假/代课原因", owner: student?.owner ?? "待分配", studentId: targetId, due: "请假前 N-1 周", status: "upcoming" as const, tone: "red" as const, category: "资料" as const, trigger: "老师请假：教务必须写明原因" },
+        { id: id("TSK"), title: "请原老师补充代课 LP 指定内容与资料", owner: student?.owner ?? "待分配", studentId: targetId, due: "最后一节课后次日", status: "upcoming" as const, tone: "blue" as const, category: "LP" as const, trigger: "老师请假：代课 LP 交接" },
+      ];
+      if (teacherAbsence && type === "老师离职") return [
+        { id: id("TSK"), title: "筛选并确认推荐老师名单", owner: "Tiffany", studentId: targetId, due: "离职前 N-2 周", status: "today" as const, tone: "red" as const, category: "排课" as const, trigger: "老师离职：推荐老师名单" },
+        { id: id("TSK"), title: "开启新老师沟通", owner: student?.owner ?? "待分配", studentId: targetId, due: "离职前 N-2 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师离职：新老师沟通" },
+        { id: id("TSK"), title: "确认 Handover Notes 与原老师约定 DDL", owner: student?.owner ?? "待分配", studentId: targetId, due: "倒数第 2 次课后次日", status: "upcoming" as const, tone: "blue" as const, category: "LP" as const, trigger: "老师离职：交接资料" },
+        { id: id("TSK"), title: "告知家长并记录最终安排", owner: student?.owner ?? "待分配", studentId: targetId, due: "倒数第 2 次课后次日", status: "upcoming" as const, tone: "red" as const, category: "资料" as const, trigger: "老师离职：家长沟通" },
+        { id: id("TSK"), title: "向龙老师汇报离职交接进度", owner: "思佳", studentId: targetId, due: "离职前 N-1 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师离职：管理确认" },
+      ];
+      return [{ id: id("TSK"), title: `${type}：${detail}`, owner: student?.owner ?? "待分配", studentId: targetId, due: "待人工确认", status: "today" as const, tone: "amber" as const, category: "排课" as const, trigger: `${type} 记录后自动生成` }];
+    });
+    setOperations((current) => [...generatedOperations, ...current]);
+    setTasks((current) => [...generatedTasks, ...current]);
+    setSelectedOperationId(generatedOperations[0].id);
+    setSelectedStudentId(generatedOperations[0].studentId);
+    const teacher = teacherById(teacherId);
+    addAudit("记录教务异常", teacherAbsence ? `${teacher?.name ?? "老师"} · ${type} · 影响 ${affectedBookings.length} 节课` : `${studentById(studentId)?.name} · ${type}`, "amber");
+    setModal(null); setActive("operations");
+    notify(teacherAbsence ? `已识别 ${affectedBookings.length} 节受影响课程，并生成 ${generatedTasks.length} 项后续任务` : "异常已记录，并生成后续处理任务");
   };
 
   const submitFile = (event: FormEvent<HTMLFormElement>) => {
@@ -1372,6 +1552,29 @@ export default function Home() {
         </form>
       </Dialog>}
 
+      {modal === "lp" && <Dialog title="创建 LP 工作流" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitLp}>
+          <label>关联学生<input name="studentId" list="lp-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="lp-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          <label>LP 类型<select name="workflowType">{lpWorkflowOptions.map((option) => <option value={option.id} key={option.id}>{option.title}</option>)}</select></label>
+          <label className="checkbox-field span-2"><input name="parentFollowUp" type="checkbox" /> 需要跟进家长指定内容（创建后立即生成强提醒）</label>
+          <label className="checkbox-field span-2"><input name="teacherPrep" type="checkbox" defaultChecked /> 需要跟进老师备课内容（课前 N-1 强提醒）</label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 试听和二次试听会额外生成：24 小时排课、N-3 收费/跟进、N-2 资料发送和 N-1 备课确认。老生 LP 修改会在发布当天强提醒。</div>
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><BookOpen size={16} /> 创建并生成提醒</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "ava" && <Dialog title="结构化录入老师 AVA" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitAva}>
+          <label className="span-2">老师<input name="teacherId" list="ava-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入老师姓名或 ID 搜索" /><datalist id="ava-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.availabilityTimezone ?? teacher.timezone}</option>)}</datalist></label>
+          <label>星期<select name="day" defaultValue="1"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select></label>
+          <label>原始 AVA 时区<select name="timezone" defaultValue={cleanTimezone(selectedTeacher.availabilityTimezone ?? selectedTeacher.timezone)} disabled>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+          <label>开始时间<input name="start" type="time" defaultValue="16:00" required /></label>
+          <label>结束时间<input name="end" type="time" defaultValue="18:00" required /></label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 只录入已由老师确认的固定可约时段。保存后会显示在 AVA 日历，并成为排课与代课筛选的依据。</div>
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Clock3 size={16} /> 保存可约时段</button></footer>
+        </form>
+      </Dialog>}
+
       {modal === "booking" && <Dialog title="新建排课" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitBooking}>
           <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
@@ -1387,12 +1590,15 @@ export default function Home() {
         </form>
       </Dialog>}
 
-      {modal === "operation" && <Dialog title="记录调课、请假或代课" onClose={() => setModal(null)}>
+      {modal === "operation" && <Dialog title="记录调课、请假、代课或离职" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitOperation}>
           <label>学生<input name="studentId" list="operation-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="operation-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.owner}</option>)}</datalist></label>
-          <label>类型<select name="type"><option>调课</option><option>请假</option><option>停课</option><option>代课</option><option>换老师</option></select></label>
+          <label>类型<select name="type"><option>调课</option><option value="请假">老师请假</option><option>停课</option><option>代课</option><option>换老师</option><option>老师离职</option></select></label>
+          <label>涉及老师（请假/离职必填）<input name="teacherId" list="operation-teacher-options" placeholder="输入老师姓名或 ID" /><datalist id="operation-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")}</option>)}</datalist></label>
+          <label>影响起始日期<input name="eventStart" type="date" defaultValue="2026-07-20" /></label>
+          <label>影响结束 / 离职日<input name="eventEnd" type="date" defaultValue="2026-07-25" /></label>
           <label className="span-2">处理说明<textarea name="detail" rows={4} placeholder="记录原时间、原因、可选时间或需要的后续确认" required /></label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> 系统只创建处理任务；是否扣课、由谁代课和对外通知均保留人工决定。</div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 录入老师和影响日期后，系统会找出受影响课程，并仅从科目匹配且有结构化 AVA 的老师中给出候选。最终人选、扣课和对外通知仍由人工决定。</div>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><ClipboardCheck size={16} /> 记录并生成任务</button></footer>
         </form>
       </Dialog>}
@@ -1426,6 +1632,17 @@ function Metric({ tone, icon, value, label, detail, onClick }: { tone: Tone; ico
 function TaskList({ tasks, studentById, onComplete, onOpen }: { tasks: Task[]; studentById: (id: string) => Student | undefined; onComplete: (id: string) => void; onOpen: (task: Task) => void }) { if (!tasks.length) return <div className="empty-inline"><CircleCheck size={20} /> 当前筛选下没有待处理事项</div>; return <div className="task-list">{tasks.map((task) => <div className="task-row" key={task.id}><span className={`task-dot ${task.tone}`} /><button className="task-copy" type="button" onClick={() => onOpen(task)}><strong>{task.title}</strong><span>{studentById(task.studentId)?.name ?? "未关联学生"} · {task.owner}</span><small>{task.trigger}</small></button><span className={`due-label ${task.status}`}>{task.due}</span><button className="complete-button" type="button" title="标记完成" onClick={() => onComplete(task.id)}><Check size={16} /></button></div>)}</div>; }
 function ScheduleList({ bookings, studentById, teacherById, onOpen }: { bookings: Booking[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; onOpen: (booking: Booking) => void }) { return <div className="schedule-list">{bookings.slice(0, 4).map((booking) => <button className="schedule-row" type="button" key={booking.id} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{booking.start}</strong><small>{booking.date.slice(5).replace("-", "/")}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {booking.kind} · {booking.status}</small></span><ChevronRight size={16} /></button>)}</div>; }
 function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; detail: string; action: () => void }) { return <button className="risk-row" type="button" onClick={action}><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight size={15} /></button>; }
+function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimezone, onTeacherChange, onAddAva }: { teacher: Teacher; teachers: Teacher[]; bookings: Booking[]; studentById: (id: string) => Student | undefined; targetTimezone: string; onTeacherChange: (teacherId: string) => void; onAddAva: () => void }) {
+  const slots = displayAvaSlots(teacher, targetTimezone);
+  const teacherBookings = bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => {
+    const parts = zonedParts(bookingInstant(booking), cleanTimezone(targetTimezone));
+    return { booking, date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+  });
+  return <section className="ava-workbench" aria-label="老师 AVA 日历">
+    <header><div><p className="eyebrow">老师 AVA · 已占用时段</p><h2>可约时间表</h2><span>按 {timezoneLabel(targetTimezone)} 显示；只有结构化 AVA 会参与排课和代课筛选。</span></div><div className="ava-actions"><select className="filter-select" value={teacher.id} onChange={(event) => onTeacherChange(event.target.value)} aria-label="选择老师查看 AVA">{teachers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select><button className="secondary-button" type="button" onClick={onAddAva}><Plus size={16} /> 录入 AVA</button></div></header>
+    {slots.length ? <div className="ava-week-grid">{avaWeekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); const dayBookings = teacherBookings.filter((entry) => entry.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone)}</span><div>{daySlots.length ? daySlots.map((slot, index) => <p className="ava-slot" key={`${slot.start}-${index}`}>可约 {slot.start}-{slot.end}</p>) : <p className="ava-empty-day">无可约时段</p>}{dayBookings.map(({ booking, time }) => <p className="ava-booked" key={booking.id}>已占用 {time} · {studentById(booking.studentId)?.name ?? "学生"}</p>)}</div></article>; })}</div> : <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。</strong><span>{teacher.availability || "尚未收到可用时间"}</span><small>录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。</small></div></div>}
+  </section>;
+}
 function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpen, onClose, onFiles, onSchedule, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; mobileOpen: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onStatus: (status: Student["status"]) => void }) {
   const studentTasks = tasks.filter((task) => task.studentId === student.id && task.status !== "done");
   const nextBooking = bookings.find((booking) => booking.studentId === student.id);

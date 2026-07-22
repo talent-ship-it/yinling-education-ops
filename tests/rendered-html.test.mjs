@@ -82,6 +82,14 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(page, /真实资料本地快照/);
   assert.match(page, /非在读与不活跃学生/);
   assert.match(page, /Demo 不会向真实企业微信发送消息/);
+  assert.match(page, /const lpWorkflowOptions/);
+  assert.match(page, /二次试听/);
+  assert.match(page, /确认家长在 48 小时内完成指定资料\/试卷/);
+  assert.match(page, /function TeacherAvaBoard/);
+  assert.match(page, /不能安全地生成可约日历/);
+  assert.match(page, /const substitutionCandidates/);
+  assert.match(page, /老师离职：推荐老师名单/);
+  assert.match(page, /请从老师清单选择涉及老师后再记录请假或离职/);
   assert.doesNotMatch(page, /function EmptyModule/);
   assert.match(css, /\.dialog-backdrop/);
   assert.match(css, /\.command-strip/);
@@ -105,6 +113,8 @@ test("implements the demo workflow instead of placeholder modules", async () => 
   assert.match(css, /\.timezone-audit/);
   assert.match(css, /\.exam-reminder-strip/);
   assert.match(css, /\.data-snapshot-bar/);
+  assert.match(css, /\.ava-week-grid/);
+  assert.match(css, /grid-template-columns:repeat\(7,minmax\(130px,1fr\)\)/);
   assert.doesNotMatch(css, /transition:\s*all/i);
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);

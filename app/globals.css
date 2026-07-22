@@ -1360,3 +1360,70 @@ body {
   .record-preview { border-top:1px solid #e2e9e4; position:static; }
   .operations-queue-insight { grid-template-columns:repeat(3,minmax(0,1fr)); }
 }
+
+/* LP templates, structured AVA, and substitute-teacher decisions. */
+.lp-template-strip { display:grid; gap:8px; grid-template-columns:repeat(6,minmax(0,1fr)); margin:-4px 0 18px; }
+.lp-template-strip article { background:#fff; border:1px solid var(--line); border-radius:6px; display:grid; gap:4px; min-height:86px; padding:12px; }
+.lp-template-strip strong { color:var(--brand-ink); font-size:11px; }
+.lp-template-strip span { color:var(--muted); font-size:9px; line-height:1.45; }
+.lp-grid-row { grid-template-columns:minmax(185px,1.2fr) .85fr .65fr .74fr .76fr .55fr; }
+.inline-meta { color:var(--muted); display:block; font-size:10px; margin-top:3px; }
+
+.ava-workbench { background:#fff; border:1px solid var(--line); border-radius:6px; box-shadow:var(--shadow); margin:0 0 18px; overflow:hidden; }
+.ava-workbench > header { align-items:flex-start; border-bottom:1px solid #e3ebe6; display:flex; gap:16px; justify-content:space-between; padding:16px 18px; }
+.ava-workbench h2 { font-size:16px; margin:0 0 3px; }
+.ava-workbench header > div:first-child > span { color:var(--muted); display:block; font-size:10px; line-height:1.5; }
+.ava-actions { align-items:center; display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+.ava-week-grid { display:grid; grid-template-columns:repeat(7,minmax(130px,1fr)); overflow:auto; }
+.ava-week-grid article { border-right:1px solid #e7eeea; min-height:172px; padding:13px; }
+.ava-week-grid article:last-child { border-right:0; }
+.ava-week-grid article > strong { display:block; font-size:11px; }
+.ava-week-grid article > span { color:var(--muted); display:block; font-size:9px; margin:3px 0 10px; }
+.ava-week-grid article > div { display:grid; gap:6px; }
+.ava-slot,.ava-booked,.ava-empty-day { border-radius:4px; font-size:9px; line-height:1.45; margin:0; padding:7px; }
+.ava-slot { background:var(--brand-soft); color:var(--brand-ink); }
+.ava-booked { background:var(--amber-soft); color:#84560f; }
+.ava-empty-day { background:#f6f8f7; color:#89958e; }
+.ava-unstructured { align-items:flex-start; background:#fff8e9; color:#79591d; display:flex; gap:10px; padding:16px 18px; }
+.ava-unstructured > div { display:grid; gap:4px; }
+.ava-unstructured strong { font-size:11px; }
+.ava-unstructured span { color:#6a6454; font-size:10px; line-height:1.55; }
+.ava-unstructured small { color:#8a7650; font-size:9px; line-height:1.45; }
+
+.operation-recommendations { display:grid; gap:7px; }
+.choice-button,.selected-choice { align-items:center; background:#fff; border:1px solid #dce7e1; border-radius:5px; cursor:pointer; display:flex; gap:9px; justify-content:space-between; padding:9px; text-align:left; width:100%; }
+.choice-button:hover { background:#f8fbfa; border-color:var(--brand-line); }
+.selected-choice { background:var(--brand-soft); border-color:var(--brand-line); color:var(--brand-ink); }
+.choice-button > span,.selected-choice > span { display:grid; gap:2px; }
+.choice-button strong,.selected-choice strong { font-size:10px; }
+.choice-button small,.selected-choice small { color:var(--muted); font-size:9px; }
+
+@media (min-width:761px) {
+  .lp-template-strip article { min-height:98px; padding:15px; }
+  .lp-template-strip strong { font-size:13px; }
+  .lp-template-strip span { font-size:11px; }
+  .ava-workbench > header { padding:18px 20px; }
+  .ava-workbench h2 { font-size:18px; }
+  .ava-workbench header > div:first-child > span { font-size:12px; }
+  .ava-week-grid article { min-height:196px; padding:16px; }
+  .ava-week-grid article > strong { font-size:13px; }
+  .ava-week-grid article > span { font-size:11px; }
+  .ava-slot,.ava-booked,.ava-empty-day { font-size:11px; padding:8px; }
+  .ava-unstructured strong { font-size:13px; }
+  .ava-unstructured span { font-size:12px; }
+  .ava-unstructured small { font-size:11px; }
+  .choice-button strong,.selected-choice strong { font-size:12px; }
+  .choice-button small,.selected-choice small { font-size:11px; }
+}
+
+@media (max-width:1000px) {
+  .lp-template-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width:760px) {
+  .lp-template-strip { grid-template-columns:1fr; }
+  .ava-workbench > header { display:grid; padding:14px; }
+  .ava-actions { justify-content:stretch; }
+  .ava-actions > * { flex:1 1 150px; }
+  .ava-week-grid { grid-template-columns:repeat(7,150px); }
+}
