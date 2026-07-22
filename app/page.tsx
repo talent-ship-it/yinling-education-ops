@@ -156,6 +156,10 @@ type Booking = {
   recurring?: boolean;
 };
 
+type BookingOccurrence = Booking & {
+  occurrenceKey: string;
+};
+
 type LpItem = {
   id: string;
   studentId: string;
@@ -535,16 +539,59 @@ function formatClock(date: Date, timezone: string) {
   return `${parts.hour}:${parts.minute}`;
 }
 
-const avaWeekDates = Array.from({ length: 7 }, (_, index) => {
-  const date = new Date(Date.UTC(2026, 6, 20 + index));
-  return { date: date.toISOString().slice(0, 10), label: new Intl.DateTimeFormat("zh-CN", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(date) };
-});
+function isoDateInTimezone(date: Date, timezone: string) {
+  const parts = zonedParts(date, cleanTimezone(timezone));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function shiftIsoDate(date: string, days: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function daysBetweenIsoDates(from: string, to: string) {
+  const start = new Date(`${from}T12:00:00Z`).getTime();
+  const end = new Date(`${to}T12:00:00Z`).getTime();
+  return Math.round((end - start) / 86400000);
+}
+
+function weekDatesForTimezone(timezone: string) {
+  const today = isoDateInTimezone(new Date(), timezone);
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const monday = shiftIsoDate(today, weekday === 0 ? -6 : 1 - weekday);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = shiftIsoDate(monday, index);
+    const dateAtNoon = new Date(`${date}T12:00:00Z`);
+    return { date, label: new Intl.DateTimeFormat("zh-CN", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(dateAtNoon) };
+  });
+}
+
+function bookingOccurrencesWithinRange(booking: Booking, rangeStart: string, rangeEnd: string): BookingOccurrence[] {
+  if (!rangeStart || !rangeEnd || rangeStart > rangeEnd || booking.date > rangeEnd) return [];
+  if (!booking.recurring) return booking.date >= rangeStart ? [{ ...booking, occurrenceKey: `${booking.id}:${booking.date}` }] : [];
+
+  const daysUntilRange = daysBetweenIsoDates(booking.date, rangeStart);
+  const firstOffset = daysUntilRange > 0 ? Math.ceil(daysUntilRange / 7) * 7 : 0;
+  const occurrences: BookingOccurrence[] = [];
+  for (let date = shiftIsoDate(booking.date, firstOffset); date <= rangeEnd; date = shiftIsoDate(date, 7)) {
+    occurrences.push({ ...booking, date, occurrenceKey: `${booking.id}:${date}` });
+  }
+  return occurrences;
+}
+
+function taskTiming(due: string, timezone = "Australia/Melbourne", futureTone: Tone = "blue") {
+  const today = isoDateInTimezone(new Date(), timezone);
+  const status: TaskStatus = due < today ? "overdue" : due === today ? "today" : "upcoming";
+  return { due, status, tone: status === "overdue" ? "red" : status === "today" ? "amber" : futureTone };
+}
 
 function displayAvaSlots(teacher: Teacher, targetTimezone: string) {
   const sourceTimezone = cleanTimezone(teacher.availabilityTimezone ?? teacher.timezone);
+  const targetWeek = weekDatesForTimezone(targetTimezone);
   return (teacher.availabilitySlots ?? []).map((slot) => {
     const dayOffset = slot.day === 0 ? 6 : slot.day - 1;
-    const sourceDate = avaWeekDates[dayOffset]?.date ?? avaWeekDates[0].date;
+    const sourceDate = targetWeek[dayOffset]?.date ?? targetWeek[0].date;
     const start = zonedDateTimeToUtc(sourceDate, slot.start, sourceTimezone);
     const end = zonedDateTimeToUtc(sourceDate, slot.end, sourceTimezone);
     const displayed = zonedParts(start, cleanTimezone(targetTimezone));
@@ -554,9 +601,7 @@ function displayAvaSlots(teacher: Teacher, targetTimezone: string) {
 
 function lpPublishedDay(item: LpItem) {
   if (!item.publishedDate) return null;
-  const published = new Date(`${item.publishedDate}T00:00:00`);
-  const today = new Date();
-  const elapsed = Math.max(0, Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(published.getFullYear(), published.getMonth(), published.getDate())) / 86400000));
+  const elapsed = Math.max(0, daysBetweenIsoDates(item.publishedDate, isoDateInTimezone(new Date(), "Australia/Melbourne")));
   return `已发布第 ${elapsed + 1} 天`;
 }
 
@@ -579,10 +624,10 @@ function requiresLp(student: Student) {
 
 function availabilityInTimezone(teacher: Teacher, targetTimezone: string) {
   if (!teacher.availabilitySlots?.length) return `${teacher.availability}（原文，待结构化）`;
-  const weekStart = new Date("2026-07-20T00:00:00Z");
+  const targetWeek = weekDatesForTimezone(targetTimezone);
   return teacher.availabilitySlots.map((slot) => {
     const dayOffset = slot.day === 0 ? 6 : slot.day - 1;
-    const date = new Date(weekStart.getTime() + dayOffset * 86400000).toISOString().slice(0, 10);
+    const date = targetWeek[dayOffset]?.date ?? targetWeek[0].date;
     const sourceTimezone = cleanTimezone(teacher.availabilityTimezone ?? teacher.timezone);
     const start = zonedDateTimeToUtc(date, slot.start, sourceTimezone);
     const end = zonedDateTimeToUtc(date, slot.end, sourceTimezone);
@@ -876,27 +921,42 @@ export default function Home() {
 
     return bookings.some((booking) => {
       if (booking.studentId !== studentId && booking.teacherId !== teacherId) return false;
-      const bookingStart = bookingInstant(booking).getTime();
-      const bookingEnd = bookingStart + booking.duration * 60000;
-      return requestedStart < bookingEnd && bookingStart < requestedEnd;
+      return bookingOccurrencesWithinRange(booking, date, date).some((occurrence) => {
+        const bookingStart = bookingInstant(occurrence).getTime();
+        const bookingEnd = bookingStart + occurrence.duration * 60000;
+        return requestedStart < bookingEnd && bookingStart < requestedEnd;
+      });
     });
+  };
+
+  const teacherHasBookingConflict = (teacherId: string, requestedBooking: Booking) => {
+    const requestedStart = bookingInstant(requestedBooking).getTime();
+    const requestedEnd = requestedStart + requestedBooking.duration * 60000;
+    return bookings.some((booking) => booking.teacherId === teacherId && bookingOccurrencesWithinRange(booking, requestedBooking.date, requestedBooking.date).some((occurrence) => {
+      const bookingStart = bookingInstant(occurrence).getTime();
+      const bookingEnd = bookingStart + occurrence.duration * 60000;
+      return requestedStart < bookingEnd && bookingStart < requestedEnd;
+    }));
   };
 
   const substitutionCandidates = (booking: Booking, unavailableTeacherId: string) => {
     const unavailableTeacher = teacherById(unavailableTeacherId);
     const student = studentById(booking.studentId);
     if (!unavailableTeacher || !student) return [];
-    return teachers.filter((teacher) => {
+    const candidatePool = hasRealSnapshot ? recordTeachers : teachers;
+    return candidatePool.filter((teacher) => {
       if (teacher.id === unavailableTeacherId || !teacher.availabilitySlots?.length) return false;
       const sharesSubject = teacher.subjects.some((subject) => unavailableTeacher.subjects.includes(subject))
         || teacher.subjects.some((subject) => student.course.includes(subject.split(" ").slice(-1)[0]));
-      return sharesSubject && teacherAvailableAt(teacher, booking.date, booking.start, booking.duration, booking.timezone);
+      return sharesSubject
+        && teacherAvailableAt(teacher, booking.date, booking.start, booking.duration, booking.timezone)
+        && !teacherHasBookingConflict(teacher.id, booking);
     }).slice(0, 5);
   };
 
   const createLpWorkflow = (studentId: string, workflowType: LpWorkflowType, needsParentFollowUp: boolean, needsTeacherPrep: boolean) => {
     const student = studentById(studentId);
-    if (!student) return;
+    if (!student) return false;
     const option = lpWorkflowOptions.find((item) => item.id === workflowType) ?? lpWorkflowOptions[0];
     const item: LpItem = {
       id: id("LP"),
@@ -908,7 +968,7 @@ export default function Home() {
       due: workflowType === "老生 LP 修改" ? "发布当天" : workflowType === "试听 LP" || workflowType === "二次试听" ? "试听前 N-3" : "发布后 24 小时",
       needsParentFollowUp,
       needsTeacherPrep,
-      publishedDate: workflowType === "老生 LP 修改" ? new Date().toISOString().slice(0, 10) : undefined,
+      publishedDate: workflowType === "老生 LP 修改" ? isoDateInTimezone(new Date(), "Australia/Melbourne") : undefined,
     };
     const generated: Task[] = [
       { id: id("TSK"), title: `${option.title}：核对交接信息`, owner: student.owner, studentId, due: "发布后立即", status: "today", tone: "blue", category: "LP", trigger: `${option.title} 创建后自动生成` },
@@ -923,13 +983,15 @@ export default function Home() {
       generated.push(
         { id: id("TSK"), title: "最迟 24 小时内完成试听排课", owner: student.owner, studentId, due: "发布后 24 小时", status: "today", tone: "red", category: "排课", trigger: `${option.title} 排课时限` },
         { id: id("TSK"), title: "将 LP 发审核群并发给老师", owner: student.owner, studentId, due: "试听前 N-2", status: "upcoming", tone: "amber", category: "LP", trigger: `${option.title} 课前资料交接` },
-        { id: id("TSK"), title: "试听收费与课后跟进提醒", owner: student.planner ?? "Tara", studentId, due: "试听前 N-3 / 试听当天（墨尔本时间）", status: "upcoming", tone: "blue", category: "试听", trigger: `${option.title} 收费与试听后跟进` },
+        { id: id("TSK"), title: "试听收费确认", owner: student.planner ?? "Tara", studentId, due: "试听前 N-3", status: "upcoming", tone: "blue", category: "试听", trigger: `${option.title} 收费提醒` },
+        { id: id("TSK"), title: "试听当天课后跟进", owner: student.planner ?? "Tara", studentId, due: "试听当天（墨尔本时间）", status: "waiting", tone: "purple", category: "试听", trigger: `${option.title} 课后跟进` },
       );
     }
     setLpItems((current) => [item, ...current]);
     setTasks((current) => [...generated, ...current]);
     setStudents((current) => current.map((entry) => entry.id === studentId ? { ...entry, lpNeed: option.lpNeed, next: `${option.title} 已创建`, nextTone: "amber" } : entry));
     addAudit("创建 LP 工作流", `${student.name} · ${option.title} · ${generated.length} 项强提醒`, "green");
+    return true;
   };
 
   const createWorkflowTasks = (studentId: string, isTrial: boolean) => {
@@ -1336,7 +1398,10 @@ export default function Home() {
     const data = new FormData(event.currentTarget);
     const studentId = String(data.get("studentId") ?? selectedStudent.id);
     const workflowType = String(data.get("workflowType") ?? "试听 LP") as LpWorkflowType;
-    createLpWorkflow(studentId, workflowType, data.get("parentFollowUp") === "on", data.get("teacherPrep") === "on");
+    if (!createLpWorkflow(studentId, workflowType, data.get("parentFollowUp") === "on", data.get("teacherPrep") === "on")) {
+      notify("没有找到该学生，未创建 LP 工作流");
+      return;
+    }
     setSelectedStudentId(studentId);
     setModal(null);
     setActive("lp");
@@ -1355,7 +1420,6 @@ export default function Home() {
     setTeachers((current) => current.map((teacher) => teacher.id === teacherId ? {
       ...teacher,
       availabilitySlots: [...(teacher.availabilitySlots ?? []), { day, start, end }],
-      availabilityStatus: "可接新生",
       availabilityUpdated: `手动结构化 · 今天 ${nowLabel()}`,
       availability: `${teacher.availability === "AVA 待确认" ? "" : `${teacher.availability}；`}${["周日", "周一", "周二", "周三", "周四", "周五", "周六"][day]} ${start}-${end}`,
     } : teacher));
@@ -1399,29 +1463,43 @@ export default function Home() {
     if ((type === "请假" || type === "老师离职") && !teacherById(teacherId)) { notify("请从老师清单选择涉及老师后再记录请假或离职"); return; }
 
     const teacherAbsence = Boolean(teacherId && (type === "请假" || type === "老师离职"));
-    const affectedBookings = teacherAbsence ? bookings.filter((booking) => booking.teacherId === teacherId && (!eventStart || booking.date >= eventStart) && (!eventEnd || booking.date <= eventEnd)) : [];
-    const affectedStudentIds = Array.from(new Set(affectedBookings.map((booking) => booking.studentId)));
-    const targetStudentIds = affectedStudentIds.length ? affectedStudentIds : [studentId];
+    if (teacherAbsence && (!eventStart || !eventEnd || eventStart > eventEnd)) { notify("请填写有效的影响起止日期，再生成请假或离职任务"); return; }
+    if (!teacherAbsence && !studentById(studentId)) { notify("请从学生清单选择需要记录异常的学生"); return; }
+
+    const affectedOccurrences = teacherAbsence
+      ? bookings.filter((booking) => booking.teacherId === teacherId).flatMap((booking) => bookingOccurrencesWithinRange(booking, eventStart, eventEnd))
+      : [];
+    if (teacherAbsence && !affectedOccurrences.length) { notify("在所选日期范围内未找到受影响课程，未创建任务。"); return; }
+
+    const affectedStudentIds = Array.from(new Set(affectedOccurrences.map((booking) => booking.studentId)));
+    const targetStudentIds = teacherAbsence ? affectedStudentIds : [studentId];
     const createdAt = `今天 ${nowLabel()}`;
     const generatedOperations = targetStudentIds.map((targetId) => {
-      const relatedBookings = affectedBookings.filter((booking) => booking.studentId === targetId);
-      const candidateIds = Array.from(new Set(relatedBookings.flatMap((booking) => substitutionCandidates(booking, teacherId).map((teacher) => teacher.id))));
-      return { id: id("OPS"), studentId: targetId, type, detail, status: "待处理" as const, createdAt, teacherId: teacherAbsence ? teacherId : undefined, eventStart: teacherAbsence ? eventStart : undefined, eventEnd: teacherAbsence ? eventEnd : undefined, affectedLessonCount: relatedBookings.length || undefined, recommendedTeacherIds: candidateIds };
+      const relatedOccurrences = affectedOccurrences.filter((booking) => booking.studentId === targetId);
+      const candidateLists = relatedOccurrences.map((booking) => substitutionCandidates(booking, teacherId).map((teacher) => teacher.id));
+      const candidateIds = candidateLists.length
+        ? candidateLists.slice(1).reduce((shared, candidates) => shared.filter((teacherId) => candidates.includes(teacherId)), candidateLists[0])
+        : [];
+      return { id: id("OPS"), studentId: targetId, type, detail, status: "待处理" as const, createdAt, teacherId: teacherAbsence ? teacherId : undefined, eventStart: teacherAbsence ? eventStart : undefined, eventEnd: teacherAbsence ? eventEnd : undefined, affectedLessonCount: relatedOccurrences.length || undefined, recommendedTeacherIds: candidateIds };
     });
-    const generatedTasks = targetStudentIds.flatMap((targetId) => {
+    const generatedTasks: Task[] = targetStudentIds.flatMap((targetId): Task[] => {
       const student = studentById(targetId);
+      const relatedOccurrences = affectedOccurrences.filter((booking) => booking.studentId === targetId).sort((left, right) => left.date.localeCompare(right.date));
+      const affectedDates = relatedOccurrences.map((booking) => booking.date);
+      const lastAffectedDate = affectedDates.at(-1) ?? eventEnd;
+      const handoverBaseDate = affectedDates.length > 1 ? affectedDates.at(-2)! : lastAffectedDate;
       if (teacherAbsence && type === "请假") return [
-        { id: id("TSK"), title: "选择可代课老师", owner: "Tiffany", studentId: targetId, due: "请假录入后立即", status: "today" as const, tone: "red" as const, category: "排课" as const, trigger: "老师请假：候选代课老师筛选" },
-        { id: id("TSK"), title: "确认最终推荐老师并交龙老师确认", owner: "思佳", studentId: targetId, due: "请假前 N-2 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师请假：最终推荐确认" },
-        { id: id("TSK"), title: "完成家长沟通并记录请假/代课原因", owner: student?.owner ?? "待分配", studentId: targetId, due: "请假前 N-1 周", status: "upcoming" as const, tone: "red" as const, category: "资料" as const, trigger: "老师请假：教务必须写明原因" },
-        { id: id("TSK"), title: "请原老师补充代课 LP 指定内容与资料", owner: student?.owner ?? "待分配", studentId: targetId, due: "最后一节课后次日", status: "upcoming" as const, tone: "blue" as const, category: "LP" as const, trigger: "老师请假：代课 LP 交接" },
+        { id: id("TSK"), title: "选择可代课老师", owner: "Tiffany", studentId: targetId, ...taskTiming(isoDateInTimezone(new Date(), "Australia/Melbourne"), "Australia/Melbourne", "red"), category: "排课", trigger: "老师请假：候选代课老师筛选" },
+        { id: id("TSK"), title: "确认最终推荐老师并交龙老师确认", owner: "思佳", studentId: targetId, ...taskTiming(shiftIsoDate(eventStart, -14), "Australia/Melbourne", "amber"), category: "排课", trigger: "老师请假：最终推荐确认" },
+        { id: id("TSK"), title: "完成家长沟通并记录请假/代课原因", owner: student?.owner ?? "待分配", studentId: targetId, ...taskTiming(shiftIsoDate(eventStart, -7), "Australia/Melbourne", "red"), category: "资料", trigger: "老师请假：教务必须写明原因" },
+        { id: id("TSK"), title: "请原老师补充代课 LP 指定内容与资料", owner: student?.owner ?? "待分配", studentId: targetId, ...taskTiming(shiftIsoDate(lastAffectedDate, 1), "Australia/Melbourne", "blue"), category: "LP", trigger: "老师请假：代课 LP 交接" },
       ];
       if (teacherAbsence && type === "老师离职") return [
-        { id: id("TSK"), title: "筛选并确认推荐老师名单", owner: "Tiffany", studentId: targetId, due: "离职前 N-2 周", status: "today" as const, tone: "red" as const, category: "排课" as const, trigger: "老师离职：推荐老师名单" },
-        { id: id("TSK"), title: "开启新老师沟通", owner: student?.owner ?? "待分配", studentId: targetId, due: "离职前 N-2 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师离职：新老师沟通" },
-        { id: id("TSK"), title: "确认 Handover Notes 与原老师约定 DDL", owner: student?.owner ?? "待分配", studentId: targetId, due: "倒数第 2 次课后次日", status: "upcoming" as const, tone: "blue" as const, category: "LP" as const, trigger: "老师离职：交接资料" },
-        { id: id("TSK"), title: "告知家长并记录最终安排", owner: student?.owner ?? "待分配", studentId: targetId, due: "倒数第 2 次课后次日", status: "upcoming" as const, tone: "red" as const, category: "资料" as const, trigger: "老师离职：家长沟通" },
-        { id: id("TSK"), title: "向龙老师汇报离职交接进度", owner: "思佳", studentId: targetId, due: "离职前 N-1 周", status: "upcoming" as const, tone: "amber" as const, category: "排课" as const, trigger: "老师离职：管理确认" },
+        { id: id("TSK"), title: "筛选并确认推荐老师名单", owner: "Tiffany", studentId: targetId, ...taskTiming(shiftIsoDate(eventEnd, -14), "Australia/Melbourne", "red"), category: "排课", trigger: "老师离职：推荐老师名单" },
+        { id: id("TSK"), title: "开启新老师沟通", owner: student?.owner ?? "待分配", studentId: targetId, ...taskTiming(shiftIsoDate(eventEnd, -14), "Australia/Melbourne", "amber"), category: "排课", trigger: "老师离职：新老师沟通" },
+        { id: id("TSK"), title: "确认 Handover Notes 与原老师约定 DDL", owner: student?.owner ?? "待分配", studentId: targetId, ...taskTiming(shiftIsoDate(handoverBaseDate, 1), "Australia/Melbourne", "blue"), category: "LP", trigger: "老师离职：交接资料" },
+        { id: id("TSK"), title: "告知家长并记录最终安排", owner: student?.owner ?? "待分配", studentId: targetId, ...taskTiming(shiftIsoDate(handoverBaseDate, 1), "Australia/Melbourne", "red"), category: "资料", trigger: "老师离职：家长沟通" },
+        { id: id("TSK"), title: "向龙老师汇报离职交接进度", owner: "思佳", studentId: targetId, ...taskTiming(shiftIsoDate(eventEnd, -7), "Australia/Melbourne", "amber"), category: "排课", trigger: "老师离职：管理确认" },
       ];
       return [{ id: id("TSK"), title: `${type}：${detail}`, owner: student?.owner ?? "待分配", studentId: targetId, due: "待人工确认", status: "today" as const, tone: "amber" as const, category: "排课" as const, trigger: `${type} 记录后自动生成` }];
     });
@@ -1430,9 +1508,9 @@ export default function Home() {
     setSelectedOperationId(generatedOperations[0].id);
     setSelectedStudentId(generatedOperations[0].studentId);
     const teacher = teacherById(teacherId);
-    addAudit("记录教务异常", teacherAbsence ? `${teacher?.name ?? "老师"} · ${type} · 影响 ${affectedBookings.length} 节课` : `${studentById(studentId)?.name} · ${type}`, "amber");
+    addAudit("记录教务异常", teacherAbsence ? `${teacher?.name ?? "老师"} · ${type} · 影响 ${affectedOccurrences.length} 节课` : `${studentById(studentId)?.name} · ${type}`, "amber");
     setModal(null); setActive("operations");
-    notify(teacherAbsence ? `已识别 ${affectedBookings.length} 节受影响课程，并生成 ${generatedTasks.length} 项后续任务` : "异常已记录，并生成后续处理任务");
+    notify(teacherAbsence ? `已识别 ${affectedOccurrences.length} 节受影响课程，并生成 ${generatedTasks.length} 项后续任务` : "异常已记录，并生成后续处理任务");
   };
 
   const submitFile = (event: FormEvent<HTMLFormElement>) => {
@@ -1579,7 +1657,7 @@ export default function Home() {
         <form className="form-grid" onSubmit={submitBooking}>
           <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
           <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入姓名或老师 ID 搜索" /><datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>
-          <label>日期<input name="date" type="date" defaultValue="2026-07-20" required /></label>
+          <label>日期<input name="date" type="date" defaultValue={isoDateInTimezone(new Date(), scheduleTimezone)} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue="16:00" required /></label>
           <label>录入时区<select name="timezone" defaultValue={scheduleTimezone}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>课程类型<select name="kind"><option>试听</option><option>常规课</option><option>代课</option></select></label>
@@ -1595,8 +1673,8 @@ export default function Home() {
           <label>学生<input name="studentId" list="operation-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="operation-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.owner}</option>)}</datalist></label>
           <label>类型<select name="type"><option>调课</option><option value="请假">老师请假</option><option>停课</option><option>代课</option><option>换老师</option><option>老师离职</option></select></label>
           <label>涉及老师（请假/离职必填）<input name="teacherId" list="operation-teacher-options" placeholder="输入老师姓名或 ID" /><datalist id="operation-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")}</option>)}</datalist></label>
-          <label>影响起始日期<input name="eventStart" type="date" defaultValue="2026-07-20" /></label>
-          <label>影响结束 / 离职日<input name="eventEnd" type="date" defaultValue="2026-07-25" /></label>
+          <label>影响起始日期<input name="eventStart" type="date" defaultValue={isoDateInTimezone(new Date(), "Australia/Melbourne")} /></label>
+          <label>影响结束 / 离职日<input name="eventEnd" type="date" defaultValue={shiftIsoDate(isoDateInTimezone(new Date(), "Australia/Melbourne"), 1)} /></label>
           <label className="span-2">处理说明<textarea name="detail" rows={4} placeholder="记录原时间、原因、可选时间或需要的后续确认" required /></label>
           <div className="form-notice span-2"><CircleAlert size={16} /> 录入老师和影响日期后，系统会找出受影响课程，并仅从科目匹配且有结构化 AVA 的老师中给出候选。最终人选、扣课和对外通知仍由人工决定。</div>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><ClipboardCheck size={16} /> 记录并生成任务</button></footer>
@@ -1633,14 +1711,15 @@ function TaskList({ tasks, studentById, onComplete, onOpen }: { tasks: Task[]; s
 function ScheduleList({ bookings, studentById, teacherById, onOpen }: { bookings: Booking[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; onOpen: (booking: Booking) => void }) { return <div className="schedule-list">{bookings.slice(0, 4).map((booking) => <button className="schedule-row" type="button" key={booking.id} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{booking.start}</strong><small>{booking.date.slice(5).replace("-", "/")}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {booking.kind} · {booking.status}</small></span><ChevronRight size={16} /></button>)}</div>; }
 function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; detail: string; action: () => void }) { return <button className="risk-row" type="button" onClick={action}><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight size={15} /></button>; }
 function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimezone, onTeacherChange, onAddAva }: { teacher: Teacher; teachers: Teacher[]; bookings: Booking[]; studentById: (id: string) => Student | undefined; targetTimezone: string; onTeacherChange: (teacherId: string) => void; onAddAva: () => void }) {
+  const weekDates = weekDatesForTimezone(targetTimezone);
   const slots = displayAvaSlots(teacher, targetTimezone);
-  const teacherBookings = bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => {
-    const parts = zonedParts(bookingInstant(booking), cleanTimezone(targetTimezone));
-    return { booking, date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
-  });
+  const teacherBookings = bookings.filter((booking) => booking.teacherId === teacher.id).flatMap((booking) => bookingOccurrencesWithinRange(booking, weekDates[0].date, weekDates.at(-1)!.date).map((occurrence) => {
+    const parts = zonedParts(bookingInstant(occurrence), cleanTimezone(targetTimezone));
+    return { booking: occurrence, date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+  }));
   return <section className="ava-workbench" aria-label="老师 AVA 日历">
     <header><div><p className="eyebrow">老师 AVA · 已占用时段</p><h2>可约时间表</h2><span>按 {timezoneLabel(targetTimezone)} 显示；只有结构化 AVA 会参与排课和代课筛选。</span></div><div className="ava-actions"><select className="filter-select" value={teacher.id} onChange={(event) => onTeacherChange(event.target.value)} aria-label="选择老师查看 AVA">{teachers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select><button className="secondary-button" type="button" onClick={onAddAva}><Plus size={16} /> 录入 AVA</button></div></header>
-    {slots.length ? <div className="ava-week-grid">{avaWeekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); const dayBookings = teacherBookings.filter((entry) => entry.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone)}</span><div>{daySlots.length ? daySlots.map((slot, index) => <p className="ava-slot" key={`${slot.start}-${index}`}>可约 {slot.start}-{slot.end}</p>) : <p className="ava-empty-day">无可约时段</p>}{dayBookings.map(({ booking, time }) => <p className="ava-booked" key={booking.id}>已占用 {time} · {studentById(booking.studentId)?.name ?? "学生"}</p>)}</div></article>; })}</div> : <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。</strong><span>{teacher.availability || "尚未收到可用时间"}</span><small>录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。</small></div></div>}
+    {slots.length ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); const dayBookings = teacherBookings.filter((entry) => entry.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone)}</span><div>{daySlots.length ? daySlots.map((slot, index) => <p className="ava-slot" key={`${slot.start}-${index}`}>可约 {slot.start}-{slot.end}</p>) : <p className="ava-empty-day">无可约时段</p>}{dayBookings.map(({ booking, time }) => <p className="ava-booked" key={booking.occurrenceKey}>已占用 {time} · {studentById(booking.studentId)?.name ?? "学生"}</p>)}</div></article>; })}</div> : <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。</strong><span>{teacher.availability || "尚未收到可用时间"}</span><small>录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。</small></div></div>}
   </section>;
 }
 function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpen, onClose, onFiles, onSchedule, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; mobileOpen: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onStatus: (status: Student["status"]) => void }) {
