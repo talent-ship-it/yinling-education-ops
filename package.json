@@ -7,13 +7,14 @@
   },
   "scripts": {
     "dev": "node scripts/dev-fixed-port.mjs",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "build": "next build",
+    "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.87.1",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^1.25.0",
     "next": "16.2.6",
