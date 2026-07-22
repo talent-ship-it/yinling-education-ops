@@ -26,7 +26,6 @@ import {
   LayoutDashboard,
   ListChecks,
   ListTodo,
-  LoaderCircle,
   MapPin,
   MessageCircle,
   MessageSquare,
@@ -43,8 +42,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { createClient, type Session } from "@supabase/supabase-js";
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Section =
   | "dashboard"
@@ -257,52 +255,33 @@ export type ImportPayload = {
   messages?: Message[];
   files?: FileRecord[];
   audit?: AuditEntry[];
+  rules?: Rules;
+  dataSnapshot?: { label: string; students: number; teachers: number; importedAt: string };
+  versions?: Record<string, number>;
+  syncSources?: SyncSource[];
 };
 
-type AppRecordRow = {
-  entity: keyof ImportPayload;
-  record_id?: string;
-  payload: unknown;
+type SyncSource = {
+  source_id: string;
+  title: string;
+  source_type: string;
+  url?: string | null;
+  modified_at?: string | null;
+  synced_at: string;
+  row_count: number;
+  status: string;
+  payload?: { sheetNames?: string[]; note?: string };
 };
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
-
-const importPayloadKeys = new Set<keyof ImportPayload>([
-  "students",
-  "teachers",
-  "tasks",
-  "bookings",
-  "lpItems",
-  "operations",
-  "renewals",
-  "payroll",
-  "messages",
-  "files",
-  "audit",
-]);
-
-function recordsToPayload(rows: AppRecordRow[], meta?: ImportPayload["meta"]) {
-  const payload: ImportPayload = { meta };
-
-  for (const row of rows) {
-    if (!importPayloadKeys.has(row.entity)) continue;
-
-    const key = row.entity;
-    const current = (payload[key] ?? []) as unknown[];
-    payload[key] = [...current, row.payload] as never;
-  }
-
-  return payload;
-}
-
-const sourceSnapshot = {
-  date: "2026-07-21",
-  students: 498,
-  teachers: 216,
-  recentAva: 30,
+type RemoteStateRow<T = unknown> = {
+  entity: string;
+  payload: T;
+  version: number;
+  updated_at: string;
+  updated_by: string;
 };
+
+type SharedSyncState = "synced" | "saving" | "offline" | "error" | "conflict";
 
 const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboard; group: "work" | "support" }> = [
   { id: "dashboard", label: "工作台", icon: LayoutDashboard, group: "work" },
@@ -322,6 +301,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
 ];
 
 const mobilePrimaryNavigation = navigation.filter((item) => ["dashboard", "students", "schedule", "messages"].includes(item.id));
+const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "lp", "operations", "renewals", "messages", "files"]);
 
 const baseStudents: Student[] = [
   { id: "STU-0248", name: "Olivia Chen", initials: "OC", status: "试听中", owner: "思佳", course: "Year 10 English", timezone: "Australia/Melbourne · UTC+10", guardian: "Chen 先生 · 企业微信客户群", teacher: "待匹配", next: "确认 N-2 资料与收费", nextTone: "red", files: 4 },
@@ -392,73 +372,36 @@ function buildRuntimeDefaults(importPayload?: ImportPayload) {
   const importedAt = importPayload?.meta?.createdAt ?? new Date().toISOString().slice(0, 10);
 
   return {
-    defaultStudents: realStudents.length ? [...initialStudents, ...realStudents] : initialStudents,
-    defaultTeachers: realTeachers.length ? [...initialTeachers, ...realTeachers] : initialTeachers,
-    defaultDataSnapshot: hasRealData
+    defaultStudents: hasRealData ? realStudents : initialStudents,
+    defaultTeachers: hasRealData ? realTeachers : initialTeachers,
+    defaultTasks: hasRealData ? importPayload?.tasks ?? [] : initialTasks,
+    defaultBookings: hasRealData ? importPayload?.bookings ?? [] : initialBookings,
+    defaultLpItems: hasRealData ? importPayload?.lpItems ?? [] : initialLp,
+    defaultOperations: hasRealData ? importPayload?.operations ?? [] : initialOperations,
+    defaultRenewals: hasRealData ? importPayload?.renewals ?? [] : initialRenewals,
+    defaultPayroll: hasRealData ? importPayload?.payroll ?? [] : initialPayroll,
+    defaultMessages: hasRealData ? importPayload?.messages ?? [] : initialMessages,
+    defaultFiles: hasRealData ? importPayload?.files ?? [] : initialFiles,
+    defaultAudit: hasRealData ? importPayload?.audit ?? [] : initialAudit,
+    defaultRules: importPayload?.rules ?? defaultRules,
+    defaultDataSnapshot: importPayload?.dataSnapshot ?? (hasRealData
       ? { label: "Supabase 真实资料快照", students: realStudents.length, teachers: realTeachers.length, importedAt }
-      : { label: "脱敏示例数据", students: initialStudents.length, teachers: initialTeachers.length, importedAt: "未导入" },
+      : { label: "脱敏示例数据", students: initialStudents.length, teachers: initialTeachers.length, importedAt: "未导入" }),
     defaultSelectedStudentId: realStudents[0]?.id ?? "STU-0248",
     defaultSelectedTeacherId: realTeachers[0]?.id ?? "TEA-011",
     storagePrefix: hasRealData ? `yinling-mvp-supabase-${importedAt}` : "yinling-mvp",
   };
 }
 
-const initialTasks: Task[] = [
-  { id: "TSK-001", title: "确认 N-2 资料与收费状态", owner: "思佳", studentId: "STU-0248", due: "今天 10:30", status: "overdue", tone: "red", category: "试听", trigger: "试听前 N-2：资料与收费检查" },
-  { id: "TSK-002", title: "发送 LP 给老师并确认备课", owner: "Tiffany", studentId: "STU-0194", due: "今天 14:00", status: "today", tone: "amber", category: "LP", trigger: "LP 审核通过后" },
-  { id: "TSK-003", title: "跟进家长：考试日期已变更", owner: "Abby", studentId: "STU-0231", due: "今天 16:30", status: "today", tone: "blue", category: "续课", trigger: "考试日期更新" },
-  { id: "TSK-004", title: "核对教务宝未结课记录", owner: "思佳", studentId: "STU-0176", due: "明天 11:00", status: "upcoming", tone: "amber", category: "薪资", trigger: "导入后数据质量检查" },
-  { id: "TSK-005", title: "等待老师确认长期可上课时间", owner: "Tara", studentId: "STU-0248", due: "等待回复", status: "waiting", tone: "blue", category: "排课", trigger: "试听老师匹配" },
-];
-
-const initialBookings: Booking[] = [
-  { id: "LES-001", studentId: "STU-0248", teacherId: "TEA-011", date: "2026-07-20", start: "16:00", duration: 60, kind: "试听", status: "待确认", timezone: "Australia/Melbourne" },
-  { id: "LES-002", studentId: "STU-0231", teacherId: "TEA-011", date: "2026-07-20", start: "18:00", duration: 60, kind: "常规课", status: "已确认", timezone: "Australia/Melbourne", recurring: true },
-  { id: "LES-003", studentId: "STU-0194", teacherId: "TEA-053", date: "2026-07-21", start: "19:00", duration: 60, kind: "常规课", status: "已确认", timezone: "Australia/Sydney", recurring: true },
-  { id: "LES-004", studentId: "STU-0176", teacherId: "TEA-027", date: "2026-07-22", start: "17:00", duration: 60, kind: "常规课", status: "已确认", timezone: "Australia/Perth", recurring: true },
-];
-
-const initialLp: LpItem[] = [
-  { id: "LP-001", studentId: "STU-0248", title: "试听资料与长期时间", workflowType: "试听 LP", stage: "待资料", owner: "思佳", due: "试听前 N-3", needsParentFollowUp: true, needsTeacherPrep: true },
-  { id: "LP-002", studentId: "STU-0194", title: "IB 数学 Learning Plan", workflowType: "老生新 LP", stage: "已发老师", owner: "Tiffany", due: "今天 14:00", needsTeacherPrep: true },
-  { id: "LP-003", studentId: "STU-0231", title: "VCE Chemistry 考试节点更新", workflowType: "老生 LP 修改", stage: "待审核", owner: "Abby", due: "发布当天", needsParentFollowUp: true, publishedDate: "2026-07-22" },
-  { id: "LP-004", studentId: "STU-0176", title: "续课目标与复习节奏", workflowType: "直报 LP", stage: "写作中", owner: "思佳", due: "明天 11:00", needsTeacherPrep: true },
-];
-
-const initialOperations: Operation[] = [
-  { id: "OPS-001", studentId: "STU-0231", type: "调课", detail: "考试日期调整后，需要确认周一晚间时间", status: "待处理", createdAt: "今天 09:20" },
-  { id: "OPS-002", studentId: "STU-0176", type: "换老师", detail: "下月起需要可稳定授课的物理老师", status: "已确认", createdAt: "昨天 16:10" },
-];
-
-const initialRenewals: Renewal[] = [
-  { id: "REN-001", studentId: "STU-0176", remaining: 8, estimate: "2026-08-02", status: "待跟进", owner: "思佳" },
-  { id: "REN-002", studentId: "STU-0194", remaining: 14, estimate: "2026-08-15", status: "已联系", owner: "Tiffany" },
-  { id: "REN-003", studentId: "STU-0231", remaining: 5, estimate: "2026-07-28", status: "等待家长", owner: "Abby" },
-];
-
-const initialPayroll: PayrollRow[] = [
-  { id: "PAY-001", teacherId: "TEA-011", lessons: 14, trialLessons: 1, amount: 1330, status: "需核对", note: "1 节试听费率待确认" },
-  { id: "PAY-002", teacherId: "TEA-027", lessons: 11, trialLessons: 0, amount: 990, status: "可审核", note: "已与教务宝结课记录一致" },
-  { id: "PAY-003", teacherId: "TEA-053", lessons: 9, trialLessons: 0, amount: 1080, status: "可审核", note: "IB 费率已匹配" },
-];
-
-const initialMessages: Message[] = [
-  { id: "MSG-001", studentId: "STU-0248", kind: "试听资料补充提醒", recipient: "Chen 先生 · 客户群", body: "您好，Olivia 的试听课将于本周六进行。为便于老师准备，请于今天补充最近的英语作业或成绩单。谢谢。", status: "待人工确认", createdAt: "今天 09:05" },
-  { id: "MSG-002", studentId: "STU-0194", kind: "LP 与备课确认", recipient: "Daniel Wu · 内部老师", body: "Lucas 的 IB Mathematics Learning Plan 已更新。请查看资料并在今天 18:00 前确认备课安排。", status: "仅内部", createdAt: "今天 09:12" },
-  { id: "MSG-003", studentId: "STU-0176", kind: "续课前跟进", recipient: "思佳 · 内部负责人", body: "Ethan 剩余 8 节课，预计 8 月 2 日需要续课沟通。请确认家长当前学习安排。", status: "仅内部", createdAt: "今天 09:30" },
-];
-
-const initialFiles: FileRecord[] = [
-  { id: "FIL-001", studentId: "STU-0248", title: "试听交接资料", type: "资料链接", source: "Google Drive · 已建立文件夹", addedAt: "今天 09:05" },
-  { id: "FIL-002", studentId: "STU-0194", title: "IB Mathematics Learning Plan v2", type: "Learning Plan", source: "Google Drive · 文档链接", addedAt: "昨天 17:32" },
-  { id: "FIL-003", studentId: "STU-0231", title: "VCE Chemistry 期中成绩", type: "成绩单", source: "人工上传 · 已索引", addedAt: "7 月 15 日" },
-];
-
-const initialAudit: AuditEntry[] = [
-  { id: "AUD-001", time: "今天 09:12", actor: "思佳", action: "创建 LP 任务", detail: "Lucas Wang · LP 已进入待发送老师阶段", tone: "blue" },
-  { id: "AUD-002", time: "今天 09:18", actor: "系统", action: "发现同步冲突", detail: "Olivia Chen 的负责人字段在腾讯表格发生人工修改", tone: "amber" },
-  { id: "AUD-003", time: "昨天 17:20", actor: "Tiffany", action: "记录内部提醒", detail: "Daniel Wu 的备课确认提醒已送达", tone: "green" },
-];
+const initialTasks: Task[] = [];
+const initialBookings: Booking[] = [];
+const initialLp: LpItem[] = [];
+const initialOperations: Operation[] = [];
+const initialRenewals: Renewal[] = [];
+const initialPayroll: PayrollRow[] = [];
+const initialMessages: Message[] = [];
+const initialFiles: FileRecord[] = [];
+const initialAudit: AuditEntry[] = [];
 
 const defaultRules: Rules = { lpDays: "N-3", feedbackHours: "24", renewalDays: "8", escalation: "逾期 4 小时后通知主管", lowHours: "5", examDays: "30" };
 const lpStages: LpItem["stage"][] = ["待资料", "写作中", "待审核", "已发老师", "待备课确认", "完成"];
@@ -471,29 +414,78 @@ const lpWorkflowOptions: Array<{ id: LpWorkflowType; lpNeed: LpNeed; title: stri
   { id: "代课 LP", lpNeed: "代课LP", title: "代课 LP", detail: "原老师指定内容、资料和新老师交接" },
 ];
 
-function usePersistentState<T>(key: string, initialValue: T) {
+function useSharedState<T>(
+  entity: string,
+  initialValue: T,
+  initialVersion: number,
+  actor: string,
+  onSync: (state: SharedSyncState, message?: string) => void,
+) {
   const [value, setValue] = useState<T>(initialValue);
-  const hydrated = useRef(false);
+  const [version, setVersion] = useState(initialVersion);
+  const versionRef = useRef(initialVersion);
+  const readyRef = useRef(false);
+  const timerRef = useRef<number | null>(null);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const committedRef = useRef(JSON.stringify(initialValue));
 
   useEffect(() => {
-    window.setTimeout(() => {
-      try {
-        const saved = window.localStorage.getItem(key);
-        if (saved) setValue(JSON.parse(saved) as T);
-      } catch {
-        // Demo data remains usable if a browser has an old or malformed saved value.
-      } finally {
-        hydrated.current = true;
-      }
-    }, 0);
-  }, [key]);
+    readyRef.current = true;
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    window.localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
+    if (!readyRef.current) return;
+    const serialized = JSON.stringify(value);
+    if (serialized === committedRef.current) return;
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    onSync("saving", `正在保存 ${entity}`);
 
-  return [value, setValue] as const;
+    timerRef.current = window.setTimeout(() => {
+      const payload = value;
+      const payloadSerialized = serialized;
+      queueRef.current = queueRef.current.then(async () => {
+        const response = await fetch("/api/app-state", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entity, payload, expectedVersion: versionRef.current, actor }),
+        });
+        const body = await response.json().catch(() => ({}));
+
+        if (response.status === 409 && body.current) {
+          const current = body.current as RemoteStateRow<T>;
+          committedRef.current = JSON.stringify(current.payload);
+          versionRef.current = current.version;
+          setVersion(current.version);
+          setValue(current.payload);
+          onSync("conflict", `${entity} 已由 ${current.updated_by} 更新，现已刷新最新版本`);
+          return;
+        }
+        if (!response.ok || !body.row) throw new Error(body.error || `${entity} 保存失败`);
+
+        const row = body.row as RemoteStateRow<T>;
+        committedRef.current = payloadSerialized;
+        versionRef.current = row.version;
+        setVersion(row.version);
+        onSync("synced", `${entity} 已同步`);
+      }).catch((error: unknown) => {
+        onSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : `${entity} 保存失败`);
+      });
+    }, 450);
+  }, [actor, entity, onSync, value]);
+
+  const applyRemote = useCallback((row: RemoteStateRow<T>) => {
+    if (row.version <= versionRef.current) return;
+    committedRef.current = JSON.stringify(row.payload);
+    versionRef.current = row.version;
+    setVersion(row.version);
+    setValue(row.payload);
+    onSync("synced", `${entity} 已接收 ${row.updated_by} 的更新`);
+  }, [entity, onSync]);
+
+  return [value, setValue, { version, applyRemote }] as const;
 }
 
 function nowLabel() {
@@ -765,8 +757,8 @@ function AuthStatusScreen({ title, detail }: { title: string; detail: string }) 
   );
 }
 
-function AuthLoginScreen({ onSubmit, loading, message, error }: { onSubmit: (email: string) => void; loading: boolean; message: string; error: string }) {
-  const [email, setEmail] = useState("");
+function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: string) => void; loading: boolean; error: string }) {
+  const [password, setPassword] = useState("");
 
   return (
     <main className="login-shell">
@@ -774,19 +766,18 @@ function AuthLoginScreen({ onSubmit, loading, message, error }: { onSubmit: (ema
         <div className="brand-mark">吟</div>
         <p className="eyebrow">内部教务系统</p>
         <h1>吟领教务</h1>
-        <p className="login-copy">请输入已授权邮箱，系统会发送一次性登录链接。</p>
+        <p className="login-copy">内部测试 Demo，请输入访问密码。</p>
         <form
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
-            onSubmit(email);
+            onSubmit(password);
           }}
         >
-          <label htmlFor="email">授权邮箱</label>
-          <input id="email" value={email} type="email" autoComplete="email" onChange={(event) => setEmail(event.target.value)} required />
-          {message ? <span className="login-success">{message}</span> : null}
+          <label htmlFor="password">访问密码</label>
+          <input id="password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
           {error ? <span className="login-error">{error}</span> : null}
-          <button type="submit" disabled={loading}>{loading ? "发送中..." : "发送登录链接"}</button>
+          <button type="submit" disabled={loading}>{loading ? "正在进入..." : "进入系统"}</button>
         </form>
       </section>
     </main>
@@ -794,64 +785,43 @@ function AuthLoginScreen({ onSubmit, loading, message, error }: { onSubmit: (ema
 }
 
 async function fetchSupabaseSnapshot() {
-  if (!supabase) return {};
-
-  const [{ data: rows, error: rowsError }, { data: metaRows, error: metaError }] = await Promise.all([
-    supabase
-      .from("app_records")
-      .select("entity,record_id,payload")
-      .neq("entity", "meta")
-      .order("entity", { ascending: true })
-      .order("record_id", { ascending: true }),
-    supabase
-      .from("app_records")
-      .select("payload")
-      .eq("entity", "meta")
-      .eq("record_id", "snapshot")
-      .limit(1),
-  ]);
-
-  if (rowsError) throw rowsError;
-  if (metaError) throw metaError;
-
-  return recordsToPayload((rows ?? []) as AppRecordRow[], metaRows?.[0]?.payload as ImportPayload["meta"] | undefined);
+  const response = await fetch("/api/app-snapshot", { cache: "no-store" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "真实资料读取失败。");
+  return body as ImportPayload;
 }
 
 export default function OperationsApp() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [authLoading, setAuthLoading] = useState(Boolean(supabase));
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [loginMessage, setLoginMessage] = useState("");
   const [loginError, setLoginError] = useState("");
-  const [initialData, setInitialData] = useState<ImportPayload | null>(supabase ? null : {});
+  const [initialData, setInitialData] = useState<ImportPayload | null>(null);
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
-    if (!supabase) return;
-
     let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      setAuthLoading(false);
-    });
-
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (!nextSession) setInitialData(null);
-    });
+    fetch("/api/demo-session", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body) => {
+        if (active) setAuthenticated(Boolean(body.ok));
+      })
+      .catch(() => {
+        if (active) setAuthenticated(false);
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
 
     return () => {
       active = false;
-      subscription.subscription.unsubscribe();
     };
   }, []);
 
   useEffect(() => {
-    if (!supabase || !session) return;
+    if (!authenticated) return;
 
     let active = true;
-    setDataError("");
     fetchSupabaseSnapshot()
       .then((payload) => {
         if (!active) return;
@@ -872,53 +842,59 @@ export default function OperationsApp() {
     return () => {
       active = false;
     };
-  }, [session]);
+  }, [authenticated]);
 
-  const sendLoginLink = async (email: string) => {
-    if (!supabase) return;
+  const submitPassword = async (password: string) => {
     setLoginLoading(true);
     setLoginError("");
-    setLoginMessage("");
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
+    const response = await fetch("/api/demo-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
     });
+    const body = await response.json().catch(() => ({}));
 
     setLoginLoading(false);
-    if (error) {
-      setLoginError(error.message);
+    if (!response.ok) {
+      setLoginError(body.error || "密码不正确。");
       return;
     }
-    setLoginMessage("登录链接已发送，请到邮箱打开。");
+    setAuthenticated(true);
   };
 
-  if (!supabase) return <OperationsWorkspace initialData={{}} />;
-  if (authLoading) return <AuthStatusScreen title="正在检查登录状态" detail="系统正在确认当前浏览器是否已有有效 session。" />;
-  if (!session) return <AuthLoginScreen onSubmit={sendLoginLink} loading={loginLoading} message={loginMessage} error={loginError} />;
+  if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前浏览器是否已经通过内部测试密码。" />;
+  if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
-  if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已登录，正在从 Supabase 读取学生和老师数据。" />;
+  if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
   return <OperationsWorkspace initialData={initialData} />;
 }
 
 function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
-  const storageKey = (key: string) => `${defaults.storagePrefix}:${key}`;
   const [active, setActive] = useState<Section>("dashboard");
-  const [students, setStudents] = usePersistentState(storageKey("students"), defaults.defaultStudents);
-  const [teachers, setTeachers] = usePersistentState(storageKey("teachers"), defaults.defaultTeachers);
-  const [tasks, setTasks] = usePersistentState(storageKey("tasks"), initialTasks);
-  const [bookings, setBookings] = usePersistentState(storageKey("bookings"), initialBookings);
-  const [lpItems, setLpItems] = usePersistentState(storageKey("lp"), initialLp);
-  const [operations, setOperations] = usePersistentState(storageKey("operations"), initialOperations);
-  const [renewals, setRenewals] = usePersistentState(storageKey("renewals"), initialRenewals);
-  const [payroll, setPayroll] = usePersistentState(storageKey("payroll"), initialPayroll);
-  const [messages, setMessages] = usePersistentState(storageKey("messages"), initialMessages);
-  const [files, setFiles] = usePersistentState(storageKey("files"), initialFiles);
-  const [audit, setAudit] = usePersistentState(storageKey("audit"), initialAudit);
-  const [rules, setRules] = usePersistentState(storageKey("rules"), defaultRules);
-  const [dataSnapshot, setDataSnapshot] = usePersistentState(storageKey("dataSnapshot"), defaults.defaultDataSnapshot);
+  const [currentOperator, setCurrentOperator] = useState("Nixon");
+  const [sharedSyncState, setSharedSyncState] = useState<SharedSyncState>("synced");
+  const [sharedSyncMessage, setSharedSyncMessage] = useState("Supabase 多人共享已连接");
+  const reportSharedSync = useCallback((state: SharedSyncState, message = "") => {
+    setSharedSyncState(state);
+    if (message) setSharedSyncMessage(message);
+  }, []);
+  const versionFor = (entity: string) => initialData?.versions?.[entity] ?? 1;
+  const [students, setStudents, studentsShared] = useSharedState("students", defaults.defaultStudents, versionFor("students"), currentOperator, reportSharedSync);
+  const [teachers, setTeachers, teachersShared] = useSharedState("teachers", defaults.defaultTeachers, versionFor("teachers"), currentOperator, reportSharedSync);
+  const [tasks, setTasks, tasksShared] = useSharedState("tasks", defaults.defaultTasks, versionFor("tasks"), currentOperator, reportSharedSync);
+  const [bookings, setBookings, bookingsShared] = useSharedState("bookings", defaults.defaultBookings, versionFor("bookings"), currentOperator, reportSharedSync);
+  const [lpItems, setLpItems, lpShared] = useSharedState("lpItems", defaults.defaultLpItems, versionFor("lpItems"), currentOperator, reportSharedSync);
+  const [operations, setOperations, operationsShared] = useSharedState("operations", defaults.defaultOperations, versionFor("operations"), currentOperator, reportSharedSync);
+  const [renewals, setRenewals, renewalsShared] = useSharedState("renewals", defaults.defaultRenewals, versionFor("renewals"), currentOperator, reportSharedSync);
+  const [payroll, setPayroll, payrollShared] = useSharedState("payroll", defaults.defaultPayroll, versionFor("payroll"), currentOperator, reportSharedSync);
+  const [messages, setMessages, messagesShared] = useSharedState("messages", defaults.defaultMessages, versionFor("messages"), currentOperator, reportSharedSync);
+  const [files, setFiles, filesShared] = useSharedState("files", defaults.defaultFiles, versionFor("files"), currentOperator, reportSharedSync);
+  const [audit, setAudit, auditShared] = useSharedState("audit", defaults.defaultAudit, versionFor("audit"), currentOperator, reportSharedSync);
+  const [rules, setRules, rulesShared] = useSharedState("rules", defaults.defaultRules, versionFor("rules"), currentOperator, reportSharedSync);
+  const [dataSnapshot, setDataSnapshot, dataSnapshotShared] = useSharedState("dataSnapshot", defaults.defaultDataSnapshot, versionFor("dataSnapshot"), currentOperator, reportSharedSync);
+  const [syncSources] = useState<SyncSource[]>(initialData?.syncSources ?? []);
   const [selectedStudentId, setSelectedStudentId] = useState(defaults.defaultSelectedStudentId);
   const [selectedTeacherId, setSelectedTeacherId] = useState(defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
@@ -957,37 +933,47 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
   const [toast, setToast] = useState("");
-  const [syncState, setSyncState] = useState<"ready" | "running" | "complete">("ready");
-  const [syncResolved, setSyncResolved] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const selectedStudent = students.find((student) => student.id === selectedStudentId) ?? students[0];
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
-  const selectedMessage = messages.find((message) => message.id === selectedMessageId) ?? messages[0];
-  const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId) ?? bookings[0];
-  const selectedOperation = operations.find((operation) => operation.id === selectedOperationId) ?? operations[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
   const teacherById = (teacherId: string) => teachers.find((teacher) => teacher.id === teacherId);
-  const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照" || dataSnapshot.label === "真实资料线上临时快照" || dataSnapshot.label === "Supabase 真实资料快照";
+  const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照" || dataSnapshot.label === "真实资料线上临时快照" || dataSnapshot.label === "Supabase 真实资料快照" || dataSnapshot.label === "Supabase 多人共享真实资料";
   const recordStudents = useMemo(() => hasRealSnapshot ? students.filter((student) => !sampleStudentIds.has(student.id)) : students, [hasRealSnapshot, students]);
   const recordTeachers = useMemo(() => hasRealSnapshot ? teachers.filter((teacher) => !sampleTeacherIds.has(teacher.id)) : teachers, [hasRealSnapshot, teachers]);
-  const activeLowHourStudents = useMemo(() => recordStudents.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [recordStudents, rules.lowHours]);
+  const isAdminView = currentOperator === "Nixon";
+  const visibleNavigation = useMemo(() => isAdminView ? navigation : navigation.filter((item) => staffSectionIds.has(item.id)), [isAdminView]);
+  const scopedStudents = useMemo(() => isAdminView ? recordStudents : recordStudents.filter((student) => student.owner === currentOperator), [currentOperator, isAdminView, recordStudents]);
+  const scopedStudentIds = useMemo(() => new Set(scopedStudents.map((student) => student.id)), [scopedStudents]);
+  const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => task.owner === currentOperator || scopedStudentIds.has(task.studentId)), [currentOperator, isAdminView, scopedStudentIds, tasks]);
+  const scopedBookings = useMemo(() => isAdminView ? bookings : bookings.filter((booking) => scopedStudentIds.has(booking.studentId)), [bookings, isAdminView, scopedStudentIds]);
+  const scopedLpItems = useMemo(() => isAdminView ? lpItems : lpItems.filter((item) => item.owner === currentOperator || scopedStudentIds.has(item.studentId)), [currentOperator, isAdminView, lpItems, scopedStudentIds]);
+  const scopedOperations = useMemo(() => isAdminView ? operations : operations.filter((operation) => scopedStudentIds.has(operation.studentId)), [isAdminView, operations, scopedStudentIds]);
+  const scopedRenewals = useMemo(() => isAdminView ? renewals : renewals.filter((renewal) => renewal.owner === currentOperator || scopedStudentIds.has(renewal.studentId)), [currentOperator, isAdminView, renewals, scopedStudentIds]);
+  const scopedMessages = useMemo(() => isAdminView ? messages : messages.filter((message) => scopedStudentIds.has(message.studentId)), [isAdminView, messages, scopedStudentIds]);
+  const scopedFiles = useMemo(() => isAdminView ? files : files.filter((file) => scopedStudentIds.has(file.studentId)), [files, isAdminView, scopedStudentIds]);
+  const selectedStudent = scopedStudents.find((student) => student.id === selectedStudentId) ?? scopedStudents[0] ?? recordStudents[0];
+  const selectedMessage = scopedMessages.find((message) => message.id === selectedMessageId) ?? scopedMessages[0];
+  const selectedBooking = scopedBookings.find((booking) => booking.id === selectedBookingId) ?? scopedBookings[0];
+  const selectedOperation = scopedOperations.find((operation) => operation.id === selectedOperationId) ?? scopedOperations[0];
+  const activeLowHourStudents = useMemo(() => scopedStudents.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [scopedStudents, rules.lowHours]);
   const examReminderStudents = useMemo(() => {
     const now = new Date();
     const threshold = Number(rules.examDays || 30);
-    return recordStudents.filter((student) => {
+    return scopedStudents.filter((student) => {
       if (!student.examDate || !isActiveStudent(student)) return false;
       const exam = new Date(`${student.examDate}T12:00:00`);
       const days = Math.ceil((exam.getTime() - now.getTime()) / 86400000);
       return days >= 0 && days <= threshold;
     });
-  }, [recordStudents, rules.examDays]);
-  const dstRiskBookings = useMemo(() => bookings.filter((booking) => {
+  }, [scopedStudents, rules.examDays]);
+  const dstRiskBookings = useMemo(() => scopedBookings.filter((booking) => {
     const student = students.find((item) => item.id === booking.studentId);
     const teacher = teachers.find((item) => item.id === booking.teacherId);
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
-  }), [bookings, students, teachers]);
+  }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
+  const operatorOptions = useMemo(() => ["Nixon", ...ownerOptions.filter((owner) => owner !== "Nixon")], [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
@@ -1008,11 +994,109 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const visibleTasks = useMemo(() => {
-    const filtered = tasks.filter((task) => task.status !== "done");
+    const filtered = scopedTasks.filter((task) => task.status !== "done");
     if (taskFilter === "overdue") return filtered.filter((task) => task.status === "overdue");
-    if (taskFilter === "mine") return filtered.filter((task) => task.owner === "思佳");
+    if (taskFilter === "mine") return filtered.filter((task) => task.owner === currentOperator);
     return filtered;
-  }, [tasks, taskFilter]);
+  }, [currentOperator, scopedTasks, taskFilter]);
+
+  const switchOperator = (operator: string) => {
+    setCurrentOperator(operator);
+    setTaskFilter(operator === "Nixon" ? "all" : "mine");
+    setStudentView(operator === "Nixon" ? "all" : "mine");
+    setStudentOwner("all");
+    setStudentPage(1);
+    setSelectedStudentIds([]);
+    const firstOwnedStudent = recordStudents.find((student) => student.owner === operator);
+    const allowedStudentIds = new Set((operator === "Nixon" ? recordStudents : recordStudents.filter((student) => student.owner === operator)).map((student) => student.id));
+    if (firstOwnedStudent) setSelectedStudentId(firstOwnedStudent.id);
+    const firstBooking = bookings.find((booking) => allowedStudentIds.has(booking.studentId));
+    const firstMessage = messages.find((message) => allowedStudentIds.has(message.studentId));
+    const firstOperation = operations.find((operation) => allowedStudentIds.has(operation.studentId));
+    if (firstBooking) setSelectedBookingId(firstBooking.id);
+    if (firstMessage) setSelectedMessageId(firstMessage.id);
+    if (firstOperation) setSelectedOperationId(firstOperation.id);
+    if (operator !== "Nixon" && !staffSectionIds.has(active)) setActive("dashboard");
+    notify(operator === "Nixon" ? "已切换到全局管理视图" : `已切换到 ${operator} 的个人工作视图`);
+  };
+
+  const sharedVersionsRef = useRef<Record<string, number>>({});
+  const remoteHandlersRef = useRef<Record<string, (row: RemoteStateRow) => void>>({});
+
+  useEffect(() => {
+    sharedVersionsRef.current = {
+      students: studentsShared.version,
+      teachers: teachersShared.version,
+      tasks: tasksShared.version,
+      bookings: bookingsShared.version,
+      lpItems: lpShared.version,
+      operations: operationsShared.version,
+      renewals: renewalsShared.version,
+      payroll: payrollShared.version,
+      messages: messagesShared.version,
+      files: filesShared.version,
+      audit: auditShared.version,
+      rules: rulesShared.version,
+      dataSnapshot: dataSnapshotShared.version,
+    };
+    remoteHandlersRef.current = {
+      students: studentsShared.applyRemote as (row: RemoteStateRow) => void,
+      teachers: teachersShared.applyRemote as (row: RemoteStateRow) => void,
+      tasks: tasksShared.applyRemote as (row: RemoteStateRow) => void,
+      bookings: bookingsShared.applyRemote as (row: RemoteStateRow) => void,
+      lpItems: lpShared.applyRemote as (row: RemoteStateRow) => void,
+      operations: operationsShared.applyRemote as (row: RemoteStateRow) => void,
+      renewals: renewalsShared.applyRemote as (row: RemoteStateRow) => void,
+      payroll: payrollShared.applyRemote as (row: RemoteStateRow) => void,
+      messages: messagesShared.applyRemote as (row: RemoteStateRow) => void,
+      files: filesShared.applyRemote as (row: RemoteStateRow) => void,
+      audit: auditShared.applyRemote as (row: RemoteStateRow) => void,
+      rules: rulesShared.applyRemote as (row: RemoteStateRow) => void,
+      dataSnapshot: dataSnapshotShared.applyRemote as (row: RemoteStateRow) => void,
+    };
+  }, [auditShared.applyRemote, auditShared.version, bookingsShared.applyRemote, bookingsShared.version, dataSnapshotShared.applyRemote, dataSnapshotShared.version, filesShared.applyRemote, filesShared.version, lpShared.applyRemote, lpShared.version, messagesShared.applyRemote, messagesShared.version, operationsShared.applyRemote, operationsShared.version, payrollShared.applyRemote, payrollShared.version, renewalsShared.applyRemote, renewalsShared.version, rulesShared.applyRemote, rulesShared.version, studentsShared.applyRemote, studentsShared.version, tasksShared.applyRemote, tasksShared.version, teachersShared.applyRemote, teachersShared.version]);
+
+  useEffect(() => {
+    let stopped = false;
+    let polling = false;
+
+    const poll = async () => {
+      if (polling || document.hidden) return;
+      polling = true;
+      try {
+        const versionResponse = await fetch("/api/app-state?mode=versions", { cache: "no-store" });
+        const versionBody = await versionResponse.json().catch(() => ({}));
+        if (!versionResponse.ok) throw new Error(versionBody.error || "共享状态检查失败");
+        const changed = (versionBody.versions as RemoteStateRow[])
+          .filter((row) => row.version > (sharedVersionsRef.current[row.entity] ?? 0))
+          .map((row) => row.entity)
+          .filter((entity) => Boolean(remoteHandlersRef.current[entity]));
+
+        if (changed.length && !stopped) {
+          const stateResponse = await fetch(`/api/app-state?entities=${encodeURIComponent(changed.join(","))}`, { cache: "no-store" });
+          const stateBody = await stateResponse.json().catch(() => ({}));
+          if (!stateResponse.ok) throw new Error(stateBody.error || "共享资料刷新失败");
+          (stateBody.rows as RemoteStateRow[]).forEach((row) => remoteHandlersRef.current[row.entity]?.(row));
+        } else if (!stopped && navigator.onLine) {
+          reportSharedSync("synced", "Supabase 多人共享已连接");
+        }
+      } catch (error) {
+        if (!stopped) reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "共享同步暂时不可用");
+      } finally {
+        polling = false;
+      }
+    };
+
+    const interval = window.setInterval(poll, 2500);
+    const onVisible = () => { if (!document.hidden) void poll(); };
+    document.addEventListener("visibilitychange", onVisible);
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reportSharedSync]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1046,20 +1130,20 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     setRules((current) => ({ ...defaultRules, ...current, lowHours: current.lowHours ?? defaultRules.lowHours, examDays: current.examDays ?? defaultRules.examDays }));
   }, [rules.examDays, rules.lowHours, setRules]);
 
-  const filteredStudents = useMemo(() => recordStudents.filter((student) => {
+  const filteredStudents = useMemo(() => scopedStudents.filter((student) => {
     const haystack = `${student.name} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
     const matchesSearch = haystack.includes(search.trim().toLowerCase());
     if (!matchesSearch || (studentOwner !== "all" && student.owner !== studentOwner)) return false;
-    if (studentView === "mine") return student.owner === "思佳";
+    if (studentView === "mine") return student.owner === currentOperator;
     if (studentView === "trial") return student.status === "试听中" || student.status === "待排课";
     if (studentView === "enrolled") return student.segment === "已报名" && isActiveStudent(student);
     if (studentView === "lp") return requiresLp(student);
     if (studentView === "renewal") return student.status === "待续课";
     if (studentView === "paused") return student.status === "停课" || student.status === "非在读" || student.status === "不活跃";
     return true;
-  }).sort((a, b) => a.name.localeCompare(b.name)), [recordStudents, search, studentOwner, studentView]);
+  }).sort((a, b) => a.name.localeCompare(b.name)), [currentOperator, scopedStudents, search, studentOwner, studentView]);
 
-  const pageSize = 7;
+  const pageSize = 12;
   const safeStudentPage = Math.min(studentPage, Math.max(1, Math.ceil(filteredStudents.length / pageSize)));
   const pagedStudents = filteredStudents.slice((safeStudentPage - 1) * pageSize, safeStudentPage * pageSize);
   const teacherMatch = (teacher: Teacher) => teacher.subjects.some((subject) => selectedStudent.course.includes(subject.split(" ").slice(-1)[0])) ? 94 : teacher.subjects.some((subject) => subject.includes("English") && selectedStudent.course.includes("English")) ? 87 : 76;
@@ -1075,14 +1159,18 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const safeTeacherPage = Math.min(teacherPage, Math.max(1, Math.ceil(filteredTeachers.length / teacherPageSize)));
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
   const globalResults = globalQuery.trim() ? [
-    ...recordStudents.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
+    ...scopedStudents.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
     ...recordTeachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
   ] : [];
 
   const goToStudent = (studentId: string, section: Section = "students") => {
+    if (!scopedStudentIds.has(studentId)) {
+      notify("当前身份无权查看该学生档案");
+      return;
+    }
     setSelectedStudentId(studentId);
     if (section === "students") {
-      const sortedIndex = [...students].sort((a, b) => a.name.localeCompare(b.name)).findIndex((student) => student.id === studentId);
+      const sortedIndex = [...scopedStudents].sort((a, b) => a.name.localeCompare(b.name)).findIndex((student) => student.id === studentId);
       if (sortedIndex >= 0) {
         setSearch("");
         setStudentView("all");
@@ -1229,27 +1317,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     notify("已记录发送。Demo 不会向真实企业微信发送消息。");
   };
 
-  const runSync = () => {
-    setSyncState("running");
-    window.setTimeout(() => {
-      setSyncState("complete");
-      addAudit("运行模拟同步", "已完成系统到腾讯表格的镜像预览；未写入真实数据", "green");
-      notify("同步预览完成，未连接真实腾讯表格");
-    }, 850);
-  };
-
-  const resolveConflict = (choice: string) => {
-    setSyncResolved(true);
-    addAudit("处理同步冲突", `Olivia Chen 的负责人字段：${choice}`, "green");
-    notify("冲突已处理并保留审计记录");
-  };
-
   const resetDemo = () => {
-    const keys = ["students", "teachers", "tasks", "bookings", "lp", "operations", "renewals", "payroll", "messages", "files", "audit", "rules", "dataSnapshot"];
-    keys.forEach((key) => {
-      window.localStorage.removeItem(storageKey(key));
-      window.localStorage.removeItem(`yinling-mvp:${key}`);
-    });
     window.location.reload();
   };
 
@@ -1286,11 +1354,11 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       setSelectedStudentId(importedStudents[0].id);
       setSelectedTeacherId(importedTeachers[0].id);
       const importedAt = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
-      setDataSnapshot({ label: "真实资料本地快照", students: importedStudents.length, teachers: importedTeachers.length, importedAt });
-      addAudit("导入真实资料快照", `${importedStudents.length} 位学生、${importedTeachers.length} 位老师；仅保存在当前浏览器`, "green");
+      setDataSnapshot({ label: "Supabase 多人共享真实资料", students: importedStudents.length, teachers: importedTeachers.length, importedAt });
+      addAudit("导入真实资料快照", `${importedStudents.length} 位学生、${importedTeachers.length} 位老师；已写入共享数据库`, "green");
       setStudentPage(1);
       setTeacherPage(1);
-      notify(`已在本机导入 ${importedStudents.length} 位学生和 ${importedTeachers.length} 位老师`);
+      notify(`已导入并共享 ${importedStudents.length} 位学生和 ${importedTeachers.length} 位老师`);
     } catch {
       notify("导入失败：请选择本系统生成的本地资料包");
     } finally {
@@ -1299,26 +1367,33 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderDashboard = () => {
-    const overdue = tasks.filter((task) => task.status === "overdue").length;
-    const today = tasks.filter((task) => task.status === "today").length;
-    const lowHours = activeLowHourStudents.length;
-    const nearestExam = examReminderStudents[0];
-    const firstLowHours = activeLowHourStudents[0];
+    const operatorTasks = scopedTasks;
+    const operatorStudents = scopedStudents;
+    const operatorStudentIds = new Set(operatorStudents.map((student) => student.id));
+    const operatorBookings = currentOperator === "Nixon" ? bookings : bookings.filter((booking) => operatorStudentIds.has(booking.studentId));
+    const operatorLowHourStudents = activeLowHourStudents.filter((student) => operatorStudentIds.has(student.id));
+    const operatorExamStudents = examReminderStudents.filter((student) => operatorStudentIds.has(student.id));
+    const operatorDstBookings = dstRiskBookings.filter((booking) => operatorStudentIds.has(booking.studentId));
+    const overdue = operatorTasks.filter((task) => task.status === "overdue").length;
+    const today = operatorTasks.filter((task) => task.status === "today").length;
+    const lowHours = operatorLowHourStudents.length;
+    const nearestExam = operatorExamStudents[0];
+    const firstLowHours = operatorLowHourStudents[0];
     const pendingAva = recordTeachers.filter((teacher) => (teacher.availabilityStatus ?? "待确认") === "待确认").length;
     const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date());
     return <>
-      <ViewHeading eyebrow={todayLabel} title="今天先处理什么" copy={`所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：${dataSnapshot.label}。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
+      <ViewHeading eyebrow={todayLabel} title="今天先处理什么" copy={`${currentOperator === "Nixon" ? "全局管理视图" : `${currentOperator} 的个人工作视图`} · 所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：${dataSnapshot.label}。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="command-strip" aria-label="快速工作流">
         <button type="button" onClick={() => setModal("booking")}><CalendarPlus size={18} /><span><strong>安排课程</strong><small>检查时区、老师与学生冲突</small></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setActive("lp")}><BookOpen size={18} /><span><strong>处理 LP</strong><small>审核、发送与老师备课确认</small></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setModal("operation")}><RefreshCw size={18} /><span><strong>记录异常</strong><small>调课、请假、代课或换老师</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong><small>先处理异常，再人工锁定</small></span><ChevronRight size={16} /></button>
+        {isAdminView && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong><small>先处理异常，再人工锁定</small></span><ChevronRight size={16} /></button>}
       </section>
       <section className="metric-grid" aria-label="今日工作概览">
         <Metric tone="blue" icon={<ListTodo size={21} />} value={visibleTasks.length.toString()} label="待处理" detail={`今天到期 ${today} 项`} onClick={() => { setTaskFilter("all"); }} />
         <Metric tone="red" icon={<AlertTriangle size={21} />} value={overdue.toString()} label="已逾期" detail="需要立即处理" onClick={() => { setTaskFilter("overdue"); }} />
         <Metric tone="amber" icon={<Clock3 size={21} />} value={lowHours.toString()} label="低于 5 课时" detail="只统计在读/待续课" onClick={() => setActive("renewals")} />
-        <Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${Math.round((tasks.filter((task) => task.status === "done").length / Math.max(tasks.length, 1)) * 100)}%`} label="已完成" detail="本地演示记录" onClick={() => setActive("audit")} />
+        <Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${Math.round((operatorTasks.filter((task) => task.status === "done").length / Math.max(operatorTasks.length, 1)) * 100)}%`} label="已完成" detail={currentOperator === "Nixon" ? "全局任务" : `${currentOperator} 的任务`} onClick={() => setActive(isAdminView ? "audit" : "dashboard")} />
       </section>
       <section className="dashboard-grid">
         <article className="panel task-panel">
@@ -1326,43 +1401,43 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           <TaskList tasks={visibleTasks} studentById={studentById} onComplete={completeTask} onOpen={(task) => goToStudent(task.studentId)} />
           <button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button>
         </article>
-        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">按学生当地时间</p><h2>接下来课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={bookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /><div className="panel-foot"><MapPin size={15} /> 排课页会同时显示学生、老师与公司时间</div></article>
-        <article className="panel risk-panel"><div className="panel-header"><div><p className="eyebrow">需要人工判断</p><h2>风险与缺口</h2></div><StatusPill tone="amber">{lowHours + examReminderStudents.length + dstRiskBookings.length + pendingAva} 项</StatusPill></div>{firstLowHours ? <RiskRow tone="red" title={`${firstLowHours.name} 仅剩 ${firstLowHours.remainingHours} 课时`} detail="仅在读或待续课学生进入强提醒" action={() => goToStudent(firstLowHours.id, "renewals")} /> : <RiskRow tone="green" title="当前没有低课时学生" detail="非在读与不活跃学生已排除" action={() => setActive("renewals")} />}{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 30 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : <RiskRow tone="green" title="考试提醒窗口正常" detail="当前没有 30 天内考试" action={() => setActive("renewals")} />}{dstRiskBookings.length ? <RiskRow tone="purple" title={`${dstRiskBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化，需在转换日前复核" action={() => setActive("schedule")} /> : <RiskRow tone="blue" title="长期课时差检查通过" detail="IANA 时区会自动处理夏令时" action={() => setActive("schedule")} />}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="保留原文，但排课前必须人工确认" action={() => setActive("teachers")} /></article>
+        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">按学生当地时间</p><h2>接下来课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /><div className="panel-foot"><MapPin size={15} /> 排课页会同时显示学生、老师与公司时间</div></article>
+        <article className="panel risk-panel"><div className="panel-header"><div><p className="eyebrow">需要人工判断</p><h2>风险与缺口</h2></div><StatusPill tone="amber">{lowHours + operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{firstLowHours ? <RiskRow tone="red" title={`${firstLowHours.name} 仅剩 ${firstLowHours.remainingHours} 课时`} detail="仅在读或待续课学生进入强提醒" action={() => goToStudent(firstLowHours.id, "renewals")} /> : <RiskRow tone="green" title="当前没有低课时学生" detail="非在读与不活跃学生已排除" action={() => setActive("renewals")} />}{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 30 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : <RiskRow tone="green" title="考试提醒窗口正常" detail="当前没有 30 天内考试" action={() => setActive("renewals")} />}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化，需在转换日前复核" action={() => setActive("schedule")} /> : <RiskRow tone="blue" title="长期课时差检查通过" detail="IANA 时区会自动处理夏令时" action={() => setActive("schedule")} />}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="保留原文，但排课前必须人工确认" action={() => setActive("teachers")} /></article>
       </section>
     </>;
   };
 
   const renderStudents = () => {
     const viewItems = [
-      { id: "all", label: "全部学生", count: recordStudents.length },
-      { id: "mine", label: "我负责的", count: recordStudents.filter((student) => student.owner === "思佳").length },
-      { id: "trial", label: "试听与待排课", count: recordStudents.filter((student) => student.status === "试听中" || student.status === "待排课").length },
-      { id: "enrolled", label: "已报名在读", count: recordStudents.filter((student) => student.segment === "已报名" && isActiveStudent(student)).length },
-      { id: "lp", label: "需要 LP", count: recordStudents.filter(requiresLp).length },
-      { id: "renewal", label: "待续课", count: recordStudents.filter((student) => student.status === "待续课").length },
-      { id: "paused", label: "暂停/非在读", count: recordStudents.filter((student) => student.status === "停课" || student.status === "非在读" || student.status === "不活跃").length },
+      { id: "all", label: isAdminView ? "全部学生" : "我负责的学生", count: scopedStudents.length },
+      { id: "mine", label: currentOperator === "Nixon" ? "我负责的" : `${currentOperator} 负责`, count: scopedStudents.filter((student) => student.owner === currentOperator).length },
+      { id: "trial", label: "试听与待排课", count: scopedStudents.filter((student) => student.status === "试听中" || student.status === "待排课").length },
+      { id: "enrolled", label: "已报名在读", count: scopedStudents.filter((student) => student.segment === "已报名" && isActiveStudent(student)).length },
+      { id: "lp", label: "需要 LP", count: scopedStudents.filter(requiresLp).length },
+      { id: "renewal", label: "待续课", count: scopedStudents.filter((student) => student.status === "待续课").length },
+      { id: "paused", label: "暂停/非在读", count: scopedStudents.filter((student) => student.status === "停课" || student.status === "非在读" || student.status === "不活跃").length },
     ];
     const pageIds = pagedStudents.map((student) => student.id);
     const pageSelected = pageIds.length > 0 && pageIds.every((studentId) => selectedStudentIds.includes(studentId));
     return <>
       <ViewHeading eyebrow="学生 CRM · 试听、已报名与 LP 分流" title="学生档案" copy="按学员状态、负责教务和 LP 类型筛选；年级按基准年份自动推进，Report、跟进、考试与特殊备注集中在同一档案。" actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> 全局查找</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
-      <section className="panel collection-shell">
+      <section className="panel collection-shell student-collection">
         <ViewTabs value={studentView} items={viewItems} onChange={(value) => { setStudentView(value); setStudentPage(1); setSelectedStudentIds([]); }} label="学生保存视图" />
         <ListToolbar query={search} onQuery={(value) => { setSearch(value); setStudentPage(1); }} placeholder="搜索姓名、ID、课程、老师或负责人" count={`${filteredStudents.length} 位学生`}>
-          <select className="filter-select" value={studentOwner} onChange={(event) => { setStudentOwner(event.target.value); setStudentPage(1); }} aria-label="按负责教务筛选"><option value="all">全部教务</option>{ownerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>
+          {isAdminView && <select className="filter-select" value={studentOwner} onChange={(event) => { setStudentOwner(event.target.value); setStudentPage(1); }} aria-label="按负责教务筛选"><option value="all">全部教务</option>{ownerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>}
           <button className="toolbar-button" type="button" onClick={() => { setSearch(""); setStudentOwner("all"); setStudentView("all"); setStudentPage(1); }}><Filter size={15} /> 清除筛选</button>
           <button className="toolbar-button" type="button" onClick={() => notify("当前列配置已保存在此浏览器") }><ArrowUpDown size={15} /> 姓名排序</button>
         </ListToolbar>
         {selectedStudentIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedStudentIds.length} 位</strong><span>批量分配负责人</span>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => <button type="button" key={owner} onClick={() => bulkAssignStudents(owner)}>{owner}</button>)}<button className="bulk-clear" type="button" onClick={() => setSelectedStudentIds([])}>取消选择</button></div>}
         <div className="master-detail-layout">
           <article className="collection-main">
-            <div className="collection-head student-grid"><input type="checkbox" checked={pageSelected} aria-label="选择本页学生" onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>学生 / 年级 / 课程</span><span>学员状态 / 老师</span><span>负责教务</span><span>下一步</span></div>
+            <div className="collection-head student-grid"><input type="checkbox" disabled={!isAdminView} checked={pageSelected} aria-label="选择本页学生" onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>学生 / 年级 / 课程</span><span>学员状态 / 老师</span><span>负责教务</span><span>下一步</span></div>
             <div className="collection-viewport">
-              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${selectedStudent.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" checked={selectedStudentIds.includes(student.id)} aria-label={`选择 ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{student.segment ?? "已报名"} · {student.status}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title="没有符合条件的学生" detail="调整搜索或切换保存视图后再试。" />}
+              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${selectedStudent.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView} checked={selectedStudentIds.includes(student.id)} aria-label={`选择 ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{student.segment ?? "已报名"} · {student.status}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title="没有符合条件的学生" detail="调整搜索或切换保存视图后再试。" />}
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={setStudentPage} />
           </article>
-          <StudentDetail student={selectedStudent} tasks={tasks} bookings={bookings} files={files} studentById={studentById} teacherById={teacherById} mobileOpen={mobilePreview === "student"} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); setModal("booking"); }} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} />
+          <StudentDetail student={selectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} mobileOpen={mobilePreview === "student"} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); setModal("booking"); }} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} />
         </div>
       </section>
     </>;
@@ -1400,7 +1475,13 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderSchedule = () => {
-    const filteredBookings = bookings.filter((booking) => scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskBookings.some((risk) => risk.id === booking.id) : true);
+    const filteredBookings = scopedBookings.filter((booking) => scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskBookings.some((risk) => risk.id === booking.id) : true);
+    if (!selectedBooking) {
+      return <>
+        <ViewHeading eyebrow="统一时点 + IANA 时区 + AVA 占用锁定" title="排课与时区检查" copy="排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
+        <section className="panel collection-shell"><EmptyState title="暂无真实排课数据" detail="当前 Supabase 只导入了学生和老师档案；排课数据导入后会在这里显示。" /></section>
+      </>;
+    }
     const bookingStudent = studentById(selectedBooking.studentId) ?? selectedStudent;
     const bookingTeacher = teacherById(selectedBooking.teacherId) ?? selectedTeacher;
     const selectedInstant = bookingInstant(selectedBooking);
@@ -1425,8 +1506,8 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderLp = () => {
-    const visibleLp = lpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
-    const viewItems = [{ id: "active", label: "进行中", count: lpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: lpItems.filter((item) => item.stage === "待审核").length }, { id: "waiting", label: "等待资料/确认", count: lpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: lpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: lpItems.length }];
+    const visibleLp = scopedLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
+    const viewItems = [{ id: "active", label: "进行中", count: scopedLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: scopedLpItems.filter((item) => item.stage === "待审核").length }, { id: "waiting", label: "等待资料/确认", count: scopedLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: scopedLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: scopedLpItems.length }];
     return <>
       <ViewHeading eyebrow="Learning Plan · 类型、时限与审批" title="试听与 LP 工作流" copy="创建时选择业务类型，系统按模板生成强提醒。每个任务仍可由人工审核、推进和留痕。" actions={<button className="primary-button" type="button" onClick={() => setModal("lp")}><Plus size={17} /> 创建 LP 工作流</button>} />
       <section className="lp-template-strip" aria-label="LP 模板说明">{lpWorkflowOptions.map((option) => <article key={option.id}><strong>{option.title}</strong><span>{option.detail}</span></article>)}</section>
@@ -1435,20 +1516,26 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderOperations = () => {
-    const visibleOperations = operations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" || operation.type === "老师离职" : true);
+    const visibleOperations = scopedOperations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" || operation.type === "老师离职" : true);
+    if (!selectedOperation) {
+      return <>
+        <ViewHeading eyebrow="结构化异常处理" title="调课、请假、代课与离职" copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
+        <section className="panel collection-shell"><EmptyState title="暂无真实异常记录" detail="当前 Supabase 没有导入调课、请假、代课或离职记录。" /></section>
+      </>;
+    }
     const operationStudent = studentById(selectedOperation.studentId) ?? selectedStudent;
     const operationTeacher = selectedOperation.teacherId ? teacherById(selectedOperation.teacherId) : undefined;
     const recommendedTeachers = (selectedOperation.recommendedTeacherIds ?? []).map((teacherId) => teacherById(teacherId)).filter((teacher): teacher is Teacher => Boolean(teacher));
     return <>
       <ViewHeading eyebrow="结构化异常处理" title="调课、请假、代课与离职" copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
-      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: operations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: operations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与离职", count: operations.filter((item) => item.type === "请假" || item.type === "停课" || item.type === "老师离职").length }, { id: "all", label: "全部", count: operations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout operations-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); setMobilePreview("operation"); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div>{visibleOperations.length < 4 && <div className="operations-queue-insight"><div><span>当前视图</span><strong>{visibleOperations.length} 条待处理记录</strong><small>切换上方状态标签即可查看其他异常。</small></div><div><span>队列概览</span><strong>{operations.filter((item) => item.status === "待处理").length} 待处理 · {operations.filter((item) => item.status === "已确认").length} 已确认</strong><small>每次确认都会保留在操作审计中。</small></div><div><span>处理顺序</span><strong>先确认老师影响，再处理代课与沟通</strong><small>请假和离职会自动生成负责人截止任务。</small></div></div>}</article><aside className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭异常详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回异常列表</button><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div>{operationTeacher && <div className="detail-section"><span>原老师与影响范围</span><strong>{operationTeacher.name} · {selectedOperation.affectedLessonCount ?? 0} 节受影响课程</strong><p>{selectedOperation.eventStart || "日期待确认"} 至 {selectedOperation.eventEnd || "日期待确认"}</p></div>}{operationTeacher && <div className="detail-section"><span>代课候选</span>{recommendedTeachers.length ? <div className="operation-recommendations">{recommendedTeachers.map((teacher) => <button className={selectedOperation.chosenTeacherId === teacher.id ? "selected-choice" : "choice-button"} type="button" key={teacher.id} onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, chosenTeacherId: teacher.id } : entry)); addAudit("选择代课推荐老师", `${operationStudent.name} · ${teacher.name}`, "green"); notify(`${teacher.name} 已标记为推荐老师，尚未自动排课`); }}><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")}</small></span>{selectedOperation.chosenTeacherId === teacher.id ? <Check size={16} /> : <ChevronRight size={16} />}</button>)}</div> : <p>没有找到同时满足科目和结构化 AVA 的候选。请先补全 AVA 后再选择，不会猜测老师可用时间。</p>}</div>}<div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
+      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: scopedOperations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: scopedOperations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与离职", count: scopedOperations.filter((item) => item.type === "请假" || item.type === "停课" || item.type === "老师离职").length }, { id: "all", label: "全部", count: scopedOperations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout operations-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); setMobilePreview("operation"); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div>{visibleOperations.length < 4 && <div className="operations-queue-insight"><div><span>当前视图</span><strong>{visibleOperations.length} 条待处理记录</strong><small>切换上方状态标签即可查看其他异常。</small></div><div><span>队列概览</span><strong>{scopedOperations.filter((item) => item.status === "待处理").length} 待处理 · {scopedOperations.filter((item) => item.status === "已确认").length} 已确认</strong><small>每次确认都会保留在操作审计中。</small></div><div><span>处理顺序</span><strong>先确认老师影响，再处理代课与沟通</strong><small>请假和离职会自动生成负责人截止任务。</small></div></div>}</article><aside className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭异常详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回异常列表</button><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div>{operationTeacher && <div className="detail-section"><span>原老师与影响范围</span><strong>{operationTeacher.name} · {selectedOperation.affectedLessonCount ?? 0} 节受影响课程</strong><p>{selectedOperation.eventStart || "日期待确认"} 至 {selectedOperation.eventEnd || "日期待确认"}</p></div>}{operationTeacher && <div className="detail-section"><span>代课候选</span>{recommendedTeachers.length ? <div className="operation-recommendations">{recommendedTeachers.map((teacher) => <button className={selectedOperation.chosenTeacherId === teacher.id ? "selected-choice" : "choice-button"} type="button" key={teacher.id} onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, chosenTeacherId: teacher.id } : entry)); addAudit("选择代课推荐老师", `${operationStudent.name} · ${teacher.name}`, "green"); notify(`${teacher.name} 已标记为推荐老师，尚未自动排课`); }}><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")}</small></span>{selectedOperation.chosenTeacherId === teacher.id ? <Check size={16} /> : <ChevronRight size={16} />}</button>)}</div> : <p>没有找到同时满足科目和结构化 AVA 的候选。请先补全 AVA 后再选择，不会猜测老师可用时间。</p>}</div>}<div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
     </>;
   };
 
   const renderRenewals = () => {
     const renewalRows = [
-      ...renewals.map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
-      ...activeLowHourStudents.filter((student) => !renewals.some((renewal) => renewal.studentId === student.id)).map((student) => ({ id: `REN-AUTO-${student.id}`, studentId: student.id, remaining: student.remainingHours ?? 0, estimate: student.renewalDate || student.renewalMonth || "待确认", status: "待跟进" as const, owner: student.owner })),
+      ...scopedRenewals.map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
+      ...activeLowHourStudents.filter((student) => !scopedRenewals.some((renewal) => renewal.studentId === student.id)).map((student) => ({ id: `REN-AUTO-${student.id}`, studentId: student.id, remaining: student.remainingHours ?? 0, estimate: student.renewalDate || student.renewalMonth || "待确认", status: "待跟进" as const, owner: student.owner })),
     ];
     const visibleRenewals = renewalRows.filter((renewal) => renewalFilter === "attention" ? renewal.status === "待跟进" || renewal.status === "等待家长" : renewalFilter === "contacted" ? renewal.status === "已联系" : renewalFilter === "confirmed" ? renewal.status === "已确认" : true);
     return <>
@@ -1468,7 +1555,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderMessages = () => {
-    const visibleMessages = messages.filter((message) => {
+    const visibleMessages = scopedMessages.filter((message) => {
       const matchesQuery = `${message.kind} ${message.recipient} ${studentById(message.studentId)?.name ?? ""}`.toLowerCase().includes(messageQuery.trim().toLowerCase());
       if (!matchesQuery) return false;
       if (messageFilter === "open") return message.status !== "已记录发送";
@@ -1477,31 +1564,35 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       if (messageFilter === "internal") return message.status === "仅内部";
       return true;
     });
+    if (!selectedMessage) {
+      return <>
+        <ViewHeading eyebrow="按学生关系路由 · 发送前确认" title="消息队列" copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
+        <section className="panel collection-shell"><EmptyState title="暂无真实消息记录" detail="当前 Supabase 没有导入消息队列；后续接入企业微信后会在这里显示。" /></section>
+      </>;
+    }
     return <>
       <ViewHeading eyebrow="按学生关系路由 · 发送前确认" title="消息队列" copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
-      <section className="panel collection-shell"><ViewTabs value={messageFilter} items={[{ id: "open", label: "待处理", count: messages.filter((item) => item.status !== "已记录发送").length }, { id: "confirm", label: "待人工确认", count: messages.filter((item) => item.status === "待人工确认").length }, { id: "internal", label: "仅内部", count: messages.filter((item) => item.status === "仅内部").length }, { id: "sent", label: "已记录发送", count: messages.filter((item) => item.status === "已记录发送").length }, { id: "all", label: "全部", count: messages.length }]} onChange={setMessageFilter} label="消息保存视图" /><ListToolbar query={messageQuery} onQuery={setMessageQuery} placeholder="搜索学生、消息类型或收件对象" count={`${visibleMessages.length} 条消息`} /><div className="master-detail-layout message-layout"><article className="collection-main"><div className="collection-viewport message-list">{visibleMessages.length ? visibleMessages.map((message) => { const student = studentById(message.studentId); return <button className={`message-list-row ${selectedMessage.id === message.id ? "selected" : ""}`} type="button" key={message.id} onClick={() => { setSelectedMessageId(message.id); setMobilePreview("message"); }}><span className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}><MessageCircle size={18} /></span><span><strong>{message.kind}</strong><small>{student?.name} · {message.recipient}</small><em>{message.body}</em></span><span><StatusPill tone={message.status === "待人工确认" ? "amber" : message.status === "已记录发送" ? "green" : "blue"}>{message.status}</StatusPill><small>{message.createdAt}</small></span></button>; }) : <EmptyState title="没有符合条件的消息" detail="切换视图或清除搜索。" />}</div><div className="send-log"><strong>安全边界</strong><p><CircleAlert size={15} /> 当前只记录发送意图，未连接企业微信 API。</p></div></article><aside className={`record-preview message-preview ${mobilePreview === "message" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭消息详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回消息列表</button><div className="preview-header"><div><p className="eyebrow">发送前预览</p><h2>{selectedMessage.kind}</h2></div><StatusPill tone={selectedMessage.status === "待人工确认" ? "amber" : selectedMessage.status === "已记录发送" ? "green" : "blue"}>{selectedMessage.status}</StatusPill></div><div className="route-summary"><span>关联学生<strong>{studentById(selectedMessage.studentId)?.name}</strong></span><span>收件对象<strong>{selectedMessage.recipient}</strong></span><span>创建时间<strong>{selectedMessage.createdAt}</strong></span></div><div className="message-bubble">{selectedMessage.body}</div><div className="preview-foot"><CircleAlert size={16} /> 真实外部消息仍需企业微信权限、收件对象映射与人工确认。</div><button className="primary-button full" type="button" disabled={selectedMessage.status === "已记录发送"} onClick={recordMessage}><Send size={16} /> {selectedMessage.status === "已记录发送" ? "已记录发送" : "记录为已发送"}</button></aside></div></section>
+      <section className="panel collection-shell"><ViewTabs value={messageFilter} items={[{ id: "open", label: "待处理", count: scopedMessages.filter((item) => item.status !== "已记录发送").length }, { id: "confirm", label: "待人工确认", count: scopedMessages.filter((item) => item.status === "待人工确认").length }, { id: "internal", label: "仅内部", count: scopedMessages.filter((item) => item.status === "仅内部").length }, { id: "sent", label: "已记录发送", count: scopedMessages.filter((item) => item.status === "已记录发送").length }, { id: "all", label: "全部", count: scopedMessages.length }]} onChange={setMessageFilter} label="消息保存视图" /><ListToolbar query={messageQuery} onQuery={setMessageQuery} placeholder="搜索学生、消息类型或收件对象" count={`${visibleMessages.length} 条消息`} /><div className="master-detail-layout message-layout"><article className="collection-main"><div className="collection-viewport message-list">{visibleMessages.length ? visibleMessages.map((message) => { const student = studentById(message.studentId); return <button className={`message-list-row ${selectedMessage.id === message.id ? "selected" : ""}`} type="button" key={message.id} onClick={() => { setSelectedMessageId(message.id); setMobilePreview("message"); }}><span className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}><MessageCircle size={18} /></span><span><strong>{message.kind}</strong><small>{student?.name} · {message.recipient}</small><em>{message.body}</em></span><span><StatusPill tone={message.status === "待人工确认" ? "amber" : message.status === "已记录发送" ? "green" : "blue"}>{message.status}</StatusPill><small>{message.createdAt}</small></span></button>; }) : <EmptyState title="没有符合条件的消息" detail="切换视图或清除搜索。" />}</div><div className="send-log"><strong>安全边界</strong><p><CircleAlert size={15} /> 当前只记录发送意图，未连接企业微信 API。</p></div></article><aside className={`record-preview message-preview ${mobilePreview === "message" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭消息详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回消息列表</button><div className="preview-header"><div><p className="eyebrow">发送前预览</p><h2>{selectedMessage.kind}</h2></div><StatusPill tone={selectedMessage.status === "待人工确认" ? "amber" : selectedMessage.status === "已记录发送" ? "green" : "blue"}>{selectedMessage.status}</StatusPill></div><div className="route-summary"><span>关联学生<strong>{studentById(selectedMessage.studentId)?.name}</strong></span><span>收件对象<strong>{selectedMessage.recipient}</strong></span><span>创建时间<strong>{selectedMessage.createdAt}</strong></span></div><div className="message-bubble">{selectedMessage.body}</div><div className="preview-foot"><CircleAlert size={16} /> 真实外部消息仍需企业微信权限、收件对象映射与人工确认。</div><button className="primary-button full" type="button" disabled={selectedMessage.status === "已记录发送"} onClick={recordMessage}><Send size={16} /> {selectedMessage.status === "已记录发送" ? "已记录发送" : "记录为已发送"}</button></aside></div></section>
     </>;
   };
 
   const renderFiles = () => {
-    const visibleFiles = files.filter((file) => {
+    const visibleFiles = scopedFiles.filter((file) => {
       const matchesQuery = `${file.title} ${file.type} ${file.source} ${studentById(file.studentId)?.name ?? ""}`.toLowerCase().includes(fileQuery.trim().toLowerCase());
       return matchesQuery && (fileFilter === "all" || file.type === fileFilter);
     });
     return <>
       <ViewHeading eyebrow="资料索引 · 不依赖文件名猜测" title="文件中心" copy="用类型视图和搜索定位资料；每条文件记录直接关联学生，不需要进入不断变长的文件夹树。" actions={<button className="primary-button" type="button" onClick={() => setModal("file")}><FilePlus2 size={17} /> 登记文件</button>} />
-      <section className="panel collection-shell"><ViewTabs value={fileFilter} items={[{ id: "all", label: "全部", count: files.length }, { id: "Learning Plan", label: "Learning Plan", count: files.filter((item) => item.type === "Learning Plan").length }, { id: "成绩单", label: "成绩单", count: files.filter((item) => item.type === "成绩单").length }, { id: "课堂反馈", label: "课堂反馈", count: files.filter((item) => item.type === "课堂反馈").length }, { id: "资料链接", label: "资料链接", count: files.filter((item) => item.type === "资料链接").length }]} onChange={setFileFilter} label="文件保存视图" /><ListToolbar query={fileQuery} onQuery={setFileQuery} placeholder="搜索资料名、学生、类型或来源" count={`${visibleFiles.length} 项资料`} /><div className="collection-main"><div className="collection-head file-grid-row"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div><div className="collection-viewport">{visibleFiles.length ? visibleFiles.map((file) => { const student = studentById(file.studentId); return <div className="collection-row file-grid-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button><StatusPill tone={file.type === "Learning Plan" ? "blue" : "neutral"}>{file.type}</StatusPill><small>{file.source}</small><span>{file.addedAt}</span></div>; }) : <EmptyState title="没有找到资料" detail="调整类型视图或搜索关键词。" />}</div></div></section>
+      <section className="panel collection-shell"><ViewTabs value={fileFilter} items={[{ id: "all", label: "全部", count: scopedFiles.length }, { id: "Learning Plan", label: "Learning Plan", count: scopedFiles.filter((item) => item.type === "Learning Plan").length }, { id: "成绩单", label: "成绩单", count: scopedFiles.filter((item) => item.type === "成绩单").length }, { id: "课堂反馈", label: "课堂反馈", count: scopedFiles.filter((item) => item.type === "课堂反馈").length }, { id: "资料链接", label: "资料链接", count: scopedFiles.filter((item) => item.type === "资料链接").length }]} onChange={setFileFilter} label="文件保存视图" /><ListToolbar query={fileQuery} onQuery={setFileQuery} placeholder="搜索资料名、学生、类型或来源" count={`${visibleFiles.length} 项资料`} /><div className="collection-main"><div className="collection-head file-grid-row"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div><div className="collection-viewport">{visibleFiles.length ? visibleFiles.map((file) => { const student = studentById(file.studentId); return <div className="collection-row file-grid-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button><StatusPill tone={file.type === "Learning Plan" ? "blue" : "neutral"}>{file.type}</StatusPill><small>{file.source}</small><span>{file.addedAt}</span></div>; }) : <EmptyState title="没有找到资料" detail="调整类型视图或搜索关键词。" />}</div></div></section>
     </>;
   };
 
   const renderSync = () => <>
-    <ViewHeading eyebrow="人工导入 · 当前浏览器本地保存" title="同步与导入" copy="完整学生与教师资料不会写入公开网页源码。使用本地资料包导入后，只保存在当前浏览器；腾讯表格双向同步仍是后续受控迁移功能。" actions={<><input className="visually-hidden" ref={importInputRef} type="file" accept="application/json" onChange={importLocalSnapshot} /><button className="secondary-button" type="button" onClick={() => importInputRef.current?.click()}><FilePlus2 size={17} /> 导入本地资料包</button><button className="primary-button" type="button" onClick={runSync} disabled={syncState === "running"}>{syncState === "running" ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}{syncState === "running" ? "同步预览中" : "运行同步预览"}</button></>} />
-    <section className="sync-summary source-summary"><SummaryCard icon={<Users size={19} />} tone="green" title={`${sourceSnapshot.students} 位有效学生`} text="来自最新学员总表的有效姓名记录" /><SummaryCard icon={<GraduationCap size={19} />} tone="blue" title={`${sourceSnapshot.teachers} 位去重老师`} text="合并中小学、大学与跨部门科目" /><SummaryCard icon={<Clock3 size={19} />} tone="amber" title={`${sourceSnapshot.recentAva} 组近期 AVA`} text="可接、暂停接新或待结构化" /></section>
-    <section className="data-snapshot-bar"><span><Database size={17} /><strong>{dataSnapshot.label}</strong><small>{dataSnapshot.students} 位学生 · {dataSnapshot.teachers} 位老师 · 导入时间 {dataSnapshot.importedAt}</small></span><StatusPill tone={dataSnapshot.importedAt === "未导入" ? "amber" : "green"}>{dataSnapshot.importedAt === "未导入" ? "示例" : "已导入本机"}</StatusPill></section>
-    <section className="sync-summary"><SummaryCard icon={<Database size={19} />} tone="green" title="系统主数据" text="学生、排课、负责人、任务" /><SummaryCard icon={<RefreshCw size={19} />} tone="blue" title="腾讯表格镜像" text="仅同步已批准的字段" /><SummaryCard icon={<ShieldCheck size={19} />} tone="amber" title="独立备份" text="生产版需数据库快照与恢复点" /></section>
-    <section className="sync-layout"><article className="panel ownership-panel"><div className="panel-header"><div><p className="eyebrow">字段所有权</p><h2>谁可以写入什么</h2></div><StatusPill tone={syncState === "complete" ? "green" : "blue"}>{syncState === "complete" ? "预览完成" : "待运行"}</StatusPill></div><OwnershipRow title="姓名、课程、状态、排课、负责人" detail="系统拥有 · 镜像到腾讯表格" tone="blue" label="系统为主" /><OwnershipRow title="旧流程人工备注、历史交接字段" detail="腾讯可受控回写 · 记录前后值" tone="purple" label="有限回写" /><OwnershipRow title="删除动作" detail="两端均软删除，不自动传播" tone="amber" label="人工确认" /><OwnershipRow title="正式备份" detail="数据库快照 + 恢复点 + 独立导出" tone="green" label="独立保存" /></article><aside className="panel conflict-panel"><div className="panel-header"><div><p className="eyebrow">同步冲突</p><h2>{syncResolved ? "今天没有待处理冲突" : "需要人工选择"}</h2></div><StatusPill tone={syncResolved ? "green" : "amber"}>{syncResolved ? "已解决" : "1 项"}</StatusPill></div>{syncResolved ? <div className="resolved-state"><CircleCheck size={28} /><strong>冲突已记录并处理</strong><span>系统会保留来源、时间、操作者和最终选择，供后续审计。</span></div> : <><div className="conflict-record"><span>学生</span><strong>Olivia Chen · STU-0248</strong><span>字段</span><strong>负责教务 StudentOwner</strong></div><div className="conflict-values"><div><span>系统当前值</span><strong>思佳</strong><small>今天 09:12 · 排课任务创建</small></div><div><span>腾讯表格值</span><strong>Tiffany</strong><small>今天 09:18 · 人工编辑</small></div></div><div className="conflict-actions"><button className="secondary-button" type="button" onClick={() => resolveConflict("保留系统值：思佳")}>保留系统值</button><button className="primary-button" type="button" onClick={() => resolveConflict("采用腾讯值：Tiffany")}>采用腾讯值</button></div></>}</aside></section>
+    <ViewHeading eyebrow="Supabase 主数据 · 腾讯文档只读镜像" title="同步与导入" copy="站内新增和修改只写入 Supabase，并实时共享给其他在线成员。腾讯文档当前只读取和留存镜像，不会从本系统回写或删除原文档内容。" actions={<><input className="visually-hidden" ref={importInputRef} type="file" accept="application/json" onChange={importLocalSnapshot} /><button className="secondary-button" type="button" onClick={() => importInputRef.current?.click()}><FilePlus2 size={17} /> 导入到共享数据库</button><button className="primary-button" type="button" onClick={() => window.location.reload()}><RefreshCw size={17} /> 刷新同步状态</button></>} />
+    <section className="sync-summary source-summary"><SummaryCard icon={<Users size={19} />} tone="green" title={`${recordStudents.length} 位有效学生`} text="Supabase 多人共享学生档案" /><SummaryCard icon={<GraduationCap size={19} />} tone="blue" title={`${recordTeachers.length} 位去重老师`} text="中小学、大学及近期 AVA 汇总" /><SummaryCard icon={<RefreshCw size={19} />} tone="amber" title={`${syncSources.length} 个腾讯来源`} text="当前均为只读镜像，不向腾讯文档写回" /></section>
+    <section className="data-snapshot-bar"><span><Database size={17} /><strong>{dataSnapshot.label}</strong><small>{dataSnapshot.students} 位学生 · {dataSnapshot.teachers} 位老师 · 最近导入 {dataSnapshot.importedAt}</small></span><StatusPill tone={sharedSyncState === "synced" ? "green" : sharedSyncState === "saving" ? "blue" : "amber"}>{sharedSyncState === "synced" ? "多人共享在线" : sharedSyncState === "saving" ? "正在保存" : "同步需检查"}</StatusPill></section>
+    <section className="sync-layout"><article className="panel ownership-panel"><div className="panel-header"><div><p className="eyebrow">数据所有权</p><h2>系统现在如何保存</h2></div><StatusPill tone="green">已启用</StatusPill></div><OwnershipRow title="学生、老师、排课、任务与业务记录" detail="Supabase 为站内唯一写入目标，所有在线成员共享最新版本" tone="green" label="系统主数据" /><OwnershipRow title="腾讯文档" detail="只读取、只做镜像；本系统不会修改腾讯文档" tone="blue" label="只读来源" /><OwnershipRow title="并发修改" detail="保存前检查版本；发现别人先修改时不会静默覆盖" tone="amber" label="防覆盖" /><OwnershipRow title="外部消息" detail="未连接企业微信前只生成待确认记录，不自动发送" tone="purple" label="人工确认" /></article><aside className="panel source-panel"><div className="panel-header"><div><p className="eyebrow">腾讯文档来源</p><h2>最近读取状态</h2></div><StatusPill tone={syncSources.length ? "green" : "amber"}>{syncSources.length ? `${syncSources.length} 个来源` : "等待首次镜像"}</StatusPill></div>{syncSources.length ? <div className="source-list">{syncSources.map((source) => <div className="source-row" key={source.source_id}><span><strong>{source.title}</strong><small>{source.row_count} 行 · {source.synced_at ? new Date(source.synced_at).toLocaleString("zh-CN") : "未同步"}</small></span><StatusPill tone={source.status === "synced" ? "green" : "amber"}>{source.status === "synced" ? "只读已同步" : source.status}</StatusPill></div>)}</div> : <EmptyState title="尚未写入腾讯文档镜像" detail="系统仍以 Supabase 现有资料正常运行；完成只读读取后会在这里显示来源和时间。" />}</aside></section>
   </>;
-
   const renderReports = () => {
     const reportTasks = tasks.filter((task) => reportOwner === "all" || task.owner === reportOwner);
     const reportStudents = recordStudents.filter((student) => reportOwner === "all" || student.owner === reportOwner);
@@ -1512,13 +1603,13 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     return <>
       <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
       <section className="report-grid"><ReportCard value={`${completed}/${reportTasks.length}`} label="任务完成" detail={reportOwner === "all" ? "全部负责人" : reportOwner} tone="green" /><ReportCard value={`${trialCount}`} label="进行中的试听" detail="需要持续关注" tone="amber" /><ReportCard value={`${activeTeachers}/${teachers.length}`} label="可接新老师" detail="当前可用资源" tone="blue" /><ReportCard value={`${missingFiles}`} label="资料待补" detail="文件索引少于 5 项" tone="red" /></section>
-      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={syncResolved ? "0 项待处理" : "1 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
+      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={sharedSyncState === "conflict" ? "1 项需重新载入" : "0 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
     </>;
   };
 
   const renderSettings = () => <>
-    <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 恢复示例数据</button>} />
-    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">本地草稿</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到当前浏览器"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>临时真实资料展示</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="真实资料随私有站点加载，并缓存在当前浏览器 localStorage" tone="amber" label="临时" /><OwnershipRow title="真实资料来源" detail="学生总表与教师总表导入包，缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="生产试点前接入 Supabase 并配置权限与恢复点" tone="amber" label="待实施" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开本地导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="amber">未连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="镜像字段与冲突策略待批准" tone="purple" label="模拟" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步设计</button></article>}</section>
+    <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 重新载入共享数据</button>} />
+    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">多人共享</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到 Supabase，并同步给其他在线成员"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>真实资料与共享保存</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="站内业务数据写入 Supabase，在线成员读取同一版本" tone="green" label="已启用" /><OwnershipRow title="真实资料来源" detail="学生总表与教师总表导入包，缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="Supabase 已启用版本检查与共享写入；冲突不会静默覆盖" tone="green" label="已启用" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开共享导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="blue">部分连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="已完成只读来源识别与 Supabase 镜像，不向腾讯文档回写" tone="green" label="只读已接入" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步状态</button></article>}</section>
   </>;
 
   const renderAudit = () => {
@@ -1536,6 +1627,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const renderView = () => {
+    if (!isAdminView && !staffSectionIds.has(active)) return renderDashboard();
     switch (active) {
       case "dashboard": return renderDashboard();
       case "students": return renderStudents();
@@ -1718,21 +1810,21 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">吟</span><div><strong>吟领教务</strong><small>Learning Operations</small></div></div>
-        <div className="workspace-switch"><span className="workspace-dot" /> 全局管理视图 <ChevronDown size={15} /></div>
+        <div className="workspace-switch"><span className="workspace-dot" /> {currentOperator === "Nixon" ? "全局管理视图" : `${currentOperator} 工作视图`} <ChevronDown size={15} /></div>
         <button className="new-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 新建</button>
         <nav aria-label="主要导航">
           <p>学生与教务</p>
-          {navigation.filter((item) => item.group === "work").map((item) => {
+          {visibleNavigation.filter((item) => item.group === "work").map((item) => {
             const Icon = item.icon;
-            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{tasks.filter((task) => task.status !== "done").length}</b>}</button>;
+            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{tasks.filter((task) => task.status !== "done" && (currentOperator === "Nixon" || task.owner === currentOperator)).length}</b>}</button>;
           })}
           <p>运营与系统</p>
-          {navigation.filter((item) => item.group === "support").map((item) => {
+          {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span></button>;
           })}
         </nav>
-        <div className="sidebar-foot"><StatusPill tone="amber">本地 MVP</StatusPill><span>未连接真实外部系统</span></div>
+        <div className="sidebar-foot"><StatusPill tone={sharedSyncState === "synced" ? "green" : sharedSyncState === "saving" ? "blue" : "amber"}>{sharedSyncState === "synced" ? "多人共享在线" : sharedSyncState === "saving" ? "正在保存" : "同步需检查"}</StatusPill><span>{dataSnapshot.label}</span></div>
       </aside>
       <section className="main-stage">
         <header className="topbar">
@@ -1740,7 +1832,12 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           <div className="top-actions">
             <button className="top-search" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={16} /> 搜索学生、老师或 ID <kbd>Cmd K</kbd></button>
             <IconButton label="查看提醒" onClick={() => setActive("dashboard")}><ListTodo size={18} /></IconButton>
-            <span className="operator"><Avatar initials="NC" tone="green" /> Nixon</span>
+            <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
+            <label className="operator">
+              <Avatar initials={currentOperator === "Nixon" ? "NC" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
+              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => switchOperator(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option key={operator}>{operator}</option>)}</select></span>
+              <ChevronDown size={14} aria-hidden="true" />
+            </label>
           </div>
         </header>
         <div className="content">{renderView()}</div>
@@ -1756,8 +1853,9 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => switchOperator(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option key={operator}>{operator}</option>)}</select></label>
           <div className="mobile-nav-grid">
-            {navigation.map((item) => {
+            {visibleNavigation.map((item) => {
               const Icon = item.icon;
               return <button className={active === item.id ? "active" : ""} type="button" key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{item.group === "work" ? "学生与教务" : "运营与系统"}</small></span><ChevronRight size={16} /></button>;
             })}
