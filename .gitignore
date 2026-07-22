@@ -41,3 +41,4 @@ next-env.d.ts
 /\.playwright-cli/
 /work/
 /private/real-data.json
+/app/temporary-real-data.json
