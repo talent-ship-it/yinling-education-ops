@@ -15,7 +15,6 @@
 
 # next.js
 /.next/
-/.vinext/
 /out/
 
 # misc
@@ -36,10 +35,10 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
-/dist/
-/.wrangler/
 /outputs/
 /output/
 /\.playwright/
 /\.playwright-cli/
 /work/
+/private/real-data.json
+/app/temporary-real-data.json

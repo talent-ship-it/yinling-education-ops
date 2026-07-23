@@ -8,13 +8,11 @@ export const metadata: Metadata = {
   openGraph: {
     title: "吟领教务 | Learning Operations",
     description: "A calm, connected operations workspace for education teams.",
-    images: [{ url: "/og.png", width: 1600, height: 900, alt: "吟领教务 Learning Operations" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "吟领教务 | Learning Operations",
     description: "A calm, connected operations workspace for education teams.",
-    images: ["/og.png"],
   },
   icons: {
     icon: "/favicon.svg",
