@@ -974,10 +974,11 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
   const operatorOptions = useMemo(() => ["Nixon", ...ownerOptions.filter((owner) => owner !== "Nixon")], [ownerOptions]);
+  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
-    setAudit((current) => [{ id: id("AUD"), time: `今天 ${nowLabel()}`, actor: "当前操作员", action, detail, tone }, ...current]);
+    setAudit((current) => [{ id: id("AUD"), time: `今天 ${nowLabel()}`, actor: currentOperator, action, detail, tone }, ...current]);
   };
 
   const notify = (message: string) => {
@@ -996,9 +997,9 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const visibleTasks = useMemo(() => {
     const filtered = scopedTasks.filter((task) => task.status !== "done");
     if (taskFilter === "overdue") return filtered.filter((task) => task.status === "overdue");
-    if (taskFilter === "mine") return filtered.filter((task) => task.owner === currentOperator);
+    if (taskFilter === "mine") return filtered.filter((task) => task.owner === currentOperator || scopedStudentIds.has(task.studentId));
     return filtered;
-  }, [currentOperator, scopedTasks, taskFilter]);
+  }, [currentOperator, scopedStudentIds, scopedTasks, taskFilter]);
 
   const switchOperator = (operator: string) => {
     setCurrentOperator(operator);
@@ -1428,7 +1429,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           <button className="toolbar-button" type="button" onClick={() => { setSearch(""); setStudentOwner("all"); setStudentView("all"); setStudentPage(1); }}><Filter size={15} /> 清除筛选</button>
           <button className="toolbar-button" type="button" onClick={() => notify("当前列配置已保存在此浏览器") }><ArrowUpDown size={15} /> 姓名排序</button>
         </ListToolbar>
-        {selectedStudentIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedStudentIds.length} 位</strong><span>批量分配负责人</span>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => <button type="button" key={owner} onClick={() => bulkAssignStudents(owner)}>{owner}</button>)}<button className="bulk-clear" type="button" onClick={() => setSelectedStudentIds([])}>取消选择</button></div>}
+        {selectedStudentIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedStudentIds.length} 位</strong><span>批量分配负责人</span>{teamOwnerOptions.map((owner) => <button type="button" key={owner} onClick={() => bulkAssignStudents(owner)}>{owner}</button>)}<button className="bulk-clear" type="button" onClick={() => setSelectedStudentIds([])}>取消选择</button></div>}
         <div className="master-detail-layout">
           <article className="collection-main">
             <div className="collection-head student-grid"><input type="checkbox" disabled={!isAdminView} checked={pageSelected} aria-label="选择本页学生" onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>学生 / 年级 / 课程</span><span>学员状态 / 老师</span><span>负责教务</span><span>下一步</span></div>
@@ -1601,9 +1602,9 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     const activeTeachers = recordTeachers.filter((teacher) => teacher.acceptsStudents).length;
     const missingFiles = reportStudents.filter((student) => student.files < 5).length;
     return <>
-      <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
+      <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
       <section className="report-grid"><ReportCard value={`${completed}/${reportTasks.length}`} label="任务完成" detail={reportOwner === "all" ? "全部负责人" : reportOwner} tone="green" /><ReportCard value={`${trialCount}`} label="进行中的试听" detail="需要持续关注" tone="amber" /><ReportCard value={`${activeTeachers}/${teachers.length}`} label="可接新老师" detail="当前可用资源" tone="blue" /><ReportCard value={`${missingFiles}`} label="资料待补" detail="文件索引少于 5 项" tone="red" /></section>
-      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{["思佳", "Tiffany", "Abby", "Tara"].map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={sharedSyncState === "conflict" ? "1 项需重新载入" : "0 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
+      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{teamOwnerOptions.map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={sharedSyncState === "conflict" ? "1 项需重新载入" : "0 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
     </>;
   };
 
@@ -1816,7 +1817,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           <p>学生与教务</p>
           {visibleNavigation.filter((item) => item.group === "work").map((item) => {
             const Icon = item.icon;
-            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{tasks.filter((task) => task.status !== "done" && (currentOperator === "Nixon" || task.owner === currentOperator)).length}</b>}</button>;
+            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
           <p>运营与系统</p>
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
@@ -1894,7 +1895,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           <label>课程 / 年级<input name="course" placeholder="例如 Year 10 English" required /></label>
           <label>学员类型<select name="segment"><option>试听</option><option>已报名</option></select></label>
           <label>当前年级<input name="grade" placeholder="例如 Year 8" /></label>
-          <label>负责人<select name="owner"><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select></label>
+          <label>负责人<select name="owner">{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select></label>
           <label>规划老师<select name="planner"><option>待分配</option><option>Tara</option><option>Eileen</option></select></label>
           <label>所在地<select name="location"><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -1910,7 +1911,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
         <form className="form-grid" onSubmit={submitTask}>
           <label className="span-2">任务内容<input name="title" autoFocus placeholder="例如确认家长是否收到上课链接" required /></label>
           <label>关联学生<input name="studentId" list="task-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="task-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          <label>负责人<select name="owner"><option>思佳</option><option>Tiffany</option><option>Abby</option><option>Tara</option></select></label>
+          <label>负责人<select name="owner">{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select></label>
           <label>截止时间<input name="due" defaultValue="今天" /></label>
           <label>任务分类<select name="category"><option>资料</option><option>试听</option><option>LP</option><option>排课</option><option>课后</option><option>续课</option><option>薪资</option></select></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Plus size={16} /> 加入队列</button></footer>

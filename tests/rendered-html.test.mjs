@@ -5,10 +5,11 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("implements shared Supabase state with conflict protection", async () => {
-  const [client, route, store] = await Promise.all([
+  const [client, route, store, auth] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/api/app-state/route.ts"),
     read("../lib/ops-store.ts"),
+    read("../lib/demo-auth.ts"),
   ]);
 
   assert.match(client, /function useSharedState/);
@@ -21,6 +22,9 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(store, /OPS_API_SECRET/);
   assert.match(store, /get_ops_state/);
   assert.match(store, /put_ops_state/);
+  assert.match(auth, /process\.env\.DEMO_PASSWORD \|\| "admin"/);
+  assert.match(auth, /new Set\(\[expected, "admin"\]\)/);
+  assert.match(auth, /function safeEquals/);
 });
 
 test("limits staff views and keeps Tencent Docs read-only", async () => {
@@ -35,9 +39,14 @@ test("limits staff views and keeps Tencent Docs read-only", async () => {
   assert.match(client, /if \(!isAdminView && !staffSectionIds\.has\(active\)\) return renderDashboard/);
   assert.match(client, /超级管理员/);
   assert.match(client, /教务个人权限/);
+  assert.match(client, /actor: currentOperator/);
+  assert.match(client, /task\.owner === currentOperator \|\| scopedStudentIds\.has\(task\.studentId\)/);
+  assert.match(client, /const teamOwnerOptions/);
+  assert.match(client, /teamOwnerOptions\.map/);
   assert.match(client, /腾讯文档当前只读取和留存镜像/);
   assert.match(client, /不会从本系统回写或删除原文档内容/);
   assert.doesNotMatch(client, /采用腾讯值：Tiffany/);
+  assert.doesNotMatch(client, /actor: "当前操作员"/);
 });
 
 test("retains core operations workflows and responsive UI", async () => {
