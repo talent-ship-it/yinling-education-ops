@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 const PORT = 3001;
 const HOST = "localhost";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const bin = join(root, "node_modules", ".bin", process.platform === "win32" ? "vinext.cmd" : "vinext");
+const bin = join(root, "node_modules", ".bin", process.platform === "win32" ? "next.cmd" : "next");
 
 async function assertPortFree() {
   await new Promise((resolve, reject) => {
@@ -31,7 +31,7 @@ try {
 }
 
 const child = spawn(bin, ["dev", "--port", String(PORT)], {
-  env: { ...process.env, WRANGLER_LOG_PATH: ".wrangler/wrangler.log" },
+  env: process.env,
   stdio: "inherit",
 });
 
