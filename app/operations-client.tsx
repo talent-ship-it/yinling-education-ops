@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   ListChecks,
   ListTodo,
+  LockKeyhole,
   MapPin,
   MessageCircle,
   MessageSquare,
@@ -863,6 +864,28 @@ function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: st
   );
 }
 
+function NixonAccessDialog({ onSubmit, onClose, loading, error }: { onSubmit: (password: string) => void; onClose: () => void; loading: boolean; error: string }) {
+  const [password, setPassword] = useState("");
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="dialog nixon-access-dialog" role="dialog" aria-modal="true" aria-label="解锁 Nixon 全局视图" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="dialog-header">
+          <div><p className="eyebrow">敏感资料权限</p><h2>解锁 Nixon 全局视图</h2></div>
+          <IconButton label="关闭" onClick={onClose}><X size={18} /></IconButton>
+        </header>
+        <div className="nixon-access-copy"><LockKeyhole size={21} /><p>Nixon 视图包含薪资、同步来源、运营报表和操作审计，需要独立密码。</p></div>
+        <form className="login-form" onSubmit={(event) => { event.preventDefault(); onSubmit(password); }}>
+          <label htmlFor="nixon-password">Nixon 权限密码</label>
+          <input id="nixon-password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
+          {error ? <span className="login-error">{error}</span> : null}
+          <button type="submit" disabled={loading}>{loading ? "正在验证..." : "解锁全局视图"}</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 async function fetchSupabaseSnapshot() {
   const response = await fetch("/api/app-snapshot", { cache: "no-store" });
   const body = await response.json().catch(() => ({}));
@@ -876,6 +899,7 @@ export default function OperationsApp() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [initialData, setInitialData] = useState<ImportPayload | null>(null);
+  const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
@@ -901,8 +925,11 @@ export default function OperationsApp() {
     if (!authenticated) return;
 
     let active = true;
-    fetchSupabaseSnapshot()
-      .then((payload) => {
+    Promise.all([
+      fetchSupabaseSnapshot(),
+      fetch("/api/nixon-session", { cache: "no-store" }).then((response) => response.json()).catch(() => ({ ok: false })),
+    ])
+      .then(([payload, nixonSession]) => {
         if (!active) return;
         const hasRows = Boolean(payload.students?.length || payload.teachers?.length);
         if (!hasRows) {
@@ -910,6 +937,7 @@ export default function OperationsApp() {
           setInitialData(null);
           return;
         }
+        setNixonAuthenticated(Boolean(nixonSession.ok));
         setInitialData(payload);
       })
       .catch((error: unknown) => {
@@ -946,13 +974,16 @@ export default function OperationsApp() {
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace initialData={initialData} />;
+  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} />;
 }
 
-function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
+function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialData?: ImportPayload; initialNixonUnlocked: boolean }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
   const [active, setActive] = useState<Section>("dashboard");
-  const [currentOperator, setCurrentOperator] = useState("Nixon");
+  const [currentOperator, setCurrentOperator] = useState(() => initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
+  const [nixonAccessOpen, setNixonAccessOpen] = useState(false);
+  const [nixonAccessLoading, setNixonAccessLoading] = useState(false);
+  const [nixonAccessError, setNixonAccessError] = useState("");
   const [sharedSyncState, setSharedSyncState] = useState<SharedSyncState>("synced");
   const [sharedSyncMessage, setSharedSyncMessage] = useState("Supabase 多人共享已连接");
   const reportSharedSync = useCallback((state: SharedSyncState, message = "") => {
@@ -1091,6 +1122,25 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     return filtered;
   }, [currentOperator, scopedStudentIds, scopedTasks, taskFilter]);
 
+  const submitNixonPassword = async (password: string) => {
+    setNixonAccessLoading(true);
+    setNixonAccessError("");
+    const response = await fetch("/api/nixon-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setNixonAccessLoading(false);
+      setNixonAccessError(body.error || "Nixon 权限密码不正确。");
+      return;
+    }
+
+    window.location.reload();
+  };
+
   const switchOperator = (operator: string) => {
     setCurrentOperator(operator);
     setTaskFilter(operator === "Nixon" ? "all" : "mine");
@@ -1109,6 +1159,16 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     if (firstOperation) setSelectedOperationId(firstOperation.id);
     if (operator !== "Nixon" && !staffSectionIds.has(active)) setActive("dashboard");
     notify(operator === "Nixon" ? "已切换到全局管理视图" : `已切换到 ${operator} 的个人工作视图`);
+  };
+
+  const requestOperatorSwitch = (operator: string) => {
+    if (operator === "Nixon" && !initialNixonUnlocked) {
+      setMobileMenuOpen(false);
+      setNixonAccessError("");
+      setNixonAccessOpen(true);
+      return;
+    }
+    switchOperator(operator);
   };
 
   const sharedVersionsRef = useRef<Record<string, number>>({});
@@ -2071,7 +2131,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
             <label className="operator">
               <Avatar initials={currentOperator === "Nixon" ? "NC" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => switchOperator(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option key={operator}>{operator}</option>)}</select></span>
+              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" && !initialNixonUnlocked ? "Nixon（需密码）" : operator}</option>)}</select></span>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
           </div>
@@ -2089,7 +2149,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => switchOperator(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option key={operator}>{operator}</option>)}</select></label>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" && !initialNixonUnlocked ? "Nixon（需密码）" : operator}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
@@ -2098,6 +2158,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
           </div>
         </section>
       </div>}
+      {nixonAccessOpen && <NixonAccessDialog loading={nixonAccessLoading} error={nixonAccessError} onSubmit={submitNixonPassword} onClose={() => { if (!nixonAccessLoading) setNixonAccessOpen(false); }} />}
       {toast && <div className="toast"><CheckCircle2 size={17} /> {toast}</div>}
 
       {globalSearchOpen && <div className="global-search-backdrop" role="presentation" onMouseDown={() => setGlobalSearchOpen(false)}>
