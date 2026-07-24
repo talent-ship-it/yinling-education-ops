@@ -76,12 +76,16 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(client, /teacherTotalHours/);
   assert.match(client, /function formatMoney/);
   assert.match(client, /payrollCurrency/);
+  assert.match(client, /payrollPage/);
+  assert.match(client, /Pagination page=\{safePayrollPage\}/);
   assert.match(client, /学生明细/);
   assert.doesNotMatch(client, /模拟导入教务宝数据/);
   assert.match(css, /\.payroll-layout/);
   assert.match(css, /\.payroll-line-list/);
   assert.match(css, /@media \(max-width:1210px\)/);
   assert.match(css, /@media \(min-width:1211px\) and \(max-width:1360px\)/);
+  assert.match(css, /collection-shell > \.master-detail-layout/);
+  assert.match(css, /sync-workspace/);
   assert.match(css, /\.mobile-bottom-nav/);
   assert.match(css, /\.live-sync/);
   assert.match(css, /@media \(max-width:760px\)/);
