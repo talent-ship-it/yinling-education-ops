@@ -112,7 +112,9 @@ body {
 .topbar {
   background:#fff;
   backdrop-filter:none;
+  isolation:isolate;
   box-shadow:0 1px 0 #dfe7e2,0 8px 22px rgba(18,63,59,.045);
+  z-index:30;
 }
 
 .content { padding-top:30px; }
@@ -1459,8 +1461,60 @@ body {
   }
 
   .payroll-grid-row {
-    grid-template-columns:minmax(190px,1.3fr) minmax(100px,.72fr) minmax(100px,.72fr) minmax(100px,.74fr) minmax(96px,.7fr);
+    gap:18px;
+    grid-template-columns:minmax(250px,1.45fr) minmax(130px,.72fr) minmax(130px,.78fr) minmax(120px,.7fr) max-content;
   }
+
+  .payroll-grid-row > .status-pill {
+    justify-self:end;
+  }
+
+  .teacher-grid-row {
+    gap:16px;
+    grid-template-columns:minmax(250px,1.4fr) minmax(72px,.4fr) minmax(112px,.58fr) minmax(142px,.72fr) max-content;
+  }
+
+  .teacher-load,
+  .teacher-availability {
+    display:grid;
+    gap:4px;
+    min-width:0;
+  }
+
+  .teacher-load strong,
+  .teacher-availability strong {
+    font-size:12px;
+    line-height:1.25;
+  }
+
+  .teacher-availability small {
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .teacher-availability.raw strong {
+    color:#97600e;
+  }
+
+  .teacher-grid-row > .status-pill {
+    justify-self:end;
+  }
+}
+
+.availability-value {
+  display:block;
+  line-height:1.65;
+  overflow-wrap:anywhere;
+}
+
+.availability-value.raw {
+  background:#f8fbfa;
+  border-left:3px solid #dfb25c;
+  color:#40594f;
+  font-size:13px;
+  font-weight:600;
+  padding:9px 11px;
 }
 
 /* LP templates, structured AVA, and substitute-teacher decisions. */
