@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       .map((entity) => entity.trim())
       .filter(Boolean);
     if (!hasNixonAccess && entities?.includes("payroll")) {
-      return noStore({ error: "需要 Nixon 权限密码才能读取薪资资料。" }, 403);
+      return noStore({ error: "需要 Admin 权限密码才能读取薪资资料。" }, 403);
     }
     const [rows, sources] = await Promise.all([
       getOpsState(entities),
@@ -78,7 +78,7 @@ export async function PUT(request: NextRequest) {
   }
 
   if (body.entity === "payroll" && !(await nixonAuthorized())) {
-    return noStore({ error: "需要 Nixon 权限密码才能修改薪资资料。" }, 403);
+    return noStore({ error: "需要 Admin 权限密码才能修改薪资资料。" }, 403);
   }
 
   try {
