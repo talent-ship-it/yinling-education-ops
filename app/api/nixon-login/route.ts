@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!matchesNixonPassword(body?.password)) {
     await new Promise((resolve) => setTimeout(resolve, 500));
-    return NextResponse.json({ error: "Nixon 权限密码不正确。" }, { status: 401 });
+    return NextResponse.json({ error: "Admin 权限密码不正确。" }, { status: 401 });
   }
 
   const response = NextResponse.json({ ok: true });
