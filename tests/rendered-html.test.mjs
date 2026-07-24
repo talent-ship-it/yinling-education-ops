@@ -49,6 +49,32 @@ test("limits staff views and keeps Tencent Docs read-only", async () => {
   assert.doesNotMatch(client, /actor: "当前操作员"/);
 });
 
+test("locks Nixon profile and payroll behind a second server session", async () => {
+  const [client, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/api/app-snapshot/route.ts"),
+    read("../app/api/app-state/route.ts"),
+    read("../lib/nixon-auth.ts"),
+    read("../app/api/nixon-login/route.ts"),
+  ]);
+
+  assert.match(client, /initialNixonUnlocked/);
+  assert.match(client, /Nixon（需密码）/);
+  assert.match(client, /NixonAccessDialog/);
+  assert.match(client, /\/api\/nixon-login/);
+  assert.match(client, /defaults\.defaultStudents\.find\(\(student\) => student\.owner && student\.owner !== "Nixon"\)/);
+  assert.match(snapshotRoute, /row\.entity !== "payroll"/);
+  assert.match(snapshotRoute, /syncSources: nixonSession \? syncSources : \[\]/);
+  assert.match(stateRoute, /需要 Nixon 权限密码才能读取薪资资料/);
+  assert.match(stateRoute, /需要 Nixon 权限密码才能修改薪资资料/);
+  assert.match(stateRoute, /versions\.filter\(\(row\) => row\.entity !== "payroll"\)/);
+  assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
+  assert.match(nixonAuth, /createHash\("sha256"\)/);
+  assert.doesNotMatch(nixonAuth, /YL-GHPwF_97qvRB/);
+  assert.match(nixonLogin, /httpOnly: true/);
+  assert.doesNotMatch(nixonLogin, /maxAge/);
+});
+
 test("retains core operations workflows and responsive UI", async () => {
   const [client, css, packageJson, devServer] = await Promise.all([
     read("../app/operations-client.tsx"),
