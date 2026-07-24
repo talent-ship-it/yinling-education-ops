@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, hasValidDemoSession } from "@/lib/demo-auth";
+import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsSources, getOpsState } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +15,11 @@ export async function GET() {
 
   try {
     const [rows, syncSources] = await Promise.all([getOpsState(), getOpsSources()]);
-    const payload = Object.fromEntries(rows.map((row) => [row.entity, row.payload]));
-    const versions = Object.fromEntries(rows.map((row) => [row.entity, row.version]));
-    return NextResponse.json({ ...payload, versions, syncSources }, {
+    const nixonSession = hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const visibleRows = nixonSession ? rows : rows.filter((row) => row.entity !== "payroll");
+    const payload = Object.fromEntries(visibleRows.map((row) => [row.entity, row.payload]));
+    const versions = Object.fromEntries(visibleRows.map((row) => [row.entity, row.version]));
+    return NextResponse.json({ ...payload, versions, syncSources: nixonSession ? syncSources : [] }, {
       headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
