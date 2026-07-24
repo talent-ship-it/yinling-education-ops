@@ -73,6 +73,13 @@ test("retains core operations workflows and responsive UI", async () => {
   ]) assert.match(client, new RegExp(contract));
 
   assert.match(css, /--brand:#75C9C2/);
+  assert.match(client, /teacherTotalHours/);
+  assert.match(client, /function formatMoney/);
+  assert.match(client, /payrollCurrency/);
+  assert.match(client, /学生明细/);
+  assert.doesNotMatch(client, /模拟导入教务宝数据/);
+  assert.match(css, /\.payroll-layout/);
+  assert.match(css, /\.payroll-line-list/);
   assert.match(css, /\.mobile-bottom-nav/);
   assert.match(css, /\.live-sync/);
   assert.match(css, /@media \(max-width:760px\)/);
