@@ -106,3 +106,25 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);
 });
+
+test("keeps Jiaowubao imports read-only and exposes real operations data", async () => {
+  const [client, css] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/globals.css"),
+  ]);
+
+  assert.match(client, /const \[courses, , coursesShared\] = useSharedState\("courses"/);
+  assert.match(client, /const renderCourses = \(\) =>/);
+  assert.match(client, /case "courses": return renderCourses\(\)/);
+  assert.match(client, /contractHours\?: number/);
+  assert.match(client, /contractEffectiveDate\?: string/);
+  assert.match(client, /jwbSyncStatus\?: string/);
+  assert.match(client, /教务宝只读同步/);
+  assert.match(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
+  assert.match(client, /useState<"week" \| "agenda">\("agenda"\)/);
+  assert.match(client, /Array\.from\(\{ length: 7 \}/);
+  assert.match(client, /学生课时、课程目录与本周排课已只读镜像；不会回写教务宝/);
+  assert.match(css, /\.course-layout/);
+  assert.match(css, /\.course-grid-row/);
+  assert.match(css, /\.week-grid \{[^}]*grid-template-columns:58px repeat\(7,minmax\(94px,1fr\)\)/);
+});

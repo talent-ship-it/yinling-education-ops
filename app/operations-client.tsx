@@ -49,6 +49,7 @@ type Section =
   | "students"
   | "teachers"
   | "schedule"
+  | "courses"
   | "lp"
   | "operations"
   | "renewals"
@@ -97,6 +98,10 @@ type Student = {
   location?: string;
   planner?: string;
   remainingHours?: number;
+  contractHours?: number;
+  contractEffectiveDate?: string;
+  jwbSyncedAt?: string;
+  jwbSyncStatus?: string;
   reportProgress?: string;
   followUp?: string;
   notes?: string;
@@ -152,6 +157,19 @@ type Booking = {
   status: "待确认" | "已确认" | "已完成";
   timezone: string;
   recurring?: boolean;
+  course?: string;
+  source?: string;
+  sourceLessonId?: string;
+  sourceStudentName?: string;
+  sourceTeacherName?: string;
+  sourceTiming?: "已结束" | "未开始";
+};
+
+type CourseRecord = {
+  id: string;
+  name: string;
+  status: "在用" | "已完结";
+  source: string;
 };
 
 type BookingOccurrence = Booking & {
@@ -278,6 +296,7 @@ export type ImportPayload = {
   teachers?: Teacher[];
   tasks?: Task[];
   bookings?: Booking[];
+  courses?: CourseRecord[];
   lpItems?: LpItem[];
   operations?: Operation[];
   renewals?: Renewal[];
@@ -318,6 +337,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
   { id: "students", label: "学生档案", icon: Users, group: "work" },
   { id: "teachers", label: "老师资源", icon: GraduationCap, group: "work" },
   { id: "schedule", label: "排课", icon: CalendarDays, group: "work" },
+  { id: "courses", label: "课程与课包", icon: BookOpen, group: "work" },
   { id: "lp", label: "试听与 LP", icon: BookOpen, group: "work" },
   { id: "operations", label: "调课与代课", icon: CalendarPlus, group: "work" },
   { id: "renewals", label: "考试与续课", icon: ListChecks, group: "work" },
@@ -331,7 +351,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
 ];
 
 const mobilePrimaryNavigation = navigation.filter((item) => ["dashboard", "students", "schedule", "messages"].includes(item.id));
-const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "lp", "operations", "renewals", "messages", "files"]);
+const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files"]);
 
 const baseStudents: Student[] = [
   { id: "STU-0248", name: "Olivia Chen", initials: "OC", status: "试听中", owner: "思佳", course: "Year 10 English", timezone: "Australia/Melbourne · UTC+10", guardian: "Chen 先生 · 企业微信客户群", teacher: "待匹配", next: "确认 N-2 资料与收费", nextTone: "red", files: 4 },
@@ -406,6 +426,7 @@ function buildRuntimeDefaults(importPayload?: ImportPayload) {
     defaultTeachers: hasRealData ? realTeachers : initialTeachers,
     defaultTasks: hasRealData ? importPayload?.tasks ?? [] : initialTasks,
     defaultBookings: hasRealData ? importPayload?.bookings ?? [] : initialBookings,
+    defaultCourses: hasRealData ? importPayload?.courses ?? [] : [],
     defaultLpItems: hasRealData ? importPayload?.lpItems ?? [] : initialLp,
     defaultOperations: hasRealData ? importPayload?.operations ?? [] : initialOperations,
     defaultRenewals: hasRealData ? importPayload?.renewals ?? [] : initialRenewals,
@@ -943,6 +964,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const [teachers, setTeachers, teachersShared] = useSharedState("teachers", defaults.defaultTeachers, versionFor("teachers"), currentOperator, reportSharedSync);
   const [tasks, setTasks, tasksShared] = useSharedState("tasks", defaults.defaultTasks, versionFor("tasks"), currentOperator, reportSharedSync);
   const [bookings, setBookings, bookingsShared] = useSharedState("bookings", defaults.defaultBookings, versionFor("bookings"), currentOperator, reportSharedSync);
+  const [courses, , coursesShared] = useSharedState("courses", defaults.defaultCourses, versionFor("courses"), currentOperator, reportSharedSync);
   const [lpItems, setLpItems, lpShared] = useSharedState("lpItems", defaults.defaultLpItems, versionFor("lpItems"), currentOperator, reportSharedSync);
   const [operations, setOperations, operationsShared] = useSharedState("operations", defaults.defaultOperations, versionFor("operations"), currentOperator, reportSharedSync);
   const [renewals, setRenewals, renewalsShared] = useSharedState("renewals", defaults.defaultRenewals, versionFor("renewals"), currentOperator, reportSharedSync);
@@ -966,10 +988,13 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const [teacherView, setTeacherView] = useState("available");
   const [teacherSubject, setTeacherSubject] = useState("all");
   const [teacherPage, setTeacherPage] = useState(1);
-  const [scheduleMode, setScheduleMode] = useState<"week" | "agenda">("week");
+  const [scheduleMode, setScheduleMode] = useState<"week" | "agenda">("agenda");
   const [scheduleFilter, setScheduleFilter] = useState("all");
   const [scheduleTimezone, setScheduleTimezone] = useState("Australia/Melbourne");
   const [selectedBookingId, setSelectedBookingId] = useState("LES-001");
+  const [courseQuery, setCourseQuery] = useState("");
+  const [coursePage, setCoursePage] = useState(1);
+  const [selectedCourseId, setSelectedCourseId] = useState(defaults.defaultCourses[0]?.id ?? "");
   const [lpMode, setLpMode] = useState<"board" | "table">("board");
   const [lpFilter, setLpFilter] = useState("active");
   const [operationFilter, setOperationFilter] = useState("open");
@@ -1091,6 +1116,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       teachers: teachersShared.version,
       tasks: tasksShared.version,
       bookings: bookingsShared.version,
+      courses: coursesShared.version,
       lpItems: lpShared.version,
       operations: operationsShared.version,
       renewals: renewalsShared.version,
@@ -1106,6 +1132,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       teachers: teachersShared.applyRemote as (row: RemoteStateRow) => void,
       tasks: tasksShared.applyRemote as (row: RemoteStateRow) => void,
       bookings: bookingsShared.applyRemote as (row: RemoteStateRow) => void,
+      courses: coursesShared.applyRemote as (row: RemoteStateRow) => void,
       lpItems: lpShared.applyRemote as (row: RemoteStateRow) => void,
       operations: operationsShared.applyRemote as (row: RemoteStateRow) => void,
       renewals: renewalsShared.applyRemote as (row: RemoteStateRow) => void,
@@ -1116,7 +1143,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       rules: rulesShared.applyRemote as (row: RemoteStateRow) => void,
       dataSnapshot: dataSnapshotShared.applyRemote as (row: RemoteStateRow) => void,
     };
-  }, [auditShared.applyRemote, auditShared.version, bookingsShared.applyRemote, bookingsShared.version, dataSnapshotShared.applyRemote, dataSnapshotShared.version, filesShared.applyRemote, filesShared.version, lpShared.applyRemote, lpShared.version, messagesShared.applyRemote, messagesShared.version, operationsShared.applyRemote, operationsShared.version, payrollShared.applyRemote, payrollShared.version, renewalsShared.applyRemote, renewalsShared.version, rulesShared.applyRemote, rulesShared.version, studentsShared.applyRemote, studentsShared.version, tasksShared.applyRemote, tasksShared.version, teachersShared.applyRemote, teachersShared.version]);
+  }, [auditShared.applyRemote, auditShared.version, bookingsShared.applyRemote, bookingsShared.version, coursesShared.applyRemote, coursesShared.version, dataSnapshotShared.applyRemote, dataSnapshotShared.version, filesShared.applyRemote, filesShared.version, lpShared.applyRemote, lpShared.version, messagesShared.applyRemote, messagesShared.version, operationsShared.applyRemote, operationsShared.version, payrollShared.applyRemote, payrollShared.version, renewalsShared.applyRemote, renewalsShared.version, rulesShared.applyRemote, rulesShared.version, studentsShared.applyRemote, studentsShared.version, tasksShared.applyRemote, tasksShared.version, teachersShared.applyRemote, teachersShared.version]);
 
   useEffect(() => {
     let stopped = false;
@@ -1384,7 +1411,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   };
 
   const exportDemo = () => {
-    const payload = { meta: { schemaVersion: 2, dataSnapshot }, students, teachers, tasks, bookings, lpItems, operations, renewals, payroll, messages, files, audit, rules };
+    const payload = { meta: { schemaVersion: 3, dataSnapshot }, students, teachers, tasks, bookings, courses, lpItems, operations, renewals, payroll, messages, files, audit, rules };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1539,6 +1566,37 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     </>;
   };
 
+  const renderCourses = () => {
+    const normalizedQuery = courseQuery.trim().toLowerCase();
+    const filteredCourses = courses.filter((course) => course.name.toLowerCase().includes(normalizedQuery));
+    const pageSize = 12;
+    const safePage = Math.min(coursePage, Math.max(1, Math.ceil(filteredCourses.length / pageSize)));
+    const pagedCourses = filteredCourses.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const selectedCourse = courses.find((course) => course.id === selectedCourseId) ?? pagedCourses[0] ?? courses[0];
+    const selectedCourseBookings = selectedCourse ? bookings.filter((booking) => booking.course === selectedCourse.name) : [];
+    const categoryFor = (name: string) => /试听/.test(name) ? "试听专用课程" : /AEAS|AAS|ACER|AMC/i.test(name) ? "考试与竞赛" : /IB|VCE|HSC|Year\s*\d/i.test(name) ? "中小学课程" : "大学与通用课程";
+
+    return <>
+      <ViewHeading eyebrow="教务宝只读课程镜像" title="课程与课包" copy="先将教务宝的在用课程目录完整镜像到本系统；课程名称可搜索、可与真实排课核对。课包价格和扣课规则仍待取得结构化来源后再启用。" actions={<button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={17} /> 查看同步来源</button>} />
+      <section className="panel collection-shell">
+        <ListToolbar query={courseQuery} onQuery={(value) => { setCourseQuery(value); setCoursePage(1); }} placeholder="搜索课程名称" count={`${filteredCourses.length} 门在用课程`}>
+          <button className="toolbar-button" type="button" onClick={() => { setCourseQuery(""); setCoursePage(1); }}><Filter size={15} /> 清除筛选</button>
+        </ListToolbar>
+        <div className="master-detail-layout course-layout">
+          <article className="collection-main">
+            <div className="collection-head course-grid-row"><span>课程名称</span><span>分类</span><span>本周排课</span><span>状态</span></div>
+            <div className="collection-viewport">{pagedCourses.map((course) => {
+              const lessonCount = bookings.filter((booking) => booking.course === course.name).length;
+              return <button className={`collection-row course-grid-row ${selectedCourse?.id === course.id ? "selected" : ""}`} type="button" key={course.id} onClick={() => setSelectedCourseId(course.id)}><span><strong>{course.name}</strong><small>{course.id}</small></span><span>{categoryFor(course.name)}</span><strong>{lessonCount} 节</strong><StatusPill tone="green">{course.status}</StatusPill></button>;
+            })}</div>
+            <Pagination page={safePage} total={filteredCourses.length} pageSize={pageSize} onPage={setCoursePage} />
+          </article>
+          {selectedCourse ? <aside className="record-preview course-preview"><div className="preview-header"><div><p className="eyebrow">课程档案</p><h2>{selectedCourse.name}</h2></div><StatusPill tone="green">{selectedCourse.status}</StatusPill></div><div className="detail-section"><span>课程分类</span><strong>{categoryFor(selectedCourse.name)}</strong><p>来源：{selectedCourse.source}</p></div><div className="detail-section split"><div><span>本周排课</span><strong>{selectedCourseBookings.length} 节</strong></div><div><span>关联学生</span><strong>{new Set(selectedCourseBookings.map((booking) => booking.studentId)).size} 人</strong></div></div><div className="detail-section"><span>课包与收费规则</span><strong>待结构化导入</strong><p>当前不会根据课程名称猜测价格、课时或扣课规则。</p></div>{selectedCourseBookings.length ? <button className="primary-button full" type="button" onClick={() => { setSelectedBookingId(selectedCourseBookings[0].id); setActive("schedule"); }}><CalendarDays size={16} /> 查看本周排课</button> : <button className="secondary-button full" type="button" onClick={() => setModal("booking")}><CalendarPlus size={16} /> 为课程安排排课</button>}</aside> : <EmptyState title="没有课程记录" detail="清除搜索条件后重试。" />}
+        </div>
+      </section>
+    </>;
+  };
+
   const renderSchedule = () => {
     const filteredBookings = scopedBookings.filter((booking) => scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskBookings.some((risk) => risk.id === booking.id) : true);
     if (!selectedBooking) {
@@ -1551,20 +1609,20 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     const bookingTeacher = teacherById(selectedBooking.teacherId) ?? selectedTeacher;
     const selectedInstant = bookingInstant(selectedBooking);
     const selectedDstRisk = bookingHasDstRisk(selectedBooking, bookingStudent, bookingTeacher);
-    const weekDays = Array.from({ length: 6 }, (_, index) => {
+    const weekDays = Array.from({ length: 7 }, (_, index) => {
       const date = new Date(Date.UTC(2026, 6, 20 + index));
       return { date: date.toISOString().slice(0, 10), label: new Intl.DateTimeFormat("zh-CN", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(date) };
     });
     return <>
       <ViewHeading eyebrow="统一时点 + IANA 时区 + AVA 占用锁定" title="排课与时区检查" copy="排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
       <section className="panel schedule-shell">
-        <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => setScheduleMode("agenda")}>日程列表</button></div><strong>2026 年 7 月 20 日 - 25 日</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleTimezone} onChange={(event) => setScheduleTimezone(event.target.value)} aria-label="排课显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>显示：{option.label}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option><option value="dst">夏令时需复核</option></select></div></div>
+        <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => setScheduleMode("agenda")}>日程列表</button></div><strong>2026 年 7 月 20 日 - 26 日</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleTimezone} onChange={(event) => setScheduleTimezone(event.target.value)} aria-label="排课显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>显示：{option.label}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => setScheduleFilter(event.target.value)} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option><option value="dst">夏令时需复核</option></select></div></div>
         <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong><small>系统会按 IANA 时区自动换算；发生相对时差变化时保留课程并要求教务复核，不会静默改时间。</small></span></div>
         <div className="master-detail-layout schedule-layout">
           <article className="collection-main">
-            {scheduleMode === "week" ? <div className="week-grid"><div className="week-side"><span>时间</span>{["14:00", "16:00", "18:00", "20:00"].map((time) => <strong key={time}>{time}</strong>)}</div>{weekDays.map((day) => <div className="day-column" key={day.date}><span>{day.label}<small>{timezoneLabel(scheduleTimezone)}</small></span>{[0, 1, 2, 3].map((slot) => <i key={slot} />)}{filteredBookings.filter((booking) => { const local = zonedParts(bookingInstant(booking), scheduleTimezone); return `${local.year}-${local.month}-${local.day}` === day.date; }).map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const local = zonedParts(bookingInstant(booking), scheduleTimezone); const displayTime = `${local.hour}:${local.minute}`; const top = 63 + Math.max(0, Math.min(3, (Number(local.hour) - 14) / 2)) * 96; return <button className={`lesson-block ${selectedBooking.id === booking.id ? "selected" : ""} ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} style={{ top }} key={booking.id} type="button" onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); setMobilePreview("booking"); }}><strong>{student?.name}</strong><small>{displayTime} · {teacher?.name}</small><small>{booking.kind} · {booking.status}</small></button>; })}</div>)}</div> : <div className="agenda-list"><div className="collection-head agenda-grid"><span>显示时间</span><span>学生 / 课程</span><span>老师</span><span>类型</span><span>状态</span></div><div className="collection-viewport">{filteredBookings.map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const instant = bookingInstant(booking); const hasRisk = student && teacher ? bookingHasDstRisk(booking, student, teacher) : false; return <button className={`collection-row agenda-grid ${selectedBooking.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); setMobilePreview("booking"); }}><span><strong>{formatInstant(instant, scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)} · {booking.duration} 分钟</small></span><span><strong>{student?.name}</strong><small>{student?.course}</small></span><span>{teacher?.name}<small>{timezoneLabel(teacher?.timezone ?? "Australia/Melbourne")}</small></span><StatusPill tone={booking.kind === "试听" ? "blue" : hasRisk ? "purple" : "green"}>{hasRisk ? "时差复核" : booking.kind}</StatusPill><StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill></button>; })}</div></div>}
+            {scheduleMode === "week" ? <div className="week-grid"><div className="week-side"><span>时间</span>{["14:00", "16:00", "18:00", "20:00"].map((time) => <strong key={time}>{time}</strong>)}</div>{weekDays.map((day) => <div className="day-column" key={day.date}><span>{day.label}<small>{timezoneLabel(scheduleTimezone)}</small></span>{[0, 1, 2, 3].map((slot) => <i key={slot} />)}{filteredBookings.filter((booking) => { const local = zonedParts(bookingInstant(booking), scheduleTimezone); return `${local.year}-${local.month}-${local.day}` === day.date; }).map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const local = zonedParts(bookingInstant(booking), scheduleTimezone); const displayTime = `${local.hour}:${local.minute}`; const top = 63 + Math.max(0, Math.min(3, (Number(local.hour) - 14) / 2)) * 96; return <button className={`lesson-block ${selectedBooking.id === booking.id ? "selected" : ""} ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} style={{ top }} key={booking.id} type="button" onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); setMobilePreview("booking"); }}><strong>{student?.name}</strong><small>{displayTime} · {teacher?.name}</small><small>{booking.course ?? booking.kind}</small></button>; })}</div>)}</div> : <div className="agenda-list"><div className="collection-head agenda-grid"><span>显示时间</span><span>学生 / 课程</span><span>老师</span><span>类型</span><span>状态</span></div><div className="collection-viewport">{filteredBookings.map((booking) => { const student = studentById(booking.studentId); const teacher = teacherById(booking.teacherId); const instant = bookingInstant(booking); const hasRisk = student && teacher ? bookingHasDstRisk(booking, student, teacher) : false; return <button className={`collection-row agenda-grid ${selectedBooking.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setSelectedTeacherId(booking.teacherId); setMobilePreview("booking"); }}><span><strong>{formatInstant(instant, scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)} · {booking.duration} 分钟</small></span><span><strong>{student?.name}</strong><small>{booking.course ?? student?.course}</small></span><span>{teacher?.name}<small>{timezoneLabel(teacher?.timezone ?? "Australia/Melbourne")}</small></span><StatusPill tone={booking.kind === "试听" ? "blue" : hasRisk ? "purple" : "green"}>{hasRisk ? "时差复核" : booking.kind}</StatusPill><StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill></button>; })}</div></div>}
           </article>
-          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button><div className="panel-header"><div><p className="eyebrow">课程预览</p><h2>{bookingStudent.name}</h2></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} /><TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} /><TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" /><TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`原始录入：${timezoneLabel(selectedBooking.timezone)}`} /><div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
+          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button><div className="panel-header"><div><p className="eyebrow">{selectedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{selectedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} /><TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} /><TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" /><TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`来源时段：${selectedBooking.sourceTiming ?? "人工录入"}`} /><div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
         </div>
       </section>
     </>;
@@ -1692,7 +1750,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
 
   const renderSettings = () => <>
     <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 重新载入共享数据</button>} />
-    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">多人共享</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到 Supabase，并同步给其他在线成员"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>真实资料与共享保存</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="站内业务数据写入 Supabase，在线成员读取同一版本" tone="green" label="已启用" /><OwnershipRow title="真实资料来源" detail="学生总表与教师总表导入包，缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="Supabase 已启用版本检查与共享写入；冲突不会静默覆盖" tone="green" label="已启用" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开共享导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="blue">部分连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="当前采用人工导入样例" tone="blue" label="人工导入" /><OwnershipRow title="腾讯表格" detail="已完成只读来源识别与 Supabase 镜像，不向腾讯文档回写" tone="green" label="只读已接入" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步状态</button></article>}</section>
+    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">多人共享</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到 Supabase，并同步给其他在线成员"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>真实资料与共享保存</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="站内业务数据写入 Supabase，在线成员读取同一版本" tone="green" label="已启用" /><OwnershipRow title="真实资料来源" detail="学生总表、教师总表与教务宝只读镜像；缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="Supabase 已启用版本检查与共享写入；冲突不会静默覆盖" tone="green" label="已启用" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开共享导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="blue">部分连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="学生课时、课程目录与本周排课已只读镜像；不会回写教务宝" tone="green" label="只读已接入" /><OwnershipRow title="腾讯表格" detail="已完成只读来源识别与 Supabase 镜像，不向腾讯文档回写" tone="green" label="只读已接入" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步状态</button></article>}</section>
   </>;
 
   const renderAudit = () => {
@@ -1716,6 +1774,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
       case "students": return renderStudents();
       case "teachers": return renderTeachers();
       case "schedule": return renderSchedule();
+      case "courses": return renderCourses();
       case "lp": return renderLp();
       case "operations": return renderOperations();
       case "renewals": return renderRenewals();
@@ -2099,7 +2158,8 @@ function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpe
   return <aside className={`student-detail ${mobileOpen ? "mobile-detail-open" : ""}`}>
     <button className="mobile-preview-close" type="button" aria-label="关闭学生详情" onClick={onClose}><ChevronLeft size={20} /> 返回学生列表</button>
     <div className="detail-top"><Avatar initials={student.initials} tone={statusTone(student.status)} /><div><p>{student.id}</p><h2>{student.name}</h2><StatusPill tone={statusTone(student.status)}>{student.segment ?? "已报名"} · {student.status}</StatusPill></div><IconButton label="更多学生操作"><MoreHorizontal size={18} /></IconButton></div>
-    <div className="student-facts"><span><small>当前年级</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>由 {student.gradeBaseYear} 年记录自动升级</em> : null}</span><span><small>所在地 / 时区</small><strong>{student.location ?? "待确认"}</strong><em>{timezoneLabel(student.timezone)}</em></span><span><small>负责教务</small><strong>{student.owner}</strong><em>规划：{student.planner ?? "待分配"}</em></span><span><small>剩余课时</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? "待导入" : `${student.remainingHours} 节`}</strong><em>{lowHours ? "已进入强提醒" : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? "当前状态不提醒" : "阈值 5 节"}</em></span></div>
+    <div className="student-facts"><span><small>当前年级</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>由 {student.gradeBaseYear} 年记录自动升级</em> : null}</span><span><small>所在地 / 时区</small><strong>{student.location ?? "待确认"}</strong><em>{timezoneLabel(student.timezone)}</em></span><span><small>负责教务</small><strong>{student.owner}</strong><em>规划：{student.planner ?? "待分配"}</em></span><span><small>剩余 / 合约课时</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? "待导入" : `${student.remainingHours} / ${student.contractHours ?? "?"} 节`}</strong><em>{student.contractEffectiveDate ? `生效 ${student.contractEffectiveDate}` : lowHours ? "已进入强提醒" : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? "当前状态不提醒" : "阈值 5 节"}</em></span></div>
+    {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝只读同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong><p>课时与合约数据来自只读镜像；本系统不会回写教务宝。</p></div>}
     <div className="detail-section"><span>课程与老师</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
     <div className="detail-section split"><div><span>LP 类型</span><strong>{student.lpNeed ?? "未设置"}</strong></div><div><span>资料</span><button className="inline-link" type="button" onClick={onFiles}>{files.filter((file) => file.studentId === student.id).length || student.files} 项索引 <ChevronRight size={14} /></button></div></div>
     <div className="detail-section split"><div><span>Report 进度</span><strong>{student.reportProgress ?? "未记录"}</strong></div><div><span>最近跟进</span><strong>{student.followUp ?? "未记录"}</strong></div></div>
