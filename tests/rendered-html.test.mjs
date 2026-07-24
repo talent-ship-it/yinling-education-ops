@@ -80,6 +80,8 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.doesNotMatch(client, /模拟导入教务宝数据/);
   assert.match(css, /\.payroll-layout/);
   assert.match(css, /\.payroll-line-list/);
+  assert.match(css, /@media \(max-width:1210px\)/);
+  assert.match(css, /@media \(min-width:1211px\) and \(max-width:1360px\)/);
   assert.match(css, /\.mobile-bottom-nav/);
   assert.match(css, /\.live-sync/);
   assert.match(css, /@media \(max-width:760px\)/);
