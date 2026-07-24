@@ -2129,7 +2129,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
             <label className="operator">
               <Avatar initials={currentOperator === "Nixon" ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? (initialNixonUnlocked ? "Admin" : "Admin（需密码）") : operator}</option>)}</select></span>
+              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></span>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
           </div>
@@ -2147,7 +2147,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? (initialNixonUnlocked ? "Admin" : "Admin（需密码）") : operator}</option>)}</select></label>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
