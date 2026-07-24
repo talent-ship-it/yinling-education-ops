@@ -1302,6 +1302,34 @@ body {
   .detail-section p { font-size:12px; line-height:1.55; }
   .record-preview .primary-button,.record-preview .secondary-button { margin-top:10px; min-height:42px; }
 
+  .collection-shell > .master-detail-layout {
+    height:clamp(580px,calc(100dvh - 270px),760px);
+  }
+
+  .master-detail-layout > .collection-main {
+    display:grid;
+    grid-template-rows:auto minmax(0,1fr) auto;
+    min-height:0;
+  }
+
+  .master-detail-layout .collection-viewport {
+    height:auto;
+    max-height:none;
+    min-height:0;
+  }
+
+  .master-detail-layout > .record-preview,
+  .master-detail-layout > .student-detail {
+    height:100%;
+    max-height:none;
+    overflow:auto;
+    scrollbar-gutter:stable;
+  }
+
+  .payroll-preview .payroll-line-list {
+    max-height:min(28dvh,260px);
+  }
+
   .compact-rules {
     gap:10px;
     list-style:none;
@@ -1390,6 +1418,13 @@ body {
   .message-layout { grid-template-columns:minmax(500px,1fr) minmax(340px,.46fr); }
   .payroll-layout { grid-template-columns:minmax(560px,1fr) minmax(360px,.5fr); }
   .operations-queue-insight { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+
+@media (min-width:761px) and (max-width:1210px) {
+  .collection-shell > .master-detail-layout { height:auto; }
+  .master-detail-layout > .collection-main { display:block; }
+  .master-detail-layout > .record-preview,
+  .master-detail-layout > .student-detail { height:auto; overflow:visible; }
 }
 
 /* LP templates, structured AVA, and substitute-teacher decisions. */
@@ -1602,6 +1637,19 @@ body {
 .source-row > span:first-child { display:grid; gap:4px; min-width:0; }
 .source-row strong { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .source-row small { color:var(--muted); font-size:10px; }
+
+/* Keep the import page on the same rhythm as the record workspaces. */
+.sync-workspace { display:grid; gap:14px; }
+.sync-workspace .sync-summary { margin:0; }
+.sync-workspace .data-snapshot-bar { margin:0; padding:15px 18px; }
+.sync-workspace .sync-layout { align-items:stretch; gap:14px; }
+.sync-workspace .ownership-panel,.sync-workspace .source-panel { padding:0 20px 18px; }
+.sync-workspace .ownership-panel .panel-header,.sync-workspace .source-panel .panel-header { padding-left:0; padding-right:0; }
+.sync-workspace .source-row { padding:15px 0; }
+
+@media (min-width:761px) {
+  .sync-workspace .sync-layout { grid-template-columns:minmax(360px,.86fr) minmax(0,1.14fr); }
+}
 
 .student-grid input:disabled { cursor:not-allowed; opacity:.25; }
 
