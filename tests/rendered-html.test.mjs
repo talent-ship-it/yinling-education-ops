@@ -59,7 +59,7 @@ test("locks Nixon profile and payroll behind a second server session", async () 
   ]);
 
   assert.match(client, /initialNixonUnlocked/);
-  assert.match(client, /Admin（需密码）/);
+  assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
   assert.match(client, /NixonAccessDialog/);
   assert.match(client, /\/api\/nixon-login/);
   assert.match(client, /defaults\.defaultStudents\.find\(\(student\) => student\.owner && student\.owner !== "Nixon"\)/);
