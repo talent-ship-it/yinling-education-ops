@@ -203,6 +203,36 @@ type PayrollRow = {
   amount: number;
   status: "需核对" | "可审核" | "已锁定";
   note: string;
+  month?: string;
+  section?: string;
+  currency?: "CNY" | "AUD";
+  teacherName?: string;
+  teacherTotalHours?: number;
+  teacherTotalAmount?: number;
+  lineAmount?: number;
+  lineCount?: number;
+  rateRange?: number[];
+  sourceHours?: number | null;
+  sourceLessonCount?: number | null;
+  sourceNoShowHours?: number | null;
+  hourVariance?: number | null;
+  bankAccount?: string;
+  bankName?: string;
+  paymentNote?: string;
+  source?: string;
+  lockedBy?: string;
+  lockedAt?: string;
+  lines?: PayrollLine[];
+};
+
+type PayrollLine = {
+  studentName: string;
+  hours: number;
+  rate: number;
+  subtotal: number;
+  note?: string;
+  isTrial?: boolean;
+  sourceRow?: number;
 };
 
 type Message = {
@@ -563,6 +593,28 @@ function formatInstant(date: Date, timezone: string) {
   }).format(date);
 }
 
+function formatHours(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "待匹配";
+  return `${Number(value.toFixed(2)).toLocaleString()} 小时`;
+}
+
+function formatMoney(amount: number, currency: PayrollRow["currency"] = "AUD") {
+  const prefix = currency === "CNY" ? "¥" : "A$";
+  return `${prefix}${Number(amount.toFixed(2)).toLocaleString()}`;
+}
+
+function payrollCurrencyLabel(currency: PayrollRow["currency"] = "AUD") {
+  return currency === "CNY" ? "人民币" : "澳币";
+}
+
+function maskAccount(value?: string) {
+  if (!value) return "未导入";
+  if (value.startsWith("尾号")) return value;
+  const compact = value.replace(/\s+/g, "");
+  if (!compact) return "未导入";
+  return `尾号 ${compact.slice(-4)}`;
+}
+
 function formatClock(date: Date, timezone: string) {
   const parts = zonedParts(date, cleanTimezone(timezone));
   return `${parts.hour}:${parts.minute}`;
@@ -918,6 +970,8 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
   const [selectedOperationId, setSelectedOperationId] = useState("OPS-001");
   const [renewalFilter, setRenewalFilter] = useState("attention");
   const [payrollFilter, setPayrollFilter] = useState("all");
+  const [payrollCurrency, setPayrollCurrency] = useState("all");
+  const [selectedPayrollId, setSelectedPayrollId] = useState("");
   const [messageFilter, setMessageFilter] = useState("open");
   const [messageQuery, setMessageQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
@@ -1444,6 +1498,9 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     </>;
   };
 
+Warning: truncated output (original token count: 16700)
+Total output lines: 250
+
   const renderTeachers = () => {
     const viewItems = [
       { id: "available", label: "可接新生", count: recordTeachers.filter((teacher) => teacher.acceptsStudents).length },
@@ -1512,68 +1569,7 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
     return <>
       <ViewHeading eyebrow="Learning Plan · 类型、时限与审批" title="试听与 LP 工作流" copy="创建时选择业务类型，系统按模板生成强提醒。每个任务仍可由人工审核、推进和留痕。" actions={<button className="primary-button" type="button" onClick={() => setModal("lp")}><Plus size={17} /> 创建 LP 工作流</button>} />
       <section className="lp-template-strip" aria-label="LP 模板说明">{lpWorkflowOptions.map((option) => <article key={option.id}><strong>{option.title}</strong><span>{option.detail}</span></article>)}</section>
-      <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /><div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div></div>{lpMode === "board" ? <section className="kanban-board">{lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>{visibleLp.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span><div className="card-tags"><StatusPill tone={item.stage === "完成" ? "green" : "amber"}>{item.stage}</StatusPill>{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>{item.stage !== "完成" && <button className="card-action" type="button" onClick={() => advanceLp(item)}><ArrowRight size={15} /> 推进到下一阶段</button>}</div>; })}</article>)}</section> : <div className="collection-main"><div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>类型</span><span>负责人</span><span>阶段</span><span>截止时间</span><span>操作</span></div><div className="collection-viewport">{visibleLp.map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="collection-row lp-grid-row" key={item.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(item.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(student?.status ?? "待排课")} /><span><strong>{student?.name}</strong><small>{item.title}</small></span></button><span>{item.workflowType ?? "历史 LP"}{publishedDay && <small className="inline-meta">{publishedDay}</small>}</span><span>{item.owner}</span><StatusPill tone={item.stage === "完成" ? "green" : item.stage === "待审核" ? "amber" : "blue"}>{item.stage}</StatusPill><span>{item.due}</span>{item.stage === "完成" ? <span className="muted-cell">已完成</span> : <button className="compact-button" type="button" onClick={() => advanceLp(item)}>推进</button>}</div>; })}</div></div>}</section>
-    </>;
-  };
-
-  const renderOperations = () => {
-    const visibleOperations = scopedOperations.filter((operation) => operationFilter === "open" ? operation.status === "待处理" : operationFilter === "confirmed" ? operation.status === "已确认" : operationFilter === "leave" ? operation.type === "请假" || operation.type === "停课" || operation.type === "老师离职" : true);
-    if (!selectedOperation) {
-      return <>
-        <ViewHeading eyebrow="结构化异常处理" title="调课、请假、代课与离职" copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
-        <section className="panel collection-shell"><EmptyState title="暂无真实异常记录" detail="当前 Supabase 没有导入调课、请假、代课或离职记录。" /></section>
-      </>;
-    }
-    const operationStudent = studentById(selectedOperation.studentId) ?? selectedStudent;
-    const operationTeacher = selectedOperation.teacherId ? teacherById(selectedOperation.teacherId) : undefined;
-    const recommendedTeachers = (selectedOperation.recommendedTeacherIds ?? []).map((teacherId) => teacherById(teacherId)).filter((teacher): teacher is Teacher => Boolean(teacher));
-    return <>
-      <ViewHeading eyebrow="结构化异常处理" title="调课、请假、代课与离职" copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。" actions={<button className="primary-button" type="button" onClick={() => setModal("operation")}><CalendarPlus size={17} /> 记录异常</button>} />
-      <section className="panel collection-shell"><ViewTabs value={operationFilter} items={[{ id: "open", label: "待处理", count: scopedOperations.filter((item) => item.status === "待处理").length }, { id: "confirmed", label: "已确认", count: scopedOperations.filter((item) => item.status === "已确认").length }, { id: "leave", label: "请假与离职", count: scopedOperations.filter((item) => item.type === "请假" || item.type === "停课" || item.type === "老师离职").length }, { id: "all", label: "全部", count: scopedOperations.length }]} onChange={setOperationFilter} label="异常保存视图" /><div className="master-detail-layout operations-layout"><article className="collection-main"><div className="collection-head operation-grid-row"><span>记录</span><span>学生</span><span>创建时间</span><span>状态</span></div><div className="collection-viewport">{visibleOperations.length ? visibleOperations.map((operation) => { const student = studentById(operation.studentId); return <button className={`collection-row operation-grid-row ${selectedOperation.id === operation.id ? "selected" : ""}`} type="button" key={operation.id} onClick={() => { setSelectedOperationId(operation.id); setSelectedStudentId(operation.studentId); setMobilePreview("operation"); }}><span><strong>{operation.type}</strong><small>{operation.detail}</small></span><span>{student?.name}<small>{student?.course}</small></span><span>{operation.createdAt}</span><StatusPill tone={operation.status === "已确认" ? "green" : "amber"}>{operation.status}</StatusPill></button>; }) : <EmptyState title="当前视图没有异常记录" detail="切换视图或新建一条异常处理记录。" />}</div>{visibleOperations.length < 4 && <div className="operations-queue-insight"><div><span>当前视图</span><strong>{visibleOperations.length} 条待处理记录</strong><small>切换上方状态标签即可查看其他异常。</small></div><div><span>队列概览</span><strong>{scopedOperations.filter((item) => item.status === "待处理").length} 待处理 · {scopedOperations.filter((item) => item.status === "已确认").length} 已确认</strong><small>每次确认都会保留在操作审计中。</small></div><div><span>处理顺序</span><strong>先确认老师影响，再处理代课与沟通</strong><small>请假和离职会自动生成负责人截止任务。</small></div></div>}</article><aside className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭异常详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回异常列表</button><div className="preview-header"><div><p className="eyebrow">异常记录</p><h2>{selectedOperation.type} · {operationStudent.name}</h2></div><StatusPill tone={selectedOperation.status === "已确认" ? "green" : "amber"}>{selectedOperation.status}</StatusPill></div><div className="detail-section"><span>处理说明</span><strong>{selectedOperation.detail}</strong><p>{selectedOperation.createdAt} · {operationStudent.owner} 负责</p></div>{operationTeacher && <div className="detail-section"><span>原老师与影响范围</span><strong>{operationTeacher.name} · {selectedOperation.affectedLessonCount ?? 0} 节受影响课程</strong><p>{selectedOperation.eventStart || "日期待确认"} 至 {selectedOperation.eventEnd || "日期待确认"}</p></div>}{operationTeacher && <div className="detail-section"><span>代课候选</span>{recommendedTeachers.length ? <div className="operation-recommendations">{recommendedTeachers.map((teacher) => <button className={selectedOperation.chosenTeacherId === teacher.id ? "selected-choice" : "choice-button"} type="button" key={teacher.id} onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, chosenTeacherId: teacher.id } : entry)); addAudit("选择代课推荐老师", `${operationStudent.name} · ${teacher.name}`, "green"); notify(`${teacher.name} 已标记为推荐老师，尚未自动排课`); }}><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")}</small></span>{selectedOperation.chosenTeacherId === teacher.id ? <Check size={16} /> : <ChevronRight size={16} />}</button>)}</div> : <p>没有找到同时满足科目和结构化 AVA 的候选。请先补全 AVA 后再选择，不会猜测老师可用时间。</p>}</div>}<div className="detail-section"><span>确认前检查</span><ul className="compact-rules"><li>学生与老师的新时间是否都确认</li><li>是否影响课时、薪资或代课安排</li><li>是否需要生成对外消息待办</li></ul></div>{selectedOperation.status === "待处理" && <button className="primary-button full" type="button" onClick={() => { setOperations((current) => current.map((entry) => entry.id === selectedOperation.id ? { ...entry, status: "已确认" } : entry)); addAudit("确认异常处理", `${selectedOperation.type} · ${operationStudent.name}`, "green"); notify("已确认，后续任务仍保留在工作台"); }}>确认处理</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(operationStudent.id)}>查看学生档案</button></aside></div></section>
-    </>;
-  };
-
-  const renderRenewals = () => {
-    const renewalRows = [
-      ...scopedRenewals.map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
-      ...activeLowHourStudents.filter((student) => !scopedRenewals.some((renewal) => renewal.studentId === student.id)).map((student) => ({ id: `REN-AUTO-${student.id}`, studentId: student.id, remaining: student.remainingHours ?? 0, estimate: student.renewalDate || student.renewalMonth || "待确认", status: "待跟进" as const, owner: student.owner })),
-    ];
-    const visibleRenewals = renewalRows.filter((renewal) => renewalFilter === "attention" ? renewal.status === "待跟进" || renewal.status === "等待家长" : renewalFilter === "contacted" ? renewal.status === "已联系" : renewalFilter === "confirmed" ? renewal.status === "已确认" : true);
-    return <>
-      <ViewHeading eyebrow="低课时与考试节点 · 自动避免遗漏" title="考试与续课" copy={`剩余课时低于 ${rules.lowHours} 的在读/待续课学生进入强提醒；停课、非在读与不活跃学生自动排除。考试在提前 ${rules.examDays} 天和考试当天提醒负责教务。`} actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加跟进</button>} />
-      <section className="exam-reminder-strip"><div><span className="risk-icon amber"><CalendarDays size={17} /></span><span><strong>{examReminderStudents.length} 位学生进入考试提醒窗口</strong><small>考试当天仍会保留一条“考后关心”任务，完成后写入跟进记录。</small></span></div>{examReminderStudents.slice(0, 4).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><strong>{student.name}</strong><small>{student.examSubject || "考试"} · {student.examDate}</small><ChevronRight size={15} /></button>)}</section>
-      <section className="panel collection-shell"><ViewTabs value={renewalFilter} items={[{ id: "attention", label: "需要关注", count: renewalRows.filter((item) => item.status === "待跟进" || item.status === "等待家长").length }, { id: "contacted", label: "已联系", count: renewalRows.filter((item) => item.status === "已联系").length }, { id: "confirmed", label: "已确认", count: renewalRows.filter((item) => item.status === "已确认").length }, { id: "all", label: "全部", count: renewalRows.length }]} onChange={setRenewalFilter} label="续课保存视图" /><div className="collection-main"><div className="collection-head renewal-grid-row"><span>学生 / 课程</span><span>剩余课时</span><span>预计续课</span><span>负责人</span><span>状态</span><span>操作</span></div><div className="collection-viewport">{visibleRenewals.length ? visibleRenewals.map((renewal) => { const student = studentById(renewal.studentId); const lowHours = renewal.remaining < Number(rules.lowHours || 5); return <div className="collection-row renewal-grid-row" key={renewal.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course} · {student?.status}</small></span></button><strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 节</strong><span>{renewal.estimate}</span><span>{renewal.owner}</span><StatusPill tone={statusTone(renewal.status)}>{renewal.status}</StatusPill>{renewal.status === "待跟进" ? <button className="compact-button" type="button" onClick={() => { setRenewals((current) => current.some((item) => item.id === renewal.id) ? current.map((item) => item.id === renewal.id ? { ...item, status: "已联系" } : item) : [...current, { ...renewal, status: "已联系" }]); setMessages((current) => [{ id: id("MSG"), studentId: renewal.studentId, kind: "续课前跟进", recipient: `${student?.guardian ?? "家长"}`, body: `您好，${student?.name} 目前剩余 ${renewal.remaining} 节课。教务正在确认接下来的学习安排，方便时请回复我们。`, status: "待人工确认", createdAt: `今天 ${nowLabel()}` }, ...current]); addAudit("创建续课跟进", `${student?.name} · 已生成消息待确认`, "blue"); notify("已生成续课消息，等待人工确认"); }}>创建跟进</button> : <button className="compact-button" type="button" onClick={() => goToStudent(renewal.studentId)}>查看</button>}</div>; }) : <EmptyState title="当前没有续课记录" detail="非在读学生不会因为低课时进入此列表。" />}</div></div></section>
-    </>;
-  };
-
-  const renderPayroll = () => {
-    const visiblePayroll = payroll.filter((row) => payrollFilter === "review" ? row.status === "需核对" : payrollFilter === "ready" ? row.status === "可审核" : payrollFilter === "locked" ? row.status === "已锁定" : true);
-    return <>
-    <ViewHeading eyebrow="教务宝导入预览 · 人工锁定" title="课时与薪资" copy="导入数据后按已确认费率计算建议金额；所有异常、调整理由和最终确认人都必须可追溯。" actions={<button className="secondary-button" type="button" onClick={() => { setPayroll((current) => current.map((row) => row.status === "需核对" ? { ...row, status: "可审核", note: "模拟导入完成，等待人工审核" } : row)); addAudit("模拟导入教务宝数据", "已更新本地薪资预览，不影响真实教务宝", "blue"); notify("已完成样例导入与异常重算"); }}><Database size={17} /> 导入样例</button>} />
-    <section className="metric-grid payroll-metrics"><Metric tone="blue" icon={<FileText size={21} />} value={`${payroll.reduce((total, row) => total + row.lessons + row.trialLessons, 0)}`} label="导入课次" detail="教务宝样例数据" /><Metric tone="amber" icon={<CircleAlert size={21} />} value={`${payroll.filter((row) => row.status === "需核对").length}`} label="需要核对" detail="不会自动锁定" /><Metric tone="green" icon={<Wallet size={21} />} value={`$${payroll.reduce((total, row) => total + row.amount, 0).toLocaleString()}`} label="建议薪资" detail="等待人工审核" /><Metric tone="purple" icon={<ShieldCheck size={21} />} value={`${payroll.filter((row) => row.status === "已锁定").length}`} label="已锁定" detail="已记录确认人" /></section>
-    <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={payrollFilter} items={[{ id: "all", label: "全部", count: payroll.length }, { id: "review", label: "需核对", count: payroll.filter((item) => item.status === "需核对").length }, { id: "ready", label: "可审核", count: payroll.filter((item) => item.status === "可审核").length }, { id: "locked", label: "已锁定", count: payroll.filter((item) => item.status === "已锁定").length }]} onChange={setPayrollFilter} label="薪资保存视图" /><button className="secondary-button" type="button" disabled={!payroll.some((row) => row.status === "可审核")} onClick={() => { const count = payroll.filter((row) => row.status === "可审核").length; setPayroll((current) => current.map((row) => row.status === "可审核" ? { ...row, status: "已锁定", note: "已批量人工锁定" } : row)); addAudit("批量锁定薪资", `${count} 条可审核记录`, "green"); notify(`已锁定 ${count} 条可审核记录`); }}><ShieldCheck size={16} /> 批量锁定可审核</button></div><div className="collection-main"><div className="collection-head payroll-grid-row"><span>老师</span><span>常规 / 试听</span><span>建议金额</span><span>状态</span><span>说明</span><span>操作</span></div><div className="collection-viewport">{visiblePayroll.map((row) => { const teacher = teacherById(row.teacherId); return <div className="collection-row payroll-grid-row" key={row.id}><span className="table-person"><Avatar initials={teacher?.initials ?? "?"} tone="blue" /><span><strong>{teacher?.name}</strong><small>{teacher?.subjects.join(" · ")}</small></span></span><span>{row.lessons} / {row.trialLessons}</span><strong>${row.amount.toLocaleString()}</strong><StatusPill tone={statusTone(row.status)}>{row.status}</StatusPill><small>{row.note}</small>{row.status !== "已锁定" ? <button className="compact-button" type="button" onClick={() => { setPayroll((current) => current.map((item) => item.id === row.id ? { ...item, status: "已锁定", note: "已由当前操作员人工锁定" } : item)); addAudit("锁定薪资记录", `${teacher?.name} · $${row.amount.toLocaleString()}`, "green"); notify("已锁定本月演示薪资记录"); }}>人工锁定</button> : <span className="muted-cell">已完成</span>}</div>; })}</div></div></section>
-    </>;
-  };
-
-  const renderMessages = () => {
-    const visibleMessages = scopedMessages.filter((message) => {
-      const matchesQuery = `${message.kind} ${message.recipient} ${studentById(message.studentId)?.name ?? ""}`.toLowerCase().includes(messageQuery.trim().toLowerCase());
-      if (!matchesQuery) return false;
-      if (messageFilter === "open") return message.status !== "已记录发送";
-      if (messageFilter === "confirm") return message.status === "待人工确认";
-      if (messageFilter === "sent") return message.status === "已记录发送";
-      if (messageFilter === "internal") return message.status === "仅内部";
-      return true;
-    });
-    if (!selectedMessage) {
-      return <>
-        <ViewHeading eyebrow="按学生关系路由 · 发送前确认" title="消息队列" copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
-        <section className="panel collection-shell"><EmptyState title="暂无真实消息记录" detail="当前 Supabase 没有导入消息队列；后续接入企业微信后会在这里显示。" /></section>
-      </>;
-    }
-    return <>
-      <ViewHeading eyebrow="按学生关系路由 · 发送前确认" title="消息队列" copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。" actions={<button className="primary-button" type="button" onClick={() => setModal("template")}><Plus size={17} /> 新建消息</button>} />
-      <section className="panel collection-shell"><ViewTabs value={messageFilter} items={[{ id: "open", label: "待处理", count: scopedMessages.filter((item) => item.status !== "已记录发送").length }, { id: "confirm", label: "待人工确认", count: scopedMessages.filter((item) => item.status === "待人工确认").length }, { id: "internal", label: "仅内部", count: scopedMessages.filter((item) => item.status === "仅内部").length }, { id: "sent", label: "已记录发送", count: scopedMessages.filter((item) => item.status === "已记录发送").length }, { id: "all", label: "全部", count: scopedMessages.length }]} onChange={setMessageFilter} label="消息保存视图" /><ListToolbar query={messageQuery} onQuery={setMessageQuery} placeholder="搜索学生、消息类型或收件对象" count={`${visibleMessages.length} 条消息`} /><div className="master-detail-layout message-layout"><article className="collection-main"><div className="collection-viewport message-list">{visibleMessages.length ? visibleMessages.map((message) => { const student = studentById(message.studentId); return <button className={`message-list-row ${selectedMessage.id === message.id ? "selected" : ""}`} type="button" key={message.id} onClick={() => { setSelectedMessageId(message.id); setMobilePreview("message"); }}><span className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}><MessageCircle size={18} /></span><span><strong>{message.kind}</strong><small>{student?.name} · {message.recipient}</small><em>{message.body}</em></span><span><StatusPill tone={message.status === "待人工确认" ? "amber" : message.status === "已记录发送" ? "green" : "blue"}>{message.status}</StatusPill><small>{message.createdAt}</small></span></button>; }) : <EmptyState title="没有符合条件的消息" detail="切换视图或清除搜索。" />}</div><div className="send-log"><strong>安全边界</strong><p><CircleAlert size={15} /> 当前只记录发送意图，未连接企业微信 API。</p></div></article><aside className={`record-preview message-preview ${mobilePreview === "message" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭消息详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回消息列表</button><div className="preview-header"><div><p className="eyebrow">发送前预览</p><h2>{selectedMessage.kind}</h2></div><StatusPill tone={selectedMessage.status === "待人工确认" ? "amber" : selectedMessage.status === "已记录发送" ? "green" : "blue"}>{selectedMessage.status}</StatusPill></div><div className="route-summary"><span>关联学生<strong>{studentById(selectedMessage.studentId)?.name}</strong></span><span>收件对象<strong>{selectedMessage.recipient}</strong></span><span>创建时间<strong>{selectedMessage.createdAt}</strong></span></div><div className="message-bubble">{selectedMessage.body}</div><div className="preview-foot"><CircleAlert size={16} /> 真实外部消息仍需企业微信权限、收件对象映射与人工确认。</div><button className="primary-button full" type="button" disabled={selectedMessage.status === "已记录发送"} onClick={recordMessage}><Send size={16} /> {selectedMessage.status === "已记录发送" ? "已记录发送" : "记录为已发送"}</button></aside></div></section>
+      <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /><div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div></div>{lpMode === "board" ? <section className="kanban-board">{lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => <article key={stage}><header><span className={`kanban-dot ${stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple"}`} /> {stage}<strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>{visibleLp.filter((item) => item.stage === stage).map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="kanban-card" key={item.id}><p>{student?.name} · {item.owner}</p><h3>{item.title}</h3><span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span><div className="card-tags"><StatusPill tone={item.stage === "完成" ? "green" : "amber"}>{item.stage}</StatusPill>{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>{item.stage !== "完成" && <button className="card-action" type="button" onClick={() => advanceLp(item)}><ArrowRight size={15} /> 推进到下一阶段</button>}</div>; })}</article>)}</section> : <div className="collection-main"><div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>类型</span><span>负责人</span><span>阶段</span><span>截止时间</span><span>操作</span></div><div className="collection-viewport">{visibleLp.map((item) => { const student = studentById(item.studentId); const publishedDay = lpPublishedDay(item); return <div className="collection-row lp-grid-row" key={item.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(item.studentId)}><Avatar initials={student?.initials ?? "?"} tone={statusTone(student?.status ?…6700 tokens truncated…已发送"}</button></aside></div></section>
     </>;
   };
 
