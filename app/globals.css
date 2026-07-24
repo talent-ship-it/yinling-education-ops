@@ -110,9 +110,9 @@ body {
 }
 
 .topbar {
-  background:rgba(255,255,255,.8);
-  backdrop-filter:saturate(1.35) blur(18px);
-  box-shadow:0 1px 0 rgba(255,255,255,.8),0 10px 30px rgba(18,63,59,.045);
+  background:#fff;
+  backdrop-filter:none;
+  box-shadow:0 1px 0 #dfe7e2,0 8px 22px rgba(18,63,59,.045);
 }
 
 .content { padding-top:30px; }
@@ -1425,6 +1425,42 @@ body {
   .master-detail-layout > .collection-main { display:block; }
   .master-detail-layout > .record-preview,
   .master-detail-layout > .student-detail { height:auto; overflow:visible; }
+}
+
+/* Desktop workspaces use a fixed right rail, not a second floating card. */
+@media (min-width:761px) {
+  .master-detail-layout {
+    align-items:stretch;
+    isolation:isolate;
+  }
+
+  .master-detail-layout > .collection-main {
+    border-right:0;
+    min-width:0;
+    overflow:hidden;
+  }
+
+  .master-detail-layout .collection-head,
+  .master-detail-layout .collection-row {
+    min-width:0;
+  }
+
+  .master-detail-layout > .record-preview,
+  .master-detail-layout > .student-detail {
+    background:#fff;
+    border-left:1px solid #dbe5df;
+    border-radius:0;
+    box-shadow:none;
+    margin:0;
+  }
+
+  .payroll-layout {
+    grid-template-columns:minmax(0,1fr) clamp(400px,29vw,500px);
+  }
+
+  .payroll-grid-row {
+    grid-template-columns:minmax(190px,1.3fr) minmax(100px,.72fr) minmax(100px,.72fr) minmax(100px,.74fr) minmax(96px,.7fr);
+  }
 }
 
 /* LP templates, structured AVA, and substitute-teacher decisions. */
