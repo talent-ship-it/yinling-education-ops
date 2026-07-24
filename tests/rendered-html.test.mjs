@@ -59,14 +59,14 @@ test("locks Nixon profile and payroll behind a second server session", async () 
   ]);
 
   assert.match(client, /initialNixonUnlocked/);
-  assert.match(client, /Nixon（需密码）/);
+  assert.match(client, /Admin（需密码）/);
   assert.match(client, /NixonAccessDialog/);
   assert.match(client, /\/api\/nixon-login/);
   assert.match(client, /defaults\.defaultStudents\.find\(\(student\) => student\.owner && student\.owner !== "Nixon"\)/);
   assert.match(snapshotRoute, /row\.entity !== "payroll"/);
   assert.match(snapshotRoute, /syncSources: nixonSession \? syncSources : \[\]/);
-  assert.match(stateRoute, /需要 Nixon 权限密码才能读取薪资资料/);
-  assert.match(stateRoute, /需要 Nixon 权限密码才能修改薪资资料/);
+  assert.match(stateRoute, /需要 Admin 权限密码才能读取薪资资料/);
+  assert.match(stateRoute, /需要 Admin 权限密码才能修改薪资资料/);
   assert.match(stateRoute, /versions\.filter\(\(row\) => row\.entity !== "payroll"\)/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
   assert.match(nixonAuth, /createHash\("sha256"\)/);
