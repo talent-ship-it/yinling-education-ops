@@ -1706,6 +1706,31 @@ body {
   opacity:.68;
 }
 
+.nixon-access-dialog {
+  max-width:440px;
+}
+
+.nixon-access-copy {
+  align-items:flex-start;
+  background:var(--brand-soft);
+  border:1px solid var(--brand-line);
+  color:var(--brand-ink);
+  display:flex;
+  gap:10px;
+  margin-top:16px;
+  padding:12px;
+}
+
+.nixon-access-copy svg {
+  flex:0 0 auto;
+}
+
+.nixon-access-copy p {
+  font-size:12px;
+  line-height:1.6;
+  margin:0;
+}
+
 .login-error,
 .login-success {
   border-radius:6px;
