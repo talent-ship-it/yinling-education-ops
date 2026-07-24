@@ -26,7 +26,6 @@ import {
   LayoutDashboard,
   ListChecks,
   ListTodo,
-  LockKeyhole,
   MapPin,
   MessageCircle,
   MessageSquare,
@@ -869,14 +868,13 @@ function NixonAccessDialog({ onSubmit, onClose, loading, error }: { onSubmit: (p
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="dialog nixon-access-dialog" role="dialog" aria-modal="true" aria-label="解锁 Nixon 全局视图" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="dialog nixon-access-dialog" role="dialog" aria-modal="true" aria-label="解锁 Admin 全局视图" onMouseDown={(event) => event.stopPropagation()}>
         <header className="dialog-header">
-          <div><p className="eyebrow">敏感资料权限</p><h2>解锁 Nixon 全局视图</h2></div>
+          <div><p className="eyebrow">敏感资料权限</p><h2>解锁 Admin 全局视图</h2></div>
           <IconButton label="关闭" onClick={onClose}><X size={18} /></IconButton>
         </header>
-        <div className="nixon-access-copy"><LockKeyhole size={21} /><p>Nixon 视图包含薪资、同步来源、运营报表和操作审计，需要独立密码。</p></div>
         <form className="login-form" onSubmit={(event) => { event.preventDefault(); onSubmit(password); }}>
-          <label htmlFor="nixon-password">Nixon 权限密码</label>
+          <label htmlFor="nixon-password">Admin 权限密码</label>
           <input id="nixon-password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
           {error ? <span className="login-error">{error}</span> : null}
           <button type="submit" disabled={loading}>{loading ? "正在验证..." : "解锁全局视图"}</button>
@@ -1134,7 +1132,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
 
     if (!response.ok) {
       setNixonAccessLoading(false);
-      setNixonAccessError(body.error || "Nixon 权限密码不正确。");
+      setNixonAccessError(body.error || "Admin 权限密码不正确。");
       return;
     }
 
@@ -2130,8 +2128,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
             <IconButton label="查看提醒" onClick={() => setActive("dashboard")}><ListTodo size={18} /></IconButton>
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
             <label className="operator">
-              <Avatar initials={currentOperator === "Nixon" ? "NC" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" && !initialNixonUnlocked ? "Nixon（需密码）" : operator}</option>)}</select></span>
+              <Avatar initials={currentOperator === "Nixon" ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
+              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? (initialNixonUnlocked ? "Admin" : "Admin（需密码）") : operator}</option>)}</select></span>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
           </div>
@@ -2149,7 +2147,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" && !initialNixonUnlocked ? "Nixon（需密码）" : operator}</option>)}</select></label>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? (initialNixonUnlocked ? "Admin" : "Admin（需密码）") : operator}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
