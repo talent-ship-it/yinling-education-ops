@@ -91,8 +91,9 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /Desktop workspaces use a fixed right rail/);
   assert.match(css, /\.teacher-availability\.raw strong/);
   assert.match(css, /\.availability-value\.raw/);
-  assert.match(css, /grid-template-columns:minmax\(200px,1\.45fr\)/);
+  assert.match(css, /grid-template-columns:minmax\(0,1\.45fr\)/);
   assert.match(css, /\.master-detail-layout \.collection-row\.selected/);
+  assert.match(css, /\.master-detail-layout \.collection-viewport/);
   assert.match(css, /\.master-detail-layout > \.student-detail/);
   assert.match(css, /border-left:1px solid #dbe5df/);
   assert.match(css, /\.topbar\s*\{\s*background:#fff/);
