@@ -1461,12 +1461,12 @@ body {
   }
 
   .payroll-grid-row {
-    gap:18px;
-    grid-template-columns:minmax(250px,1.45fr) minmax(130px,.72fr) minmax(130px,.78fr) minmax(120px,.7fr) max-content;
+    gap:12px;
+    grid-template-columns:minmax(200px,1.45fr) minmax(100px,.72fr) minmax(100px,.78fr) minmax(96px,.7fr) minmax(78px,.46fr);
   }
 
   .payroll-grid-row > .status-pill {
-    justify-self:end;
+    justify-self:start;
   }
 
   .teacher-grid-row {
@@ -1499,6 +1499,11 @@ body {
 
   .teacher-grid-row > .status-pill {
     justify-self:end;
+  }
+
+  .master-detail-layout .collection-row.selected {
+    background:#e7f8f6;
+    background-image:none;
   }
 }
 
