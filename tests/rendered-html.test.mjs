@@ -74,6 +74,9 @@ test("retains core operations workflows and responsive UI", async () => {
 
   assert.match(css, /--brand:#75C9C2/);
   assert.match(client, /teacherTotalHours/);
+  assert.match(client, /function availabilitySummary/);
+  assert.match(client, /const teacherPageSize = 8/);
+  assert.match(client, /原始 AVA · 详情查看/);
   assert.match(client, /function formatMoney/);
   assert.match(client, /payrollCurrency/);
   assert.match(client, /payrollPage/);
@@ -86,6 +89,9 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /@media \(min-width:1211px\) and \(max-width:1360px\)/);
   assert.match(css, /collection-shell > \.master-detail-layout/);
   assert.match(css, /Desktop workspaces use a fixed right rail/);
+  assert.match(css, /\.teacher-availability\.raw strong/);
+  assert.match(css, /\.availability-value\.raw/);
+  assert.match(css, /grid-template-columns:minmax\(250px,1\.45fr\)/);
   assert.match(css, /\.master-detail-layout > \.student-detail/);
   assert.match(css, /border-left:1px solid #dbe5df/);
   assert.match(css, /\.topbar\s*\{\s*background:#fff/);
