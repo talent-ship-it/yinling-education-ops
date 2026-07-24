@@ -1607,3 +1607,5 @@ body {
 
 @media (max-width:760px) {
   .live-sync { display:none; }
+  .source-row { align-items:flex-start; }
+}
