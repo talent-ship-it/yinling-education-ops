@@ -85,6 +85,11 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /@media \(max-width:1210px\)/);
   assert.match(css, /@media \(min-width:1211px\) and \(max-width:1360px\)/);
   assert.match(css, /collection-shell > \.master-detail-layout/);
+  assert.match(css, /Desktop workspaces use a fixed right rail/);
+  assert.match(css, /\.master-detail-layout > \.student-detail/);
+  assert.match(css, /border-left:1px solid #dbe5df/);
+  assert.match(css, /\.topbar\s*\{\s*background:#fff/);
+  assert.doesNotMatch(client, /panel student-detail/);
   assert.match(css, /sync-workspace/);
   assert.match(css, /\.mobile-bottom-nav/);
   assert.match(css, /\.live-sync/);
