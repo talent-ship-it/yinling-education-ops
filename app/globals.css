@@ -1445,6 +1445,12 @@ body {
   .master-detail-layout .collection-head,
   .master-detail-layout .collection-row {
     min-width:0;
+    width:100%;
+  }
+
+  .master-detail-layout .collection-viewport {
+    overflow-x:hidden;
+    overflow-y:auto;
   }
 
   .master-detail-layout > .record-preview,
@@ -1462,16 +1468,22 @@ body {
 
   .payroll-grid-row {
     gap:12px;
-    grid-template-columns:minmax(200px,1.45fr) minmax(100px,.72fr) minmax(100px,.78fr) minmax(96px,.7fr) minmax(78px,.46fr);
+    grid-template-columns:minmax(0,1.45fr) minmax(0,.72fr) minmax(0,.78fr) minmax(0,.7fr) auto;
   }
 
-  .payroll-grid-row > .status-pill {
+  .payroll-grid-row > *,
+  .teacher-grid-row > * {
+    min-width:0;
+  }
+
+  .payroll-grid-row > .status-pill,
+  .teacher-grid-row > .status-pill {
     justify-self:start;
   }
 
   .teacher-grid-row {
-    gap:16px;
-    grid-template-columns:minmax(250px,1.4fr) minmax(72px,.4fr) minmax(112px,.58fr) minmax(142px,.72fr) max-content;
+    gap:12px;
+    grid-template-columns:minmax(0,1.4fr) minmax(0,.4fr) minmax(0,.58fr) minmax(0,.72fr) auto;
   }
 
   .teacher-load,
@@ -1495,10 +1507,6 @@ body {
 
   .teacher-availability.raw strong {
     color:#97600e;
-  }
-
-  .teacher-grid-row > .status-pill {
-    justify-self:end;
   }
 
   .master-detail-layout .collection-row.selected {
