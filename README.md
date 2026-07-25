@@ -2,7 +2,7 @@
 
 Internal operations MVP for Insider Leads / 吟领教育教务.
 
-The app is a Next.js site backed by Supabase shared state. It is currently an internal demo using one shared password so the team can review the operating logic without individual accounts.
+The app is a Next.js site backed by Supabase shared state. It is currently an internal demo with password-selected work views so the team can review the operating logic before full account management is added.
 
 ## Current Shape
 
@@ -15,10 +15,11 @@ The app is a Next.js site backed by Supabase shared state. It is currently an in
 
 ## Access Model
 
-All reviewers use the same demo password. The internal MVP always accepts `admin`; `DEMO_PASSWORD` can additionally enable an environment-specific password in hosted environments. Inside the app, the top-right operator selector changes the visible working view:
+The login password determines the demo work view:
 
-- `Nixon` sees the global management workspace.
-- Staff views show records and tasks tied to that person or their students.
+- The Admin password opens the global management workspace and can switch into every staff view.
+- A staff member enters their own name as the demo password and can only see their own work view.
+- Logging in as staff clears any prior Admin session in that browser, including payroll access.
 
 This is intentional for the current internal MVP. It is not the final production authentication model.
 
@@ -36,7 +37,7 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 
 ## Required Environment
 
-- `DEMO_PASSWORD` optional; `admin` remains accepted for the current internal MVP
+- `NIXON_PASSWORD_HASH` optional; the internal Admin password hash has a fallback for the current demo
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `OPS_API_SECRET`
