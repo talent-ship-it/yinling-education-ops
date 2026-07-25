@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, hasValidDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsSources, getOpsState } from "@/lib/ops-store";
 
@@ -9,13 +9,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const cookieStore = await cookies();
-  if (!hasValidDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value)) {
+  const demoUser = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  if (!demoUser) {
     return NextResponse.json({ error: "请先输入访问密码。" }, { status: 401 });
   }
 
   try {
     const [rows, syncSources] = await Promise.all([getOpsState(), getOpsSources()]);
-    const nixonSession = hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const nixonSession = demoUser === DEMO_ADMIN_USER && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const visibleRows = nixonSession ? rows : rows.filter((row) => row.entity !== "payroll");
     const payload = Object.fromEntries(visibleRows.map((row) => [row.entity, row.payload]));
     const versions = Object.fromEntries(visibleRows.map((row) => [row.entity, row.version]));
