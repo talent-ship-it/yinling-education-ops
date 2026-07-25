@@ -20,6 +20,14 @@
   text-align:left;
 }
 
+.trigger::-webkit-details-marker {
+  display:none;
+}
+
+.trigger::marker {
+  content:"";
+}
+
 .avatar {
   align-items:center;
   background:#e5f7f4;
