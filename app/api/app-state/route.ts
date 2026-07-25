@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, hasValidDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser, hasValidDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsSources,
@@ -20,7 +20,8 @@ async function authorized() {
 
 async function nixonAuthorized() {
   const cookieStore = await cookies();
-  return hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  return getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value) === DEMO_ADMIN_USER
+    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
 }
 
 function noStore(payload: unknown, status = 200) {
