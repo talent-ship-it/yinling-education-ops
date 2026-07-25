@@ -845,7 +845,7 @@ function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: st
         <div className="brand-mark">吟</div>
         <p className="eyebrow">内部教务系统</p>
         <h1>吟领教务</h1>
-        <p className="login-copy">内部测试 Demo，请输入访问密码。</p>
+        <p className="login-copy">请输入登录密码进入对应工作视图。</p>
         <form
           className="login-form"
           onSubmit={(event) => {
@@ -853,34 +853,13 @@ function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: st
             onSubmit(password);
           }}
         >
-          <label htmlFor="password">访问密码</label>
+          <label htmlFor="password">登录密码</label>
           <input id="password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
           {error ? <span className="login-error">{error}</span> : null}
           <button type="submit" disabled={loading}>{loading ? "正在进入..." : "进入系统"}</button>
         </form>
       </section>
     </main>
-  );
-}
-
-function NixonAccessDialog({ onSubmit, onClose, loading, error }: { onSubmit: (password: string) => void; onClose: () => void; loading: boolean; error: string }) {
-  const [password, setPassword] = useState("");
-
-  return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="dialog nixon-access-dialog" role="dialog" aria-modal="true" aria-label="解锁 Admin 全局视图" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="dialog-header">
-          <div><p className="eyebrow">敏感资料权限</p><h2>解锁 Admin 全局视图</h2></div>
-          <IconButton label="关闭" onClick={onClose}><X size={18} /></IconButton>
-        </header>
-        <form className="login-form" onSubmit={(event) => { event.preventDefault(); onSubmit(password); }}>
-          <label htmlFor="nixon-password">Admin 权限密码</label>
-          <input id="nixon-password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
-          {error ? <span className="login-error">{error}</span> : null}
-          <button type="submit" disabled={loading}>{loading ? "正在验证..." : "解锁全局视图"}</button>
-        </form>
-      </section>
-    </div>
   );
 }
 
@@ -898,6 +877,7 @@ export default function OperationsApp() {
   const [loginError, setLoginError] = useState("");
   const [initialData, setInitialData] = useState<ImportPayload | null>(null);
   const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
+  const [sessionUser, setSessionUser] = useState("");
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
@@ -905,7 +885,9 @@ export default function OperationsApp() {
     fetch("/api/demo-session", { cache: "no-store" })
       .then((response) => response.json())
       .then((body) => {
-        if (active) setAuthenticated(Boolean(body.ok));
+        if (!active) return;
+        setAuthenticated(Boolean(body.ok));
+        setSessionUser(typeof body.user === "string" ? body.user : "");
       })
       .catch(() => {
         if (active) setAuthenticated(false);
@@ -965,23 +947,23 @@ export default function OperationsApp() {
       return;
     }
     setAuthenticated(true);
+    setSessionUser(typeof body.user === "string" ? body.user : "");
   };
 
-  if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前浏览器是否已经通过内部测试密码。" />;
+  if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
   if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} />;
+  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={sessionUser} />;
 }
 
-function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialData?: ImportPayload; initialNixonUnlocked: boolean }) {
+function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
   const [active, setActive] = useState<Section>("dashboard");
-  const [currentOperator, setCurrentOperator] = useState(() => initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
-  const [nixonAccessOpen, setNixonAccessOpen] = useState(false);
-  const [nixonAccessLoading, setNixonAccessLoading] = useState(false);
-  const [nixonAccessError, setNixonAccessError] = useState("");
+  const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
+  const isAdminSession = initialNixonUnlocked && sessionOperator === "Nixon";
+  const [currentOperator, setCurrentOperator] = useState(sessionOperator);
   const [sharedSyncState, setSharedSyncState] = useState<SharedSyncState>("synced");
   const [sharedSyncMessage, setSharedSyncMessage] = useState("Supabase 多人共享已连接");
   const reportSharedSync = useCallback((state: SharedSyncState, message = "") => {
@@ -1092,7 +1074,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
-  const operatorOptions = useMemo(() => ["Nixon", ...ownerOptions.filter((owner) => owner !== "Nixon")], [ownerOptions]);
+  const operatorOptions = useMemo(() => isAdminSession ? ["Nixon", ...ownerOptions.filter((owner) => owner !== "Nixon")] : [sessionOperator], [isAdminSession, ownerOptions, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
@@ -1120,25 +1102,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
     return filtered;
   }, [currentOperator, scopedStudentIds, scopedTasks, taskFilter]);
 
-  const submitNixonPassword = async (password: string) => {
-    setNixonAccessLoading(true);
-    setNixonAccessError("");
-    const response = await fetch("/api/nixon-login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    });
-    const body = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      setNixonAccessLoading(false);
-      setNixonAccessError(body.error || "Admin 权限密码不正确。");
-      return;
-    }
-
-    window.location.reload();
-  };
-
   const switchOperator = (operator: string) => {
     setCurrentOperator(operator);
     setTaskFilter(operator === "Nixon" ? "all" : "mine");
@@ -1160,12 +1123,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
   };
 
   const requestOperatorSwitch = (operator: string) => {
-    if (operator === "Nixon" && !initialNixonUnlocked) {
-      setMobileMenuOpen(false);
-      setNixonAccessError("");
-      setNixonAccessOpen(true);
-      return;
-    }
+    if (!isAdminSession && operator !== sessionOperator) return;
     switchOperator(operator);
   };
 
@@ -2156,7 +2114,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked }: { initialDat
           </div>
         </section>
       </div>}
-      {nixonAccessOpen && <NixonAccessDialog loading={nixonAccessLoading} error={nixonAccessError} onSubmit={submitNixonPassword} onClose={() => { if (!nixonAccessLoading) setNixonAccessOpen(false); }} />}
       {toast && <div className="toast"><CheckCircle2 size={17} /> {toast}</div>}
 
       {globalSearchOpen && <div className="global-search-backdrop" role="presentation" onMouseDown={() => setGlobalSearchOpen(false)}>
