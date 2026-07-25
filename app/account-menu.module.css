@@ -1,0 +1,142 @@
+.root {
+  align-items:center;
+  display:flex;
+  height:58px;
+  position:fixed;
+  right:28px;
+  top:0;
+  z-index:20;
+}
+
+.trigger {
+  align-items:center;
+  background:#fff;
+  border:0;
+  color:#17211c;
+  cursor:pointer;
+  display:flex;
+  gap:7px;
+  padding:0;
+  text-align:left;
+}
+
+.avatar {
+  align-items:center;
+  background:#e5f7f4;
+  border-radius:50%;
+  color:#1a746c;
+  display:flex;
+  font-size:10px;
+  font-weight:700;
+  height:30px;
+  justify-content:center;
+  width:30px;
+}
+
+.identity {
+  display:grid;
+  gap:2px;
+  min-width:64px;
+}
+
+.identity small,
+.loggedIn small,
+.viewPicker span {
+  color:#7b8b83;
+  font-size:9px;
+}
+
+.identity strong {
+  font-size:11px;
+}
+
+.trigger > svg {
+  color:#7b8b83;
+}
+
+.menu {
+  background:#fff;
+  border:1px solid #dbe5df;
+  border-radius:6px;
+  box-shadow:0 14px 32px rgba(28,54,47,.16);
+  display:grid;
+  gap:10px;
+  padding:12px;
+  position:absolute;
+  right:0;
+  top:calc(100% + 6px);
+  width:218px;
+}
+
+.loggedIn,
+.viewPicker {
+  display:grid;
+  gap:4px;
+}
+
+.loggedIn strong {
+  font-size:13px;
+}
+
+.viewPicker select {
+  background:#f8fbfa;
+  border:1px solid #dbe5df;
+  border-radius:5px;
+  color:#17211c;
+  font-size:12px;
+  min-height:34px;
+  padding:0 8px;
+}
+
+.logout {
+  align-items:center;
+  background:#fff;
+  border:1px solid #d6e1dc;
+  border-radius:5px;
+  color:#9f3b36;
+  cursor:pointer;
+  display:flex;
+  font-size:12px;
+  font-weight:700;
+  gap:7px;
+  justify-content:center;
+  min-height:36px;
+}
+
+.logout:hover {
+  background:#fff6f5;
+  border-color:#e7bdb9;
+}
+
+.logout:disabled {
+  cursor:wait;
+  opacity:.65;
+}
+
+@media (max-width:760px) {
+  .root {
+    height:44px;
+    right:14px;
+    top:calc(env(safe-area-inset-top) + 6px);
+  }
+
+  .trigger {
+    height:40px;
+    justify-content:center;
+    width:40px;
+  }
+
+  .identity,
+  .trigger > svg {
+    display:none;
+  }
+
+  .avatar {
+    height:34px;
+    width:34px;
+  }
+
+  .menu {
+    top:44px;
+  }
+}
