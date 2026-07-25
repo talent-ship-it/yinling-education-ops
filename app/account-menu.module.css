@@ -20,14 +20,6 @@
   text-align:left;
 }
 
-.trigger::-webkit-details-marker {
-  display:none;
-}
-
-.trigger::marker {
-  content:"";
-}
-
 .avatar {
   align-items:center;
   background:#e5f7f4;
@@ -67,13 +59,17 @@
   border:1px solid #dbe5df;
   border-radius:6px;
   box-shadow:0 14px 32px rgba(28,54,47,.16);
-  display:grid;
+  display:none;
   gap:10px;
   padding:12px;
   position:absolute;
   right:0;
   top:calc(100% + 6px);
   width:218px;
+}
+
+.root:focus-within .menu {
+  display:grid;
 }
 
 .loggedIn,
