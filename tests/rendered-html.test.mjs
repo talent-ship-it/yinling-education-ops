@@ -22,8 +22,11 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(store, /OPS_API_SECRET/);
   assert.match(store, /get_ops_state/);
   assert.match(store, /put_ops_state/);
-  assert.match(auth, /process\.env\.DEMO_PASSWORD \|\| "admin"/);
-  assert.match(auth, /new Set\(\[expected, "admin"\]\)/);
+  assert.match(auth, /DEMO_STAFF_USERS/);
+  assert.match(auth, /resolveDemoUser/);
+  assert.match(auth, /matchesNixonPassword/);
+  assert.doesNotMatch(auth, /DEMO_PASSWORD/);
+  assert.doesNotMatch(auth, /"admin"/);
   assert.match(auth, /function safeEquals/);
 });
 
@@ -49,9 +52,11 @@ test("limits staff views and keeps Tencent Docs read-only", async () => {
   assert.doesNotMatch(client, /actor: "当前操作员"/);
 });
 
-test("locks Nixon profile and payroll behind a second server session", async () => {
-  const [client, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
+test("binds demo identities to profiles and protects Admin payroll access", async () => {
+  const [client, demoLogin, demoSession, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
     read("../app/operations-client.tsx"),
+    read("../app/api/demo-login/route.ts"),
+    read("../app/api/demo-session/route.ts"),
     read("../app/api/app-snapshot/route.ts"),
     read("../app/api/app-state/route.ts"),
     read("../lib/nixon-auth.ts"),
@@ -59,11 +64,18 @@ test("locks Nixon profile and payroll behind a second server session", async () 
   ]);
 
   assert.match(client, /initialNixonUnlocked/);
+  assert.match(client, /initialOperator/);
+  assert.match(client, /isAdminSession/);
+  assert.match(client, /isAdminSession \? \["Nixon"/);
+  assert.match(client, /!isAdminSession && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
-  assert.match(client, /NixonAccessDialog/);
-  assert.match(client, /\/api\/nixon-login/);
-  assert.match(client, /defaults\.defaultStudents\.find\(\(student\) => student\.owner && student\.owner !== "Nixon"\)/);
+  assert.doesNotMatch(client, /NixonAccessDialog/);
+  assert.match(demoLogin, /resolveDemoUser/);
+  assert.match(demoLogin, /user === DEMO_ADMIN_USER/);
+  assert.match(demoLogin, /maxAge: 0/);
+  assert.match(demoSession, /getDemoSessionUser/);
   assert.match(snapshotRoute, /row\.entity !== "payroll"/);
+  assert.match(snapshotRoute, /demoUser === DEMO_ADMIN_USER/);
   assert.match(snapshotRoute, /syncSources: nixonSession \? syncSources : \[\]/);
   assert.match(stateRoute, /需要 Admin 权限密码才能读取薪资资料/);
   assert.match(stateRoute, /需要 Admin 权限密码才能修改薪资资料/);
@@ -72,6 +84,7 @@ test("locks Nixon profile and payroll behind a second server session", async () 
   assert.match(nixonAuth, /createHash\("sha256"\)/);
   assert.doesNotMatch(nixonAuth, /YL-GHPwF_97qvRB/);
   assert.match(nixonLogin, /httpOnly: true/);
+  assert.match(nixonLogin, /getDemoSessionUser/);
   assert.doesNotMatch(nixonLogin, /maxAge/);
 });
 
