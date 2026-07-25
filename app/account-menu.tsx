@@ -10,9 +10,8 @@ export default function AccountMenu() {
   const [sessionUser, setSessionUser] = useState("");
   const [currentView, setCurrentView] = useState("");
   const [viewOptions, setViewOptions] = useState<ViewOption[]>([]);
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {
     let resolved = false;
@@ -68,13 +67,12 @@ export default function AccountMenu() {
   }, []);
 
   useEffect(() => {
-    if (!open) return;
     const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (rootRef.current?.open && !rootRef.current.contains(event.target as Node)) rootRef.current.open = false;
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+  }, []);
 
   const changeView = (value: string) => {
     const source = document.querySelector<HTMLSelectElement>(".operator select");
@@ -103,16 +101,16 @@ export default function AccountMenu() {
   const displayName = isAdmin ? "Admin" : sessionUser;
   const initials = isAdmin ? "AD" : sessionUser.slice(0, 2).toUpperCase();
 
-  return <div className={styles.root} ref={rootRef}>
-    <button className={styles.trigger} type="button" aria-label="打开账户菜单" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+  return <details className={styles.root} ref={rootRef}>
+    <summary className={styles.trigger} aria-label="打开账户菜单">
       <span className={styles.avatar}>{initials}</span>
       <span className={styles.identity}><small>{isAdmin ? "超级管理员" : "教务个人权限"}</small><strong>{displayName}</strong></span>
       <ChevronDown size={14} aria-hidden="true" />
-    </button>
-    {open && <section className={styles.menu} aria-label="账户菜单">
+    </summary>
+    <section className={styles.menu} aria-label="账户菜单">
       <div className={styles.loggedIn}><small>当前登录</small><strong>{displayName}</strong></div>
       {isAdmin && viewOptions.length > 1 && <label className={styles.viewPicker}><span>查看工作视图</span><select value={currentView} onChange={(event) => changeView(event.target.value)}>{viewOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>}
       <button className={styles.logout} type="button" disabled={busy} onClick={logout}><LogOut size={15} />{busy ? "正在退出" : "退出登录"}</button>
-    </section>}
-  </div>;
+    </section>
+  </details>;
 }
