@@ -53,10 +53,11 @@ test("limits staff views and keeps Tencent Docs read-only", async () => {
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
-  const [client, demoLogin, demoSession, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
+  const [client, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/api/demo-login/route.ts"),
     read("../app/api/demo-session/route.ts"),
+    read("../app/api/demo-logout/route.ts"),
     read("../app/api/app-snapshot/route.ts"),
     read("../app/api/app-state/route.ts"),
     read("../lib/nixon-auth.ts"),
@@ -69,11 +70,17 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /isAdminSession \? \["Nixon"/);
   assert.match(client, /!isAdminSession && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
+  assert.match(client, /profileMenuOpen/);
+  assert.match(client, /\/api\/demo-logout/);
+  assert.match(client, /退出登录/);
   assert.doesNotMatch(client, /NixonAccessDialog/);
   assert.match(demoLogin, /resolveDemoUser/);
   assert.match(demoLogin, /user === DEMO_ADMIN_USER/);
   assert.match(demoLogin, /maxAge: 0/);
   assert.match(demoSession, /getDemoSessionUser/);
+  assert.match(demoLogout, /DEMO_COOKIE_NAME/);
+  assert.match(demoLogout, /NIXON_COOKIE_NAME/);
+  assert.match(demoLogout, /maxAge: 0/);
   assert.match(snapshotRoute, /row\.entity !== "payroll"/);
   assert.match(snapshotRoute, /demoUser === DEMO_ADMIN_USER/);
   assert.match(snapshotRoute, /syncSources: nixonSession \? syncSources : \[\]/);
