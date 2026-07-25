@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { matchesNixonPassword, nixonSessionSigningKey } from "@/lib/nixon-auth";
+import { matchesNixonPassword, nixonSessionToken } from "@/lib/nixon-auth";
 
 export const DEMO_COOKIE_NAME = "yinling_demo_auth";
 export const DEMO_ADMIN_USER = "Nixon";
@@ -31,7 +31,7 @@ export function resolveDemoUser(candidate: unknown): DemoUser | null {
 }
 
 export function demoSessionToken(user: DemoUser) {
-  return createHmac("sha256", nixonSessionSigningKey()).update(`yinling-demo-session-v2:${user}`).digest("hex");
+  return createHmac("sha256", nixonSessionToken()).update(`yinling-demo-session-v2:${user}`).digest("hex");
 }
 
 export function getDemoSessionUser(value: string | undefined): DemoUser | null {
