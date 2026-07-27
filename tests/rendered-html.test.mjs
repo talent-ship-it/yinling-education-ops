@@ -30,18 +30,27 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(auth, /function safeEquals/);
 });
 
-test("limits staff views and keeps Tencent Docs read-only", async () => {
-  const client = await read("../app/operations-client.tsx");
+test("limits staff and teacher views and keeps Tencent Docs read-only", async () => {
+  const [client, users] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../lib/demo-users.ts"),
+  ]);
 
   assert.match(client, /const staffSectionIds/);
+  assert.match(client, /const teacherSectionIds/);
   assert.match(client, /const visibleNavigation/);
   assert.match(client, /const scopedStudents/);
   assert.match(client, /const scopedTasks/);
   assert.match(client, /const scopedBookings/);
   assert.match(client, /const scopedMessages/);
-  assert.match(client, /if \(!isAdminView && !staffSectionIds\.has\(active\)\) return renderDashboard/);
+  assert.match(client, /if \(!isAdminView && !\(isTeacherView \? teacherSectionIds : staffSectionIds\)\.has\(active\)\) return renderDashboard/);
   assert.match(client, /超级管理员/);
   assert.match(client, /教务个人权限/);
+  assert.match(client, /老师个人权限/);
+  assert.match(client, /renderTeacherDashboard/);
+  assert.match(client, /renderClassroom/);
+  assert.match(client, /renderAccounts/);
+  assert.match(users, /"Helen Ceperkovic", "Shirley Li", "Anna Zhang"/);
   assert.match(client, /actor: currentOperator/);
   assert.match(client, /task\.owner === currentOperator \|\| scopedStudentIds\.has\(task\.studentId\)/);
   assert.match(client, /const teamOwnerOptions/);
@@ -68,7 +77,8 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /initialNixonUnlocked/);
   assert.match(client, /initialOperator/);
   assert.match(client, /isAdminSession/);
-  assert.match(client, /isAdminSession \? \["Nixon"/);
+  assert.match(client, /isAdminSession \? Array\.from\(new Set\(\["Nixon", \.\.\.DEMO_STAFF_USERS/);
+  assert.match(client, /\.\.\.DEMO_TEACHER_USERS/);
   assert.match(client, /!isAdminSession && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
   assert.match(accountMenu, /\/api\/demo-logout/);
