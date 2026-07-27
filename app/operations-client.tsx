@@ -18,6 +18,8 @@ import {
   Clock3,
   Database,
   Download,
+  Copy,
+  ExternalLink,
   FilePlus2,
   FileText,
   Filter,
@@ -26,6 +28,8 @@ import {
   LayoutDashboard,
   ListChecks,
   ListTodo,
+  KeyRound,
+  Link2,
   MapPin,
   MessageCircle,
   MessageSquare,
@@ -38,17 +42,21 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   UserPlus,
+  UserCog,
   Users,
+  Video,
   Wallet,
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEMO_STAFF_USERS, DEMO_TEACHER_USERS, isDemoTeacher } from "@/lib/demo-users";
 
 type Section =
   | "dashboard"
   | "students"
   | "teachers"
   | "schedule"
+  | "classroom"
   | "courses"
   | "lp"
   | "operations"
@@ -59,6 +67,7 @@ type Section =
   | "sync"
   | "reports"
   | "settings"
+  | "accounts"
   | "audit";
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
@@ -337,6 +346,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
   { id: "students", label: "学生档案", icon: Users, group: "work" },
   { id: "teachers", label: "老师资源", icon: GraduationCap, group: "work" },
   { id: "schedule", label: "排课", icon: CalendarDays, group: "work" },
+  { id: "classroom", label: "网上教室", icon: Video, group: "work" },
   { id: "courses", label: "课程与课包", icon: BookOpen, group: "work" },
   { id: "lp", label: "试听与 LP", icon: BookOpen, group: "work" },
   { id: "operations", label: "调课与代课", icon: CalendarPlus, group: "work" },
@@ -347,11 +357,12 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
   { id: "sync", label: "同步与导入", icon: RefreshCw, group: "support" },
   { id: "reports", label: "运营报表", icon: SlidersHorizontal, group: "support" },
   { id: "settings", label: "规则设置", icon: Settings, group: "support" },
+  { id: "accounts", label: "账号与权限", icon: KeyRound, group: "support" },
   { id: "audit", label: "操作审计", icon: ShieldCheck, group: "support" },
 ];
 
-const mobilePrimaryNavigation = navigation.filter((item) => ["dashboard", "students", "schedule", "messages"].includes(item.id));
 const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files"]);
+const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom", "files"]);
 
 const baseStudents: Student[] = [
   { id: "STU-0248", name: "Olivia Chen", initials: "OC", status: "试听中", owner: "思佳", course: "Year 10 English", timezone: "Australia/Melbourne · UTC+10", guardian: "Chen 先生 · 企业微信客户群", teacher: "待匹配", next: "确认 N-2 资料与收费", nextTone: "red", files: 4 },
@@ -1028,6 +1039,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [auditQuery, setAuditQuery] = useState("");
   const [auditFilter, setAuditFilter] = useState("all");
   const [auditPage, setAuditPage] = useState(1);
+  const [selectedAccountName, setSelectedAccountName] = useState<string>("Admin");
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
@@ -1043,17 +1055,28 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const recordStudents = useMemo(() => hasRealSnapshot ? students.filter((student) => !sampleStudentIds.has(student.id)) : students, [hasRealSnapshot, students]);
   const recordTeachers = useMemo(() => hasRealSnapshot ? teachers.filter((teacher) => !sampleTeacherIds.has(teacher.id)) : teachers, [hasRealSnapshot, teachers]);
   const isAdminView = currentOperator === "Nixon";
-  const visibleNavigation = useMemo(() => isAdminView ? navigation : navigation.filter((item) => staffSectionIds.has(item.id)), [isAdminView]);
-  const scopedStudents = useMemo(() => isAdminView ? recordStudents : recordStudents.filter((student) => student.owner === currentOperator), [currentOperator, isAdminView, recordStudents]);
+  const isTeacherView = isDemoTeacher(currentOperator);
+  const currentTeacher = useMemo(() => isTeacherView ? recordTeachers.find((teacher) => teacher.name.trim().toLocaleLowerCase() === currentOperator.trim().toLocaleLowerCase()) : undefined, [currentOperator, isTeacherView, recordTeachers]);
+  const teacherBookingStudentIds = useMemo(() => new Set(currentTeacher ? bookings.filter((booking) => booking.teacherId === currentTeacher.id).map((booking) => booking.studentId) : []), [bookings, currentTeacher]);
+  const visibleNavigation = useMemo(() => isAdminView ? navigation : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)), [isAdminView, isTeacherView]);
+  const visibleMobileNavigation = useMemo(() => visibleNavigation.filter((item) => isTeacherView ? ["dashboard", "students", "schedule", "classroom"].includes(item.id) : ["dashboard", "students", "schedule", "messages"].includes(item.id)), [isTeacherView, visibleNavigation]);
+  const scopedStudents = useMemo(() => {
+    if (isAdminView) return recordStudents;
+    if (isTeacherView) {
+      const teacherName = currentOperator.trim().toLocaleLowerCase();
+      return recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === teacherName || teacherBookingStudentIds.has(student.id));
+    }
+    return recordStudents.filter((student) => student.owner === currentOperator);
+  }, [currentOperator, isAdminView, isTeacherView, recordStudents, teacherBookingStudentIds]);
   const scopedStudentIds = useMemo(() => new Set(scopedStudents.map((student) => student.id)), [scopedStudents]);
   const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => task.owner === currentOperator || scopedStudentIds.has(task.studentId)), [currentOperator, isAdminView, scopedStudentIds, tasks]);
-  const scopedBookings = useMemo(() => isAdminView ? bookings : bookings.filter((booking) => scopedStudentIds.has(booking.studentId)), [bookings, isAdminView, scopedStudentIds]);
+  const scopedBookings = useMemo(() => isAdminView ? bookings : isTeacherView ? bookings.filter((booking) => booking.teacherId === currentTeacher?.id) : bookings.filter((booking) => scopedStudentIds.has(booking.studentId)), [bookings, currentTeacher?.id, isAdminView, isTeacherView, scopedStudentIds]);
   const scopedLpItems = useMemo(() => isAdminView ? lpItems : lpItems.filter((item) => item.owner === currentOperator || scopedStudentIds.has(item.studentId)), [currentOperator, isAdminView, lpItems, scopedStudentIds]);
   const scopedOperations = useMemo(() => isAdminView ? operations : operations.filter((operation) => scopedStudentIds.has(operation.studentId)), [isAdminView, operations, scopedStudentIds]);
   const scopedRenewals = useMemo(() => isAdminView ? renewals : renewals.filter((renewal) => renewal.owner === currentOperator || scopedStudentIds.has(renewal.studentId)), [currentOperator, isAdminView, renewals, scopedStudentIds]);
   const scopedMessages = useMemo(() => isAdminView ? messages : messages.filter((message) => scopedStudentIds.has(message.studentId)), [isAdminView, messages, scopedStudentIds]);
   const scopedFiles = useMemo(() => isAdminView ? files : files.filter((file) => scopedStudentIds.has(file.studentId)), [files, isAdminView, scopedStudentIds]);
-  const selectedStudent = scopedStudents.find((student) => student.id === selectedStudentId) ?? scopedStudents[0] ?? recordStudents[0];
+  const selectedStudent = scopedStudents.find((student) => student.id === selectedStudentId) ?? scopedStudents[0] ?? (isTeacherView ? { id: "STU-NONE", name: "暂无关联学生", initials: "--", status: "待确认", owner: "教务", course: "待分配", timezone: "Australia/Melbourne", guardian: "待补充", teacher: currentOperator, next: "等待管理员关联学生", nextTone: "neutral", files: 0 } satisfies Student : recordStudents[0]);
   const selectedMessage = scopedMessages.find((message) => message.id === selectedMessageId) ?? scopedMessages[0];
   const selectedBooking = scopedBookings.find((booking) => booking.id === selectedBookingId) ?? scopedBookings[0];
   const selectedOperation = scopedOperations.find((operation) => operation.id === selectedOperationId) ?? scopedOperations[0];
@@ -1074,7 +1097,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
-  const operatorOptions = useMemo(() => isAdminSession ? ["Nixon", ...ownerOptions.filter((owner) => owner !== "Nixon")] : [sessionOperator], [isAdminSession, ownerOptions, sessionOperator]);
+  const operatorOptions = useMemo(() => isAdminSession ? Array.from(new Set(["Nixon", ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...DEMO_TEACHER_USERS])) : [sessionOperator], [isAdminSession, ownerOptions, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
@@ -1103,23 +1126,28 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [currentOperator, scopedStudentIds, scopedTasks, taskFilter]);
 
   const switchOperator = (operator: string) => {
+    const teacherView = isDemoTeacher(operator);
+    const teacher = teacherView ? recordTeachers.find((item) => item.name.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase()) : undefined;
+    const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
+    const allowedStudents = operator === "Nixon" ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
     setCurrentOperator(operator);
     setTaskFilter(operator === "Nixon" ? "all" : "mine");
-    setStudentView(operator === "Nixon" ? "all" : "mine");
+    setStudentView(operator === "Nixon" || teacherView ? "all" : "mine");
     setStudentOwner("all");
     setStudentPage(1);
     setSelectedStudentIds([]);
-    const firstOwnedStudent = recordStudents.find((student) => student.owner === operator);
-    const allowedStudentIds = new Set((operator === "Nixon" ? recordStudents : recordStudents.filter((student) => student.owner === operator)).map((student) => student.id));
+    const firstOwnedStudent = allowedStudents[0];
+    const allowedStudentIds = new Set(allowedStudents.map((student) => student.id));
     if (firstOwnedStudent) setSelectedStudentId(firstOwnedStudent.id);
-    const firstBooking = bookings.find((booking) => allowedStudentIds.has(booking.studentId));
+    if (teacher) setSelectedTeacherId(teacher.id);
+    const firstBooking = bookings.find((booking) => teacher ? booking.teacherId === teacher.id : allowedStudentIds.has(booking.studentId));
     const firstMessage = messages.find((message) => allowedStudentIds.has(message.studentId));
     const firstOperation = operations.find((operation) => allowedStudentIds.has(operation.studentId));
     if (firstBooking) setSelectedBookingId(firstBooking.id);
     if (firstMessage) setSelectedMessageId(firstMessage.id);
     if (firstOperation) setSelectedOperationId(firstOperation.id);
-    if (operator !== "Nixon" && !staffSectionIds.has(active)) setActive("dashboard");
-    notify(operator === "Nixon" ? "已切换到全局管理视图" : `已切换到 ${operator} 的个人工作视图`);
+    if (operator !== "Nixon" && !(teacherView ? teacherSectionIds : staffSectionIds).has(active)) setActive("dashboard");
+    notify(operator === "Nixon" ? "已切换到全局管理视图" : teacherView ? `已切换到 ${operator} 的老师视图` : `已切换到 ${operator} 的个人工作视图`);
   };
 
   const requestOperatorSwitch = (operator: string) => {
@@ -1243,14 +1271,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const haystack = `${student.name} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
     const matchesSearch = haystack.includes(search.trim().toLowerCase());
     if (!matchesSearch || (studentOwner !== "all" && student.owner !== studentOwner)) return false;
-    if (studentView === "mine") return student.owner === currentOperator;
+    if (studentView === "mine") return isTeacherView || student.owner === currentOperator;
     if (studentView === "trial") return student.status === "试听中" || student.status === "待排课";
     if (studentView === "enrolled") return student.segment === "已报名" && isActiveStudent(student);
     if (studentView === "lp") return requiresLp(student);
     if (studentView === "renewal") return student.status === "待续课";
     if (studentView === "paused") return student.status === "停课" || student.status === "非在读" || student.status === "不活跃";
     return true;
-  }).sort((a, b) => a.name.localeCompare(b.name)), [currentOperator, scopedStudents, search, studentOwner, studentView]);
+  }).sort((a, b) => a.name.localeCompare(b.name)), [currentOperator, isTeacherView, scopedStudents, search, studentOwner, studentView]);
 
   const pageSize = 12;
   const safeStudentPage = Math.min(studentPage, Math.max(1, Math.ceil(filteredStudents.length / pageSize)));
@@ -1269,7 +1297,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
   const globalResults = globalQuery.trim() ? [
     ...scopedStudents.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: "学生", title: student.name, detail: `${student.id} · ${student.course}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
-    ...recordTeachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })),
+    ...(!isTeacherView ? recordTeachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })) : []),
   ] : [];
 
   const goToStudent = (studentId: string, section: Section = "students") => {
@@ -1475,7 +1503,44 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
+  const classroomUrl = (booking: Booking) => `${window.location.origin}/classroom/${encodeURIComponent(booking.id)}`;
+
+  const copyClassroomLink = async (booking: Booking) => {
+    await navigator.clipboard.writeText(classroomUrl(booking));
+    addAudit("复制 Demo 教室链接", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
+    notify("Demo 教室链接已复制");
+  };
+
+  const openClassroom = (booking: Booking) => {
+    window.open(`/classroom/${encodeURIComponent(booking.id)}`, "_blank", "noopener,noreferrer");
+  };
+
+  const renderTeacherDashboard = () => {
+    const pendingBookings = scopedBookings.filter((booking) => booking.status === "待确认");
+    const totalMinutes = scopedBookings.reduce((sum, booking) => sum + booking.duration, 0);
+    const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date());
+    return <>
+      <ViewHeading eyebrow={todayLabel} title="我的教学工作台" copy={`${currentOperator} 老师的学生、排课与网上教室。这里只显示与当前老师直接关联的真实资料。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> 我的学生</button><button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建约课</button></>} />
+      <section className="command-strip teacher-command-strip" aria-label="老师快捷操作">
+        <button type="button" onClick={() => setModal("booking")}><CalendarPlus size={18} /><span><strong>安排课程</strong><small>从自己的学生中选择并检查时间冲突</small></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("schedule")}><CalendarDays size={18} /><span><strong>查看课表</strong><small>按学生、老师和墨尔本时间核对</small></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("classroom")}><Video size={18} /><span><strong>网上教室</strong><small>生成并打开 Demo 上课链接</small></span><ChevronRight size={16} /></button>
+      </section>
+      <section className="metric-grid teacher-metric-grid" aria-label="我的教学概览">
+        <Metric tone="green" icon={<Users size={21} />} value={scopedStudents.length.toString()} label="我的学生" detail="仅显示当前老师关联学生" onClick={() => setActive("students")} />
+        <Metric tone="blue" icon={<CalendarDays size={21} />} value={scopedBookings.length.toString()} label="课程记录" detail="当前已导入的排课" onClick={() => setActive("schedule")} />
+        <Metric tone="amber" icon={<Clock3 size={21} />} value={pendingBookings.length.toString()} label="待确认" detail="需要确认的课程" onClick={() => setActive("schedule")} />
+        <Metric tone="purple" icon={<Video size={21} />} value={`${Math.round(totalMinutes / 60)}h`} label="排课时长" detail="按当前课程记录汇总" onClick={() => setActive("classroom")} />
+      </section>
+      <section className="teacher-dashboard-grid">
+        <article className="panel teacher-roster-panel"><div className="panel-header"><div><p className="eyebrow">学生管理</p><h2>我的学生</h2></div><IconButton label="打开学生列表" onClick={() => setActive("students")}><Users size={18} /></IconButton></div><div className="teacher-student-list">{scopedStudents.slice(0, 8).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.course} · {student.status}</small></span><ChevronRight size={16} /></button>)}{!scopedStudents.length && <EmptyState title="暂无关联学生" detail="管理员为老师关联学生或导入排课后，这里会自动出现。" />}</div></article>
+        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">我的排课</p><h2>接下来课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{scopedBookings.length ? <ScheduleList bookings={scopedBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setActive("schedule"); }} /> : <EmptyState title="暂无排课" detail="点击“新建约课”为自己的学生安排课程。" />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> 管理 Demo 教室</button></article>
+      </section>
+    </>;
+  };
+
   const renderDashboard = () => {
+    if (isTeacherView) return renderTeacherDashboard();
     const operatorTasks = scopedTasks;
     const operatorStudents = scopedStudents;
     const operatorStudentIds = new Set(operatorStudents.map((student) => student.id));
@@ -1518,8 +1583,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderStudents = () => {
     const viewItems = [
-      { id: "all", label: isAdminView ? "全部学生" : "我负责的学生", count: scopedStudents.length },
-      { id: "mine", label: currentOperator === "Nixon" ? "我负责的" : `${currentOperator} 负责`, count: scopedStudents.filter((student) => student.owner === currentOperator).length },
+      { id: "all", label: isAdminView ? "全部学生" : isTeacherView ? "我的学生" : "我负责的学生", count: scopedStudents.length },
+      ...(!isTeacherView ? [{ id: "mine", label: currentOperator === "Nixon" ? "我负责的" : `${currentOperator} 负责`, count: scopedStudents.filter((student) => student.owner === currentOperator).length }] : []),
       { id: "trial", label: "试听与待排课", count: scopedStudents.filter((student) => student.status === "试听中" || student.status === "待排课").length },
       { id: "enrolled", label: "已报名在读", count: scopedStudents.filter((student) => student.segment === "已报名" && isActiveStudent(student)).length },
       { id: "lp", label: "需要 LP", count: scopedStudents.filter(requiresLp).length },
@@ -1529,7 +1594,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const pageIds = pagedStudents.map((student) => student.id);
     const pageSelected = pageIds.length > 0 && pageIds.every((studentId) => selectedStudentIds.includes(studentId));
     return <>
-      <ViewHeading eyebrow="学生 CRM · 试听、已报名与 LP 分流" title="学生档案" copy="按学员状态、负责教务和 LP 类型筛选；年级按基准年份自动推进，Report、跟进、考试与特殊备注集中在同一档案。" actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> 全局查找</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
+      <ViewHeading eyebrow={isTeacherView ? "老师个人视图 · 学生与约课" : "学生 CRM · 试听、已报名与 LP 分流"} title={isTeacherView ? "我的学生" : "学生档案"} copy={isTeacherView ? "查看自己负责授课的学生资料，并直接为学生安排课程。学生状态由教务维护。" : "按学员状态、负责教务和 LP 类型筛选；年级按基准年份自动推进，Report、跟进、考试与特殊备注集中在同一档案。"} actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> 查找学生</button>{!isTeacherView && <button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button>}</>} />
       <section className="panel collection-shell student-collection">
         <ViewTabs value={studentView} items={viewItems} onChange={(value) => { setStudentView(value); setStudentPage(1); setSelectedStudentIds([]); }} label="学生保存视图" />
         <ListToolbar query={search} onQuery={(value) => { setSearch(value); setStudentPage(1); }} placeholder="搜索姓名、ID、课程、老师或负责人" count={`${filteredStudents.length} 位学生`}>
@@ -1546,7 +1611,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={setStudentPage} />
           </article>
-          <StudentDetail student={selectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} mobileOpen={mobilePreview === "student"} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); setModal("booking"); }} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} />
+          <StudentDetail student={selectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); setModal("booking"); }} onStatus={(status) => { setStudents((current) => current.map((student) => student.id === selectedStudent.id ? { ...student, status } : student)); addAudit("更新学生状态", `${selectedStudent.name} → ${status}`, "blue"); notify("学生状态已更新"); }} />
         </div>
       </section>
     </>;
@@ -1634,7 +1699,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const visibleWeekDays = scheduleDay === "all" ? weekDays : weekDays.filter((day) => day.date === scheduleDay);
     if (!selectedBooking) {
       return <>
-        <ViewHeading eyebrow="统一时点 + IANA 时区 + AVA 占用锁定" title="排课与时区检查" copy="排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
+        <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建约课</button>} />
         <section className="panel collection-shell"><EmptyState title="暂无真实排课数据" detail="当前 Supabase 只导入了学生和老师档案；排课数据导入后会在这里显示。" /></section>
       </>;
     }
@@ -1643,7 +1708,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const selectedInstant = bookingInstant(selectedBooking);
     const selectedDstRisk = bookingHasDstRisk(selectedBooking, bookingStudent, bookingTeacher);
     return <>
-      <ViewHeading eyebrow="统一时点 + IANA 时区 + AVA 占用锁定" title="排课与时区检查" copy="排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。" actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建排课</button>} />
+      <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建约课</button>} />
       <section className="panel schedule-shell">
         <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => { setScheduleMode("agenda"); setSchedulePage(1); }}>日程列表</button></div><strong>2026 年 7 月 20 日 - 26 日</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleDay} onChange={(event) => { setScheduleDay(event.target.value); setSchedulePage(1); }} aria-label="排课日期筛选"><option value="all">全部日期</option>{weekDays.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select>{scheduleMode === "week" && <select className="filter-select" value={scheduleDensity} onChange={(event) => setScheduleDensity(event.target.value as "compact" | "comfortable")} aria-label="周视图显示密度"><option value="comfortable">放大显示</option><option value="compact">紧凑显示</option></select>}<select className="filter-select" value={scheduleTimezone} onChange={(event) => { setScheduleTimezone(event.target.value); setSchedulePage(1); }} aria-label="排课显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>显示：{option.label}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option><option value="dst">夏令时需复核</option></select></div></div>
         <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong><small>系统会按 IANA 时区自动换算；发生相对时差变化时保留课程并要求教务复核，不会静默改时间。</small></span></div>
@@ -1729,7 +1794,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </div>
             )}
           </article>
-          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button><div className="panel-header"><div><p className="eyebrow">{selectedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{selectedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} /><TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} /><TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" /><TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`来源时段：${selectedBooking.sourceTiming ?? "人工录入"}`} /><div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
+          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button><div className="panel-header"><div><p className="eyebrow">{selectedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{selectedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} /><TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} /><TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" /><TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`来源时段：${selectedBooking.sourceTiming ?? "人工录入"}`} /><div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="primary-button full" type="button" onClick={() => openClassroom(selectedBooking)}><Video size={16} /> 进入 Demo 教室</button><button className="secondary-button full" type="button" onClick={() => copyClassroomLink(selectedBooking)}><Link2 size={16} /> 复制教室链接</button><button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
         </div>
       </section>
     </>;
@@ -1877,13 +1942,51 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>;
   };
 
+  const renderClassroom = () => {
+    const roomBooking = selectedBooking ?? scopedBookings[0];
+    return <>
+      <ViewHeading eyebrow="Demo 网上教室 · 先验证操作流程" title="网上教室" copy="目前先演示生成链接、进入教室和课堂工具布局，不会调用真实摄像头、麦克风或录制服务；后续可替换为正式视频供应商。" actions={roomBooking ? <button className="primary-button" type="button" onClick={() => openClassroom(roomBooking)}><ExternalLink size={17} /> 进入 Demo 教室</button> : <button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 先创建约课</button>} />
+      <section className="panel classroom-hub">
+        {scopedBookings.length ? <div className="classroom-hub-layout">
+          <article className="classroom-room-list"><div className="collection-head classroom-grid-row"><span>课程</span><span>时间</span><span>状态</span></div>{scopedBookings.slice(0, 12).map((booking) => { const student = studentById(booking.studentId); return <button className={`collection-row classroom-grid-row ${roomBooking?.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); }}><span><strong>{student?.name ?? booking.studentId}</strong><small>{booking.course ?? student?.course ?? booking.kind}</small></span><span><strong>{formatInstant(bookingInstant(booking), scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)}</small></span><StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill></button>; })}</article>
+          {roomBooking && <aside className="classroom-room-preview"><div className="preview-header"><div><p className="eyebrow">{roomBooking.id}</p><h2>{studentById(roomBooking.studentId)?.name ?? "学生"}</h2></div><StatusPill tone="purple">Demo</StatusPill></div><div className="classroom-link-preview"><Video size={24} /><span><strong>一对一网上教室</strong><small>老师与学生可通过同一链接进入</small></span></div><div className="detail-section"><span>课程时间</span><strong>{formatInstant(bookingInstant(roomBooking), scheduleTimezone)}</strong><p>{timezoneLabel(scheduleTimezone)} · {roomBooking.duration} 分钟</p></div><div className="detail-section"><span>课堂工具演示</span><div className="classroom-tool-tags"><span>视频</span><span>语音</span><span>白板</span><span>计时器</span><span>快速选择题</span></div></div><button className="primary-button full" type="button" onClick={() => openClassroom(roomBooking)}><ExternalLink size={16} /> 进入 Demo 教室</button><button className="secondary-button full" type="button" onClick={() => copyClassroomLink(roomBooking)}><Copy size={16} /> 复制学生进入链接</button></aside>}
+        </div> : <EmptyState title="还没有可用课程" detail="先为自己的学生创建约课，系统会自动生成对应的 Demo 教室链接。" />}
+      </section>
+    </>;
+  };
+
+  const renderAccounts = () => {
+    const accounts = [
+      { name: "Admin", operator: "Nixon", role: "超级管理员", login: "管理员独立密码", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
+      ...DEMO_STAFF_USERS.map((name) => ({ name, operator: name, role: "教务账号", login: name, permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"] })),
+      ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", login: name, permissions: ["自己的学生", "自己的排课", "Demo 网上教室", "学生资料只读"] })),
+    ];
+    const selectedAccount = accounts.find((account) => account.name === selectedAccountName) ?? accounts[0];
+    const copyCredential = async () => {
+      if (selectedAccount.name === "Admin") { notify("管理员密码不会在页面中显示或复制"); return; }
+      await navigator.clipboard.writeText(selectedAccount.login);
+      addAudit("复制演示登录凭证", `${selectedAccount.name} · ${selectedAccount.role}`, "blue");
+      notify(`${selectedAccount.name} 的演示登录名已复制`);
+    };
+    return <>
+      <ViewHeading eyebrow="演示账号 · 正式上线前再升级强密码" title="账号与权限" copy="集中查看管理员、教务和老师账号。演示阶段教务和老师使用姓名登录；管理员仍使用独立密码。" actions={<button className="secondary-button" type="button" onClick={() => notify("正式上线时可接 Supabase Auth、强密码与密码重置邮件")}><UserPlus size={17} /> 新增账号</button>} />
+      <section className="panel account-admin-shell">
+        <div className="account-admin-layout">
+          <article className="account-list"><div className="collection-head account-grid-row"><span>账号</span><span>角色</span><span>登录方式</span></div>{accounts.map((account) => <button className={`collection-row account-grid-row ${selectedAccount.name === account.name ? "selected" : ""}`} type="button" key={account.name} onClick={() => setSelectedAccountName(account.name)}><span className="table-person"><Avatar initials={account.name === "Admin" ? "AD" : initials(account.name)} tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"} /><span><strong>{account.name}</strong><small>状态：已启用</small></span></span><StatusPill tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"}>{account.role}</StatusPill><span>{account.name === "Admin" ? "独立密码" : "姓名登录"}</span></button>)}</article>
+          <aside className="account-preview"><div className="preview-header"><div><p className="eyebrow">账号权限</p><h2>{selectedAccount.name}</h2></div><StatusPill tone="green">已启用</StatusPill></div><div className="student-facts account-facts"><span><small>角色</small><strong>{selectedAccount.role}</strong><em>演示权限组</em></span><span><small>登录方式</small><strong>{selectedAccount.name === "Admin" ? "独立密码" : "姓名登录"}</strong><em>{selectedAccount.name === "Admin" ? "密码不在页面显示" : "当前演示阶段"}</em></span></div><div className="detail-section"><span>可访问功能</span><div className="permission-list">{selectedAccount.permissions.map((permission) => <p key={permission}><CheckCircle2 size={15} /> {permission}</p>)}</div></div><div className="account-actions"><button className="primary-button full" type="button" onClick={() => switchOperator(selectedAccount.operator)}><UserCog size={16} /> 查看此账号视图</button><button className="secondary-button full" type="button" onClick={copyCredential}><Copy size={16} /> {selectedAccount.name === "Admin" ? "管理员密码保持隐藏" : "复制演示登录名"}</button></div><div className="form-notice"><CircleAlert size={16} /> 正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。</div></aside>
+        </div>
+      </section>
+    </>;
+  };
+
   const renderView = () => {
-    if (!isAdminView && !staffSectionIds.has(active)) return renderDashboard();
+    if (!isAdminView && !(isTeacherView ? teacherSectionIds : staffSectionIds).has(active)) return renderDashboard();
     switch (active) {
       case "dashboard": return renderDashboard();
       case "students": return renderStudents();
       case "teachers": return renderTeachers();
       case "schedule": return renderSchedule();
+      case "classroom": return renderClassroom();
       case "courses": return renderCourses();
       case "lp": return renderLp();
       case "operations": return renderOperations();
@@ -1894,6 +1997,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       case "sync": return renderSync();
       case "reports": return renderReports();
       case "settings": return renderSettings();
+      case "accounts": return renderAccounts();
       case "audit": return renderAudit();
     }
   };
@@ -1967,10 +2071,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const studentId = String(data.get("studentId") ?? selectedStudent.id);
-    const teacherId = String(data.get("teacherId") ?? selectedTeacher.id);
+    const teacherId = isTeacherView ? currentTeacher?.id ?? "" : String(data.get("teacherId") ?? selectedTeacher.id);
     const date = String(data.get("date") ?? ""); const start = String(data.get("start") ?? ""); const duration = Number(data.get("duration") ?? 60);
     const inputTimezone = String(data.get("timezone") ?? "Australia/Melbourne");
     const kind = String(data.get("kind") ?? "试听") as Booking["kind"];
+    if (isTeacherView && !scopedStudentIds.has(studentId)) { notify("老师账号只能为自己的学生安排课程。"); return; }
+    if (!teacherId) { notify("当前老师账号没有匹配到老师档案，请联系管理员。"); return; }
     if (scheduleConflict(studentId, teacherId, date, start, duration, inputTimezone)) { notify("这个学生或老师在该时段已有重叠课程，请先选择其他时段。"); return; }
     const teacher = teacherById(teacherId); const student = studentById(studentId);
     if (kind === "试听" && teacher && !teacher.acceptsStudents) { notify(`${teacher.name} 当前不是“可接新生”状态，不能安排试听。`); return; }
@@ -2062,8 +2168,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">吟</span><div><strong>吟领教务</strong><small>Learning Operations</small></div></div>
-        <div className="workspace-switch"><span className="workspace-dot" /> {currentOperator === "Nixon" ? "全局管理视图" : `${currentOperator} 工作视图`} <ChevronDown size={15} /></div>
-        <button className="new-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 新建</button>
+        <div className="workspace-switch"><span className="workspace-dot" /> {currentOperator === "Nixon" ? "全局管理视图" : isTeacherView ? `${currentOperator} 老师工作台` : `${currentOperator} 工作视图`} <ChevronDown size={15} /></div>
+        <button className="new-button" type="button" onClick={() => setModal(isTeacherView ? "booking" : "task")}><Plus size={17} /> {isTeacherView ? "新建约课" : "新建"}</button>
         <nav aria-label="主要导航">
           <p>学生与教务</p>
           {visibleNavigation.filter((item) => item.group === "work").map((item) => {
@@ -2087,7 +2193,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
             <label className="operator">
               <Avatar initials={currentOperator === "Nixon" ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></span>
+              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : isTeacherView ? "老师个人权限" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></span>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
           </div>
@@ -2095,11 +2201,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <div className="content">{renderView()}</div>
       </section>
       <nav className="mobile-bottom-nav" aria-label="手机主导航">
-        {mobilePrimaryNavigation.map((item) => {
+        {visibleMobileNavigation.map((item) => {
           const Icon = item.icon;
           return <button className={active === item.id ? "active" : ""} type="button" key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={21} /><span>{item.label === "学生档案" ? "学生" : item.label === "消息队列" ? "消息" : item.label}</span></button>;
         })}
-        <button className={mobileMenuOpen || !mobilePrimaryNavigation.some((item) => item.id === active) ? "active" : ""} type="button" onClick={() => setMobileMenuOpen(true)}><MoreHorizontal size={22} /><span>更多</span></button>
+        <button className={mobileMenuOpen || !visibleMobileNavigation.some((item) => item.id === active) ? "active" : ""} type="button" onClick={() => setMobileMenuOpen(true)}><MoreHorizontal size={22} /><span>更多</span></button>
       </nav>
 
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
@@ -2134,7 +2240,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div>
               <button type="button" onClick={() => { setActive("students"); setGlobalSearchOpen(false); }}>学生档案</button>
               <button type="button" onClick={() => { setActive("schedule"); setGlobalSearchOpen(false); }}>排课中心</button>
-              <button type="button" onClick={() => { setActive("operations"); setGlobalSearchOpen(false); }}>运营队列</button>
+              <button type="button" onClick={() => { setActive(isTeacherView ? "classroom" : "operations"); setGlobalSearchOpen(false); }}>{isTeacherView ? "网上教室" : "运营队列"}</button>
             </div>
           </div>}
         </section>
@@ -2194,8 +2300,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "booking" && <Dialog title="新建排课" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitBooking}>
-          <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入姓名或老师 ID 搜索" /><datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>
+          <label>学生<input name="studentId" list="booking-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="booking-student-options">{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={selectedTeacher.id} placeholder="输入姓名或老师 ID 搜索" /><datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>}
           <label>日期<input name="date" type="date" defaultValue={isoDateInTimezone(new Date(), scheduleTimezone)} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue="16:00" required /></label>
           <label>录入时区<select name="timezone" defaultValue={scheduleTimezone}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -2261,7 +2367,7 @@ function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimez
     {slots.length ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); const dayBookings = teacherBookings.filter((entry) => entry.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone)}</span><div>{daySlots.length ? daySlots.map((slot, index) => <p className="ava-slot" key={`${slot.start}-${index}`}>可约 {slot.start}-{slot.end}</p>) : <p className="ava-empty-day">无可约时段</p>}{dayBookings.map(({ booking, time }) => <p className="ava-booked" key={booking.occurrenceKey}>已占用 {time} · {studentById(booking.studentId)?.name ?? "学生"}</p>)}</div></article>; })}</div> : <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。</strong><span>{teacher.availability || "尚未收到可用时间"}</span><small>录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。</small></div></div>}
   </section>;
 }
-function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpen, onClose, onFiles, onSchedule, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; mobileOpen: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onStatus: (status: Student["status"]) => void }) {
+function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpen, canEditStatus = true, onClose, onFiles, onSchedule, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onStatus: (status: Student["status"]) => void }) {
   const studentTasks = tasks.filter((task) => task.studentId === student.id && task.status !== "done");
   const nextBooking = bookings.find((booking) => booking.studentId === student.id);
   const lowHours = isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < 5;
@@ -2276,7 +2382,7 @@ function StudentDetail({ student, tasks, bookings, files, teacherById, mobileOpe
     {(student.examDate || student.examSubject) && <div className="detail-section"><span>考试节点</span><strong>{student.examSubject || "考试科目待确认"} · {student.examDate || "日期待确认"}</strong><p>{student.resultDate ? `预计出分 ${student.resultDate}` : "考前 30 天与考试当天提醒"}</p></div>}
     <div className="detail-section"><span>特殊备注</span><strong>{student.notes ?? "无特殊备注"}</strong></div>
     <div className="detail-section"><span>家长与沟通路由</span><strong>{student.guardian}</strong></div>
-    <label className="status-select">学生状态<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["待确认", "待排课", "试听中", "在读", "待续课", "停课", "非在读", "不活跃"].map((status) => <option key={status}>{status}</option>)}</select></label>
+    {canEditStatus ? <label className="status-select">学生状态<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["待确认", "待排课", "试听中", "在读", "待续课", "停课", "非在读", "不活跃"].map((status) => <option key={status}>{status}</option>)}</select></label> : <div className="detail-section"><span>学生状态</span><strong>{student.status}</strong><p>老师账号只读；如需调整请联系负责教务。</p></div>}
     <div className="timeline"><div className="timeline-title"><strong>下一步与时间线</strong><small>{studentTasks.length} 项待办</small></div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{task.title}</strong><small>{task.due} · {task.owner}</small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>下一节：{formatInstant(bookingInstant(nextBooking), student.timezone)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {nextBooking.kind}</small></span></div>}</div>
     <button className="primary-button full" type="button" onClick={onSchedule}><CalendarPlus size={16} /> 为此学生安排课程</button>
   </aside>;
