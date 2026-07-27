@@ -2,6 +2,7 @@
 
 import { ChevronDown, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isDemoTeacher } from "@/lib/demo-users";
 import styles from "./account-menu.module.css";
 
 type ViewOption = { label: string; value: string };
@@ -89,13 +90,14 @@ export default function AccountMenu() {
 
   if (!sessionUser) return null;
   const isAdmin = sessionUser === "Nixon";
+  const isTeacher = isDemoTeacher(sessionUser);
   const displayName = isAdmin ? "Admin" : sessionUser;
   const initials = isAdmin ? "AD" : sessionUser.slice(0, 2).toUpperCase();
 
   return <div className={styles.root}>
     <button className={styles.trigger} type="button" aria-label="打开账户菜单">
       <span className={styles.avatar}>{initials}</span>
-      <span className={styles.identity}><small>{isAdmin ? "超级管理员" : "教务个人权限"}</small><strong>{displayName}</strong></span>
+      <span className={styles.identity}><small>{isAdmin ? "超级管理员" : isTeacher ? "老师个人权限" : "教务个人权限"}</small><strong>{displayName}</strong></span>
       <ChevronDown size={14} aria-hidden="true" />
     </button>
     <section className={styles.menu} aria-label="账户菜单">
