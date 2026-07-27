@@ -3,14 +3,18 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { matchesNixonPassword, nixonSessionToken } from "@/lib/nixon-auth";
+import {
+  DEMO_ADMIN_USER,
+  DEMO_STAFF_USERS,
+  DEMO_TEACHER_USERS,
+  type DemoUser,
+} from "@/lib/demo-users";
+
+export { DEMO_ADMIN_USER, DEMO_STAFF_USERS, DEMO_TEACHER_USERS } from "@/lib/demo-users";
+export type { DemoUser } from "@/lib/demo-users";
 
 export const DEMO_COOKIE_NAME = "yinling_demo_auth";
-export const DEMO_ADMIN_USER = "Nixon";
-export const DEMO_STAFF_USERS = ["Abby", "Ella", "Molly", "Thea", "Tiffany"] as const;
-
-export type DemoUser = typeof DEMO_ADMIN_USER | (typeof DEMO_STAFF_USERS)[number];
-
-const DEMO_USERS: readonly DemoUser[] = [DEMO_ADMIN_USER, ...DEMO_STAFF_USERS];
+const DEMO_USERS: readonly DemoUser[] = [DEMO_ADMIN_USER, ...DEMO_STAFF_USERS, ...DEMO_TEACHER_USERS];
 
 function safeEquals(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
@@ -27,7 +31,7 @@ export function resolveDemoUser(candidate: unknown): DemoUser | null {
   if (matchesNixonPassword(candidate)) return DEMO_ADMIN_USER;
 
   const normalisedCandidate = normalise(candidate);
-  return DEMO_STAFF_USERS.find((user) => normalise(user) === normalisedCandidate) ?? null;
+  return [...DEMO_STAFF_USERS, ...DEMO_TEACHER_USERS].find((user) => normalise(user) === normalisedCandidate) ?? null;
 }
 
 export function demoSessionToken(user: DemoUser) {
