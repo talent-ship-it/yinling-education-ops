@@ -81,7 +81,8 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /canUseAdminScope \? Array\.from\(new Set\(\[sessionOperator, DEMO_LIMITED_ADMIN_USER, \.\.\.DEMO_STAFF_USERS/);
   assert.match(client, /\.\.\.DEMO_TEACHER_USERS/);
   assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
-  assert.match(client, /operator === "Nixon" \? "Admin" : operator === DEMO_LIMITED_ADMIN_USER \? "Admin Lite" : operator/);
+  assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
+  assert.match(client, /const canViewPayroll = isFullAdminSession && currentOperator === "Nixon"/);
   assert.match(client, /canViewPayroll \|\| noPayrollAdminSectionIds\.has/);
   assert.match(client, /\{canViewPayroll && <button type="button" onClick=\{\(\) => setActive\("payroll"\)\}/);
   assert.match(client, /if \(!canViewPayroll && active === "payroll"\) return renderDashboard/);
@@ -112,7 +113,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(nixonLogin, /httpOnly: true/);
   assert.match(nixonLogin, /getDemoSessionUser/);
   assert.doesNotMatch(nixonLogin, /maxAge/);
-  assert.match(client, /Admin Lite/);
+  assert.doesNotMatch(client, /Admin Lite/);
 });
 
 test("retains core operations workflows and responsive UI", async () => {
