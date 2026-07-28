@@ -78,7 +78,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /initialOperator/);
   assert.match(client, /isAdminSession/);
   assert.match(client, /DEMO_LIMITED_ADMIN_USER/);
-  assert.match(client, /canUseAdminScope \? Array\.from\(new Set\(\[sessionOperator, \.\.\.DEMO_STAFF_USERS/);
+  assert.match(client, /canUseAdminScope \? Array\.from\(new Set\(\[sessionOperator, DEMO_LIMITED_ADMIN_USER, \.\.\.DEMO_STAFF_USERS/);
   assert.match(client, /\.\.\.DEMO_TEACHER_USERS/);
   assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator === DEMO_LIMITED_ADMIN_USER \? "Admin Lite" : operator/);
