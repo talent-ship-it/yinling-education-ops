@@ -9,7 +9,7 @@
     "dev": "node scripts/dev-fixed-port.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && node --import tsx --test tests/ops-access.test.ts tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern .next"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "eslint": "9.39.4",
     "eslint-config-next": "^16.2.11",
     "tailwindcss": "4.2.1",
+    "tsx": "^4.23.1",
     "typescript": "5.9.3"
   },
   "type": "module"

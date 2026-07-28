@@ -484,16 +484,46 @@ const lpWorkflowOptions: Array<{ id: LpWorkflowType; lpNeed: LpNeed; title: stri
   { id: "代课 LP", lpNeed: "代课LP", title: "代课 LP", detail: "原老师指定内容、资料和新老师交接" },
 ];
 
+function mergeConcurrentPayload<T>(committed: T, local: T, remote: T) {
+  if (!Array.isArray(committed) || !Array.isArray(local) || !Array.isArray(remote)) return { value: remote, conflicts: 0 };
+  const isItem = (value: unknown): value is { id: string } => Boolean(value) && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string";
+  if (![...committed, ...local, ...remote].every(isItem)) return { value: remote, conflicts: 0 };
+
+  const baseline = new Map(committed.map((item) => [item.id, item]));
+  const localItems = new Map(local.map((item) => [item.id, item]));
+  const remoteItems = new Map(remote.map((item) => [item.id, item]));
+  const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id)])];
+  let conflicts = 0;
+  const value = orderedIds.flatMap((itemId) => {
+    const base = baseline.get(itemId);
+    const localItem = localItems.get(itemId);
+    const remoteItem = remoteItems.get(itemId);
+    if (!base) return [localItem ?? remoteItem].filter(Boolean);
+    if (!localItem) return remoteItem ? [remoteItem] : [];
+    if (!remoteItem) return [localItem];
+    const localChanged = JSON.stringify(localItem) !== JSON.stringify(base);
+    const remoteChanged = JSON.stringify(remoteItem) !== JSON.stringify(base);
+    if (localChanged && remoteChanged && JSON.stringify(localItem) !== JSON.stringify(remoteItem)) {
+      conflicts += 1;
+      return [remoteItem];
+    }
+    return [localChanged ? localItem : remoteItem];
+  });
+  return { value: value as T, conflicts };
+}
+
 function useSharedState<T>(
   entity: string,
   initialValue: T,
   initialVersion: number,
   actor: string,
   onSync: (state: SharedSyncState, message?: string) => void,
+  readOnly = false,
 ) {
   const [value, setValue] = useState<T>(initialValue);
   const [version, setVersion] = useState(initialVersion);
   const versionRef = useRef(initialVersion);
+  const valueRef = useRef(initialValue);
   const readyRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
@@ -507,7 +537,11 @@ function useSharedState<T>(
   }, []);
 
   useEffect(() => {
-    if (!readyRef.current) return;
+    valueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    if (!readyRef.current || readOnly) return;
     const serialized = JSON.stringify(value);
     if (serialized === committedRef.current) return;
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
@@ -520,17 +554,18 @@ function useSharedState<T>(
         const response = await fetch("/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entity, payload, expectedVersion: versionRef.current, actor }),
+          body: JSON.stringify({ entity, payload, expectedVersion: versionRef.current }),
         });
         const body = await response.json().catch(() => ({}));
 
         if (response.status === 409 && body.current) {
           const current = body.current as RemoteStateRow<T>;
+          const merged = mergeConcurrentPayload(JSON.parse(committedRef.current) as T, valueRef.current, current.payload);
           committedRef.current = JSON.stringify(current.payload);
           versionRef.current = current.version;
           setVersion(current.version);
-          setValue(current.payload);
-          onSync("conflict", `${entity} 已由 ${current.updated_by} 更新，现已刷新最新版本`);
+          setValue(merged.value);
+          onSync("conflict", merged.conflicts ? `${entity} 有 ${merged.conflicts} 条同一记录被其他人更新，已保留最新版本，请复核` : `${entity} 已合并其他人的更新，正在保存你的改动`);
           return;
         }
         if (!response.ok || !body.row) throw new Error(body.error || `${entity} 保存失败`);
@@ -544,15 +579,19 @@ function useSharedState<T>(
         onSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : `${entity} 保存失败`);
       });
     }, 450);
-  }, [actor, entity, onSync, value]);
+  }, [actor, entity, onSync, readOnly, value]);
 
   const applyRemote = useCallback((row: RemoteStateRow<T>) => {
     if (row.version <= versionRef.current) return;
+    const local = valueRef.current;
+    const committed = JSON.parse(committedRef.current) as T;
+    const hasPendingLocalChanges = JSON.stringify(local) !== committedRef.current;
+    const merged = hasPendingLocalChanges ? mergeConcurrentPayload(committed, local, row.payload) : { value: row.payload, conflicts: 0 };
     committedRef.current = JSON.stringify(row.payload);
     versionRef.current = row.version;
     setVersion(row.version);
-    setValue(row.payload);
-    onSync("synced", `${entity} 已接收 ${row.updated_by} 的更新`);
+    setValue(merged.value);
+    onSync(merged.conflicts ? "conflict" : "synced", merged.conflicts ? `${entity} 有 ${merged.conflicts} 条同一记录已更新，请复核` : hasPendingLocalChanges ? `${entity} 已合并其他人的更新` : `${entity} 已接收 ${row.updated_by} 的更新`);
   }, [entity, onSync]);
 
   return [value, setValue, { version, applyRemote }] as const;
@@ -1023,7 +1062,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [payroll, setPayroll, payrollShared] = useSharedState("payroll", defaults.defaultPayroll, versionFor("payroll"), currentOperator, reportSharedSync);
   const [messages, setMessages, messagesShared] = useSharedState("messages", defaults.defaultMessages, versionFor("messages"), currentOperator, reportSharedSync);
   const [files, setFiles, filesShared] = useSharedState("files", defaults.defaultFiles, versionFor("files"), currentOperator, reportSharedSync);
-  const [audit, setAudit, auditShared] = useSharedState("audit", defaults.defaultAudit, versionFor("audit"), currentOperator, reportSharedSync);
+  const [audit, setAudit, auditShared] = useSharedState("audit", defaults.defaultAudit, versionFor("audit"), currentOperator, reportSharedSync, true);
   const [rules, setRules, rulesShared] = useSharedState("rules", defaults.defaultRules, versionFor("rules"), currentOperator, reportSharedSync);
   const [dataSnapshot, setDataSnapshot, dataSnapshotShared] = useSharedState("dataSnapshot", defaults.defaultDataSnapshot, versionFor("dataSnapshot"), currentOperator, reportSharedSync);
   const [syncSources] = useState<SyncSource[]>(initialData?.syncSources ?? []);
@@ -1139,7 +1178,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
-    setAudit((current) => [{ id: id("AUD"), time: `今天 ${nowLabel()}`, actor: currentOperator, action, detail, tone }, ...current]);
+    const optimisticEntry: AuditEntry = { id: id("AUD"), time: `今天 ${nowLabel()}`, actor: currentOperator, action, detail, tone };
+    setAudit((current) => [optimisticEntry, ...current]);
+    void fetch("/api/audit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, detail, tone }),
+    }).then(async (response) => {
+      if (response.ok) return;
+      const body = await response.json().catch(() => ({}));
+      notify(body.error || "操作审计保存失败");
+    }).catch(() => notify("操作审计保存失败"));
   };
 
   const notify = (message: string) => {
@@ -1722,10 +1771,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderSchedule = () => {
-    const weekDays = Array.from({ length: 7 }, (_, index) => {
-      const date = new Date(Date.UTC(2026, 6, 20 + index));
-      return { date: date.toISOString().slice(0, 10), label: new Intl.DateTimeFormat("zh-CN", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(date) };
-    });
+    const weekDays = weekDatesForTimezone(scheduleTimezone);
+    const weekRangeLabel = `${weekDays[0]?.date.replaceAll("-", "/")} - ${weekDays.at(-1)?.date.replaceAll("-", "/")}`;
     const filteredBookings = scopedBookings.filter((booking) => {
       const matchesStatus = scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskBookings.some((risk) => risk.id === booking.id) : true;
       if (!matchesStatus || scheduleDay === "all") return matchesStatus;
@@ -1749,7 +1796,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 新建约课</button>} />
       <section className="panel schedule-shell">
-        <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => { setScheduleMode("agenda"); setSchedulePage(1); }}>日程列表</button></div><strong>2026 年 7 月 20 日 - 26 日</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleDay} onChange={(event) => { setScheduleDay(event.target.value); setSchedulePage(1); }} aria-label="排课日期筛选"><option value="all">全部日期</option>{weekDays.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select>{scheduleMode === "week" && <select className="filter-select" value={scheduleDensity} onChange={(event) => setScheduleDensity(event.target.value as "compact" | "comfortable")} aria-label="周视图显示密度"><option value="comfortable">放大显示</option><option value="compact">紧凑显示</option></select>}<select className="filter-select" value={scheduleTimezone} onChange={(event) => { setScheduleTimezone(event.target.value); setSchedulePage(1); }} aria-label="排课显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>显示：{option.label}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option><option value="dst">夏令时需复核</option></select></div></div>
+        <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>周视图</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => { setScheduleMode("agenda"); setSchedulePage(1); }}>日程列表</button></div><strong>{weekRangeLabel}</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleDay} onChange={(event) => { setScheduleDay(event.target.value); setSchedulePage(1); }} aria-label="排课日期筛选"><option value="all">全部日期</option>{weekDays.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select>{scheduleMode === "week" && <select className="filter-select" value={scheduleDensity} onChange={(event) => setScheduleDensity(event.target.value as "compact" | "comfortable")} aria-label="周视图显示密度"><option value="comfortable">放大显示</option><option value="compact">紧凑显示</option></select>}<select className="filter-select" value={scheduleTimezone} onChange={(event) => { setScheduleTimezone(event.target.value); setSchedulePage(1); }} aria-label="排课显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>显示：{option.label}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label="排课筛选"><option value="all">全部课程</option><option value="pending">待确认</option><option value="trial">仅试听</option><option value="dst">夏令时需复核</option></select></div></div>
         <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong><small>系统会按 IANA 时区自动换算；发生相对时差变化时保留课程并要求教务复核，不会静默改时间。</small></span></div>
         <div className="master-detail-layout schedule-layout">
           <article className="collection-main schedule-main">
@@ -2297,7 +2344,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ? current.map((item) => item.id === updated.id ? updated : item)
         : [updated, ...current]);
       if (contacted) {
-        setStudents((current) => current.map((item) => item.id === updated.studentId ? { ...item, followUp: formatFollowUpTime(attemptedAt) } : item));
+        setStudents((current) => current.map((item) => item.id === updated.studentId ? { ...item, followUp: attemptedAt } : item));
       }
       addAudit(
         "记录续课跟进",

@@ -23,10 +23,12 @@ export function matchesNixonPassword(candidate: unknown) {
 }
 
 export function nixonSessionToken() {
-  return createHmac("sha256", passwordHash()).update("yinling-nixon-session-v1").digest("hex");
+  const secret = process.env.OPS_API_SECRET;
+  if (!secret) return null;
+  return createHmac("sha256", secret).update("yinling-nixon-session-v1").digest("hex");
 }
 
 export function hasValidNixonSession(value: string | undefined) {
-  if (!value) return false;
-  return safeEquals(value, nixonSessionToken());
+  const expected = nixonSessionToken();
+  return Boolean(value && expected && safeEquals(value, expected));
 }

@@ -40,12 +40,17 @@ export function resolveDemoUser(candidate: unknown): DemoUser | null {
 }
 
 export function demoSessionToken(user: DemoUser) {
-  return createHmac("sha256", nixonSessionToken()).update(`yinling-demo-session-v2:${user}`).digest("hex");
+  const adminToken = nixonSessionToken();
+  if (!adminToken) return null;
+  return createHmac("sha256", adminToken).update(`yinling-demo-session-v2:${user}`).digest("hex");
 }
 
 export function getDemoSessionUser(value: string | undefined): DemoUser | null {
   if (!value) return null;
-  return DEMO_USERS.find((user) => safeEquals(value, demoSessionToken(user))) ?? null;
+  return DEMO_USERS.find((user) => {
+    const token = demoSessionToken(user);
+    return Boolean(token && safeEquals(value, token));
+  }) ?? null;
 }
 
 export function hasValidDemoSession(value: string | undefined) {

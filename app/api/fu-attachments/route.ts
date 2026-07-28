@@ -2,7 +2,9 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
-import { putStudentFuAttachment } from "@/lib/ops-store";
+import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
+import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { getOpsState, putStudentFuAttachment } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +37,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const allRows = await getOpsState();
+    const fullAdmin = actor === "Nixon" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin);
+    if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
     const bytes = Buffer.from(await file.arrayBuffer());
     const attachment = await putStudentFuAttachment({
       studentId,
