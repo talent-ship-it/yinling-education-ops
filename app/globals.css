@@ -2101,3 +2101,49 @@ body {
     height:auto;
   }
 }
+
+.renewal-status-cell {
+  align-items:start;
+  display:grid;
+  gap:4px;
+  min-width:0;
+}
+
+.renewal-status-cell .status-pill {
+  justify-self:start;
+}
+
+.renewal-status-cell small,
+.upload-field small {
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.45;
+}
+
+.upload-field input[type="file"] {
+  padding:9px;
+}
+
+.file-source-link {
+  align-items:center;
+  display:inline-flex;
+  gap:5px;
+}
+
+@media (min-width:761px) {
+  body { font-size:15px; }
+  .nav-item,.workspace-switch,.top-search,.operator,.breadcrumb { font-size:14px; }
+  .primary-button,.secondary-button { font-size:14px; }
+  .compact-button,.text-button,.segmented button,.view-tabs button,.filter-select { font-size:13px; }
+  .search-field input { font-size:14px; }
+  .collection-head { font-size:12px; }
+  .collection-row { font-size:14px; }
+  .collection-row,.row-primary strong,.task-copy strong,.schedule-copy strong { font-size:14px; }
+  .row-primary strong { font-size:15px; }
+  .collection-row small,.row-primary small,.row-cell small,.task-copy span,.task-copy small { font-size:12px; }
+  .status-pill,.result-count,.pagination span,.pagination strong { font-size:12px; }
+  .detail-top p,.detail-section > span,.detail-section div > span,.status-select { font-size:12px; }
+  .detail-section strong { font-size:15px; }
+  .detail-section p { font-size:13px; }
+  .renewal-grid-row { grid-template-columns:minmax(190px,1.15fr) .45fr .6fr .55fr minmax(175px,.95fr) minmax(105px,.55fr); }
+}

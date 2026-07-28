@@ -203,3 +203,37 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(css, /\.renewal-collection > \.collection-main/);
   assert.match(css, /\.pagination strong/);
 });
+
+test("records renewal outcomes, preserves prior contact time and archives FU screenshots securely", async () => {
+  const [client, store, uploadRoute, downloadRoute, migration, css] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../lib/ops-store.ts"),
+    read("../app/api/fu-attachments/route.ts"),
+    read("../app/api/fu-attachments/[id]/route.ts"),
+    read("../supabase/migrations/20260728_add_student_fu_attachments.sql"),
+    read("../app/globals.css"),
+  ]);
+
+  assert.match(client, /type RenewalStatus = .*"本次未跟进"/);
+  assert.match(client, /lastAttemptAt\?: string/);
+  assert.match(client, /lastContactedAt\?: string/);
+  assert.match(client, /renewal\.status === "本次未跟进"/);
+  assert.match(client, /lastContactedAt: contacted \? attemptedAt : renewalDraft\.lastContactedAt/);
+  assert.match(client, /student && isActiveStudent\(student\)/);
+  assert.match(client, /addAudit\(\s*"记录续课跟进"/);
+  assert.match(client, /fetch\("\/api\/fu-attachments"/);
+  assert.match(client, /type: "续课 FU"/);
+  assert.match(client, /聊天记录截图（可选）/);
+  assert.match(store, /putStudentFuAttachment/);
+  assert.match(store, /getStudentFuAttachment/);
+  assert.match(uploadRoute, /getDemoSessionUser/);
+  assert.match(uploadRoute, /MAX_IMAGE_BYTES = 4 \* 1024 \* 1024/);
+  assert.match(uploadRoute, /ALLOWED_IMAGE_TYPES/);
+  assert.match(downloadRoute, /hasValidDemoSession/);
+  assert.match(downloadRoute, /Cache-Control": "private, no-store"/);
+  assert.match(migration, /student_fu_attachments enable row level security/);
+  assert.match(migration, /perform internal\.verify_ops_secret\(p_secret\)/);
+  assert.match(migration, /revoke all on table internal\.student_fu_attachments from anon, authenticated/);
+  assert.match(css, /\.renewal-status-cell/);
+  assert.match(css, /\.upload-field/);
+});
