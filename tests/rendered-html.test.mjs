@@ -77,10 +77,14 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /initialNixonUnlocked/);
   assert.match(client, /initialOperator/);
   assert.match(client, /isAdminSession/);
-  assert.match(client, /isAdminSession \? Array\.from\(new Set\(\["Nixon", \.\.\.DEMO_STAFF_USERS/);
+  assert.match(client, /DEMO_LIMITED_ADMIN_USER/);
+  assert.match(client, /canUseAdminScope \? Array\.from\(new Set\(\[sessionOperator, \.\.\.DEMO_STAFF_USERS/);
   assert.match(client, /\.\.\.DEMO_TEACHER_USERS/);
-  assert.match(client, /!isAdminSession && operator !== sessionOperator/);
-  assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
+  assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
+  assert.match(client, /operator === "Nixon" \? "Admin" : operator === DEMO_LIMITED_ADMIN_USER \? "Admin Lite" : operator/);
+  assert.match(client, /canViewPayroll \|\| noPayrollAdminSectionIds\.has/);
+  assert.match(client, /\{canViewPayroll && <button type="button" onClick=\{\(\) => setActive\("payroll"\)\}/);
+  assert.match(client, /if \(!canViewPayroll && active === "payroll"\) return renderDashboard/);
   assert.match(accountMenu, /\/api\/demo-logout/);
   assert.match(accountMenu, /打开账户菜单/);
   assert.match(accountMenu, /退出登录/);
@@ -89,22 +93,26 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(demoLogin, /resolveDemoUser/);
   assert.match(demoLogin, /user === DEMO_ADMIN_USER/);
   assert.match(demoLogin, /maxAge: 0/);
+  assert.match(demoLogin, /resolveDemoUser/);
   assert.match(demoSession, /getDemoSessionUser/);
   assert.match(demoLogout, /DEMO_COOKIE_NAME/);
   assert.match(demoLogout, /NIXON_COOKIE_NAME/);
   assert.match(demoLogout, /maxAge: 0/);
   assert.match(snapshotRoute, /row\.entity !== "payroll"/);
   assert.match(snapshotRoute, /demoUser === DEMO_ADMIN_USER/);
-  assert.match(snapshotRoute, /syncSources: nixonSession \? syncSources : \[\]/);
+  assert.match(snapshotRoute, /demoUser === DEMO_LIMITED_ADMIN_USER/);
+  assert.match(snapshotRoute, /syncSources: sourceAccess \? syncSources : \[\]/);
   assert.match(stateRoute, /需要 Admin 权限密码才能读取薪资资料/);
   assert.match(stateRoute, /需要 Admin 权限密码才能修改薪资资料/);
   assert.match(stateRoute, /versions\.filter\(\(row\) => row\.entity !== "payroll"\)/);
+  assert.match(stateRoute, /DEMO_LIMITED_ADMIN_USER/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
   assert.match(nixonAuth, /createHash\("sha256"\)/);
-  assert.doesNotMatch(nixonAuth, /YL-GHPwF_97qvRB/);
+  assert.doesNotMatch(nixonAuth, /YL-[A-Za-z0-9_-]{8,}/);
   assert.match(nixonLogin, /httpOnly: true/);
   assert.match(nixonLogin, /getDemoSessionUser/);
   assert.doesNotMatch(nixonLogin, /maxAge/);
+  assert.match(client, /Admin Lite/);
 });
 
 test("retains core operations workflows and responsive UI", async () => {
