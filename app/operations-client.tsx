@@ -72,7 +72,7 @@ type Section =
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "task" | "booking" | "operation" | "file" | "template" | "lp" | "ava" | null;
+type ModalKind = "student" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | null;
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
@@ -213,13 +213,20 @@ type Operation = {
   chosenTeacherId?: string;
 };
 
+type RenewalStatus = "待跟进" | "已联系" | "已跟进" | "本次未跟进" | "等待家长" | "已确认";
+
 type Renewal = {
   id: string;
   studentId: string;
   remaining: number;
   estimate: string;
-  status: "待跟进" | "已联系" | "等待家长" | "已确认";
+  status: RenewalStatus;
   owner: string;
+  lastAttemptAt?: string;
+  lastContactedAt?: string;
+  followUpNote?: string;
+  followUpAttachmentId?: string;
+  followUpAttachmentTitle?: string;
 };
 
 type PayrollRow = {
@@ -276,7 +283,7 @@ type FileRecord = {
   id: string;
   studentId: string;
   title: string;
-  type: "Learning Plan" | "成绩单" | "课堂反馈" | "资料链接" | "其他";
+  type: "Learning Plan" | "成绩单" | "课堂反馈" | "续课 FU" | "资料链接" | "其他";
   source: string;
   addedAt: string;
 };
@@ -555,6 +562,28 @@ function nowLabel() {
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
 }
 
+function currentLocalDateTimeValue() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function formatFollowUpTime(value?: string) {
+  if (!value) return "暂无成功跟进记录";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}（历史记录未含具体时间）`;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(parsed);
+}
+
 let uniqueSequence = 0;
 
 function id(prefix: string) {
@@ -787,7 +816,7 @@ function statusTone(status: Student["status"] | TaskStatus | PayrollRow["status"
     "试听中": "amber", "在读": "green", "待排课": "blue", "待确认": "neutral", "待续课": "purple", "停课": "red", "非在读": "neutral", "不活跃": "neutral",
     overdue: "red", today: "amber", upcoming: "blue", waiting: "purple", done: "green",
     "需核对": "amber", "可审核": "blue", "已锁定": "green",
-    "待跟进": "amber", "已联系": "blue", "等待家长": "purple", "已确认": "green",
+    "待跟进": "amber", "已联系": "blue", "已跟进": "blue", "本次未跟进": "amber", "等待家长": "purple", "已确认": "green",
   };
   return map[status] ?? "neutral";
 }
@@ -1027,6 +1056,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [selectedOperationId, setSelectedOperationId] = useState("OPS-001");
   const [renewalFilter, setRenewalFilter] = useState("attention");
   const [renewalPage, setRenewalPage] = useState(1);
+  const [renewalDraft, setRenewalDraft] = useState<Renewal | null>(null);
+  const [renewalUploadBusy, setRenewalUploadBusy] = useState(false);
   const [payrollFilter, setPayrollFilter] = useState("all");
   const [payrollCurrency, setPayrollCurrency] = useState("all");
   const [payrollPage, setPayrollPage] = useState(1);
@@ -1836,18 +1867,64 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderRenewals = () => {
-    const renewalRows = [
-      ...scopedRenewals.map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
+    const renewalRows: Renewal[] = [
+      ...scopedRenewals
+        .filter((renewal) => {
+          const student = studentById(renewal.studentId);
+          return Boolean(student && isActiveStudent(student));
+        })
+        .map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
       ...activeLowHourStudents.filter((student) => !scopedRenewals.some((renewal) => renewal.studentId === student.id)).map((student) => ({ id: `REN-AUTO-${student.id}`, studentId: student.id, remaining: student.remainingHours ?? 0, estimate: student.renewalDate || student.renewalMonth || "待确认", status: "待跟进" as const, owner: student.owner })),
     ];
-    const visibleRenewals = renewalRows.filter((renewal) => renewalFilter === "attention" ? renewal.status === "待跟进" || renewal.status === "等待家长" : renewalFilter === "contacted" ? renewal.status === "已联系" : renewalFilter === "confirmed" ? renewal.status === "已确认" : true);
+    const visibleRenewals = renewalRows.filter((renewal) => renewalFilter === "attention"
+      ? renewal.status === "待跟进" || renewal.status === "等待家长" || renewal.status === "本次未跟进"
+      : renewalFilter === "contacted"
+        ? renewal.status === "已联系" || renewal.status === "已跟进"
+        : renewalFilter === "missed"
+          ? renewal.status === "本次未跟进"
+          : renewalFilter === "confirmed"
+            ? renewal.status === "已确认"
+            : true);
     const renewalPageSize = 10;
     const safeRenewalPage = Math.min(renewalPage, Math.max(1, Math.ceil(visibleRenewals.length / renewalPageSize)));
     const pagedRenewals = visibleRenewals.slice((safeRenewalPage - 1) * renewalPageSize, safeRenewalPage * renewalPageSize);
     return <>
       <ViewHeading eyebrow="低课时与考试节点 · 自动避免遗漏" title="考试与续课" copy={`剩余课时低于 ${rules.lowHours} 的在读/待续课学生进入强提醒；停课、非在读与不活跃学生自动排除。考试在提前 ${rules.examDays} 天和考试当天提醒负责教务。`} actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加跟进</button>} />
       <section className="exam-reminder-strip"><div><span className="risk-icon amber"><CalendarDays size={17} /></span><span><strong>{examReminderStudents.length} 位学生进入考试提醒窗口</strong><small>考试当天仍会保留一条“考后关心”任务，完成后写入跟进记录。</small></span></div>{examReminderStudents.slice(0, 4).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><strong>{student.name}</strong><small>{student.examSubject || "考试"} · {student.examDate}</small><ChevronRight size={15} /></button>)}</section>
-      <section className="panel collection-shell renewal-collection"><ViewTabs value={renewalFilter} items={[{ id: "attention", label: "需要关注", count: renewalRows.filter((item) => item.status === "待跟进" || item.status === "等待家长").length }, { id: "contacted", label: "已联系", count: renewalRows.filter((item) => item.status === "已联系").length }, { id: "confirmed", label: "已确认", count: renewalRows.filter((item) => item.status === "已确认").length }, { id: "all", label: "全部", count: renewalRows.length }]} onChange={(value) => { setRenewalFilter(value); setRenewalPage(1); }} label="续课保存视图" /><div className="collection-main"><div className="collection-head renewal-grid-row"><span>学生 / 课程</span><span>剩余课时</span><span>预计续课</span><span>负责人</span><span>状态</span><span>操作</span></div><div className="collection-viewport">{pagedRenewals.length ? pagedRenewals.map((renewal) => { const student = studentById(renewal.studentId); const lowHours = renewal.remaining < Number(rules.lowHours || 5); return <div className="collection-row renewal-grid-row" key={renewal.id}><button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course} · {student?.status}</small></span></button><strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 节</strong><span>{renewal.estimate}</span><span>{renewal.owner}</span><StatusPill tone={statusTone(renewal.status)}>{renewal.status}</StatusPill>{renewal.status === "待跟进" ? <button className="compact-button" type="button" onClick={() => { setRenewals((current) => current.some((item) => item.id === renewal.id) ? current.map((item) => item.id === renewal.id ? { ...item, status: "已联系" } : item) : [...current, { ...renewal, status: "已联系" }]); setMessages((current) => [{ id: id("MSG"), studentId: renewal.studentId, kind: "续课前跟进", recipient: `${student?.guardian ?? "家长"}`, body: `您好，${student?.name} 目前剩余 ${renewal.remaining} 节课。教务正在确认接下来的学习安排，方便时请回复我们。`, status: "待人工确认", createdAt: `今天 ${nowLabel()}` }, ...current]); addAudit("创建续课跟进", `${student?.name} · 已生成消息待确认`, "blue"); notify("已生成续课消息，等待人工确认"); }}>创建跟进</button> : <button className="compact-button" type="button" onClick={() => goToStudent(renewal.studentId)}>查看</button>}</div>; }) : <EmptyState title="当前没有续课记录" detail="非在读学生不会因为低课时进入此列表。" />}</div><Pagination page={safeRenewalPage} total={visibleRenewals.length} pageSize={renewalPageSize} onPage={setRenewalPage} /></div></section>
+      <section className="panel collection-shell renewal-collection">
+        <ViewTabs
+          value={renewalFilter}
+          items={[
+            { id: "attention", label: "需要关注", count: renewalRows.filter((item) => item.status === "待跟进" || item.status === "等待家长" || item.status === "本次未跟进").length },
+            { id: "contacted", label: "已跟进", count: renewalRows.filter((item) => item.status === "已联系" || item.status === "已跟进").length },
+            { id: "missed", label: "本次未跟进", count: renewalRows.filter((item) => item.status === "本次未跟进").length },
+            { id: "confirmed", label: "已确认", count: renewalRows.filter((item) => item.status === "已确认").length },
+            { id: "all", label: "全部", count: renewalRows.length },
+          ]}
+          onChange={(value) => { setRenewalFilter(value); setRenewalPage(1); }}
+          label="续课保存视图"
+        />
+        <div className="collection-main">
+          <div className="collection-head renewal-grid-row"><span>学生 / 课程</span><span>剩余课时</span><span>预计续课</span><span>负责人</span><span>状态 / 时间</span><span>操作</span></div>
+          <div className="collection-viewport">
+            {pagedRenewals.length ? pagedRenewals.map((renewal) => {
+              const student = studentById(renewal.studentId);
+              const lowHours = renewal.remaining < Number(rules.lowHours || 5);
+              const lastContactedAt = renewal.lastContactedAt || (/^\d{4}-\d{2}-\d{2}$/.test(student?.followUp ?? "") ? student?.followUp : undefined);
+              const displayStatus = renewal.status === "已联系" ? "已跟进" : renewal.status;
+              return <div className="collection-row renewal-grid-row" key={renewal.id}>
+                <button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course} · {student?.status}</small></span></button>
+                <strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 节</strong>
+                <span>{renewal.estimate}</span>
+                <span>{renewal.owner}</span>
+                <span className="renewal-status-cell"><StatusPill tone={statusTone(renewal.status)}>{displayStatus}</StatusPill><small>{renewal.lastAttemptAt ? `本次 ${formatFollowUpTime(renewal.lastAttemptAt)}` : `上次成功 ${formatFollowUpTime(lastContactedAt)}`}</small>{renewal.status === "本次未跟进" && <small>上次成功 {formatFollowUpTime(lastContactedAt)}</small>}</span>
+                <button className="compact-button" type="button" onClick={() => { setRenewalDraft({ ...renewal, lastContactedAt }); setModal("renewal"); }}>记录跟进</button>
+              </div>;
+            }) : <EmptyState title="当前没有续课记录" detail="非在读学生不会因为低课时进入此列表。" />}
+          </div>
+          <Pagination page={safeRenewalPage} total={visibleRenewals.length} pageSize={renewalPageSize} onPage={setRenewalPage} />
+        </div>
+      </section>
     </>;
   };
 
@@ -1909,7 +1986,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
     return <>
       <ViewHeading eyebrow="资料索引 · 不依赖文件名猜测" title="文件中心" copy="用类型视图和搜索定位资料；每条文件记录直接关联学生，不需要进入不断变长的文件夹树。" actions={<button className="primary-button" type="button" onClick={() => setModal("file")}><FilePlus2 size={17} /> 登记文件</button>} />
-      <section className="panel collection-shell"><ViewTabs value={fileFilter} items={[{ id: "all", label: "全部", count: scopedFiles.length }, { id: "Learning Plan", label: "Learning Plan", count: scopedFiles.filter((item) => item.type === "Learning Plan").length }, { id: "成绩单", label: "成绩单", count: scopedFiles.filter((item) => item.type === "成绩单").length }, { id: "课堂反馈", label: "课堂反馈", count: scopedFiles.filter((item) => item.type === "课堂反馈").length }, { id: "资料链接", label: "资料链接", count: scopedFiles.filter((item) => item.type === "资料链接").length }]} onChange={setFileFilter} label="文件保存视图" /><ListToolbar query={fileQuery} onQuery={setFileQuery} placeholder="搜索资料名、学生、类型或来源" count={`${visibleFiles.length} 项资料`} /><div className="collection-main"><div className="collection-head file-grid-row"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div><div className="collection-viewport">{visibleFiles.length ? visibleFiles.map((file) => { const student = studentById(file.studentId); return <div className="collection-row file-grid-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button><StatusPill tone={file.type === "Learning Plan" ? "blue" : "neutral"}>{file.type}</StatusPill><small>{file.source}</small><span>{file.addedAt}</span></div>; }) : <EmptyState title="没有找到资料" detail="调整类型视图或搜索关键词。" />}</div></div></section>
+      <section className="panel collection-shell"><ViewTabs value={fileFilter} items={[{ id: "all", label: "全部", count: scopedFiles.length }, { id: "Learning Plan", label: "Learning Plan", count: scopedFiles.filter((item) => item.type === "Learning Plan").length }, { id: "成绩单", label: "成绩单", count: scopedFiles.filter((item) => item.type === "成绩单").length }, { id: "课堂反馈", label: "课堂反馈", count: scopedFiles.filter((item) => item.type === "课堂反馈").length }, { id: "续课 FU", label: "续课 FU", count: scopedFiles.filter((item) => item.type === "续课 FU").length }, { id: "资料链接", label: "资料链接", count: scopedFiles.filter((item) => item.type === "资料链接").length }]} onChange={setFileFilter} label="文件保存视图" /><ListToolbar query={fileQuery} onQuery={setFileQuery} placeholder="搜索资料名、学生、类型或来源" count={`${visibleFiles.length} 项资料`} /><div className="collection-main"><div className="collection-head file-grid-row"><span>资料</span><span>关联学生</span><span>类型</span><span>来源</span><span>加入时间</span></div><div className="collection-viewport">{visibleFiles.length ? visibleFiles.map((file) => { const student = studentById(file.studentId); const linkedSource = file.source.startsWith("/") || /^https?:\/\//.test(file.source); return <div className="collection-row file-grid-row" key={file.id}><span className="file-title"><span className="file-icon"><FileText size={17} /></span><strong>{file.title}</strong></span><button className="inline-link" type="button" onClick={() => goToStudent(file.studentId)}>{student?.name} <ChevronRight size={14} /></button><StatusPill tone={file.type === "Learning Plan" ? "blue" : file.type === "续课 FU" ? "green" : "neutral"}>{file.type}</StatusPill>{linkedSource ? <a className="inline-link file-source-link" href={file.source} target="_blank" rel="noreferrer">查看截图 <ExternalLink size={13} /></a> : <small>{file.source}</small>}<span>{file.addedAt}</span></div>; }) : <EmptyState title="没有找到资料" detail="调整类型视图或搜索关键词。" />}</div></div></section>
     </>;
   };
 
@@ -2162,6 +2239,81 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     notify(teacherAbsence ? `已识别 ${affectedOccurrences.length} 节受影响课程，并生成 ${generatedTasks.length} 项后续任务` : "异常已记录，并生成后续处理任务");
   };
 
+  const submitRenewalFollowUp = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!renewalDraft || renewalUploadBusy) return;
+
+    const data = new FormData(event.currentTarget);
+    const student = studentById(renewalDraft.studentId);
+    if (!student || !isActiveStudent(student)) {
+      notify("该学生当前不是在读/待续课状态，未保存本次跟进");
+      return;
+    }
+
+    const result = String(data.get("result") ?? "已跟进") as RenewalStatus;
+    const note = String(data.get("note") ?? "").trim();
+    const attemptedAtInput = String(data.get("attemptedAt") ?? currentLocalDateTimeValue());
+    const attemptedAtDate = new Date(attemptedAtInput);
+    const attemptedAt = Number.isNaN(attemptedAtDate.getTime()) ? new Date().toISOString() : attemptedAtDate.toISOString();
+    const attachment = data.get("attachment");
+    let attachmentId: string | undefined;
+    let attachmentTitle: string | undefined;
+
+    setRenewalUploadBusy(true);
+    try {
+      if (attachment instanceof File && attachment.size > 0) {
+        const upload = new FormData();
+        upload.set("studentId", renewalDraft.studentId);
+        upload.set("file", attachment);
+        const response = await fetch("/api/fu-attachments", { method: "POST", body: upload });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.id || !body.url) throw new Error(body.error || "聊天截图上传失败");
+
+        attachmentId = String(body.id);
+        attachmentTitle = String(body.fileName || attachment.name);
+        const fileRecord: FileRecord = {
+          id: `FU-${attachmentId}`,
+          studentId: renewalDraft.studentId,
+          title: `续课 FU · ${formatFollowUpTime(attemptedAt)} · ${attachmentTitle}`,
+          type: "续课 FU",
+          source: String(body.url),
+          addedAt: `今天 ${nowLabel()}`,
+        };
+        setFiles((current) => current.some((item) => item.id === fileRecord.id) ? current : [fileRecord, ...current]);
+        setStudents((current) => current.map((item) => item.id === renewalDraft.studentId ? { ...item, files: item.files + 1 } : item));
+      }
+
+      const contacted = result !== "本次未跟进";
+      const updated: Renewal = {
+        ...renewalDraft,
+        status: result,
+        lastAttemptAt: attemptedAt,
+        lastContactedAt: contacted ? attemptedAt : renewalDraft.lastContactedAt,
+        followUpNote: note,
+        followUpAttachmentId: attachmentId,
+        followUpAttachmentTitle: attachmentTitle,
+      };
+      setRenewals((current) => current.some((item) => item.id === updated.id)
+        ? current.map((item) => item.id === updated.id ? updated : item)
+        : [updated, ...current]);
+      if (contacted) {
+        setStudents((current) => current.map((item) => item.id === updated.studentId ? { ...item, followUp: formatFollowUpTime(attemptedAt) } : item));
+      }
+      addAudit(
+        "记录续课跟进",
+        `${student.name} · ${result} · ${formatFollowUpTime(attemptedAt)}${attachmentTitle ? ` · 已归档截图 ${attachmentTitle}` : ""}${note ? ` · ${note}` : ""}`,
+        result === "本次未跟进" ? "amber" : result === "已确认" ? "green" : "blue",
+      );
+      setModal(null);
+      setRenewalDraft(null);
+      notify(attachmentTitle ? "跟进结果和聊天截图已保存到学生 FU 档案" : "跟进结果和时间已保存");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "续课跟进保存失败");
+    } finally {
+      setRenewalUploadBusy(false);
+    }
+  };
+
   const submitFile = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const title = String(data.get("title") ?? "").trim(); if (!title) return;
     const file: FileRecord = { id: id("FIL"), studentId, title, type: String(data.get("type") ?? "其他") as FileRecord["type"], source: String(data.get("source") ?? "人工登记") || "人工登记", addedAt: `今天 ${nowLabel()}` };
@@ -2336,10 +2488,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
+      {modal === "renewal" && renewalDraft && <Dialog title="记录续课跟进" onClose={() => { setModal(null); setRenewalDraft(null); }}>
+        <form className="form-grid renewal-followup-form" onSubmit={submitRenewalFollowUp}>
+          <label>学生<input value={studentById(renewalDraft.studentId)?.name ?? renewalDraft.studentId} disabled /></label>
+          <label>本次结果<select name="result" defaultValue={renewalDraft.status === "本次未跟进" ? "本次未跟进" : renewalDraft.status === "等待家长" ? "等待家长" : renewalDraft.status === "已确认" ? "已确认" : "已跟进"}><option>已跟进</option><option>本次未跟进</option><option>等待家长</option><option>已确认</option></select></label>
+          <label>本次操作时间<input name="attemptedAt" type="datetime-local" defaultValue={currentLocalDateTimeValue()} required /></label>
+          <label>上次成功跟进<input value={formatFollowUpTime(renewalDraft.lastContactedAt)} disabled /></label>
+          <label className="span-2">跟进说明<textarea name="note" rows={3} defaultValue={renewalDraft.followUpNote ?? ""} placeholder="例如：已联系家长，等待确认下月课时；或本次电话未接通" /></label>
+          <label className="span-2 upload-field">聊天记录截图（可选）<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" /><small>支持 PNG、JPG、WebP，最多 4MB。上传后自动归档到该学生的“续课 FU”。</small></label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> “本次未跟进”只记录本次尝试，不会覆盖上次成功跟进时间。停课、非在读或不活跃学生不会出现在续课列表。</div>
+          <footer><button className="secondary-button" type="button" disabled={renewalUploadBusy} onClick={() => { setModal(null); setRenewalDraft(null); }}>取消</button><button className="primary-button" type="submit" disabled={renewalUploadBusy}><ClipboardCheck size={16} /> {renewalUploadBusy ? "正在保存..." : "保存跟进记录"}</button></footer>
+        </form>
+      </Dialog>}
+
       {modal === "file" && <Dialog title="登记资料链接" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitFile}>
           <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="file-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
-          <label>资料类型<select name="type"><option>Learning Plan</option><option>成绩单</option><option>课堂反馈</option><option>资料链接</option><option>其他</option></select></label>
+          <label>资料类型<select name="type"><option>Learning Plan</option><option>成绩单</option><option>课堂反馈</option><option>续课 FU</option><option>资料链接</option><option>其他</option></select></label>
           <label className="span-2">资料名称<input name="title" autoFocus placeholder="例如 2026 Semester 2 Learning Plan" required /></label>
           <label className="span-2">来源链接或说明<input name="source" placeholder="例如 Google Drive · https://..." /></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><FilePlus2 size={16} /> 登记资料</button></footer>

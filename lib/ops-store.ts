@@ -22,6 +22,17 @@ export type OpsSourceRow = {
   payload: unknown;
 };
 
+export type FuAttachmentRow = {
+  id: string;
+  student_id: string;
+  file_name: string;
+  content_type: string;
+  byte_size: number;
+  uploaded_by: string;
+  uploaded_at: string;
+  content_base64?: string;
+};
+
 export class OpsStoreError extends Error {
   constructor(
     message: string,
@@ -97,5 +108,31 @@ export function putOpsState(input: {
     p_payload: input.payload,
     p_expected_version: input.expectedVersion,
     p_actor: input.actor,
+  });
+}
+
+export function putStudentFuAttachment(input: {
+  studentId: string;
+  fileName: string;
+  contentType: string;
+  contentBase64: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<FuAttachmentRow>("put_student_fu_attachment", {
+    p_secret: secret,
+    p_student_id: input.studentId,
+    p_file_name: input.fileName,
+    p_content_type: input.contentType,
+    p_content_base64: input.contentBase64,
+    p_actor: input.actor,
+  });
+}
+
+export function getStudentFuAttachment(id: string) {
+  const { secret } = configuration();
+  return rpc<FuAttachmentRow>("get_student_fu_attachment", {
+    p_secret: secret,
+    p_id: id,
   });
 }
