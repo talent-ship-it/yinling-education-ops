@@ -1079,7 +1079,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
   const [toast, setToast] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
-  const operatorLabel = (operator: string) => operator === "Nixon" ? "Admin" : operator === DEMO_LIMITED_ADMIN_USER ? "Admin Lite" : operator;
+  const operatorLabel = (operator: string) => operator === "Nixon" ? "Admin" : operator;
 
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
@@ -1090,7 +1090,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const isFullAdminSession = isAdminSession;
   const isLimitedAdminSession = sessionOperator === DEMO_LIMITED_ADMIN_USER;
   const canUseAdminScope = isFullAdminSession || isLimitedAdminSession;
-  const canViewPayroll = isFullAdminSession;
+  const canViewPayroll = isFullAdminSession && currentOperator === "Nixon";
   const isAdminView = currentOperator === "Nixon" || currentOperator === DEMO_LIMITED_ADMIN_USER;
   const isTeacherView = isDemoTeacher(currentOperator);
   const currentTeacher = useMemo(() => isTeacherView ? recordTeachers.find((teacher) => teacher.name.trim().toLocaleLowerCase() === currentOperator.trim().toLocaleLowerCase()) : undefined, [currentOperator, isTeacherView, recordTeachers]);
@@ -2043,13 +2043,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renderAccounts = () => {
     const accounts = [
       { name: "Admin", operator: "Nixon", role: "超级管理员", login: "管理员独立密码", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
-      { name: "Admin Lite", operator: DEMO_LIMITED_ADMIN_USER, role: "运营管理员", login: "独立密码", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
+      { name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, role: "运营管理员", login: "独立密码", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
       ...DEMO_STAFF_USERS.map((name) => ({ name, operator: name, role: "教务账号", login: name, permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"] })),
       ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", login: name, permissions: ["自己的学生", "自己的排课", "Demo 网上教室", "学生资料只读"] })),
     ];
     const selectedAccount = accounts.find((account) => account.name === selectedAccountName) ?? accounts[0];
     const copyCredential = async () => {
-      if (selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite") { notify("管理员密码不会在页面中显示或复制"); return; }
+      if (selectedAccount.operator === "Nixon" || selectedAccount.operator === DEMO_LIMITED_ADMIN_USER) { notify("管理员密码不会在页面中显示或复制"); return; }
       await navigator.clipboard.writeText(selectedAccount.login);
       addAudit("复制演示登录凭证", `${selectedAccount.name} · ${selectedAccount.role}`, "blue");
       notify(`${selectedAccount.name} 的演示登录名已复制`);
@@ -2058,8 +2058,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <ViewHeading eyebrow="演示账号 · 正式上线前再升级强密码" title="账号与权限" copy="集中查看管理员、运营管理员、教务和老师账号。演示阶段教务和老师使用姓名登录；管理员使用独立密码。" actions={<button className="secondary-button" type="button" onClick={() => notify("正式上线时可接 Supabase Auth、强密码与密码重置邮件")}><UserPlus size={17} /> 新增账号</button>} />
       <section className="panel account-admin-shell">
         <div className="account-admin-layout">
-          <article className="account-list"><div className="collection-head account-grid-row"><span>账号</span><span>角色</span><span>登录方式</span></div>{accounts.map((account) => <button className={`collection-row account-grid-row ${selectedAccount.name === account.name ? "selected" : ""}`} type="button" key={account.name} onClick={() => setSelectedAccountName(account.name)}><span className="table-person"><Avatar initials={account.name === "Admin" ? "AD" : initials(account.name)} tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"} /><span><strong>{account.name}</strong><small>状态：已启用</small></span></span><StatusPill tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"}>{account.role}</StatusPill><span>{account.name === "Admin" || account.name === "Admin Lite" ? "独立密码" : "姓名登录"}</span></button>)}</article>
-          <aside className="account-preview"><div className="preview-header"><div><p className="eyebrow">账号权限</p><h2>{selectedAccount.name}</h2></div><StatusPill tone="green">已启用</StatusPill></div><div className="student-facts account-facts"><span><small>角色</small><strong>{selectedAccount.role}</strong><em>演示权限组</em></span><span><small>登录方式</small><strong>{selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "独立密码" : "姓名登录"}</strong><em>{selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "密码不在页面显示" : "当前演示阶段"}</em></span></div><div className="detail-section"><span>可访问功能</span><div className="permission-list">{selectedAccount.permissions.map((permission) => <p key={permission}><CheckCircle2 size={15} /> {permission}</p>)}</div></div><div className="account-actions"><button className="primary-button full" type="button" onClick={() => switchOperator(selectedAccount.operator)}><UserCog size={16} /> 查看此账号视图</button><button className="secondary-button full" type="button" onClick={copyCredential}><Copy size={16} /> {selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "管理员密码保持隐藏" : "复制演示登录名"}</button></div><div className="form-notice"><CircleAlert size={16} /> 正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。</div></aside>
+          <article className="account-list"><div className="collection-head account-grid-row"><span>账号</span><span>角色</span><span>登录方式</span></div>{accounts.map((account) => <button className={`collection-row account-grid-row ${selectedAccount.name === account.name ? "selected" : ""}`} type="button" key={account.name} onClick={() => setSelectedAccountName(account.name)}><span className="table-person"><Avatar initials={account.name === "Admin" ? "AD" : initials(account.name)} tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"} /><span><strong>{account.name}</strong><small>状态：已启用</small></span></span><StatusPill tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"}>{account.role}</StatusPill><span>{account.operator === "Nixon" || account.operator === DEMO_LIMITED_ADMIN_USER ? "独立密码" : "姓名登录"}</span></button>)}</article>
+          <aside className="account-preview"><div className="preview-header"><div><p className="eyebrow">账号权限</p><h2>{selectedAccount.name}</h2></div><StatusPill tone="green">已启用</StatusPill></div><div className="student-facts account-facts"><span><small>角色</small><strong>{selectedAccount.role}</strong><em>演示权限组</em></span><span><small>登录方式</small><strong>{selectedAccount.operator === "Nixon" || selectedAccount.operator === DEMO_LIMITED_ADMIN_USER ? "独立密码" : "姓名登录"}</strong><em>{selectedAccount.operator === "Nixon" || selectedAccount.operator === DEMO_LIMITED_ADMIN_USER ? "密码不在页面显示" : "当前演示阶段"}</em></span></div><div className="detail-section"><span>可访问功能</span><div className="permission-list">{selectedAccount.permissions.map((permission) => <p key={permission}><CheckCircle2 size={15} /> {permission}</p>)}</div></div><div className="account-actions"><button className="primary-button full" type="button" onClick={() => switchOperator(selectedAccount.operator)}><UserCog size={16} /> 查看此账号视图</button><button className="secondary-button full" type="button" onClick={copyCredential}><Copy size={16} /> {selectedAccount.operator === "Nixon" || selectedAccount.operator === DEMO_LIMITED_ADMIN_USER ? "管理员密码保持隐藏" : "复制演示登录名"}</button></div><div className="form-notice"><CircleAlert size={16} /> 正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。</div></aside>
         </div>
       </section>
     </>;
