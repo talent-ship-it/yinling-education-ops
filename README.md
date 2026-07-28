@@ -18,6 +18,7 @@ The app is a Next.js site backed by Supabase shared state. It is currently an in
 The login password determines the demo work view:
 
 - The Admin password opens the global management workspace and can switch into every staff view.
+- The limited Admin password opens a global operations workspace except all payroll data and payroll pages.
 - A staff member enters their own name as the demo password and can only see their own work view.
 - Logging in as staff clears any prior Admin session in that browser, including payroll access.
 
@@ -38,6 +39,7 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 ## Required Environment
 
 - `NIXON_PASSWORD_HASH` optional; the internal Admin password hash has a fallback for the current demo
+- `LIMITED_ADMIN_PASSWORD_HASH` optional; the limited Admin password hash has a fallback for the current demo
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `OPS_API_SECRET`
