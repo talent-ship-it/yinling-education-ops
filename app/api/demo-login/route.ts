@@ -16,6 +16,11 @@ export async function POST(request: Request) {
   if (!user) {
     return NextResponse.json({ error: "密码不正确。" }, { status: 401 });
   }
+  const demoToken = demoSessionToken(user);
+  const adminToken = user === DEMO_ADMIN_USER ? nixonSessionToken() : null;
+  if (!demoToken || (user === DEMO_ADMIN_USER && !adminToken)) {
+    return NextResponse.json({ error: "服务器访问配置尚未完成。" }, { status: 503 });
+  }
 
   const cookieOptions = {
     httpOnly: true,
@@ -25,10 +30,10 @@ export async function POST(request: Request) {
     maxAge: 60 * 60 * 24 * 7,
   } as const;
   const response = NextResponse.json({ ok: true, user });
-  response.cookies.set(DEMO_COOKIE_NAME, demoSessionToken(user), cookieOptions);
+  response.cookies.set(DEMO_COOKIE_NAME, demoToken, cookieOptions);
 
   if (user === DEMO_ADMIN_USER) {
-    response.cookies.set(NIXON_COOKIE_NAME, nixonSessionToken(), cookieOptions);
+    response.cookies.set(NIXON_COOKIE_NAME, adminToken!, cookieOptions);
   } else {
     response.cookies.set(NIXON_COOKIE_NAME, "", { ...cookieOptions, maxAge: 0 });
   }

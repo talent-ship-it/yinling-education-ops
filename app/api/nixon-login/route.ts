@@ -21,9 +21,11 @@ export async function POST(request: Request) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     return NextResponse.json({ error: "Admin 权限密码不正确。" }, { status: 401 });
   }
+  const token = nixonSessionToken();
+  if (!token) return NextResponse.json({ error: "服务器访问配置尚未完成。" }, { status: 503 });
 
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(NIXON_COOKIE_NAME, nixonSessionToken(), {
+  response.cookies.set(NIXON_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
