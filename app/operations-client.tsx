@@ -1134,7 +1134,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
-  const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...DEMO_TEACHER_USERS])) : [sessionOperator], [canUseAdminScope, ownerOptions, sessionOperator]);
+  const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...DEMO_TEACHER_USERS])) : [sessionOperator], [canUseAdminScope, ownerOptions, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
