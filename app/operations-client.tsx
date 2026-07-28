@@ -49,7 +49,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEMO_STAFF_USERS, DEMO_TEACHER_USERS, isDemoTeacher } from "@/lib/demo-users";
+import { DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS, DEMO_TEACHER_USERS, isDemoTeacher } from "@/lib/demo-users";
 
 type Section =
   | "dashboard"
@@ -363,6 +363,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof LayoutDashboa
 
 const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files"]);
 const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom", "files"]);
+const noPayrollAdminSectionIds = new Set<Section>(navigation.filter((item) => item.id !== "payroll").map((item) => item.id));
 
 const baseStudents: Student[] = [
   { id: "STU-0248", name: "Olivia Chen", initials: "OC", status: "试听中", owner: "思佳", course: "Year 10 English", timezone: "Australia/Melbourne · UTC+10", guardian: "Chen 先生 · 企业微信客户群", teacher: "待匹配", next: "确认 N-2 资料与收费", nextTone: "red", files: 4 },
@@ -1047,6 +1048,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
   const [toast, setToast] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
+  const operatorLabel = (operator: string) => operator === "Nixon" ? "Admin" : operator === DEMO_LIMITED_ADMIN_USER ? "Admin Lite" : operator;
 
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
@@ -1054,11 +1056,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const hasRealSnapshot = dataSnapshot.label === "真实资料本地快照" || dataSnapshot.label === "真实资料线上临时快照" || dataSnapshot.label === "Supabase 真实资料快照" || dataSnapshot.label === "Supabase 多人共享真实资料";
   const recordStudents = useMemo(() => hasRealSnapshot ? students.filter((student) => !sampleStudentIds.has(student.id)) : students, [hasRealSnapshot, students]);
   const recordTeachers = useMemo(() => hasRealSnapshot ? teachers.filter((teacher) => !sampleTeacherIds.has(teacher.id)) : teachers, [hasRealSnapshot, teachers]);
-  const isAdminView = currentOperator === "Nixon";
+  const isFullAdminSession = isAdminSession;
+  const isLimitedAdminSession = sessionOperator === DEMO_LIMITED_ADMIN_USER;
+  const canUseAdminScope = isFullAdminSession || isLimitedAdminSession;
+  const canViewPayroll = isFullAdminSession;
+  const isAdminView = currentOperator === "Nixon" || currentOperator === DEMO_LIMITED_ADMIN_USER;
   const isTeacherView = isDemoTeacher(currentOperator);
   const currentTeacher = useMemo(() => isTeacherView ? recordTeachers.find((teacher) => teacher.name.trim().toLocaleLowerCase() === currentOperator.trim().toLocaleLowerCase()) : undefined, [currentOperator, isTeacherView, recordTeachers]);
   const teacherBookingStudentIds = useMemo(() => new Set(currentTeacher ? bookings.filter((booking) => booking.teacherId === currentTeacher.id).map((booking) => booking.studentId) : []), [bookings, currentTeacher]);
-  const visibleNavigation = useMemo(() => isAdminView ? navigation : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)), [isAdminView, isTeacherView]);
+  const visibleNavigation = useMemo(() => isAdminView ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id)) : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)), [canViewPayroll, isAdminView, isTeacherView]);
   const visibleMobileNavigation = useMemo(() => visibleNavigation.filter((item) => isTeacherView ? ["dashboard", "students", "schedule", "classroom"].includes(item.id) : ["dashboard", "students", "schedule", "messages"].includes(item.id)), [isTeacherView, visibleNavigation]);
   const scopedStudents = useMemo(() => {
     if (isAdminView) return recordStudents;
@@ -1097,7 +1103,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
-  const operatorOptions = useMemo(() => isAdminSession ? Array.from(new Set(["Nixon", ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...DEMO_TEACHER_USERS])) : [sessionOperator], [isAdminSession, ownerOptions, sessionOperator]);
+  const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...DEMO_TEACHER_USERS])) : [sessionOperator], [canUseAdminScope, ownerOptions, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
   const teacherSubjectOptions = useMemo(() => Array.from(new Set(recordTeachers.flatMap((teacher) => teacher.subjects))).sort(), [recordTeachers]);
 
@@ -1127,12 +1133,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const switchOperator = (operator: string) => {
     const teacherView = isDemoTeacher(operator);
+    const adminScope = operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER;
     const teacher = teacherView ? recordTeachers.find((item) => item.name.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase()) : undefined;
     const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
-    const allowedStudents = operator === "Nixon" ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
+    const allowedStudents = adminScope ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
     setCurrentOperator(operator);
-    setTaskFilter(operator === "Nixon" ? "all" : "mine");
-    setStudentView(operator === "Nixon" || teacherView ? "all" : "mine");
+    setTaskFilter(adminScope ? "all" : "mine");
+    setStudentView(adminScope || teacherView ? "all" : "mine");
     setStudentOwner("all");
     setStudentPage(1);
     setSelectedStudentIds([]);
@@ -1146,12 +1153,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (firstBooking) setSelectedBookingId(firstBooking.id);
     if (firstMessage) setSelectedMessageId(firstMessage.id);
     if (firstOperation) setSelectedOperationId(firstOperation.id);
-    if (operator !== "Nixon" && !(teacherView ? teacherSectionIds : staffSectionIds).has(active)) setActive("dashboard");
-    notify(operator === "Nixon" ? "已切换到全局管理视图" : teacherView ? `已切换到 ${operator} 的老师视图` : `已切换到 ${operator} 的个人工作视图`);
+    if (!adminScope && !(teacherView ? teacherSectionIds : staffSectionIds).has(active)) setActive("dashboard");
+    if (operator === DEMO_LIMITED_ADMIN_USER && active === "payroll") setActive("dashboard");
+    notify(adminScope ? "已切换到全局管理视图" : teacherView ? `已切换到 ${operator} 的老师视图` : `已切换到 ${operator} 的个人工作视图`);
   };
 
   const requestOperatorSwitch = (operator: string) => {
-    if (!isAdminSession && operator !== sessionOperator) return;
+    if (!canUseAdminScope && operator !== sessionOperator) return;
     switchOperator(operator);
   };
 
@@ -1919,7 +1927,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow="运营结果而非单纯运行成功" title="运营报表" copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。" actions={<><select className="filter-select header-filter" value={reportOwner} onChange={(event) => setReportOwner(event.target.value)} aria-label="报表负责人"><option value="all">全部负责人</option>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select><button className="secondary-button" type="button" onClick={exportDemo}><Download size={17} /> 导出数据</button></>} />
       <section className="report-grid"><ReportCard value={`${completed}/${reportTasks.length}`} label="任务完成" detail={reportOwner === "all" ? "全部负责人" : reportOwner} tone="green" /><ReportCard value={`${trialCount}`} label="进行中的试听" detail="需要持续关注" tone="amber" /><ReportCard value={`${activeTeachers}/${teachers.length}`} label="可接新老师" detail="当前可用资源" tone="blue" /><ReportCard value={`${missingFiles}`} label="资料待补" detail="文件索引少于 5 项" tone="red" /></section>
-      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{teamOwnerOptions.map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" /><DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" /><DataIssue title="同步冲突" count={sharedSyncState === "conflict" ? "1 项需重新载入" : "0 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
+      <section className="two-column"><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">负责人负载</p><h2>待处理任务</h2></div><StatusPill tone="blue">动态计算</StatusPill></div>{teamOwnerOptions.map((owner) => { const count = tasks.filter((task) => task.owner === owner && task.status !== "done").length; return <div className="bar-row" key={owner}><span>{owner}</span><div><i style={{ width: `${Math.max(12, count * 24)}%` }} /></div><strong>{count} 项</strong></div>; })}</article><article className="panel chart-panel"><div className="panel-header"><div><p className="eyebrow">需要留意</p><h2>数据质量</h2></div><StatusPill tone="amber">人工复核</StatusPill></div><DataIssue title="试听资料缺少索引" count={`${missingFiles} 位学生`} tone="red" />{canViewPayroll && <DataIssue title="薪资规则例外" count={`${payroll.filter((row) => row.status === "需核对").length} 条记录`} tone="amber" />}<DataIssue title="同步冲突" count={sharedSyncState === "conflict" ? "1 项需重新载入" : "0 项待处理"} tone="blue" /><DataIssue title="未确认排课" count={`${bookings.filter((booking) => booking.status === "待确认").length} 节`} tone="purple" /></article></section>
     </>;
   };
 
@@ -1958,28 +1966,30 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renderAccounts = () => {
     const accounts = [
       { name: "Admin", operator: "Nixon", role: "超级管理员", login: "管理员独立密码", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
+      { name: "Admin Lite", operator: DEMO_LIMITED_ADMIN_USER, role: "运营管理员", login: "独立密码", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
       ...DEMO_STAFF_USERS.map((name) => ({ name, operator: name, role: "教务账号", login: name, permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"] })),
       ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", login: name, permissions: ["自己的学生", "自己的排课", "Demo 网上教室", "学生资料只读"] })),
     ];
     const selectedAccount = accounts.find((account) => account.name === selectedAccountName) ?? accounts[0];
     const copyCredential = async () => {
-      if (selectedAccount.name === "Admin") { notify("管理员密码不会在页面中显示或复制"); return; }
+      if (selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite") { notify("管理员密码不会在页面中显示或复制"); return; }
       await navigator.clipboard.writeText(selectedAccount.login);
       addAudit("复制演示登录凭证", `${selectedAccount.name} · ${selectedAccount.role}`, "blue");
       notify(`${selectedAccount.name} 的演示登录名已复制`);
     };
     return <>
-      <ViewHeading eyebrow="演示账号 · 正式上线前再升级强密码" title="账号与权限" copy="集中查看管理员、教务和老师账号。演示阶段教务和老师使用姓名登录；管理员仍使用独立密码。" actions={<button className="secondary-button" type="button" onClick={() => notify("正式上线时可接 Supabase Auth、强密码与密码重置邮件")}><UserPlus size={17} /> 新增账号</button>} />
+      <ViewHeading eyebrow="演示账号 · 正式上线前再升级强密码" title="账号与权限" copy="集中查看管理员、运营管理员、教务和老师账号。演示阶段教务和老师使用姓名登录；管理员使用独立密码。" actions={<button className="secondary-button" type="button" onClick={() => notify("正式上线时可接 Supabase Auth、强密码与密码重置邮件")}><UserPlus size={17} /> 新增账号</button>} />
       <section className="panel account-admin-shell">
         <div className="account-admin-layout">
-          <article className="account-list"><div className="collection-head account-grid-row"><span>账号</span><span>角色</span><span>登录方式</span></div>{accounts.map((account) => <button className={`collection-row account-grid-row ${selectedAccount.name === account.name ? "selected" : ""}`} type="button" key={account.name} onClick={() => setSelectedAccountName(account.name)}><span className="table-person"><Avatar initials={account.name === "Admin" ? "AD" : initials(account.name)} tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"} /><span><strong>{account.name}</strong><small>状态：已启用</small></span></span><StatusPill tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"}>{account.role}</StatusPill><span>{account.name === "Admin" ? "独立密码" : "姓名登录"}</span></button>)}</article>
-          <aside className="account-preview"><div className="preview-header"><div><p className="eyebrow">账号权限</p><h2>{selectedAccount.name}</h2></div><StatusPill tone="green">已启用</StatusPill></div><div className="student-facts account-facts"><span><small>角色</small><strong>{selectedAccount.role}</strong><em>演示权限组</em></span><span><small>登录方式</small><strong>{selectedAccount.name === "Admin" ? "独立密码" : "姓名登录"}</strong><em>{selectedAccount.name === "Admin" ? "密码不在页面显示" : "当前演示阶段"}</em></span></div><div className="detail-section"><span>可访问功能</span><div className="permission-list">{selectedAccount.permissions.map((permission) => <p key={permission}><CheckCircle2 size={15} /> {permission}</p>)}</div></div><div className="account-actions"><button className="primary-button full" type="button" onClick={() => switchOperator(selectedAccount.operator)}><UserCog size={16} /> 查看此账号视图</button><button className="secondary-button full" type="button" onClick={copyCredential}><Copy size={16} /> {selectedAccount.name === "Admin" ? "管理员密码保持隐藏" : "复制演示登录名"}</button></div><div className="form-notice"><CircleAlert size={16} /> 正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。</div></aside>
+          <article className="account-list"><div className="collection-head account-grid-row"><span>账号</span><span>角色</span><span>登录方式</span></div>{accounts.map((account) => <button className={`collection-row account-grid-row ${selectedAccount.name === account.name ? "selected" : ""}`} type="button" key={account.name} onClick={() => setSelectedAccountName(account.name)}><span className="table-person"><Avatar initials={account.name === "Admin" ? "AD" : initials(account.name)} tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"} /><span><strong>{account.name}</strong><small>状态：已启用</small></span></span><StatusPill tone={account.role === "老师账号" ? "green" : account.role === "教务账号" ? "blue" : "purple"}>{account.role}</StatusPill><span>{account.name === "Admin" || account.name === "Admin Lite" ? "独立密码" : "姓名登录"}</span></button>)}</article>
+          <aside className="account-preview"><div className="preview-header"><div><p className="eyebrow">账号权限</p><h2>{selectedAccount.name}</h2></div><StatusPill tone="green">已启用</StatusPill></div><div className="student-facts account-facts"><span><small>角色</small><strong>{selectedAccount.role}</strong><em>演示权限组</em></span><span><small>登录方式</small><strong>{selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "独立密码" : "姓名登录"}</strong><em>{selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "密码不在页面显示" : "当前演示阶段"}</em></span></div><div className="detail-section"><span>可访问功能</span><div className="permission-list">{selectedAccount.permissions.map((permission) => <p key={permission}><CheckCircle2 size={15} /> {permission}</p>)}</div></div><div className="account-actions"><button className="primary-button full" type="button" onClick={() => switchOperator(selectedAccount.operator)}><UserCog size={16} /> 查看此账号视图</button><button className="secondary-button full" type="button" onClick={copyCredential}><Copy size={16} /> {selectedAccount.name === "Admin" || selectedAccount.name === "Admin Lite" ? "管理员密码保持隐藏" : "复制演示登录名"}</button></div><div className="form-notice"><CircleAlert size={16} /> 正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。</div></aside>
         </div>
       </section>
     </>;
   };
 
   const renderView = () => {
+    if (!canViewPayroll && active === "payroll") return renderDashboard();
     if (!isAdminView && !(isTeacherView ? teacherSectionIds : staffSectionIds).has(active)) return renderDashboard();
     switch (active) {
       case "dashboard": return renderDashboard();
@@ -2168,7 +2178,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">吟</span><div><strong>吟领教务</strong><small>Learning Operations</small></div></div>
-        <div className="workspace-switch"><span className="workspace-dot" /> {currentOperator === "Nixon" ? "全局管理视图" : isTeacherView ? `${currentOperator} 老师工作台` : `${currentOperator} 工作视图`} <ChevronDown size={15} /></div>
+        <div className="workspace-switch"><span className="workspace-dot" /> {isAdminView ? `${operatorLabel(currentOperator)} 管理视图` : isTeacherView ? `${currentOperator} 老师工作台` : `${currentOperator} 工作视图`} <ChevronDown size={15} /></div>
         <button className="new-button" type="button" onClick={() => setModal(isTeacherView ? "booking" : "task")}><Plus size={17} /> {isTeacherView ? "新建约课" : "新建"}</button>
         <nav aria-label="主要导航">
           <p>学生与教务</p>
@@ -2192,8 +2202,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <IconButton label="查看提醒" onClick={() => setActive("dashboard")}><ListTodo size={18} /></IconButton>
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
             <label className="operator">
-              <Avatar initials={currentOperator === "Nixon" ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? "超级管理员" : isTeacherView ? "老师个人权限" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></span>
+              <Avatar initials={isAdminView ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
+              <span className="operator-copy"><small>{isAdminView ? currentOperator === "Nixon" ? "超级管理员" : "运营管理员" : isTeacherView ? "老师个人权限" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)}</option>)}</select></span>
               <ChevronDown size={14} aria-hidden="true" />
             </label>
           </div>
@@ -2211,7 +2221,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operator === "Nixon" ? "Admin" : operator}</option>)}</select></label>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
