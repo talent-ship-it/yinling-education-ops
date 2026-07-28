@@ -1569,7 +1569,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <button type="button" onClick={() => setModal("booking")}><CalendarPlus size={18} /><span><strong>安排课程</strong><small>检查时区、老师与学生冲突</small></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setActive("lp")}><BookOpen size={18} /><span><strong>处理 LP</strong><small>审核、发送与老师备课确认</small></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setModal("operation")}><RefreshCw size={18} /><span><strong>记录异常</strong><small>调课、请假、代课或换老师</small></span><ChevronRight size={16} /></button>
-        {isAdminView && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong><small>先处理异常，再人工锁定</small></span><ChevronRight size={16} /></button>}
+        {canViewPayroll && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong><small>先处理异常，再人工锁定</small></span><ChevronRight size={16} /></button>}
       </section>
       <section className="metric-grid" aria-label="今日工作概览">
         <Metric tone="blue" icon={<ListTodo size={21} />} value={visibleTasks.length.toString()} label="待处理" detail={`今天到期 ${today} 项`} onClick={() => { setTaskFilter("all"); }} />

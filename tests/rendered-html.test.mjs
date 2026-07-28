@@ -83,6 +83,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator === DEMO_LIMITED_ADMIN_USER \? "Admin Lite" : operator/);
   assert.match(client, /canViewPayroll \|\| noPayrollAdminSectionIds\.has/);
+  assert.match(client, /\{canViewPayroll && <button type="button" onClick=\{\(\) => setActive\("payroll"\)\}/);
   assert.match(client, /if \(!canViewPayroll && active === "payroll"\) return renderDashboard/);
   assert.match(accountMenu, /\/api\/demo-logout/);
   assert.match(accountMenu, /打开账户菜单/);
