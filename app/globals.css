@@ -2155,3 +2155,45 @@ body {
   .detail-section p { font-size:13px; }
   .renewal-grid-row { grid-template-columns:minmax(190px,1.15fr) .45fr .6fr .55fr minmax(175px,.95fr) minmax(105px,.55fr); }
 }
+
+
+/* One account surface: role switching and logout share the same anchored menu. */
+.operator-menu-footer {
+  border-top:1px solid #edf1ee;
+  padding:8px;
+}
+
+.operator-logout,
+.mobile-logout-button {
+  align-items:center;
+  background:#fff;
+  border:1px solid #e2d4d1;
+  border-radius:5px;
+  color:#9f3b36;
+  cursor:pointer;
+  display:flex;
+  font:inherit;
+  font-size:11px;
+  font-weight:700;
+  gap:7px;
+  justify-content:center;
+  min-height:36px;
+  width:100%;
+}
+
+.operator-logout:hover,
+.mobile-logout-button:hover {
+  background:#fff6f5;
+  border-color:#e7bdb9;
+}
+
+.operator-logout:disabled,
+.mobile-logout-button:disabled {
+  cursor:wait;
+  opacity:.65;
+}
+
+.mobile-logout-button {
+  margin-top:10px;
+  min-height:44px;
+}
