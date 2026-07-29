@@ -1,6 +1,5 @@
-import ClassroomDemo from "./classroom-demo";
+import { redirect } from "next/navigation";
 
-export default async function ClassroomPage({ params }: { params: Promise<{ roomId: string }> }) {
-  const { roomId } = await params;
-  return <ClassroomDemo roomId={decodeURIComponent(roomId)} />;
+export default function ClassroomPage() {
+  redirect("/");
 }

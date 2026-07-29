@@ -75,7 +75,7 @@ type Section =
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
 type ModalKind = "student" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | null;
-type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | null;
+type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
 type LpNeed = "待确认" | "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
@@ -174,6 +174,25 @@ type Booking = {
   sourceStudentName?: string;
   sourceTeacherName?: string;
   sourceTiming?: "已结束" | "未开始";
+  classroom?: {
+    meetingId: string;
+    status: "ready" | "running" | "ended";
+    createdAt: string;
+  };
+};
+
+type ClassroomRuntime = {
+  meetingId: string;
+  running: boolean;
+  participantCount: number;
+  moderatorCount: number;
+  recording?: boolean;
+  recordings: Array<{
+    id: string;
+    name: string;
+    state: string;
+    playbackUrl?: string;
+  }>;
 };
 
 type CourseRecord = {
@@ -1084,6 +1103,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [schedulePage, setSchedulePage] = useState(1);
   const [scheduleTimezone, setScheduleTimezone] = useState("Australia/Melbourne");
   const [selectedBookingId, setSelectedBookingId] = useState("LES-001");
+  const [classroomRuntime, setClassroomRuntime] = useState<ClassroomRuntime | null>(null);
+  const [classroomBusy, setClassroomBusy] = useState(false);
   const [courseQuery, setCourseQuery] = useState("");
   const [coursePage, setCoursePage] = useState(1);
   const [selectedCourseId, setSelectedCourseId] = useState(defaults.defaultCourses[0]?.id ?? "");
@@ -1589,17 +1610,171 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const classroomUrl = (booking: Booking) => `${window.location.origin}/classroom/${encodeURIComponent(booking.id)}`;
-
-  const copyClassroomLink = async (booking: Booking) => {
-    await navigator.clipboard.writeText(classroomUrl(booking));
-    addAudit("复制 Demo 教室链接", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
-    notify("Demo 教室链接已复制");
+  const classroomRequest = async (body: { action: "create" | "teacher-join" | "student-link" | "end"; bookingId: string }) => {
+    const response = await fetch("/api/classroom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "在线教室操作失败");
+    return result;
   };
 
-  const openClassroom = (booking: Booking) => {
-    window.open(`/classroom/${encodeURIComponent(booking.id)}`, "_blank", "noopener,noreferrer");
+  const persistClassroom = (bookingId: string, meetingId: string, status: "ready" | "running" | "ended") => {
+    setBookings((current) => {
+      let changed = false;
+      const next = current.map((booking) => {
+        if (booking.id !== bookingId) return booking;
+        const bookingStatus = status === "ended" ? "已完成" : booking.status;
+        if (booking.status === bookingStatus && booking.classroom?.meetingId === meetingId && booking.classroom.status === status) return booking;
+        changed = true;
+        return {
+          ...booking,
+          status: bookingStatus,
+          classroom: {
+            meetingId,
+            status,
+            createdAt: booking.classroom?.createdAt ?? new Date().toISOString(),
+          },
+        };
+      });
+      return changed ? next : current;
+    });
   };
+
+  const refreshClassroom = async (booking: Booking, quiet = false) => {
+    try {
+      const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "无法读取教室状态");
+      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      const runtime: ClassroomRuntime = { ...result.status, recordings };
+      setClassroomRuntime(runtime);
+      const nextStatus = runtime.running
+        ? "running"
+        : booking.classroom?.status === "running" || recordings.length
+          ? "ended"
+          : "ready";
+      persistClassroom(booking.id, runtime.meetingId, nextStatus);
+      if (!quiet) notify(runtime.running ? `教室进行中，当前 ${runtime.participantCount} 人在线` : recordings.length ? "课堂已结束，录播正在处理或已就绪" : "教室已创建，尚未开始");
+      return runtime;
+    } catch (error) {
+      if (!quiet) notify(error instanceof Error ? error.message : "无法读取教室状态");
+      return null;
+    }
+  };
+
+  const provisionClassroom = async (booking: Booking, announce: boolean) => {
+    const result = await classroomRequest({ action: "create", bookingId: booking.id });
+    const meetingId = String(result.meeting?.meetingId || "");
+    if (!meetingId) throw new Error("在线教室没有返回会议 ID");
+    persistClassroom(booking.id, meetingId, "ready");
+    if (!classroomRuntime?.running) setClassroomRuntime({ meetingId, running: false, participantCount: 0, moderatorCount: 0, recordings: classroomRuntime?.recordings ?? [] });
+    if (announce) {
+      addAudit("创建在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
+      notify(result.meeting?.duplicate ? "已读取现有在线教室" : "在线教室已创建，可发送学生链接");
+    }
+    return meetingId;
+  };
+
+  const createClassroom = async (booking: Booking) => {
+    setClassroomBusy(true);
+    try {
+      return await provisionClassroom(booking, true);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "在线教室创建失败");
+      return "";
+    } finally {
+      setClassroomBusy(false);
+    }
+  };
+
+  const joinTeacherClassroom = async (booking: Booking) => {
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    setClassroomBusy(true);
+    try {
+      const result = await classroomRequest({ action: "teacher-join", bookingId: booking.id });
+      if (!result.url) throw new Error("无法生成老师进入链接");
+      const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
+      if (meetingId) persistClassroom(booking.id, meetingId, "ready");
+      if (popup) popup.location.href = result.url;
+      else window.open(result.url, "_blank", "noopener,noreferrer");
+      addAudit("老师进入在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
+      window.setTimeout(() => void refreshClassroom({ ...booking, classroom: booking.classroom ?? { meetingId, status: "ready", createdAt: new Date().toISOString() } }, true), 2500);
+    } catch (error) {
+      popup?.close();
+      notify(error instanceof Error ? error.message : "无法进入在线教室");
+    } finally {
+      setClassroomBusy(false);
+    }
+  };
+
+  const copyStudentClassroomLink = async (booking: Booking) => {
+    setClassroomBusy(true);
+    try {
+      const result = await classroomRequest({ action: "student-link", bookingId: booking.id });
+      if (!result.url) throw new Error("无法生成学生进入链接");
+      const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
+      if (meetingId) persistClassroom(booking.id, meetingId, "ready");
+      await navigator.clipboard.writeText(result.url);
+      addAudit("复制学生教室链接", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
+      notify("学生进入链接已复制");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "学生链接生成失败");
+    } finally {
+      setClassroomBusy(false);
+    }
+  };
+
+  const endClassroom = async (booking: Booking) => {
+    setClassroomBusy(true);
+    try {
+      const result = await classroomRequest({ action: "end", bookingId: booking.id });
+      persistClassroom(booking.id, String(result.meetingId || booking.classroom?.meetingId || ""), "ended");
+      setClassroomRuntime((current) => current ? { ...current, running: false, participantCount: 0, moderatorCount: 0 } : current);
+      addAudit("结束在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
+      notify("课堂已结束，排课已自动结课；录播处理完成后会显示回放");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "在线教室结束失败");
+    } finally {
+      setClassroomBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (active !== "classroom" || !selectedBooking?.classroom?.meetingId) return;
+    let stopped = false;
+    const poll = async () => {
+      const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(selectedBooking.id)}`, { cache: "no-store" }).catch(() => null);
+      if (!response || stopped) return;
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || stopped) return;
+      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      const runtime: ClassroomRuntime = { ...result.status, recordings };
+      setClassroomRuntime(runtime);
+      setBookings((current) => {
+        let changed = false;
+        const next = current.map((booking) => {
+          if (booking.id !== selectedBooking.id) return booking;
+          const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running ? "running" : booking.classroom?.status === "running" || recordings.length ? "ended" : "ready";
+          const bookingStatus = nextStatus === "ended" ? "已完成" : booking.status;
+          if (booking.status === bookingStatus && booking.classroom?.meetingId === runtime.meetingId && booking.classroom.status === nextStatus) return booking;
+          changed = true;
+          return {
+            ...booking,
+            status: bookingStatus,
+            classroom: { meetingId: runtime.meetingId, status: nextStatus, createdAt: booking.classroom?.createdAt ?? new Date().toISOString() },
+          };
+        });
+        return changed ? next : current;
+      });
+    };
+    void poll();
+    const interval = window.setInterval(poll, 15000);
+    return () => { stopped = true; window.clearInterval(interval); };
+  }, [active, selectedBooking?.classroom?.meetingId, selectedBooking?.id, setBookings]);
 
   const renderTeacherDashboard = () => {
     const pendingBookings = scopedBookings.filter((booking) => booking.status === "待确认");
@@ -1610,7 +1785,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <section className="command-strip teacher-command-strip" aria-label="老师快捷操作">
         <button type="button" onClick={() => setModal("booking")}><CalendarPlus size={18} /><span><strong>安排课程</strong><small>从自己的学生中选择并检查时间冲突</small></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setActive("schedule")}><CalendarDays size={18} /><span><strong>查看课表</strong><small>按学生、老师和墨尔本时间核对</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setActive("classroom")}><Video size={18} /><span><strong>网上教室</strong><small>生成并打开 Demo 上课链接</small></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("classroom")}><Video size={18} /><span><strong>网上教室</strong><small>创建课堂、发送学生链接并查看录播</small></span><ChevronRight size={16} /></button>
       </section>
       <section className="metric-grid teacher-metric-grid" aria-label="我的教学概览">
         <Metric tone="green" icon={<Users size={21} />} value={scopedStudents.length.toString()} label="我的学生" detail="仅显示当前老师关联学生" onClick={() => setActive("students")} />
@@ -1620,7 +1795,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       <section className="teacher-dashboard-grid">
         <article className="panel teacher-roster-panel"><div className="panel-header"><div><p className="eyebrow">学生管理</p><h2>我的学生</h2></div><IconButton label="打开学生列表" onClick={() => setActive("students")}><Users size={18} /></IconButton></div><div className="teacher-student-list">{scopedStudents.slice(0, 8).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.course} · {student.status}</small></span><ChevronRight size={16} /></button>)}{!scopedStudents.length && <EmptyState title="暂无关联学生" detail="管理员为老师关联学生或导入排课后，这里会自动出现。" />}</div></article>
-        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">我的排课</p><h2>接下来课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{scopedBookings.length ? <ScheduleList bookings={scopedBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setActive("schedule"); }} /> : <EmptyState title="暂无排课" detail="点击“新建约课”为自己的学生安排课程。" />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> 管理 Demo 教室</button></article>
+        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">我的排课</p><h2>接下来课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{scopedBookings.length ? <ScheduleList bookings={scopedBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setActive("schedule"); }} /> : <EmptyState title="暂无排课" detail="点击“新建约课”为自己的学生安排课程。" />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> 管理在线教室</button></article>
       </section>
     </>;
   };
@@ -1878,7 +2053,22 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </div>
             )}
           </article>
-          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button><div className="panel-header"><div><p className="eyebrow">{selectedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{selectedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div><TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} /><TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} /><TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" /><TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`来源时段：${selectedBooking.sourceTiming ?? "人工录入"}`} /><div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>{selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}<button className="primary-button full" type="button" onClick={() => openClassroom(selectedBooking)}><Video size={16} /> 进入 Demo 教室</button><button className="secondary-button full" type="button" onClick={() => copyClassroomLink(selectedBooking)}><Link2 size={16} /> 复制教室链接</button><button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button></aside>
+          <aside className={`record-preview booking-panel ${mobilePreview === "booking" ? "mobile-detail-open" : ""}`}>
+            <button className="mobile-preview-close" type="button" aria-label="关闭课程详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课程列表</button>
+            <div className="panel-header"><div><p className="eyebrow">{selectedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{selectedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={selectedBooking.status === "待确认" ? "amber" : "green"}>{selectedBooking.status}</StatusPill></div>
+            <TimeLine label={`学生时间 · ${timezoneLabel(bookingStudent.timezone)}`} time={formatInstant(selectedInstant, bookingStudent.timezone)} detail={cleanTimezone(bookingStudent.timezone)} />
+            <TimeLine label={`老师时间 · ${timezoneLabel(bookingTeacher.timezone)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone)} detail={bookingTeacher.name} />
+            <TimeLine label="墨尔本基准时间" time={formatInstant(selectedInstant, "Australia/Melbourne")} detail="系统按日期自动处理夏令时" />
+            <TimeLine label={`当前查看 · ${timezoneLabel(scheduleTimezone)}`} time={formatInstant(selectedInstant, scheduleTimezone)} detail={`来源时段：${selectedBooking.sourceTiming ?? "人工录入"}`} />
+            <div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>
+            {selectedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => { setBookings((current) => current.map((booking) => booking.id === selectedBooking.id ? { ...booking, status: "已确认" } : booking)); addAudit("确认排课", `${bookingStudent.name} · ${formatInstant(selectedInstant, bookingStudent.timezone)}`, "green"); notify("课程已确认"); }}>确认课程</button>}
+            {!selectedBooking.classroom?.meetingId ? <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void createClassroom(selectedBooking)}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建在线教室"}</button> : selectedBooking.classroom.status === "ended" ? <button className="secondary-button full" type="button" onClick={() => { setActive("classroom"); setMobilePreview(null); }}><Video size={16} /> 查看录播与课堂记录</button> : <>
+              <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(selectedBooking)}><ExternalLink size={16} /> 老师进入教室</button>
+              <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(selectedBooking)}><Link2 size={16} /> 复制学生链接</button>
+              <button className="secondary-button full" type="button" onClick={() => { setActive("classroom"); setMobilePreview(null); }}><Video size={16} /> 查看教室与录播</button>
+            </>}
+            <button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button>
+          </aside>
         </div>
       </section>
     </>;
@@ -2055,7 +2245,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderSettings = () => <>
     <ViewHeading eyebrow="规则应可读、可改、可审计" title="规则设置" copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。" actions={<button className="secondary-button" type="button" onClick={resetDemo}><RefreshCw size={17} /> 重新载入共享数据</button>} />
-    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">多人共享</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到 Supabase，并同步给其他在线成员"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>真实资料与共享保存</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="站内业务数据写入 Supabase，在线成员读取同一版本" tone="green" label="已启用" /><OwnershipRow title="真实资料来源" detail="学生总表、教师总表与教务宝只读镜像；缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="Supabase 已启用版本检查与共享写入；冲突不会静默覆盖" tone="green" label="已启用" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开共享导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="blue">部分连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="学生课时、课程目录与本周排课已只读镜像；不会回写教务宝" tone="green" label="只读已接入" /><OwnershipRow title="腾讯表格" detail="已完成只读来源识别与 Supabase 镜像，不向腾讯文档回写" tone="green" label="只读已接入" /><OwnershipRow title="ClassIn / 百家云" detail="课堂供应商待单独做功能、价格与中澳连通性评估" tone="amber" label="待验证" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步状态</button></article>}</section>
+    <section className="panel settings-shell"><ViewTabs value={settingsTab} items={[{ id: "reminders", label: "提醒规则" }, { id: "data", label: "数据与备份" }, { id: "integrations", label: "外部集成" }]} onChange={setSettingsTab} label="设置分类" />{settingsTab === "reminders" && <article className="settings-panel settings-form"><div className="settings-intro"><div><p className="eyebrow">强提醒规则</p><h2>时间节点</h2></div><StatusPill tone="amber">多人共享</StatusPill></div><div className="settings-fields"><label>LP 默认提前<input value={rules.lpDays} onChange={(event) => setRules((current) => ({ ...current, lpDays: event.target.value }))} /></label><label>课后反馈检查（小时）<input value={rules.feedbackHours} onChange={(event) => setRules((current) => ({ ...current, feedbackHours: event.target.value }))} /></label><label>续课预销售提前（天）<input value={rules.renewalDays} onChange={(event) => setRules((current) => ({ ...current, renewalDays: event.target.value }))} /></label><label>低课时阈值<input type="number" min="1" value={rules.lowHours} onChange={(event) => setRules((current) => ({ ...current, lowHours: event.target.value }))} /></label><label>考试提前提醒（天）<input type="number" min="1" value={rules.examDays} onChange={(event) => setRules((current) => ({ ...current, examDays: event.target.value }))} /></label><label>逾期升级规则<input value={rules.escalation} onChange={(event) => setRules((current) => ({ ...current, escalation: event.target.value }))} /></label></div><button className="primary-button settings-save" type="button" onClick={() => { addAudit("保存强提醒规则", `LP ${rules.lpDays}、课后 ${rules.feedbackHours}h、低课时 ${rules.lowHours}、考试 ${rules.examDays} 天`, "green"); notify("规则已保存到 Supabase，并同步给其他在线成员"); }}><Check size={17} /> 保存规则</button></article>}{settingsTab === "data" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">数据安全</p><h2>真实资料与共享保存</h2></div><StatusPill tone="amber">私有访问</StatusPill></div><div className="settings-list"><OwnershipRow title="当前存储" detail="站内业务数据写入 Supabase，在线成员读取同一版本" tone="green" label="已启用" /><OwnershipRow title="真实资料来源" detail="学生总表、教师总表与教务宝只读镜像；缺失字段保留待确认" tone="green" label="已加载" /><OwnershipRow title="数据导出" detail="可随时导出 JSON 副本" tone="green" label="可用" /><OwnershipRow title="共享数据库" detail="Supabase 已启用版本检查与共享写入；冲突不会静默覆盖" tone="green" label="已启用" /></div><div className="button-row"><button className="secondary-button" type="button" onClick={() => setActive("sync")}><FilePlus2 size={16} /> 打开共享导入</button><button className="secondary-button" type="button" onClick={exportDemo}><Download size={16} /> 导出当前数据</button></div></article>}{settingsTab === "integrations" && <article className="settings-panel"><div className="settings-intro"><div><p className="eyebrow">连接状态</p><h2>外部系统</h2></div><StatusPill tone="blue">部分连接</StatusPill></div><div className="integration-list"><OwnershipRow title="企业微信" detail="需要应用权限、员工与客户群映射" tone="amber" label="待 PoC" /><OwnershipRow title="教务宝" detail="学生课时、课程目录与本周排课已只读镜像；不会回写教务宝" tone="green" label="只读已接入" /><OwnershipRow title="腾讯表格" detail="已完成只读来源识别与 Supabase 镜像，不向腾讯文档回写" tone="green" label="只读已接入" /><OwnershipRow title="BiggerBlueButton" detail="已连接托管课堂 API；支持独立老师/学生链接、互动白板、投票、分组讨论和自动录播" tone="green" label="已接入" /></div><button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={16} /> 查看同步状态</button></article>}</section>
   </>;
 
   const renderAudit = () => {
@@ -2074,13 +2264,39 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderClassroom = () => {
     const roomBooking = selectedBooking ?? scopedBookings[0];
+    const roomStudent = roomBooking ? studentById(roomBooking.studentId) : undefined;
+    const roomTeacher = roomBooking ? teacherById(roomBooking.teacherId) : undefined;
+    const classroomStatus = classroomRuntime?.running
+      ? { label: "课堂进行中", tone: "green" as Tone }
+      : classroomRuntime?.recordings.some((recording) => recording.playbackUrl)
+        ? { label: "录播已就绪", tone: "blue" as Tone }
+        : roomBooking?.classroom?.status === "ended"
+          ? { label: "课堂已结束", tone: "neutral" as Tone }
+          : roomBooking?.classroom?.meetingId
+            ? { label: "待开课", tone: "amber" as Tone }
+            : { label: "未创建", tone: "neutral" as Tone };
+    const playback = classroomRuntime?.recordings.find((recording) => recording.playbackUrl);
     return <>
-      <ViewHeading eyebrow="Demo 网上教室 · 先验证操作流程" title="网上教室" copy="目前先演示生成链接、进入教室和课堂工具布局，不会调用真实摄像头、麦克风或录制服务；后续可替换为正式视频供应商。" actions={roomBooking ? <button className="primary-button" type="button" onClick={() => openClassroom(roomBooking)}><ExternalLink size={17} /> 进入 Demo 教室</button> : <button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 先创建约课</button>} />
+      <ViewHeading eyebrow="BiggerBlueButton 托管课堂" title="网上教室" copy="从排课直接创建一对一课堂。老师与学生使用不同权限链接，支持音视频、屏幕共享、互动白板、投票、分组讨论和自动录播。" actions={roomBooking ? !roomBooking.classroom?.meetingId ? <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void createClassroom(roomBooking)}><Video size={17} /> 创建在线教室</button> : roomBooking.classroom.status === "ended" ? <button className="secondary-button" type="button" disabled={classroomBusy} onClick={() => void refreshClassroom(roomBooking)}><RefreshCw size={17} /> 刷新录播</button> : <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={17} /> 老师进入教室</button> : <button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 先创建约课</button>} />
       <section className="panel classroom-hub">
         {scopedBookings.length ? <div className="classroom-hub-layout">
-          <article className="classroom-room-list"><div className="collection-head classroom-grid-row"><span>课程</span><span>时间</span><span>状态</span></div>{scopedBookings.slice(0, 12).map((booking) => { const student = studentById(booking.studentId); return <button className={`collection-row classroom-grid-row ${roomBooking?.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); }}><span><strong>{student?.name ?? booking.studentId}</strong><small>{booking.course ?? student?.course ?? booking.kind}</small></span><span><strong>{formatInstant(bookingInstant(booking), scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)}</small></span><StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill></button>; })}</article>
-          {roomBooking && <aside className="classroom-room-preview"><div className="preview-header"><div><p className="eyebrow">{roomBooking.id}</p><h2>{studentById(roomBooking.studentId)?.name ?? "学生"}</h2></div><StatusPill tone="purple">Demo</StatusPill></div><div className="classroom-link-preview"><Video size={24} /><span><strong>一对一网上教室</strong><small>老师与学生可通过同一链接进入</small></span></div><div className="detail-section"><span>课程时间</span><strong>{formatInstant(bookingInstant(roomBooking), scheduleTimezone)}</strong><p>{timezoneLabel(scheduleTimezone)} · {roomBooking.duration} 分钟</p></div><div className="detail-section"><span>课堂工具演示</span><div className="classroom-tool-tags"><span>视频</span><span>语音</span><span>白板</span><span>计时器</span><span>快速选择题</span></div></div><button className="primary-button full" type="button" onClick={() => openClassroom(roomBooking)}><ExternalLink size={16} /> 进入 Demo 教室</button><button className="secondary-button full" type="button" onClick={() => copyClassroomLink(roomBooking)}><Copy size={16} /> 复制学生进入链接</button></aside>}
-        </div> : <EmptyState title="还没有可用课程" detail="先为自己的学生创建约课，系统会自动生成对应的 Demo 教室链接。" />}
+          <article className="classroom-room-list"><div className="collection-head classroom-grid-row"><span>课程</span><span>时间</span><span>教室</span></div>{scopedBookings.slice(0, 12).map((booking) => { const student = studentById(booking.studentId); const status = booking.classroom?.status === "running" ? "进行中" : booking.classroom?.status === "ended" ? "已结束" : booking.classroom?.meetingId ? "待开课" : "未创建"; return <button className={`collection-row classroom-grid-row ${roomBooking?.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedStudentId(booking.studentId); setClassroomRuntime(null); setMobilePreview("classroom"); }}><span><strong>{student?.name ?? booking.studentId}</strong><small>{booking.course ?? student?.course ?? booking.kind}</small></span><span><strong>{formatInstant(bookingInstant(booking), scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)}</small></span><StatusPill tone={status === "进行中" ? "green" : status === "待开课" ? "amber" : status === "已结束" ? "blue" : "neutral"}>{status}</StatusPill></button>; })}</article>
+          {roomBooking && <aside className={`classroom-room-preview ${mobilePreview === "classroom" ? "mobile-detail-open" : ""}`}>
+            <button className="mobile-preview-close" type="button" aria-label="关闭课堂详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回课堂列表</button>
+            <div className="preview-header"><div><p className="eyebrow">{roomBooking.id} · {roomTeacher?.name ?? "老师待关联"}</p><h2>{roomStudent?.name ?? "学生"}</h2></div><StatusPill tone={classroomStatus.tone}>{classroomStatus.label}</StatusPill></div>
+            <div className="classroom-link-preview"><Video size={24} /><span><strong>一对一网上教室</strong><small>{classroomRuntime?.running ? `${classroomRuntime.participantCount} 人在线 · ${classroomRuntime.moderatorCount} 位老师` : "老师与学生使用独立权限链接"}</small></span></div>
+            <div className="detail-section"><span>课程时间</span><strong>{formatInstant(bookingInstant(roomBooking), scheduleTimezone)}</strong><p>{timezoneLabel(scheduleTimezone)} · {roomBooking.duration} 分钟</p></div>
+            <div className="detail-section"><span>可用课堂工具</span><div className="classroom-tool-tags"><span>音视频</span><span>屏幕共享</span><span>互动白板</span><span>投票</span><span>分组讨论</span><span>自动录播</span></div></div>
+            {!roomBooking.classroom?.meetingId ? <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void createClassroom(roomBooking)}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建在线教室"}</button> : <>
+              {roomBooking.classroom.status !== "ended" && <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={16} /> 老师进入教室</button>}
+              {roomBooking.classroom.status !== "ended" && <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(roomBooking)}><Copy size={16} /> 复制学生进入链接</button>}
+              <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void refreshClassroom(roomBooking)}><RefreshCw size={16} /> 刷新教室状态</button>
+              {(classroomRuntime?.running || roomBooking.classroom.status === "running") && <button className="danger-button full" type="button" disabled={classroomBusy} onClick={() => void endClassroom(roomBooking)}><ShieldCheck size={16} /> 结束课堂并结课</button>}
+              {playback?.playbackUrl && <a className="secondary-button full classroom-recording-link" href={playback.playbackUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 打开课堂录播</a>}
+              {!playback?.playbackUrl && roomBooking.classroom.status === "ended" && <div className="classroom-recording-pending"><Clock3 size={16} /><span><strong>录播处理中</strong><small>供应商处理完成后会在这里出现回放链接</small></span></div>}
+            </>}
+          </aside>}
+        </div> : <EmptyState title="还没有可用课程" detail="先为学生创建排课，系统会从排课生成对应的在线教室。" />}
       </section>
     </>;
   };
@@ -2090,7 +2306,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       { name: "Admin", operator: "Nixon", role: "超级管理员", login: "管理员独立密码", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
       { name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, role: "运营管理员", login: "独立密码", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
       ...DEMO_STAFF_USERS.map((name) => ({ name, operator: name, role: "教务账号", login: name, permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"] })),
-      ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", login: name, permissions: ["自己的学生", "自己的排课", "Demo 网上教室", "学生资料只读"] })),
+      ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", login: name, permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"] })),
     ];
     const selectedAccount = accounts.find((account) => account.name === selectedAccountName) ?? accounts[0];
     const copyCredential = async () => {
@@ -2213,12 +2429,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const teacher = teacherById(teacherId); const student = studentById(studentId);
     if (kind === "试听" && teacher && !teacher.acceptsStudents) { notify(`${teacher.name} 当前不是“可接新生”状态，不能安排试听。`); return; }
     if (teacher && !teacherAvailableAt(teacher, date, start, duration, inputTimezone)) { notify(`该时段不在 ${teacher.name} 的结构化 AVA 内，请选择其他时间。`); return; }
-    const booking: Booking = { id: id("LES"), studentId, teacherId, date, start, duration, kind, status: "待确认", timezone: inputTimezone, recurring: data.get("recurring") === "on" };
+    const bookingId = id("LES");
+    const booking: Booking = {
+      id: bookingId,
+      studentId,
+      teacherId,
+      date,
+      start,
+      duration,
+      kind,
+      status: "待确认",
+      timezone: inputTimezone,
+      recurring: data.get("recurring") === "on",
+      classroom: { meetingId: `yinling-${bookingId}`, status: "ready", createdAt: new Date().toISOString() },
+    };
     setBookings((current) => [...current, booking]);
     setStudents((current) => current.map((item) => item.id === studentId ? { ...item, teacher: teacher?.name ?? "待匹配", status: kind === "试听" ? "试听中" : item.status, next: "完成 LP 与 N-2 检查", nextTone: "amber" } : item));
     createWorkflowTasks(studentId, kind === "试听");
     addAudit("创建排课", `${student?.name} · ${date} ${start} · ${teacher?.name}`, "green");
-    setModal(null); setActive("schedule"); notify("排课已创建，并生成 LP、N-2 和课后检查任务");
+    setModal(null); setActive("schedule"); notify("排课和在线教室已创建，并生成 LP、N-2 和课后检查任务");
   };
 
   const submitOperation = (event: FormEvent<HTMLFormElement>) => {
@@ -2515,7 +2744,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>课程类型<select name="kind"><option>试听</option><option>常规课</option><option>代课</option></select></label>
           <label>课程时长<select name="duration"><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
           <label className="checkbox-field"><input name="recurring" type="checkbox" defaultChecked /> 每周固定课程</label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> 提交前会按准确时点检查学生/老师重叠，并在已有结构化 AVA 时验证老师可用时段；成功后生成 LP、N-2 和课后任务。</div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 提交前会检查学生/老师重叠并验证老师 AVA；成功后自动生成在线教室、LP、N-2 和课后任务。</div>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><CalendarPlus size={16} /> 检查并创建</button></footer>
         </form>
       </Dialog>}

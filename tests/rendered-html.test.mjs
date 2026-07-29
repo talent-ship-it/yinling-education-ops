@@ -214,6 +214,45 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(css, /\.pagination strong/);
 });
 
+test("connects scoped bookings to real BiggerBlueButton classrooms", async () => {
+  const [client, route, bbb, css, legacyPage, packageJson] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/api/classroom/route.ts"),
+    read("../lib/bigbluebutton.ts"),
+    read("../app/globals.css"),
+    read("../app/classroom/[roomId]/page.tsx"),
+    read("../package.json").then(JSON.parse),
+  ]);
+
+  assert.match(client, /classroom\?: \{/);
+  assert.match(client, /classroomRequest/);
+  assert.match(client, /createClassroom/);
+  assert.match(client, /joinTeacherClassroom/);
+  assert.match(client, /copyStudentClassroomLink/);
+  assert.match(client, /endClassroom/);
+  assert.match(client, /classroom: \{ meetingId: `yinling-\$\{bookingId\}`/);
+  assert.match(client, /window\.setInterval\(poll, 15000\)/);
+  assert.match(client, /BiggerBlueButton 托管课堂/);
+  assert.match(client, /自动录播/);
+  assert.doesNotMatch(client, /进入 Demo 教室/);
+  assert.doesNotMatch(client, /Demo 网上教室/);
+  assert.match(route, /getDemoSessionUser/);
+  assert.match(route, /getOpsState\(\["students", "teachers", "bookings"\]\)/);
+  assert.match(route, /filterOpsStateRows/);
+  assert.match(route, /meetingIdForBooking\(bookingId\)/);
+  assert.match(route, /body\.action === "teacher-join"/);
+  assert.match(route, /body\.action === "student-link"/);
+  assert.doesNotMatch(route, /body\.meetingId/);
+  assert.match(bbb, /import "server-only"/);
+  assert.match(bbb, /createHash\("sha1"\)/);
+  assert.match(bbb, /XMLParser/);
+  assert.match(bbb, /autoStartRecording: true/);
+  assert.match(bbb, /meetingIdForBooking/);
+  assert.match(css, /\.classroom-recording-pending/);
+  assert.match(legacyPage, /redirect\("\/"\)/);
+  assert.equal(packageJson.dependencies["fast-xml-parser"], "^5.10.1");
+});
+
 test("records renewal outcomes, preserves prior contact time and archives FU screenshots securely", async () => {
   const [client, store, uploadRoute, downloadRoute, migration, css] = await Promise.all([
     read("../app/operations-client.tsx"),
