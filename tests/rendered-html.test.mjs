@@ -234,6 +234,10 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /window\.setInterval\(poll, 15000\)/);
   assert.match(client, /BiggerBlueButton 托管课堂/);
   assert.match(client, /自动录播/);
+  assert.match(client, /正在连接网上教室/);
+  assert.match(client, /通常需要 10–30 秒/);
+  assert.match(client, /首次进入请允许浏览器使用麦克风和摄像头/);
+  assert.match(client, /window\.location\.assign\(result\.url\)/);
   assert.doesNotMatch(client, /进入 Demo 教室/);
   assert.doesNotMatch(client, /Demo 网上教室/);
   assert.match(route, /getDemoSessionUser/);
