@@ -79,6 +79,15 @@ type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
 type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
+
+type OperatorProfile = { role: string; scope: string; tone: Tone };
+
+function operatorProfile(operator: string): OperatorProfile {
+  if (operator === "Nixon") return { role: "超级管理员", scope: "全部资料、薪资和系统设置", tone: "purple" };
+  if (operator === DEMO_LIMITED_ADMIN_USER) return { role: "运营管理员", scope: "全局运营与教务协同", tone: "blue" };
+  if (isDemoTeacher(operator)) return { role: "老师", scope: "自己的学生、约课和网上课堂", tone: "green" };
+  return { role: "教务", scope: "负责学生、排课和跟进", tone: "blue" };
+}
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
 type LpNeed = "待确认" | "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
@@ -1198,9 +1207,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [globalQuery, setGlobalQuery] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [operatorMenuOpen, setOperatorMenuOpen] = useState(false);
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
   const [toast, setToast] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
+  const operatorMenuRef = useRef<HTMLDivElement>(null);
   const operatorLabel = (operator: string) => operator === "Nixon" ? "Admin" : operator;
 
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
@@ -1423,12 +1434,22 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         setGlobalSearchOpen(false);
         setModal(null);
         setMobileMenuOpen(false);
+        setOperatorMenuOpen(false);
         setMobilePreview(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!operatorMenuOpen) return;
+    const closeOperatorMenu = (event: MouseEvent) => {
+      if (!operatorMenuRef.current?.contains(event.target as Node)) setOperatorMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeOperatorMenu);
+    return () => document.removeEventListener("mousedown", closeOperatorMenu);
+  }, [operatorMenuOpen]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -2959,11 +2980,28 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <button className="top-search" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={16} /> 搜索学生、老师或 ID <kbd>Cmd K</kbd></button>
             <IconButton label="查看提醒" onClick={() => setActive("dashboard")}><ListTodo size={18} /></IconButton>
             <span className={`live-sync ${sharedSyncState}`} title={sharedSyncMessage}><i />{sharedSyncState === "synced" ? "已同步" : sharedSyncState === "saving" ? "保存中" : sharedSyncState === "conflict" ? "有冲突" : "离线"}</span>
-            <label className="operator">
-              <Avatar initials={isAdminView ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone="green" />
-              <span className="operator-copy"><small>{isAdminView ? currentOperator === "Nixon" ? "超级管理员" : "运营管理员" : isTeacherView ? "老师个人权限" : "教务个人权限"}</small><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)}</option>)}</select></span>
-              <ChevronDown size={14} aria-hidden="true" />
-            </label>
+            <div className="operator-menu-wrap" ref={operatorMenuRef}>
+              <button className="operator" type="button" aria-haspopup="menu" aria-expanded={operatorMenuOpen} onClick={() => setOperatorMenuOpen((open) => !open)}>
+                <Avatar initials={isAdminView ? "AD" : currentOperator.slice(0, 2).toUpperCase()} tone={operatorProfile(currentOperator).tone} />
+                <span className="operator-copy"><small>{operatorProfile(currentOperator).role}</small><strong>{operatorLabel(currentOperator)}</strong></span>
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+              {operatorMenuOpen ? <section className="operator-menu" role="menu" aria-label="切换工作身份">
+                <header><span>切换工作身份</span><small>不同身份看到不同的工作范围</small></header>
+                <div className="operator-menu-list">
+                  {operatorOptions.map((operator) => {
+                    const profile = operatorProfile(operator);
+                    const selected = operator === currentOperator;
+                    return <button className={selected ? "operator-menu-item selected" : "operator-menu-item"} type="button" role="menuitemradio" aria-checked={selected} key={operator} onClick={() => { requestOperatorSwitch(operator); setOperatorMenuOpen(false); }}>
+                      <Avatar initials={operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER ? "AD" : operator.slice(0, 2).toUpperCase()} tone={profile.tone} />
+                      <span className="operator-menu-copy"><strong>{operatorLabel(operator)}</strong><small>{profile.role}</small></span>
+                      <span className="operator-menu-scope">{profile.scope}</span>
+                      {selected ? <Check size={15} aria-hidden="true" /> : null}
+                    </button>;
+                  })}
+                </div>
+              </section> : null}
+            </div>
           </div>
         </header>
         <div className="content">{renderView()}</div>
@@ -2979,7 +3017,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" role="dialog" aria-modal="true" aria-label="全部功能" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><p className="eyebrow">全部功能</p><h2>去哪里处理工作</h2></div><IconButton label="关闭功能菜单" onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)}</option>)}</select></label>
+          <label className="mobile-operator-picker"><span>当前工作视图</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label="切换当前操作人">{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)} · {operatorProfile(operator).role}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
