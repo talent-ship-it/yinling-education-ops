@@ -287,3 +287,53 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(css, /\.renewal-status-cell/);
   assert.match(css, /\.upload-field/);
 });
+
+test("covers the July 28 and 29 scheduling, LP, AVA and student record changes", async () => {
+  const [client, css] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/globals.css"),
+  ]);
+
+  assert.match(client, /repeatCount\?: number/);
+  assert.match(client, /booking\.repeatCount == null \? Number\.POSITIVE_INFINITY/);
+  assert.match(client, /const validationCount = recurring \? repeatCount \?\? 104 : 1/);
+  assert.match(client, /const proposedDates = Array\.from\(\{ length: validationCount \}/);
+  assert.match(client, /const scheduleOccurrences = scopedBookings/);
+  assert.match(client, /bookingOccurrencesWithinRange\(booking, shiftIsoDate\(weekDays\[0\]\.date, -1\)/);
+  assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
+  assert.match(client, /bookingHasDstRisk\(selectedBookingSeries \?\? selectedBooking/);
+  assert.match(client, /周期课会整组更新/);
+  assert.match(client, /const conflictDate = proposedDates\.find/);
+  assert.match(client, /const unavailableDate = teacher \? proposedDates\.find/);
+  assert.match(client, /本轮排课节数/);
+  assert.match(client, /批量更新课程/);
+  assert.match(client, /设为已完成/);
+  assert.match(client, /学生请假/);
+  assert.match(client, /老师请假/);
+  assert.match(client, /启动代课/);
+  assert.match(client, /sourceBookingId: booking\.id/);
+  assert.match(client, /!substitution \|\| booking\.studentId === studentId/);
+  assert.match(client, /\{!isTeacherView && <>/);
+  assert.match(client, /选择可代课老师/);
+  assert.match(client, /setLpStage/);
+  assert.match(client, /retreatLp/);
+  assert.match(client, /试听、二次试听和直报可先不填姓名/);
+  assert.match(client, /if \(!isAdminView\) \{ notify\("无姓名临时建档需要管理员处理/);
+  assert.match(client, /\{isAdminView && <>/);
+  assert.match(client, /姓名待补/);
+  assert.match(client, /规划老师/);
+  assert.match(client, /负责教务/);
+  assert.match(client, /上传沟通或家长反馈/);
+  assert.match(client, /type: "课堂反馈"/);
+  assert.match(client, /本周/);
+  assert.match(client, /本月/);
+  assert.match(client, /下月/);
+  assert.match(client, /修改固定可约时段/);
+  assert.match(client, /删除固定可约时段/);
+  assert.match(client, /浅绿色为可约，灰色为已排课/);
+  assert.match(css, /\.agenda-select-grid/);
+  assert.match(css, /\.booking-action-grid/);
+  assert.match(css, /\.lp-card-actions/);
+  assert.match(css, /\.ava-month-grid/);
+  assert.match(css, /\.ava-booked/);
+});
