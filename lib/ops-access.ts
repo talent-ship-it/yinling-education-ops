@@ -18,6 +18,8 @@ export type OpsAccessContext = {
   teacherIds: Set<string>;
 };
 
+const ACCESS_SCOPE_ENTITIES = ["bookings", "students", "teachers"] as const;
+
 export class OpsAccessError extends Error {}
 
 const STAFF_READ_ENTITIES = new Set([
@@ -82,6 +84,20 @@ export function buildOpsAccessContext(rows: OpsStateRow[], actor: DemoUser, full
   );
 
   return { actor, fullAdmin, limitedAdmin, staff, teacher, studentIds, teacherIds };
+}
+
+/**
+ * Scoped access is derived from these three payloads. Their versions travel with
+ * every scoped write so the database can reject a request if assignment changed
+ * after the page was loaded.
+ */
+export function getAccessScopeVersions(rows: OpsStateRow[], context: OpsAccessContext) {
+  if (context.fullAdmin || context.limitedAdmin) return null;
+
+  return Object.fromEntries(ACCESS_SCOPE_ENTITIES.map((entity) => [
+    entity,
+    rows.find((row) => row.entity === entity)?.version ?? -1,
+  ]));
 }
 
 export function canReadOpsEntity(context: OpsAccessContext, entity: string) {

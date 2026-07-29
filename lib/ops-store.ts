@@ -100,14 +100,16 @@ export function putOpsState(input: {
   payload: unknown;
   expectedVersion: number;
   actor: string;
+  scopeVersions?: Record<string, number> | null;
 }) {
   const { secret } = configuration();
-  return rpc<OpsStateRow[]>("put_ops_state", {
+  return rpc<OpsStateRow[]>("put_scoped_ops_state", {
     p_secret: secret,
     p_entity: input.entity,
     p_payload: input.payload,
     p_expected_version: input.expectedVersion,
     p_actor: input.actor,
+    p_scope_versions: input.scopeVersions ?? null,
   });
 }
 

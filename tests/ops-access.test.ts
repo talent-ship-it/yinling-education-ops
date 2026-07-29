@@ -6,6 +6,7 @@ import {
   canAccessStudent,
   filterOpsStateRows,
   filterOpsVersions,
+  getAccessScopeVersions,
   mergeScopedPayload,
   OpsAccessError,
 } from "../lib/ops-access";
@@ -118,6 +119,18 @@ test("limited admin can use operations data but payroll stays exclusive to full 
   assert.equal(filterOpsStateRows(rows, limited).some((item) => item.entity === "payroll"), false);
   assert.equal(filterOpsVersions(versions, limited).some((item) => item.entity === "payroll"), false);
   assert.equal(filterOpsStateRows(rows, full).some((item) => item.entity === "payroll"), true);
+});
+
+test("scoped writes bind their access decision to the current scope versions", () => {
+  const scoped = buildOpsAccessContext(rows, "Abby", false);
+  const global = buildOpsAccessContext(rows, "Ops Admin", false);
+
+  assert.deepEqual(getAccessScopeVersions(rows, scoped), {
+    bookings: 2,
+    students: 4,
+    teachers: 1,
+  });
+  assert.equal(getAccessScopeVersions(rows, global), null);
 });
 
 test("scoped writes preserve other users' records and reject cross-owner writes", () => {

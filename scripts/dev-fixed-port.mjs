@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const PORT = 3001;
-const HOST = "localhost";
+const HOST = "127.0.0.1";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const bin = join(root, "node_modules", ".bin", process.platform === "win32" ? "next.cmd" : "next");
 
@@ -30,7 +30,7 @@ try {
   throw error;
 }
 
-const child = spawn(bin, ["dev", "--port", String(PORT)], {
+const child = spawn(bin, ["dev", "--hostname", HOST, "--port", String(PORT)], {
   env: process.env,
   stdio: "inherit",
 });

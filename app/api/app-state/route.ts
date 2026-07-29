@@ -7,6 +7,7 @@ import {
   canReadOpsEntity,
   filterOpsStateRows,
   filterOpsVersions,
+  getAccessScopeVersions,
   mergeScopedPayload,
   OpsAccessError,
 } from "@/lib/ops-access";
@@ -99,11 +100,13 @@ export async function PUT(request: NextRequest) {
       submittedPayload: body.payload,
       context: access,
     });
+    const scopeVersions = getAccessScopeVersions(allRows, access);
     const saved = await putOpsState({
       entity: body.entity,
       payload,
       expectedVersion: body.expectedVersion,
       actor: session.actor,
+      scopeVersions,
     });
     return noStore({ row: filterOpsStateRows(saved, access)[0] });
   } catch (error) {
@@ -112,7 +115,12 @@ export async function PUT(request: NextRequest) {
       const allRows = await getOpsState().catch(() => []);
       const access = buildOpsAccessContext(allRows, session.actor, session.fullAdmin);
       const current = filterOpsStateRows(allRows.filter((row) => row.entity === body.entity), access)[0];
-      return noStore({ error: "其他人刚刚修改了同一部分资料。", current }, 409);
+      const accessChanged = error.message === "access_scope_changed";
+      return noStore({
+        error: accessChanged ? "你的权限或负责范围刚刚变更，本次保存没有执行。请刷新页面后继续。" : "其他人刚刚修改了同一部分资料。",
+        current,
+        accessChanged,
+      }, 409);
     }
     const message = error instanceof Error ? error.message : "共享数据保存失败。";
     return noStore({ error: message }, 503);

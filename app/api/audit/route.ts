@@ -4,7 +4,9 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { buildOpsAccessContext, getAccessScopeVersions } from "@/lib/ops-access";
 import { getOpsState, OpsStoreError, putOpsState } from "@/lib/ops-store";
+import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +20,7 @@ export async function POST(request: Request) {
   const cookieStore = await cookies();
   const actor = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!actor) return noStore({ error: "请先输入访问密码。" }, 401);
+  const fullAdmin = actor === "Nixon" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   const body = await request.json().catch(() => null);
   const action = typeof body?.action === "string" ? body.action.trim() : "";
@@ -38,13 +41,16 @@ export async function POST(request: Request) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const row = (await getOpsState(["audit"]))[0];
+      const rows = await getOpsState();
+      const row = rows.find((item) => item.entity === "audit");
       if (!row || !Array.isArray(row.payload)) return noStore({ error: "操作审计尚未初始化。" }, 503);
+      const scopeVersions = getAccessScopeVersions(rows, buildOpsAccessContext(rows, actor, fullAdmin));
       const saved = await putOpsState({
         entity: "audit",
         payload: [entry, ...row.payload],
         expectedVersion: row.version,
         actor,
+        scopeVersions,
       });
       return noStore({ row: saved[0], entry });
     } catch (error) {

@@ -22,7 +22,7 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(route, /expectedVersion/);
   assert.match(store, /OPS_API_SECRET/);
   assert.match(store, /get_ops_state/);
-  assert.match(store, /put_ops_state/);
+  assert.match(store, /put_scoped_ops_state/);
   assert.match(auth, /DEMO_STAFF_USERS/);
   assert.match(auth, /resolveDemoUser/);
   assert.match(auth, /matchesNixonPassword/);
@@ -63,7 +63,7 @@ test("limits staff and teacher views and keeps Tencent Docs read-only", async ()
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
-  const [client, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, nixonAuth, nixonLogin] = await Promise.all([
+  const [client, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, auditRoute, nixonAuth, nixonLogin] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/account-menu.tsx"),
     read("../app/api/demo-login/route.ts"),
@@ -71,6 +71,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
     read("../app/api/demo-logout/route.ts"),
     read("../app/api/app-snapshot/route.ts"),
     read("../app/api/app-state/route.ts"),
+    read("../app/api/audit/route.ts"),
     read("../lib/nixon-auth.ts"),
     read("../app/api/nixon-login/route.ts"),
   ]);
@@ -106,8 +107,12 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(snapshotRoute, /actor === DEMO_LIMITED_ADMIN_USER/);
   assert.match(stateRoute, /filterOpsVersions/);
   assert.match(stateRoute, /mergeScopedPayload/);
+  assert.match(stateRoute, /getAccessScopeVersions/);
+  assert.match(stateRoute, /access_scope_changed/);
   assert.match(stateRoute, /操作审计由服务器自动记录/);
   assert.match(stateRoute, /DEMO_LIMITED_ADMIN_USER/);
+  assert.match(auditRoute, /getAccessScopeVersions/);
+  assert.match(auditRoute, /scopeVersions/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
   assert.match(nixonAuth, /process\.env\.OPS_API_SECRET/);
   assert.match(nixonAuth, /createHash\("sha256"\)/);
@@ -174,6 +179,8 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.doesNotMatch(css, /transition:\s*all/i);
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);
+  assert.match(devServer, /const HOST = "127\.0\.0\.1"/);
+  assert.match(devServer, /"--hostname", HOST/);
 });
 
 test("keeps Jiaowubao imports read-only and exposes real operations data", async () => {

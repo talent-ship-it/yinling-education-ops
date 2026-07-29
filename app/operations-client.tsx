@@ -48,6 +48,8 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+
+import { cleanTimezone } from "@/lib/timezone";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS, DEMO_TEACHER_USERS, isDemoTeacher } from "@/lib/demo-users";
 
@@ -642,10 +644,6 @@ const timezoneOptions = [
   { id: "Australia/Perth", label: "珀斯" },
   { id: "Asia/Shanghai", label: "中国" },
 ];
-
-function cleanTimezone(value: string) {
-  return value.split(" · ")[0] || "Australia/Melbourne";
-}
 
 function timezoneLabel(value: string) {
   const timezone = cleanTimezone(value);
@@ -2144,7 +2142,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!name || !course) return;
     const segment = String(data.get("segment") ?? "试听") as StudentSegment;
     const lpNeed = String(data.get("lpNeed") ?? (segment === "试听" ? "试听LP" : "无需LP")) as LpNeed;
-    const newStudent: Student = { id: id("STU"), name, initials: initials(name), status: segment === "试听" ? "待排课" : "在读", segment, owner: String(data.get("owner") ?? "思佳"), planner: String(data.get("planner") ?? "待分配"), course, grade: String(data.get("grade") ?? "待确认"), gradeBaseYear: new Date().getFullYear(), location: String(data.get("location") ?? "VIC"), timezone: String(data.get("timezone") ?? "Australia/Melbourne"), guardian: String(data.get("guardian") ?? "待补充"), teacher: "待匹配", next: segment === "试听" ? "完成试听交接" : lpNeed === "无需LP" ? "确认首次排课" : `创建${lpNeed}`, nextTone: "blue", files: 0, lpNeed, reportProgress: "未记录", followUp: "未记录", notes: String(data.get("notes") ?? "无特殊备注"), remainingHours: data.get("remainingHours") ? Number(data.get("remainingHours")) : undefined };
+    const newStudent: Student = { id: id("STU"), name, initials: initials(name), status: segment === "试听" ? "待排课" : "在读", segment, owner: String(data.get("owner") ?? "思佳"), planner: String(data.get("planner") ?? "待分配"), course, grade: String(data.get("grade") ?? "待确认"), gradeBaseYear: new Date().getFullYear(), location: String(data.get("location") ?? "VIC"), timezone: cleanTimezone(data.get("timezone")), guardian: String(data.get("guardian") ?? "待补充"), teacher: "待匹配", next: segment === "试听" ? "完成试听交接" : lpNeed === "无需LP" ? "确认首次排课" : `创建${lpNeed}`, nextTone: "blue", files: 0, lpNeed, reportProgress: "未记录", followUp: "未记录", notes: String(data.get("notes") ?? "无特殊备注"), remainingHours: data.get("remainingHours") ? Number(data.get("remainingHours")) : undefined };
     setStudents((current) => [newStudent, ...current]);
     setSelectedStudentId(newStudent.id);
     const generatedTasks: Task[] = [{ id: id("TSK"), title: segment === "试听" ? "完成试听交接与老师匹配" : "确认首次排课与资料", owner: newStudent.owner, studentId: newStudent.id, due: "今天", status: "today", tone: "blue", category: segment === "试听" ? "试听" : "排课", trigger: "新建学生记录" }];
@@ -2207,7 +2205,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const studentId = String(data.get("studentId") ?? selectedStudent.id);
     const teacherId = isTeacherView ? currentTeacher?.id ?? "" : String(data.get("teacherId") ?? selectedTeacher.id);
     const date = String(data.get("date") ?? ""); const start = String(data.get("start") ?? ""); const duration = Number(data.get("duration") ?? 60);
-    const inputTimezone = String(data.get("timezone") ?? "Australia/Melbourne");
+    const inputTimezone = cleanTimezone(data.get("timezone"));
     const kind = String(data.get("kind") ?? "试听") as Booking["kind"];
     if (isTeacherView && !scopedStudentIds.has(studentId)) { notify("老师账号只能为自己的学生安排课程。"); return; }
     if (!teacherId) { notify("当前老师账号没有匹配到老师档案，请联系管理员。"); return; }
