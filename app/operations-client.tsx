@@ -31,6 +31,7 @@ import {
   ListTodo,
   KeyRound,
   Link2,
+  LogOut,
   MapPin,
   MessageCircle,
   MessageSquare,
@@ -1208,6 +1209,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [modal, setModal] = useState<ModalKind>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [operatorMenuOpen, setOperatorMenuOpen] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
   const [toast, setToast] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -1342,6 +1344,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const requestOperatorSwitch = (operator: string) => {
     if (!canUseAdminScope && operator !== sessionOperator) return;
     switchOperator(operator);
+  };
+
+  const logout = async () => {
+    setLogoutBusy(true);
+    try {
+      const response = await fetch("/api/demo-logout", { method: "POST" });
+      if (!response.ok) throw new Error("logout failed");
+      window.location.assign("/");
+    } catch {
+      setLogoutBusy(false);
+      notify("退出失败，请重试");
+    }
   };
 
   const sharedVersionsRef = useRef<Record<string, number>>({});
@@ -3000,6 +3014,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     </button>;
                   })}
                 </div>
+                <footer className="operator-menu-footer">
+                  <button className="operator-logout" type="button" disabled={logoutBusy} onClick={() => void logout()}><LogOut size={15} aria-hidden="true" />{logoutBusy ? "正在退出" : "退出登录"}</button>
+                </footer>
               </section> : null}
             </div>
           </div>
@@ -3024,6 +3041,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               return <button className={active === item.id ? "active" : ""} type="button" key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{item.group === "work" ? "学生与教务" : "运营与系统"}</small></span><ChevronRight size={16} /></button>;
             })}
           </div>
+          <button className="mobile-logout-button" type="button" disabled={logoutBusy} onClick={() => void logout()}><LogOut size={18} aria-hidden="true" />{logoutBusy ? "正在退出" : "退出登录"}</button>
         </section>
       </div>}
       {toast && <div className="toast"><CheckCircle2 size={17} /> {toast}</div>}
