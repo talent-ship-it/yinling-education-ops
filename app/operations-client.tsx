@@ -1867,15 +1867,32 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const joinTeacherClassroom = async (booking: Booking) => {
     const popup = window.open("about:blank", "_blank");
-    if (popup) popup.opener = null;
+    if (popup) {
+      popup.opener = null;
+      popup.document.title = "正在进入网上教室";
+      popup.document.documentElement.lang = "zh-CN";
+      popup.document.body.innerHTML = `
+        <main style="min-height:100vh;display:grid;place-items:center;margin:0;background:#f4fbfa;color:#163b37;font-family:Arial,sans-serif">
+          <section style="width:min(420px,calc(100vw - 40px));text-align:center">
+            <div style="width:44px;height:44px;margin:0 auto 20px;border:4px solid #c8ebe8;border-top-color:#277f77;border-radius:50%;animation:spin 1s linear infinite"></div>
+            <h1 style="font-size:22px;margin:0 0 10px">正在连接网上教室</h1>
+            <p style="font-size:15px;line-height:1.6;margin:0;color:#55746f">通常需要 10–30 秒，请不要关闭此页面。进入后请允许浏览器使用麦克风和摄像头。</p>
+          </section>
+          <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+        </main>`;
+    }
     setClassroomBusy(true);
     try {
       const result = await classroomRequest({ action: "teacher-join", bookingId: booking.id });
       if (!result.url) throw new Error("无法生成老师进入链接");
       const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
       if (meetingId) persistClassroom(booking.id, meetingId, "ready");
-      if (popup) popup.location.href = result.url;
-      else window.open(result.url, "_blank", "noopener,noreferrer");
+      if (popup) {
+        popup.location.replace(result.url);
+        notify("课堂已在新标签页打开；首次进入请允许浏览器使用麦克风和摄像头");
+      } else {
+        window.location.assign(result.url);
+      }
       addAudit("老师进入在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
       window.setTimeout(() => void refreshClassroom({ ...booking, classroom: booking.classroom ?? { meetingId, status: "ready", createdAt: new Date().toISOString() } }, true), 2500);
     } catch (error) {
@@ -2250,8 +2267,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <button className="secondary-button" type="button" onClick={() => openBookingOperation(selectedBooking, "代课")}><RefreshCw size={15} /> 启动代课</button></>}
             </div>
             {!selectedBooking.classroom?.meetingId ? <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void createClassroom(selectedBooking)}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建在线教室"}</button> : selectedBooking.classroom.status === "ended" ? <button className="secondary-button full" type="button" onClick={() => { setActive("classroom"); setMobilePreview(null); }}><Video size={16} /> 查看录播与课堂记录</button> : <>
-              <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(selectedBooking)}><ExternalLink size={16} /> 老师进入教室</button>
-              <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(selectedBooking)}><Link2 size={16} /> 复制学生链接</button>
+              <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(selectedBooking)}><ExternalLink size={16} /> {classroomBusy ? "正在处理…" : "老师进入教室"}</button>
+              <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(selectedBooking)}><Link2 size={16} /> {classroomBusy ? "正在处理…" : "复制学生链接"}</button>
               <button className="secondary-button full" type="button" onClick={() => { setActive("classroom"); setMobilePreview(null); }}><Video size={16} /> 查看教室与录播</button>
             </>}
             <button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>打开学生档案</button>
@@ -2521,7 +2538,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             : { label: "未创建", tone: "neutral" as Tone };
     const playback = classroomRuntime?.recordings.find((recording) => recording.playbackUrl);
     return <>
-      <ViewHeading eyebrow="BiggerBlueButton 托管课堂" title="网上教室" copy="从排课直接创建一对一课堂。老师与学生使用不同权限链接，支持音视频、屏幕共享、互动白板、投票、分组讨论和自动录播。" actions={roomBooking ? !roomBooking.classroom?.meetingId ? <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void createClassroom(roomBooking)}><Video size={17} /> 创建在线教室</button> : roomBooking.classroom.status === "ended" ? <button className="secondary-button" type="button" disabled={classroomBusy} onClick={() => void refreshClassroom(roomBooking)}><RefreshCw size={17} /> 刷新录播</button> : <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={17} /> 老师进入教室</button> : <button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 先创建约课</button>} />
+      <ViewHeading eyebrow="BiggerBlueButton 托管课堂" title="网上教室" copy="从排课直接创建一对一课堂。老师与学生使用不同权限链接，支持音视频、屏幕共享、互动白板、投票、分组讨论和自动录播。" actions={roomBooking ? !roomBooking.classroom?.meetingId ? <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void createClassroom(roomBooking)}><Video size={17} /> {classroomBusy ? "正在连接课堂…" : "创建在线教室"}</button> : roomBooking.classroom.status === "ended" ? <button className="secondary-button" type="button" disabled={classroomBusy} onClick={() => void refreshClassroom(roomBooking)}><RefreshCw size={17} /> 刷新录播</button> : <button className="primary-button" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={17} /> {classroomBusy ? "正在处理…" : "老师进入教室"}</button> : <button className="primary-button" type="button" onClick={() => setModal("booking")}><CalendarPlus size={17} /> 先创建约课</button>} />
       <section className="panel classroom-hub">
         {scopedBookings.length ? <div className="classroom-hub-layout">
           <article className="classroom-room-list"><div className="collection-head classroom-grid-row"><span>课程</span><span>时间</span><span>教室</span></div>{scopedBookings.slice(0, 12).map((booking) => { const student = studentById(booking.studentId); const status = booking.classroom?.status === "running" ? "进行中" : booking.classroom?.status === "ended" ? "已结束" : booking.classroom?.meetingId ? "待开课" : "未创建"; return <button className={`collection-row classroom-grid-row ${roomBooking?.id === booking.id ? "selected" : ""}`} type="button" key={booking.id} onClick={() => { setSelectedBookingId(booking.id); setSelectedBookingDate(booking.date); setSelectedBookingDateId(booking.id); setSelectedStudentId(booking.studentId); setClassroomRuntime(null); setMobilePreview("classroom"); }}><span><strong>{student?.name ?? booking.studentId}</strong><small>{booking.course ?? student?.course ?? booking.kind}</small></span><span><strong>{formatInstant(bookingInstant(booking), scheduleTimezone)}</strong><small>{timezoneLabel(scheduleTimezone)}</small></span><StatusPill tone={status === "进行中" ? "green" : status === "待开课" ? "amber" : status === "已结束" ? "blue" : "neutral"}>{status}</StatusPill></button>; })}</article>
@@ -2532,13 +2549,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="detail-section"><span>课程时间</span><strong>{formatInstant(bookingInstant(roomBooking), scheduleTimezone)}</strong><p>{timezoneLabel(scheduleTimezone)} · {roomBooking.duration} 分钟</p></div>
             <div className="detail-section"><span>可用课堂工具</span><div className="classroom-tool-tags"><span>音视频</span><span>屏幕共享</span><span>互动白板</span><span>投票</span><span>分组讨论</span><span>自动录播</span></div></div>
             {!roomBooking.classroom?.meetingId ? <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void createClassroom(roomBooking)}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建在线教室"}</button> : <>
-              {roomBooking.classroom.status !== "ended" && <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={16} /> 老师进入教室</button>}
-              {roomBooking.classroom.status !== "ended" && <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(roomBooking)}><Copy size={16} /> 复制学生进入链接</button>}
+              {roomBooking.classroom.status !== "ended" && <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(roomBooking)}><ExternalLink size={16} /> {classroomBusy ? "正在处理…" : "老师进入教室"}</button>}
+              {roomBooking.classroom.status !== "ended" && <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void copyStudentClassroomLink(roomBooking)}><Copy size={16} /> {classroomBusy ? "正在处理…" : "复制学生进入链接"}</button>}
               <button className="secondary-button full" type="button" disabled={classroomBusy} onClick={() => void refreshClassroom(roomBooking)}><RefreshCw size={16} /> 刷新教室状态</button>
               {(classroomRuntime?.running || roomBooking.classroom.status === "running") && <button className="danger-button full" type="button" disabled={classroomBusy} onClick={() => void endClassroom(roomBooking)}><ShieldCheck size={16} /> 结束课堂并结课</button>}
               {playback?.playbackUrl && <a className="secondary-button full classroom-recording-link" href={playback.playbackUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 打开课堂录播</a>}
               {!playback?.playbackUrl && roomBooking.classroom.status === "ended" && <div className="classroom-recording-pending"><Clock3 size={16} /><span><strong>录播处理中</strong><small>供应商处理完成后会在这里出现回放链接</small></span></div>}
             </>}
+            {classroomBusy && <div className="classroom-recording-pending"><Clock3 size={16} /><span><strong>正在连接课堂服务</strong><small>通常需要 10–30 秒，请不要重复点击或关闭新标签页</small></span></div>}
           </aside>}
         </div> : <EmptyState title="还没有可用课程" detail="先为学生创建排课，系统会从排课生成对应的在线教室。" />}
       </section>
