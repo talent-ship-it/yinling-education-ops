@@ -16,7 +16,9 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(client, /\/api\/app-state\?mode=versions/);
   assert.match(client, /window\.setInterval\(poll, 2500\)/);
   assert.match(client, /onSync\("conflict"/);
-  assert.doesNotMatch(client, /window\.localStorage/);
+  assert.match(client, /displayPreferencesStorageKey/);
+  assert.match(client, /window\.localStorage\.setItem\(displayPreferencesStorageKey/);
+  assert.doesNotMatch(client, /localStorage\.setItem\(["'](?:students|teachers|tasks|bookings|payroll|files|audit)["']/);
   assert.match(route, /mergeScopedPayload/);
   assert.match(route, /filterOpsStateRows/);
   assert.match(route, /expectedVersion/);
@@ -200,7 +202,7 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(client, /教务宝只读同步/);
   assert.match(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
   assert.match(client, /useState<"week" \| "agenda">\("agenda"\)/);
-  assert.match(client, /useState<"compact" \| "comfortable">\("comfortable"\)/);
+  assert.match(client, /const scheduleDensity = displayPreferences\.density/);
   assert.match(client, /Array\.from\(\{ length: 7 \}/);
   assert.match(client, /const schedulePageSize = 10/);
   assert.match(client, /Pagination page=\{safeSchedulePage\}/);
