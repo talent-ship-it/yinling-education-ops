@@ -69,6 +69,8 @@ test("translates runtime-composed records and standardised source labels", () =>
     "Ella's personal workspace · Every reminder includes the student, trigger, owner and next action. Current source: Supabase live-data snapshot.",
   );
   assert.equal(translateInterfaceText("今天到期 2 项", "en-AU"), "2 due today");
+  assert.equal(translateInterfaceText("今天 21:11", "en-AU"), "Today 21:11");
+  assert.equal(translateInterfaceText("Ella 负责", "en-AU"), "Assigned to Ella");
   assert.equal(translateInterfaceText("Ella 的任务", "en-AU"), "Ella's tasks");
   assert.equal(translateInterfaceText("试听 LP：需要跟进家长指定内容", "en-AU"), "Trial LP: Follow up parent-requested content");
   assert.equal(translateInterfaceText("Jared陈汶杰 仅剩 3 课时", "en-AU"), "Jared陈汶杰 has only 3 hours remaining");
@@ -78,6 +80,8 @@ test("translates runtime-composed records and standardised source labels", () =>
   assert.equal(translateInterfaceText("0/4 节", "en-AU"), "0/4 lessons");
   assert.equal(translateInterfaceText("5月", "en-AU"), "May");
   assert.equal(translateInterfaceText("已结构化 · 手动结构化 · 今天 16:59", "en-AU"), "Structured · Manually structured · Today 16:59");
+  assert.equal(translateInterfaceText("手动结构化 · 今天 16:59", "en-AU"), "Manually structured · Today 16:59");
+  assert.equal(translateInterfaceText("上次成功 No successful follow-up recorded", "en-AU"), "Last successful follow-up: No successful follow-up recorded");
   assert.equal(
     translateInterfaceText("Source:手动结构化 · 今天 16:59 · Original timezone 墨尔本", "en-AU"),
     "Source: Manually structured · Today 16:59 · Original timezone: Melbourne",
