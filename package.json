@@ -9,7 +9,7 @@
     "dev": "node scripts/dev-fixed-port.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --import tsx --test tests/ops-access.test.ts tests/timezone.test.ts tests/display-preferences.test.ts tests/rendered-html.test.mjs",
+    "test": "npm run build && node --import tsx --test tests/ops-access.test.ts tests/timezone.test.ts tests/display-preferences.test.ts tests/payroll-export.test.ts tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern .next"
   },
   "dependencies": {
