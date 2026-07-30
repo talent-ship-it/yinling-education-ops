@@ -8,7 +8,7 @@ The app is a Next.js site backed by Supabase shared state. It is currently an in
 
 - Student CRM with owner-scoped views, status updates, file index, LP needs, exam and renewal fields.
 - Teacher resource library with subject filters, AVA display, manual structured AVA entry, and availability-based scheduling checks.
-- Scheduling, LP workflows, exception handling, renewals, payroll preview, message queue, file index, reports, settings, and audit log.
+- Scheduling, LP workflows, exception handling, renewals, and a month-based payroll workspace with Excel export, teacher onboarding, rate maintenance, review locks, and audit history.
 - Per-account display preferences support Chinese or English interface labels, locale-aware date/time formats, timezone selection, and text sizing. English mode translates system-controlled UI while preserving names and source records as entered.
 - Supabase is the write target for in-app changes.
 - Tencent Docs sources are read-only mirrors. The app does not write back to Tencent Docs.
