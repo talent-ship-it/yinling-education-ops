@@ -61,3 +61,36 @@ test("translates shared controls and schedule details without changing names", (
   assert.equal(translateInterfaceText("Olivia 陈欣兰", "en-AU"), "Olivia 陈欣兰");
   assert.equal(translateInterfaceText("排课与时区检查", "zh-CN"), "排课与时区检查");
 });
+
+test("translates runtime-composed records and standardised source labels", () => {
+  assert.equal(translateInterfaceText("2026年7月30日星期四", "en-AU"), "Thursday, 30 July 2026");
+  assert.equal(
+    translateInterfaceText("Ella 的个人工作视图 · 所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：Supabase 真实资料快照。", "en-AU"),
+    "Ella's personal workspace · Every reminder includes the student, trigger, owner and next action. Current source: Supabase live-data snapshot.",
+  );
+  assert.equal(translateInterfaceText("今天到期 2 项", "en-AU"), "2 due today");
+  assert.equal(translateInterfaceText("Ella 的任务", "en-AU"), "Ella's tasks");
+  assert.equal(translateInterfaceText("试听 LP：需要跟进家长指定内容", "en-AU"), "Trial LP: Follow up parent-requested content");
+  assert.equal(translateInterfaceText("Jared陈汶杰 仅剩 3 课时", "en-AU"), "Jared陈汶杰 has only 3 hours remaining");
+  assert.equal(translateInterfaceText("198 位老师的 AVA 待结构化", "en-AU"), "198 teachers have unstructured availability");
+  assert.equal(translateInterfaceText("1997 门在用课程", "en-AU"), "1997 active courses");
+  assert.equal(translateInterfaceText("0 项资料", "en-AU"), "0 files");
+  assert.equal(translateInterfaceText("0/4 节", "en-AU"), "0/4 lessons");
+  assert.equal(translateInterfaceText("5月", "en-AU"), "May");
+  assert.equal(translateInterfaceText("已结构化 · 手动结构化 · 今天 16:59", "en-AU"), "Structured · Manually structured · Today 16:59");
+  assert.equal(
+    translateInterfaceText("Source:手动结构化 · 今天 16:59 · Original timezone 墨尔本", "en-AU"),
+    "Source: Manually structured · Today 16:59 · Original timezone: Melbourne",
+  );
+  assert.equal(translateInterfaceText("数学 · 科学 · 中小学/大学", "en-AU"), "Mathematics · Science · School / university");
+  assert.equal(translateInterfaceText("STU-R0167 · 五年级 · Subject to be confirmed", "en-AU"), "STU-R0167 · Year 5 · Subject to be confirmed");
+  assert.equal(translateInterfaceText("Plan: Eileen校长号", "en-AU"), "Plan: Eileen principal account");
+  assert.equal(translateInterfaceText("墨尔本", "en-AU"), "Melbourne");
+  assert.equal(translateInterfaceText("沟通对象待关联", "en-AU"), "Communication contact pending");
+  assert.equal(translateInterfaceText("在线教室服务请求失败（502）。", "en-AU"), "The online classroom service request failed (502).");
+  assert.equal(translateInterfaceText("当前账号只能修改已分配的资料记录。", "en-AU"), "This account can modify assigned records only.");
+  assert.equal(
+    translateInterfaceText("剩余课时低于 5 的在读/待续课学生进入强提醒；停课、非在读与不活跃学生自动排除。考试在提前 30 天和考试当天提醒负责教务。", "en-AU"),
+    "Active and renewal-due students with fewer than 5 hours enter priority reminders; paused and inactive students are excluded. Operations is reminded 30 days before and on the exam day.",
+  );
+});
