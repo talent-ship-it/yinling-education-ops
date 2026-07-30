@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
 import { buildOpsAccessContext, getAccessScopeVersions } from "@/lib/ops-access";
 import { getOpsState, OpsStoreError, putOpsState } from "@/lib/ops-store";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   const entry = {
     id: `AUD-${randomUUID()}`,
     time: new Date().toISOString(),
-    actor,
+    actor: actor === DEMO_ADMIN_USER ? "Admin" : actor,
     action,
     detail,
     tone,

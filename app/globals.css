@@ -2197,3 +2197,75 @@ body {
   margin-top:10px;
   min-height:44px;
 }
+
+/* Shared safety affordances: confirmation for consequential writes and real undo. */
+.confirm-dialog {
+  max-width:520px;
+}
+
+.confirm-body {
+  display:grid;
+  gap:14px;
+  padding:18px 0 4px;
+}
+
+.confirm-body > p {
+  color:#41564c;
+  font-size:14px;
+  line-height:1.6;
+  margin:0;
+}
+
+.confirm-impact-list {
+  background:#f6f8f7;
+  border:1px solid var(--line);
+  border-radius:5px;
+  color:#53665c;
+  display:grid;
+  font-size:13px;
+  gap:8px;
+  line-height:1.45;
+  list-style-position:inside;
+  margin:0;
+  padding:13px 15px;
+}
+
+.confirm-actions {
+  display:flex;
+  gap:8px;
+  justify-content:flex-end;
+  padding-top:17px;
+}
+
+.toast > span {
+  min-width:0;
+}
+
+.toast-action {
+  background:rgba(255,255,255,.13);
+  border:1px solid rgba(255,255,255,.28);
+  border-radius:4px;
+  color:#fff;
+  cursor:pointer;
+  flex:0 0 auto;
+  font:inherit;
+  font-weight:800;
+  margin-left:7px;
+  padding:5px 9px;
+}
+
+.toast-action:hover {
+  background:rgba(255,255,255,.22);
+}
+
+@media (max-width:760px) {
+  .confirm-actions {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+  }
+
+  .confirm-actions > button {
+    justify-content:center;
+    min-height:44px;
+  }
+}

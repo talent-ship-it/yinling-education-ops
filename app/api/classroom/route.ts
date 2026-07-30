@@ -14,6 +14,7 @@ import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/dem
 import { buildOpsAccessContext, filterOpsStateRows } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
+import { cleanTimezone } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,43 @@ function bookingIdFrom(value: unknown) {
   return typeof value === "string" ? value.trim().slice(0, 180) : "";
 }
 
+function zonedParts(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  return Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+}
+
+function timezoneOffsetMs(date: Date, timezone: string) {
+  const parts = zonedParts(date, timezone);
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute)) - date.getTime();
+}
+
+function bookingStartsAt(booking: RecordValue) {
+  const date = typeof booking.date === "string" ? booking.date : "";
+  const time = typeof booking.start === "string" ? booking.start : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const timezone = cleanTimezone(booking.timezone);
+  const wallClock = Date.UTC(year, month - 1, day, hour, minute);
+  const first = new Date(wallClock - timezoneOffsetMs(new Date(wallClock), timezone));
+  return new Date(wallClock - timezoneOffsetMs(first, timezone));
+}
+
+function bookingIsHistorical(booking: RecordValue) {
+  const startsAt = bookingStartsAt(booking);
+  if (!startsAt) return true;
+  const duration = Math.max(1, Number(booking.duration) || 60);
+  return startsAt.getTime() + duration * 60 * 1000 < Date.now();
+}
+
 export async function GET(request: NextRequest) {
   const bookingId = bookingIdFrom(request.nextUrl.searchParams.get("bookingId"));
   if (!bookingId) return noStore({ error: "缺少排课 ID。" }, 400);
@@ -102,6 +140,7 @@ export async function POST(request: NextRequest) {
     const teacherId = String(context.booking.teacherId || "teacher");
     const course = cleanName(context.booking.course, "在线课堂");
     const classroom = record(context.booking.classroom);
+    const historical = bookingIsHistorical(context.booking);
     const provision = () => createMeeting({
       meetingId,
       name: `${studentName} · ${course}`,
@@ -113,11 +152,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (body.action === "create") {
+      if (historical) return noStore({ error: "历史课程不能新建在线教室，请创建新的排课。" }, 409);
       const result = await provision();
       return noStore({ meeting: result });
     }
 
     if (body.action === "teacher-join") {
+      if (historical) return noStore({ error: "历史课程不能重新开课，请创建新的排课。" }, 409);
       if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
       await provision();
       return noStore({
@@ -128,6 +169,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === "student-link") {
+      if (historical) return noStore({ error: "历史课程不能生成新的学生进入链接。" }, 409);
       if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
       await provision();
       return noStore({
