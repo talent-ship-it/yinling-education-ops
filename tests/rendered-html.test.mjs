@@ -162,7 +162,18 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(client, /原始 AVA · 详情查看/);
   assert.match(client, /function formatMoney/);
   assert.match(client, /payrollCurrency/);
+  assert.match(client, /payrollMonthSelection/);
+  assert.match(client, /activePayrollMonth/);
+  assert.match(client, /monthPayroll/);
   assert.match(client, /payrollPage/);
+  assert.match(client, /downloadPayrollExcel/);
+  assert.match(client, /submitNewPayroll/);
+  assert.match(client, /submitPayrollEdit/);
+  assert.match(client, /modal === "payrollNew"/);
+  assert.match(client, /modal === "payrollEdit"/);
+  assert.match(client, /type="month"/);
+  assert.match(client, /导出本月 Excel/);
+  assert.match(client, /编辑老师与费率/);
   assert.match(client, /<Pagination\s+page=\{safePayrollPage\}/);
   assert.match(client, /学生明细/);
   assert.doesNotMatch(client, /模拟导入教务宝数据/);
