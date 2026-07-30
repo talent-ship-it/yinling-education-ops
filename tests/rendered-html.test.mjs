@@ -5,11 +5,12 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("implements shared Supabase state with conflict protection", async () => {
-  const [client, route, store, auth] = await Promise.all([
+  const [client, route, store, auth, localization] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/api/app-state/route.ts"),
     read("../lib/ops-store.ts"),
     read("../lib/demo-auth.ts"),
+    read("../lib/interface-localization.ts"),
   ]);
 
   assert.match(client, /function useSharedState/);
@@ -18,6 +19,10 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(client, /onSync\("conflict"/);
   assert.match(client, /displayPreferencesStorageKey/);
   assert.match(client, /window\.localStorage\.setItem\(displayPreferencesStorageKey/);
+  assert.match(client, /observeInterfaceLocalization/);
+  assert.match(localization, /MutationObserver/);
+  assert.match(localization, /data-preserve-language/);
+  assert.match(localization, /Schedule and timezone checks/);
   assert.doesNotMatch(client, /localStorage\.setItem\(["'](?:students|teachers|tasks|bookings|payroll|files|audit)["']/);
   assert.match(route, /mergeScopedPayload/);
   assert.match(route, /filterOpsStateRows/);
@@ -350,6 +355,6 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(client, /当前筛选没有匹配课程[\s\S]*新建约课/);
   assert.match(client, /当前课程缺少有效关联[\s\S]*新建约课/);
   assert.match(client, /requestConfirmation/);
-  assert.match(client, /actionLabel: undo \? "撤销"/);
+  assert.match(client, /actionLabel: undo \? translateInterfaceText\("撤销", displayPreferences\.language\)/);
   assert.match(client, /current\?\.id === toastId/);
 });
