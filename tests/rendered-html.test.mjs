@@ -44,15 +44,15 @@ test("limits staff and teacher views and keeps Tencent Docs read-only", async ()
   assert.match(client, /const scopedTasks/);
   assert.match(client, /const scopedBookings/);
   assert.match(client, /const scopedMessages/);
-  assert.match(client, /if \(!isAdminView && !\(isTeacherView \? teacherSectionIds : staffSectionIds\)\.has\(active\)\) return renderDashboard/);
+  assert.match(client, /if \(\s*!isAdminView &&\s*!\(isTeacherView \? teacherSectionIds : staffSectionIds\)\.has\(active\)\s*\)\s*return renderDashboard/);
   assert.match(client, /超级管理员/);
-  assert.match(client, /教务个人权限/);
-  assert.match(client, /老师个人权限/);
+  assert.match(client, /scope: "负责学生、排课和跟进"/);
+  assert.match(client, /scope: "自己的学生、约课和网上课堂"/);
   assert.match(client, /renderTeacherDashboard/);
   assert.match(client, /renderClassroom/);
   assert.match(client, /renderAccounts/);
   assert.match(users, /"Helen Ceperkovic", "Shirley Li", "Anna Zhang"/);
-  assert.match(client, /actor: currentOperator/);
+  assert.match(client, /actor: operatorLabel\(sessionOperator\)/);
   assert.match(client, /task\.owner === currentOperator \|\| scopedStudentIds\.has\(task\.studentId\)/);
   assert.match(client, /const teamOwnerOptions/);
   assert.match(client, /teamOwnerOptions\.map/);
@@ -84,6 +84,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /\.\.\.DEMO_TEACHER_USERS/);
   assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
+  assert.match(client, /operatorLabel\(entry\.actor\)/);
   assert.match(client, /const canViewPayroll = isFullAdminSession && currentOperator === "Nixon"/);
   assert.match(client, /canViewPayroll \|\| noPayrollAdminSectionIds\.has/);
   assert.match(client, /\{canViewPayroll && <button type="button" onClick=\{\(\) => setActive\("payroll"\)\}/);
@@ -113,6 +114,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(stateRoute, /DEMO_LIMITED_ADMIN_USER/);
   assert.match(auditRoute, /getAccessScopeVersions/);
   assert.match(auditRoute, /scopeVersions/);
+  assert.match(auditRoute, /actor: actor === DEMO_ADMIN_USER \? "Admin" : actor/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
   assert.match(nixonAuth, /process\.env\.OPS_API_SECRET/);
   assert.match(nixonAuth, /createHash\("sha256"\)/);
@@ -154,7 +156,7 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(client, /function formatMoney/);
   assert.match(client, /payrollCurrency/);
   assert.match(client, /payrollPage/);
-  assert.match(client, /Pagination page=\{safePayrollPage\}/);
+  assert.match(client, /<Pagination\s+page=\{safePayrollPage\}/);
   assert.match(client, /学生明细/);
   assert.doesNotMatch(client, /模拟导入教务宝数据/);
   assert.match(css, /\.payroll-layout/);
@@ -191,7 +193,7 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
 
   assert.match(client, /const \[courses, , coursesShared\] = useSharedState\("courses"/);
   assert.match(client, /const renderCourses = \(\) =>/);
-  assert.match(client, /case "courses": return renderCourses\(\)/);
+  assert.match(client, /case "courses":\s*return renderCourses\(\)/);
   assert.match(client, /contractHours\?: number/);
   assert.match(client, /contractEffectiveDate\?: string/);
   assert.match(client, /jwbSyncStatus\?: string/);
@@ -230,7 +232,7 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /joinTeacherClassroom/);
   assert.match(client, /copyStudentClassroomLink/);
   assert.match(client, /endClassroom/);
-  assert.match(client, /classroom: \{ meetingId: `yinling-\$\{bookingId\}`/);
+  assert.match(client, /classroom:\s*\{\s*meetingId: `yinling-\$\{bookingId\}`/);
   assert.match(client, /window\.setInterval\(poll, 15000\)/);
   assert.match(client, /BiggerBlueButton 托管课堂/);
   assert.match(client, /自动录播/);
@@ -300,15 +302,17 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
 
   assert.match(client, /repeatCount\?: number/);
   assert.match(client, /booking\.repeatCount == null \? Number\.POSITIVE_INFINITY/);
-  assert.match(client, /const validationCount = recurring \? repeatCount \?\? 104 : 1/);
+  assert.match(client, /const validationCount = recurring \? \(repeatCount \?\? 104\) : 1/);
   assert.match(client, /const proposedDates = Array\.from\(\{ length: validationCount \}/);
   assert.match(client, /const scheduleOccurrences = scopedBookings/);
   assert.match(client, /bookingOccurrencesWithinRange\(booking, shiftIsoDate\(weekDays\[0\]\.date, -1\)/);
   assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
-  assert.match(client, /bookingHasDstRisk\(selectedBookingSeries \?\? selectedBooking/);
+  assert.match(client, /const displayedBooking = currentScheduleScope\.find/);
+  assert.match(client, /bookingHasDstRisk\(displayedBookingSeries/);
   assert.match(client, /周期课会整组更新/);
   assert.match(client, /const conflictDate = proposedDates\.find/);
-  assert.match(client, /const unavailableDate = teacher \? proposedDates\.find/);
+  assert.match(client, /const unavailableDate = proposedDates\.find/);
+  assert.match(client, /!teacherAvailableAt\(/);
   assert.match(client, /本轮排课节数/);
   assert.match(client, /批量更新课程/);
   assert.match(client, /设为已完成/);
@@ -322,7 +326,7 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(client, /setLpStage/);
   assert.match(client, /retreatLp/);
   assert.match(client, /试听、二次试听和直报可先不填姓名/);
-  assert.match(client, /if \(!isAdminView\) \{ notify\("无姓名临时建档需要管理员处理/);
+  assert.match(client, /if \(!isAdminView\) \{\s*notify\("无姓名临时建档需要管理员处理/);
   assert.match(client, /\{isAdminView && <>/);
   assert.match(client, /姓名待补/);
   assert.match(client, /规划老师/);
@@ -340,4 +344,10 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(css, /\.lp-card-actions/);
   assert.match(css, /\.ava-month-grid/);
   assert.match(css, /\.ava-booked/);
+  assert.match(client, /历史课程不能重新开课/);
+  assert.match(client, /当前筛选没有匹配课程[\s\S]*新建约课/);
+  assert.match(client, /当前课程缺少有效关联[\s\S]*新建约课/);
+  assert.match(client, /requestConfirmation/);
+  assert.match(client, /actionLabel: undo \? "撤销"/);
+  assert.match(client, /current\?\.id === toastId/);
 });
