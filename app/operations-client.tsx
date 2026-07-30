@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 
 import { cleanTimezone } from "@/lib/timezone";
+import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import {
   defaultDisplayPreferences,
   displayPreferencesStorageKey,
@@ -1278,6 +1279,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [toast, setToast] = useState<ToastState | null>(null);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const interfaceRootRef = useRef<HTMLElement>(null);
   const operatorMenuRef = useRef<HTMLDivElement>(null);
   const operatorLabel = (operator: string) => operator === "Nixon" ? "Admin" : operator;
 
@@ -1306,7 +1308,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   useEffect(() => {
     document.documentElement.lang = displayPreferences.language;
+    document.title = displayPreferences.language === "en-AU"
+      ? "Yinling Operations"
+      : "吟领教务 | Learning Operations";
   }, [displayPreferences.language]);
+
+  useEffect(() => {
+    if (!displayPreferencesReady || !interfaceRootRef.current) return;
+    return observeInterfaceLocalization(interfaceRootRef.current, displayPreferences.language);
+  }, [displayPreferences.language, displayPreferencesReady]);
 
   const updateDisplayPreferences = useCallback((patch: Partial<DisplayPreferences>) => {
     setDisplayPreferences((current) => ({ ...current, ...patch }));
@@ -1405,7 +1415,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const notify = (message: string, undo?: () => void) => {
     const toastId = id("TOAST");
-    setToast({ id: toastId, message, actionLabel: undo ? "撤销" : undefined, onAction: undo });
+    setToast({
+      id: toastId,
+      message: translateInterfaceText(message, displayPreferences.language),
+      actionLabel: undo ? translateInterfaceText("撤销", displayPreferences.language) : undefined,
+      onAction: undo,
+    });
     window.setTimeout(
       () => setToast((current) => (current?.id === toastId ? null : current)),
       undo ? 12000 : 4200,
@@ -2227,15 +2242,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     const popup = window.open("about:blank", "_blank");
     if (popup) {
+      const useEnglishInterface = displayPreferences.language === "en-AU";
       popup.opener = null;
-      popup.document.title = "正在进入网上教室";
-      popup.document.documentElement.lang = "zh-CN";
+      popup.document.title = useEnglishInterface ? "Entering online classroom" : "正在进入网上教室";
+      popup.document.documentElement.lang = useEnglishInterface ? "en-AU" : "zh-CN";
       popup.document.body.innerHTML = `
         <main style="min-height:100vh;display:grid;place-items:center;margin:0;background:#f4fbfa;color:#163b37;font-family:Arial,sans-serif">
           <section style="width:min(420px,calc(100vw - 40px));text-align:center">
             <div style="width:44px;height:44px;margin:0 auto 20px;border:4px solid #c8ebe8;border-top-color:#277f77;border-radius:50%;animation:spin 1s linear infinite"></div>
-            <h1 style="font-size:22px;margin:0 0 10px">正在连接网上教室</h1>
-            <p style="font-size:15px;line-height:1.6;margin:0;color:#55746f">通常需要 10–30 秒，请不要关闭此页面。进入后请允许浏览器使用麦克风和摄像头。</p>
+            <h1 style="font-size:22px;margin:0 0 10px">${useEnglishInterface ? "Connecting to online classroom" : "正在连接网上教室"}</h1>
+            <p style="font-size:15px;line-height:1.6;margin:0;color:#55746f">${
+              useEnglishInterface
+                ? "This usually takes 10–30 seconds. Keep this page open, then allow microphone and camera access when prompted."
+                : "通常需要 10–30 秒，请不要关闭此页面。进入后请允许浏览器使用麦克风和摄像头。"
+            }</p>
           </section>
           <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
         </main>`;
@@ -6363,7 +6383,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   return (
-    <main className="app-shell" data-interface-language={displayPreferences.language} data-text-size={displayPreferences.textSize} data-list-density={displayPreferences.density} data-motion-preference={displayPreferences.motion}>
+    <main ref={interfaceRootRef} className="app-shell" data-interface-language={displayPreferences.language} data-text-size={displayPreferences.textSize} data-list-density={displayPreferences.density} data-motion-preference={displayPreferences.motion}>
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">吟</span><div><strong>吟领教务</strong><small>Learning Operations</small></div></div>
         <div className="workspace-switch"><span className="workspace-dot" /> {isAdminView ? `${operatorLabel(currentOperator)} ${displayPreferences.language === "en-AU" ? "admin view" : "管理视图"}` : isTeacherView ? `${currentOperator} ${displayPreferences.language === "en-AU" ? "teaching workspace" : "老师工作台"}` : `${currentOperator} ${displayPreferences.language === "en-AU" ? "workspace" : "工作视图"}`} <ChevronDown size={15} /></div>
