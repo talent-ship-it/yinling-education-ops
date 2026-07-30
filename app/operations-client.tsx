@@ -55,6 +55,7 @@ import {
 
 import { cleanTimezone } from "@/lib/timezone";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
+import { downloadPayrollExcel } from "@/lib/payroll-export";
 import {
   defaultDisplayPreferences,
   displayPreferencesStorageKey,
@@ -91,7 +92,7 @@ type Section =
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -1011,10 +1012,10 @@ function IconButton({ label, children, onClick }: { label: string; children: Rea
   return <button className="icon-button" aria-label={label} title={label} type="button" onClick={onClick}>{children}</button>;
 }
 
-function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+function Dialog({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="dialog" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`dialog ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         <header className="dialog-header"><div><p className="eyebrow">真实资料 · 保存后多人可见</p><h2>{title}</h2></div><IconButton label="关闭" onClick={onClose}><X size={18} /></IconButton></header>
         {children}
       </section>
@@ -1257,8 +1258,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [evidenceUploadBusy, setEvidenceUploadBusy] = useState(false);
   const [payrollFilter, setPayrollFilter] = useState("all");
   const [payrollCurrency, setPayrollCurrency] = useState("all");
+  const [payrollMonthSelection, setPayrollMonthSelection] = useState("");
   const [payrollPage, setPayrollPage] = useState(1);
   const [selectedPayrollId, setSelectedPayrollId] = useState("");
+  const [payrollDraft, setPayrollDraft] = useState<PayrollRow | null>(null);
+  const availablePayrollMonths = useMemo(
+    () => Array.from(new Set(payroll.map((row) => row.month).filter((month): month is string => Boolean(month)))).sort().reverse(),
+    [payroll],
+  );
+  const activePayrollMonth = payrollMonthSelection || availablePayrollMonths[0] || new Date().toISOString().slice(0, 7);
+  const monthPayroll = useMemo(
+    () => payroll.filter((row) => row.month === activePayrollMonth),
+    [activePayrollMonth, payroll],
+  );
   const [messageFilter, setMessageFilter] = useState("open");
   const [messageQuery, setMessageQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
@@ -3247,7 +3259,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderPayroll = () => {
-    const visiblePayroll = payroll.filter((row) => {
+    const visiblePayroll = monthPayroll.filter((row) => {
       const matchesStatus =
         payrollFilter === "review"
           ? row.status === "需核对"
@@ -3272,17 +3284,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const selectedPayroll =
       pagedPayroll.find((row) => row.id === selectedPayrollId) ??
       pagedPayroll[0];
-    const payrollMonth =
-      Array.from(new Set(payroll.map((row) => row.month).filter(Boolean))).join(
-        "、",
-      ) || "待导入";
-    const cnyTotal = payroll
+    const cnyTotal = monthPayroll
       .filter((row) => row.currency === "CNY")
       .reduce((total, row) => total + row.amount, 0);
-    const audTotal = payroll
+    const audTotal = monthPayroll
       .filter((row) => row.currency !== "CNY")
       .reduce((total, row) => total + row.amount, 0);
-    const totalHours = payroll.reduce(
+    const totalHours = monthPayroll.reduce(
       (total, row) =>
         total + (row.teacherTotalHours ?? row.lessons + row.trialLessons),
       0,
@@ -3337,11 +3345,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
 
     const lockAllReadyPayroll = () => {
-      const readyRows = payroll.filter((row) => row.status === "可审核");
+      const readyRows = monthPayroll.filter((row) => row.status === "可审核");
       if (!readyRows.length) return;
       requestConfirmation({
         title: "确认批量锁定可审核薪资",
-        detail: `${readyRows.length} 位老师 · ${Array.from(new Set(readyRows.map((row) => row.month).filter(Boolean))).join("、") || "月份待确认"}`,
+        detail: `${readyRows.length} 位老师 · ${activePayrollMonth}`,
         items: [
           "只锁定状态为“可审核”的记录",
           "需核对记录不会被锁定",
@@ -3381,20 +3389,60 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       });
     };
 
+    const exportCurrentPayroll = () => {
+      downloadPayrollExcel(
+        activePayrollMonth,
+        monthPayroll.map((row) => ({
+          teacherName: teacherById(row.teacherId)?.name ?? row.teacherName ?? row.teacherId,
+          month: row.month ?? activePayrollMonth,
+          section: row.section ?? "教师薪资",
+          currency: row.currency ?? "AUD",
+          status: row.status,
+          payrollHours: row.teacherTotalHours ?? row.lessons + row.trialLessons,
+          sourceHours: row.sourceHours,
+          amount: row.amount,
+          bankName: row.bankName,
+          bankAccount: row.bankAccount,
+          paymentNote: row.paymentNote ?? row.note,
+          lockedBy: row.lockedBy,
+          lockedAt: row.lockedAt,
+          lines: row.lines ?? [],
+        })),
+      );
+      addAudit("导出月度薪资 Excel", `${activePayrollMonth} · ${monthPayroll.length} 位老师`, "blue");
+    };
+
     return (
       <>
         <ViewHeading
           eyebrow="教务宝课时证据 + 人工费率表"
           title="课时与薪资"
-          copy={`当前显示 ${payrollMonth} 薪资。系统保留每位老师的学生明细、课时费、教务宝匹配差异和人工锁定记录。`}
+          copy={`当前显示 ${activePayrollMonth} 薪资。系统保留每位老师的学生明细、课时费、教务宝匹配差异和人工锁定记录。`}
           actions={
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setActive("sync")}
-            >
-              <Database size={17} /> 查看数据来源
-            </button>
+            <>
+              <label className="payroll-month-picker">
+                <span>薪资月份</span>
+                <input
+                  type="month"
+                  value={activePayrollMonth}
+                  onChange={(event) => {
+                    setPayrollMonthSelection(event.target.value);
+                    setPayrollPage(1);
+                    setSelectedPayrollId("");
+                  }}
+                  aria-label="薪资月份"
+                />
+              </label>
+              <button className="secondary-button" type="button" disabled={!monthPayroll.length} onClick={exportCurrentPayroll}>
+                <Download size={17} /> 导出本月 Excel
+              </button>
+              <button className="primary-button" type="button" onClick={() => setModal("payrollNew")}>
+                <UserPlus size={17} /> 新增老师薪资
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setActive("sync")}>
+                <Database size={17} /> 查看数据来源
+              </button>
+            </>
           }
         />
         <section className="metric-grid payroll-metrics">
@@ -3403,12 +3451,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             icon={<FileText size={21} />}
             value={formatHours(totalHours)}
             label="薪资表课时"
-            detail={`${payroll.reduce((total, row) => total + (row.lineCount ?? row.lines?.length ?? 0), 0)} 条学生明细`}
+            detail={`${monthPayroll.reduce((total, row) => total + (row.lineCount ?? row.lines?.length ?? 0), 0)} 条学生明细`}
           />
           <Metric
             tone="amber"
             icon={<CircleAlert size={21} />}
-            value={`${payroll.filter((row) => row.status === "需核对").length}`}
+            value={`${monthPayroll.filter((row) => row.status === "需核对").length}`}
             label="需要核对"
             detail="姓名、课时或费率例外"
           />
@@ -3424,7 +3472,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             icon={<ShieldCheck size={21} />}
             value={formatMoney(audTotal, "AUD")}
             label="澳币薪资"
-            detail={`${payroll.filter((row) => row.status === "已锁定").length} 条已锁定`}
+            detail={`${monthPayroll.filter((row) => row.status === "已锁定").length} 条已锁定`}
           />
         </section>
         <section className="panel collection-shell">
@@ -3432,23 +3480,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <ViewTabs
               value={payrollFilter}
               items={[
-                { id: "all", label: "全部", count: payroll.length },
+                { id: "all", label: "全部", count: monthPayroll.length },
                 {
                   id: "review",
                   label: "需核对",
-                  count: payroll.filter((item) => item.status === "需核对")
+                  count: monthPayroll.filter((item) => item.status === "需核对")
                     .length,
                 },
                 {
                   id: "ready",
                   label: "可审核",
-                  count: payroll.filter((item) => item.status === "可审核")
+                  count: monthPayroll.filter((item) => item.status === "可审核")
                     .length,
                 },
                 {
                   id: "locked",
                   label: "已锁定",
-                  count: payroll.filter((item) => item.status === "已锁定")
+                  count: monthPayroll.filter((item) => item.status === "已锁定")
                     .length,
                 },
               ]}
@@ -3475,14 +3523,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!payroll.some((row) => row.status === "可审核")}
+                disabled={!monthPayroll.some((row) => row.status === "可审核")}
                 onClick={lockAllReadyPayroll}
               >
                 <ShieldCheck size={16} /> 批量锁定可审核
               </button>
             </div>
           </div>
-          {payroll.length ? (
+          {monthPayroll.length ? (
             <div className="master-detail-layout payroll-layout">
               <article className="collection-main">
                 <div className="collection-head payroll-grid-row">
@@ -3679,6 +3727,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       )}
                     </div>
                   </div>
+                  <button
+                    className="secondary-button full"
+                    type="button"
+                    onClick={() => {
+                      setPayrollDraft(selectedPayroll);
+                      setModal("payrollEdit");
+                    }}
+                  >
+                    <Pencil size={16} /> 编辑老师与费率
+                  </button>
                   {selectedPayroll.status !== "已锁定" ? (
                     <button
                       className="primary-button full"
@@ -3699,8 +3757,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
           ) : (
             <EmptyState
-              title="暂无真实薪资数据"
-              detail="导入教务宝课时导出和当前薪资表后，这里会显示老师薪资、学生明细和核对状态。"
+              title="该月份暂无薪资记录"
+              detail="可以新增老师薪资记录，或先导入该月份的教务宝课时数据。"
             />
           )}
         </section>
@@ -5672,6 +5730,145 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     notify("任务已加入强提醒队列");
   };
 
+  const submitNewPayroll = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const existingTeacherId = String(data.get("teacherId") ?? "").trim();
+    const newTeacherName = String(data.get("newTeacherName") ?? "").trim();
+    const month = String(data.get("month") ?? payrollMonthSelection).trim();
+    const currency = String(data.get("currency") ?? "AUD") as PayrollRow["currency"];
+    const rate = Number(data.get("rate") ?? 0);
+    if (!month || (!existingTeacherId && !newTeacherName)) {
+      notify("请选择老师和薪资月份，或填写新老师姓名");
+      return;
+    }
+    if (!Number.isFinite(rate) || rate < 0) {
+      notify("请填写有效的课时费");
+      return;
+    }
+    let teacherId = existingTeacherId;
+    let teacherName = teacherById(existingTeacherId)?.name ?? newTeacherName;
+    if (newTeacherName) {
+      const duplicateTeacher = teachers.find((teacher) => teacher.name.trim().toLowerCase() === newTeacherName.toLowerCase());
+      if (duplicateTeacher) {
+        teacherId = duplicateTeacher.id;
+        teacherName = duplicateTeacher.name;
+      } else {
+        teacherId = id("TEA");
+        const newTeacher: Teacher = {
+          id: teacherId,
+          name: newTeacherName,
+          initials: initials(newTeacherName),
+          subjects: ["待确认"],
+          timezone: "Australia/Melbourne",
+          availability: "待补充",
+          load: 0,
+          capacity: 0,
+          acceptsStudents: false,
+          note: "由薪资页面新增，教师资料待补充",
+          availabilityStatus: "待确认",
+        };
+        setTeachers((current) => [newTeacher, ...current]);
+      }
+    }
+    if (!teacherId || !teacherName) {
+      notify("没有找到所选老师");
+      return;
+    }
+    if (payroll.some((row) => row.teacherId === teacherId && row.month === month)) {
+      notify("该老师在所选月份已经有薪资记录");
+      return;
+    }
+    const payrollRow: PayrollRow = {
+      id: id("PAY"),
+      teacherId,
+      teacherName,
+      month,
+      section: String(data.get("section") ?? "教师薪资").trim() || "教师薪资",
+      currency,
+      lessons: 0,
+      trialLessons: 0,
+      teacherTotalHours: 0,
+      amount: 0,
+      teacherTotalAmount: 0,
+      status: "需核对",
+      note: "手动新增，待导入或核对本月课时明细",
+      paymentNote: String(data.get("paymentNote") ?? "").trim(),
+      bankName: String(data.get("bankName") ?? "").trim(),
+      bankAccount: String(data.get("bankAccount") ?? "").trim(),
+      rateRange: rate > 0 ? [rate] : [],
+      sourceHours: null,
+      sourceLessonCount: null,
+      sourceNoShowHours: null,
+      hourVariance: null,
+      lineCount: 0,
+      lines: [],
+      source: "薪资页面手动新增",
+    };
+    setPayroll((current) => [payrollRow, ...current]);
+    setPayrollMonthSelection(month);
+    setSelectedPayrollId(payrollRow.id);
+    setPayrollPage(1);
+    addAudit("新增老师薪资记录", `${teacherName} · ${month} · ${currency}`, "green");
+    setModal(null);
+    notify("老师薪资记录已新增，待导入或核对本月课时");
+  };
+
+  const submitPayrollEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!payrollDraft) return;
+    const data = new FormData(event.currentTarget);
+    const teacherName = String(data.get("teacherName") ?? "").trim();
+    const month = String(data.get("month") ?? "").trim();
+    const currency = String(data.get("currency") ?? payrollDraft.currency ?? "AUD") as PayrollRow["currency"];
+    const fallbackRate = Number(data.get("defaultRate") ?? 0);
+    if (!teacherName || !month || !Number.isFinite(fallbackRate) || fallbackRate < 0) {
+      notify("请填写有效的老师姓名、薪资月份和课时费");
+      return;
+    }
+    if (payroll.some((row) => row.id !== payrollDraft.id && row.teacherId === payrollDraft.teacherId && row.month === month)) {
+      notify("该老师在所选月份已经有薪资记录");
+      return;
+    }
+    const updatedLines = (payrollDraft.lines ?? []).map((line, index) => {
+      const submittedRate = Number(data.get(`lineRate-${index}`) ?? line.rate);
+      const rate = Number.isFinite(submittedRate) && submittedRate >= 0 ? submittedRate : line.rate;
+      return { ...line, rate, subtotal: Number((line.hours * rate).toFixed(2)) };
+    });
+    const payrollHours = payrollDraft.teacherTotalHours ?? payrollDraft.lessons + payrollDraft.trialLessons;
+    const amount = updatedLines.length
+      ? Number(updatedLines.reduce((total, line) => total + line.subtotal, 0).toFixed(2))
+      : Number((payrollHours * fallbackRate).toFixed(2));
+    const rateRange = Array.from(new Set((updatedLines.length ? updatedLines.map((line) => line.rate) : [fallbackRate]).filter((rate) => rate > 0))).sort((a, b) => a - b);
+    const wasLocked = payrollDraft.status === "已锁定";
+    setPayroll((current) => current.map((row) => row.id === payrollDraft.id ? {
+      ...row,
+      teacherName,
+      month,
+      currency,
+      section: String(data.get("section") ?? row.section ?? "教师薪资").trim() || "教师薪资",
+      bankName: String(data.get("bankName") ?? "").trim(),
+      bankAccount: String(data.get("bankAccount") ?? "").trim(),
+      paymentNote: String(data.get("paymentNote") ?? "").trim(),
+      rateRange,
+      lines: updatedLines,
+      amount,
+      teacherTotalAmount: amount,
+      status: "需核对",
+      lockedBy: undefined,
+      lockedAt: undefined,
+    } : row));
+    addAudit(
+      "修改老师薪资与费率",
+      `${teacherName} · ${month} · ${formatMoney(amount, currency)}${wasLocked ? " · 原锁定记录已重置" : ""}`,
+      "amber",
+    );
+    setPayrollMonthSelection(month);
+    setPayrollDraft(null);
+    setModal(null);
+    notify(wasLocked ? "薪资已更新并重置为需核对" : "薪资与费率已更新，等待重新核对");
+  };
+
   const submitLp = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -6562,6 +6759,38 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>截止时间<input name="due" defaultValue="今天" /></label>
           <label>任务分类<select name="category"><option>资料</option><option>试听</option><option>LP</option><option>排课</option><option>课后</option><option>续课</option><option>薪资</option></select></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Plus size={16} /> 加入队列</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "payrollNew" && <Dialog title="新增老师薪资记录" onClose={() => setModal(null)} wide>
+        <form className="form-grid" onSubmit={submitNewPayroll}>
+          <label>现有老师<select name="teacherId" defaultValue=""><option value="">请选择现有老师</option>{[...teachers].sort((a, b) => a.name.localeCompare(b.name)).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.id}</option>)}</select></label>
+          <label>新老师姓名（仅新增老师时填写）<input name="newTeacherName" placeholder="例如 Olivia Chen" /></label>
+          <label>薪资月份<input name="month" type="month" defaultValue={activePayrollMonth} required /></label>
+          <label>教师类别<input name="section" defaultValue="教师薪资" placeholder="例如 国内教师" /></label>
+          <label>币种<select name="currency" defaultValue="AUD"><option value="AUD">澳币</option><option value="CNY">人民币</option></select></label>
+          <label>初始课时费<input name="rate" type="number" min="0" step="0.01" defaultValue="0" /></label>
+          <label>银行名称<input name="bankName" placeholder="可稍后补充" /></label>
+          <label>银行账户<input name="bankAccount" placeholder="可稍后补充" /></label>
+          <label className="span-2">付款说明<textarea name="paymentNote" rows={3} placeholder="费率规则、线下课程或其他说明" /></label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 选择现有老师，或填写新老师姓名。新老师会同时加入老师资源表，教学科目和 AVA 可随后补充；新增薪资记录会先标记为“需核对”。</div>
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><UserPlus size={16} /> 添加薪资记录</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "payrollEdit" && payrollDraft && <Dialog title="编辑老师与费率" onClose={() => { setPayrollDraft(null); setModal(null); }} wide>
+        <form className="form-grid" onSubmit={submitPayrollEdit}>
+          <label>薪资显示姓名<input name="teacherName" autoFocus defaultValue={teacherById(payrollDraft.teacherId)?.name ?? payrollDraft.teacherName ?? payrollDraft.teacherId} required /></label>
+          <label>薪资月份<input name="month" type="month" defaultValue={payrollDraft.month ?? activePayrollMonth} required /></label>
+          <label>教师类别<input name="section" defaultValue={payrollDraft.section ?? "教师薪资"} /></label>
+          <label>币种<select name="currency" defaultValue={payrollDraft.currency ?? "AUD"}><option value="AUD">澳币</option><option value="CNY">人民币</option></select></label>
+          <label>默认课时费<input name="defaultRate" type="number" min="0" step="0.01" defaultValue={payrollDraft.rateRange?.[0] ?? payrollDraft.lines?.[0]?.rate ?? 0} required /></label>
+          <label>银行名称<input name="bankName" defaultValue={payrollDraft.bankName ?? ""} /></label>
+          <label>银行账户<input name="bankAccount" defaultValue={payrollDraft.bankAccount ?? ""} /></label>
+          <label className="span-2">付款说明<textarea name="paymentNote" rows={3} defaultValue={payrollDraft.paymentNote ?? payrollDraft.note} /></label>
+          {(payrollDraft.lines?.length ?? 0) > 0 && <div className="span-2 payroll-rate-editor"><header><strong>学生费率</strong><small>修改后系统会重新计算每位学生小计和老师总额。</small></header>{payrollDraft.lines?.map((line, index) => <label className="payroll-rate-row" key={`${line.studentName}-${line.sourceRow ?? index}`}><span><strong>{line.studentName}</strong><small>{formatHours(line.hours)}</small></span><span>{line.isTrial ? "试听" : "常规课"}</span><input name={`lineRate-${index}`} type="number" min="0" step="0.01" defaultValue={line.rate} aria-label={`${line.studentName} 课时费`} /></label>)}</div>}
+          {payrollDraft.status === "已锁定" && <div className="form-notice span-2"><CircleAlert size={16} /> 当前记录已锁定；修改后将清除锁定并重新核对。</div>}
+          <footer><button className="secondary-button" type="button" onClick={() => { setPayrollDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存薪资修改</button></footer>
         </form>
       </Dialog>}
 
