@@ -49,6 +49,11 @@ test("partitions browser display preferences by login account", () => {
 
 test("translates shared controls and schedule details without changing names", () => {
   assert.equal(translateInterfaceText("排课与时区检查", "en-AU"), "Schedule and timezone checks");
+  assert.equal(translateInterfaceText("导出本月 Excel", "en-AU"), "Export monthly Excel");
+  assert.equal(
+    translateInterfaceText("当前显示 2026-07 薪资。系统保留每位老师的学生明细、课时费、教务宝匹配差异和人工锁定记录。", "en-AU"),
+    "Currently showing 2026-07 payroll. Student details, lesson rates, Jiaowubao matching differences and manual locks are retained for each teacher.",
+  );
   assert.equal(translateInterfaceText("关闭课程详情", "en-AU"), "Close lesson details");
   assert.equal(translateInterfaceText(" 查看排课\n", "en-AU"), " View schedule\n");
   assert.equal(
