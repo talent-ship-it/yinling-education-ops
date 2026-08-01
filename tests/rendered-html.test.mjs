@@ -366,6 +366,8 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(client, /当前筛选没有匹配课程[\s\S]*新建约课/);
   assert.match(client, /当前课程缺少有效关联[\s\S]*新建约课/);
   assert.match(client, /requestConfirmation/);
+  assert.match(client, /<form onSubmit=\{\(event\) => \{ event\.preventDefault\(\); void confirmRequestedAction\(\); \}\}>/);
+  assert.match(client, /type="submit" disabled=\{confirmBusy\}>\{confirmBusy/);
   assert.match(client, /actionLabel: undo \? translateInterfaceText\("撤销", displayPreferences\.language\)/);
   assert.match(client, /current\?\.id === toastId/);
 });
