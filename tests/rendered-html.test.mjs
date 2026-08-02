@@ -58,7 +58,7 @@ test("limits staff and teacher views and keeps Tencent Docs read-only", async ()
   assert.match(client, /renderTeacherDashboard/);
   assert.match(client, /renderClassroom/);
   assert.match(client, /renderAccounts/);
-  assert.match(users, /"Helen Ceperkovic", "Shirley Li", "Anna Zhang"/);
+  assert.match(users, /"Helen Ceperkovic", "Shirley Li", "Anna Zhang", "Nixon（测试）"/);
   assert.match(client, /actor: operatorLabel\(sessionOperator\)/);
   assert.match(client, /task\.owner === currentOperator \|\| scopedStudentIds\.has\(task\.studentId\)/);
   assert.match(client, /const teamOwnerOptions/);
@@ -249,6 +249,11 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /createClassroom/);
   assert.match(client, /joinTeacherClassroom/);
   assert.match(client, /copyStudentClassroomLink/);
+  assert.match(client, /submitTemporaryClassroom/);
+  assert.match(client, /prepareTemporaryClassroomLink/);
+  assert.match(client, /立即开临时课堂/);
+  assert.match(client, /排课已自动关联网上教室/);
+  assert.match(client, /source: "临时课堂"/);
   assert.match(client, /endClassroom/);
   assert.match(client, /classroom:\s*\{\s*meetingId: `yinling-\$\{bookingId\}`/);
   assert.match(client, /window\.setInterval\(poll, 15000\)/);
@@ -273,6 +278,7 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(bbb, /autoStartRecording: true/);
   assert.match(bbb, /meetingIdForBooking/);
   assert.match(css, /\.classroom-recording-pending/);
+  assert.match(css, /\.classroom-share-link/);
   assert.match(legacyPage, /redirect\("\/"\)/);
   assert.equal(packageJson.dependencies["fast-xml-parser"], "^5.10.1");
 });
