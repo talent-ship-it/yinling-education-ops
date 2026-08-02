@@ -106,6 +106,26 @@ test("teachers receive only their own assigned and booked students", () => {
   assert.deepEqual((visible.find((item) => item.entity === "teachers")?.payload as Array<{ id: string }>).map((item) => item.id), ["TEA-HELEN"]);
 });
 
+test("test teacher can create a classroom booking only for the linked test student", () => {
+  const testRows: OpsStateRow[] = rows.map((item) => {
+    if (item.entity === "students") return { ...item, payload: [...(item.payload as object[]), { id: "STU-TEST-NIXON", name: "Nixon（测试）", owner: "Nixon", teacher: "Nixon（测试）" }] };
+    if (item.entity === "teachers") return { ...item, payload: [...(item.payload as object[]), { id: "TEA-TEST-NIXON", name: "Nixon（测试）" }] };
+    return item;
+  });
+  const access = buildOpsAccessContext(testRows, "Nixon（测试）", false);
+  const currentBookings = testRows.find((item) => item.entity === "bookings")?.payload as object[];
+  const ownBooking = { id: "TMP-TEST", studentId: "STU-TEST-NIXON", teacherId: "TEA-TEST-NIXON" };
+  const merged = mergeScopedPayload({ entity: "bookings", currentPayload: currentBookings, submittedPayload: [ownBooking], context: access }) as Array<{ id: string }>;
+  assert.equal(merged.some((item) => item.id === "TMP-TEST"), true);
+
+  assert.throws(() => mergeScopedPayload({
+    entity: "bookings",
+    currentPayload: currentBookings,
+    submittedPayload: [{ id: "TMP-CROSS", studentId: "STU-THEA", teacherId: "TEA-TEST-NIXON" }],
+    context: access,
+  }), OpsAccessError);
+});
+
 test("limited admin can use operations data but payroll stays exclusive to full admin", () => {
   const limited = buildOpsAccessContext(rows, "Ops Admin", false);
   const full = buildOpsAccessContext(rows, "Nixon", true);
