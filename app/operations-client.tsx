@@ -2306,9 +2306,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       if (!result.url) throw new Error("无法生成学生进入链接");
       const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
       if (meetingId) persistClassroom(booking.id, meetingId, "ready");
-      await navigator.clipboard.writeText(result.url);
+      setTemporaryClassroomLink({ bookingId: booking.id, url: String(result.url) });
       addAudit("复制学生教室链接", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
-      notify("学生进入链接已复制");
+      try {
+        await Promise.race([
+          navigator.clipboard.writeText(result.url),
+          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("clipboard timeout")), 1500)),
+        ]);
+        notify("学生进入链接已复制");
+      } catch {
+        notify("学生链接已生成，请从页面复制或直接打开学生端");
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : "学生链接生成失败");
     } finally {
