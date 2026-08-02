@@ -92,7 +92,7 @@ type Section =
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -1241,6 +1241,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [classroomRuntime, setClassroomRuntime] = useState<ClassroomRuntime | null>(null);
   const [classroomBusy, setClassroomBusy] = useState(false);
   const [classroomView, setClassroomView] = useState<"upcoming" | "history">("upcoming");
+  const [temporaryClassroomLink, setTemporaryClassroomLink] = useState<{ bookingId: string; url: string } | null>(null);
   const [courseQuery, setCourseQuery] = useState("");
   const [coursePage, setCoursePage] = useState(1);
   const [selectedCourseId, setSelectedCourseId] = useState(defaults.defaultCourses[0]?.id ?? "");
@@ -2313,6 +2314,100 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     } finally {
       setClassroomBusy(false);
     }
+  };
+
+  const prepareTemporaryClassroomLink = async (booking: Booking) => {
+    setClassroomBusy(true);
+    try {
+      // Shared booking writes are debounced. Retry briefly until the server can
+      // authorize the newly-created scoped booking.
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const response = await fetch("/api/classroom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "student-link", bookingId: booking.id }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (response.ok && result.url) {
+          const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
+          if (meetingId) persistClassroom(booking.id, meetingId, "ready");
+          setTemporaryClassroomLink({ bookingId: booking.id, url: String(result.url) });
+          addAudit("创建临时网上课堂", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
+          notify("临时课堂已创建，学生链接可以复制或打开");
+          return;
+        }
+        if (response.status !== 403 || attempt === 19) {
+          throw new Error(result.error || "临时课堂创建失败");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "临时课堂创建失败");
+    } finally {
+      setClassroomBusy(false);
+    }
+  };
+
+  const submitTemporaryClassroom = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const studentId = String(data.get("studentId") ?? "").trim();
+    const teacherId = isTeacherView ? (currentTeacher?.id ?? "") : String(data.get("teacherId") ?? "").trim();
+    const duration = Number(data.get("duration") ?? 60);
+    const student = studentById(studentId);
+    const teacher = teacherById(teacherId);
+    if (!student || !teacher) {
+      notify("请从清单选择学生和老师。");
+      return;
+    }
+    if (isTeacherView && !scopedStudentIds.has(studentId)) {
+      notify("老师账号只能为自己的学生创建临时课堂。");
+      return;
+    }
+
+    const parts = zonedParts(new Date(), scheduleTimezone);
+    const date = `${parts.year}-${parts.month}-${parts.day}`;
+    const start = `${parts.hour}:${parts.minute}`;
+    if (scheduleConflict(studentId, teacherId, date, start, duration, scheduleTimezone)) {
+      notify("学生或老师当前已有重叠课程，请先调整现有排课。");
+      return;
+    }
+
+    const bookingId = id("TMP");
+    const booking: Booking = {
+      id: bookingId,
+      studentId,
+      teacherId,
+      date,
+      start,
+      duration,
+      kind: "常规课",
+      status: "已确认",
+      timezone: scheduleTimezone,
+      recurring: false,
+      repeatCount: 1,
+      course: String(data.get("course") ?? "").trim() || `${student.course}（临时课堂）`,
+      source: "临时课堂",
+      classroom: {
+        meetingId: `yinling-${bookingId}`,
+        status: "ready",
+        createdAt: new Date().toISOString(),
+      },
+    };
+
+    setTemporaryClassroomLink(null);
+    setBookings((current) => [...current, booking]);
+    setSelectedBookingId(booking.id);
+    setSelectedBookingDate(date);
+    setSelectedBookingDateId(booking.id);
+    setSelectedStudentId(studentId);
+    setSelectedTeacherId(teacherId);
+    setClassroomView("upcoming");
+    setClassroomRuntime(null);
+    setMobilePreview("classroom");
+    setModal(null);
+    setActive("classroom");
+    void prepareTemporaryClassroomLink(booking);
   };
 
   const endClassroom = async (booking: Booking) => {
@@ -4928,61 +5023,71 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           title="网上教室"
           copy="从排课直接创建一对一课堂。老师与学生使用不同权限链接，支持音视频、屏幕共享、互动白板、投票、分组讨论和自动录播。"
           actions={
-            roomBooking ? (
-              historicalRoom ? (
-                roomBooking.classroom?.meetingId ? (
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={classroomBusy || (isTeacherView && (!currentTeacher || !scopedStudents.length))}
+                onClick={() => setModal("temporaryClassroom")}
+              >
+                <Video size={17} /> 立即开临时课堂
+              </button>
+              {roomBooking ? (
+                historicalRoom ? (
+                  roomBooking.classroom?.meetingId ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={classroomBusy}
+                      onClick={() => void refreshClassroom(roomBooking)}
+                    >
+                      <RefreshCw size={17} /> 刷新历史录播
+                    </button>
+                  ) : (
+                    <button className="secondary-button" type="button" disabled>
+                      <Clock3 size={17} /> 历史课程只读
+                    </button>
+                  )
+                ) : !roomBooking.classroom?.meetingId ? (
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={classroomBusy}
+                    onClick={() => void createClassroom(roomBooking)}
+                  >
+                    <Video size={17} />{" "}
+                    {classroomBusy ? "正在连接课堂…" : "创建在线教室"}
+                  </button>
+                ) : roomBooking.classroom.status === "ended" ? (
                   <button
                     className="secondary-button"
                     type="button"
                     disabled={classroomBusy}
                     onClick={() => void refreshClassroom(roomBooking)}
                   >
-                    <RefreshCw size={17} /> 刷新历史录播
+                    <RefreshCw size={17} /> 刷新录播
                   </button>
                 ) : (
-                  <button className="secondary-button" type="button" disabled>
-                    <Clock3 size={17} /> 历史课程只读
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={classroomBusy}
+                    onClick={() => void joinTeacherClassroom(roomBooking)}
+                  >
+                    <ExternalLink size={17} />{" "}
+                    {classroomBusy ? "正在处理…" : "老师进入教室"}
                   </button>
                 )
-              ) : !roomBooking.classroom?.meetingId ? (
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={classroomBusy}
-                  onClick={() => void createClassroom(roomBooking)}
-                >
-                  <Video size={17} />{" "}
-                  {classroomBusy ? "正在连接课堂…" : "创建在线教室"}
-                </button>
-              ) : roomBooking.classroom.status === "ended" ? (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={classroomBusy}
-                  onClick={() => void refreshClassroom(roomBooking)}
-                >
-                  <RefreshCw size={17} /> 刷新录播
-                </button>
               ) : (
                 <button
                   className="primary-button"
                   type="button"
-                  disabled={classroomBusy}
-                  onClick={() => void joinTeacherClassroom(roomBooking)}
+                  onClick={() => openNewBooking()}
                 >
-                  <ExternalLink size={17} />{" "}
-                  {classroomBusy ? "正在处理…" : "老师进入教室"}
+                  <CalendarPlus size={17} /> 先创建约课
                 </button>
-              )
-            ) : (
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => openNewBooking()}
-              >
-                <CalendarPlus size={17} /> 先创建约课
-              </button>
-            )
+              )}
+            </>
           }
         />
         <section className="panel classroom-hub">
@@ -5115,6 +5220,33 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       </small>
                     </span>
                   </div>
+                  <div className="classroom-auto-room-note">
+                    <ShieldCheck size={16} />
+                    <span>
+                      <strong>排课已自动关联网上教室</strong>
+                      <small>第一次进入或复制学生链接时，系统会自动连接课堂服务；无需重复创建。</small>
+                    </span>
+                  </div>
+                  {temporaryClassroomLink?.bookingId === roomBooking.id && (
+                    <div className="classroom-share-link">
+                      <label>
+                        学生邀请链接
+                        <input aria-label="学生邀请链接" value={temporaryClassroomLink.url} readOnly />
+                      </label>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => void navigator.clipboard.writeText(temporaryClassroomLink.url)
+                          .then(() => notify("学生进入链接已复制"))
+                          .catch(() => notify("复制失败，请手动选择并复制链接"))}
+                      >
+                        <Copy size={16} /> 复制链接
+                      </button>
+                      <a className="secondary-button" href={temporaryClassroomLink.url} target="_blank" rel="noreferrer">
+                        <ExternalLink size={16} /> 打开学生端
+                      </a>
+                    </div>
+                  )}
                   <div className="detail-section">
                     <span>课程时间</span>
                     <strong>
@@ -6837,6 +6969,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>本轮排课节数<input name="repeatCount" type="number" min="1" max="104" defaultValue={bookingDraft ? bookingDraft.repeatCount : 1} placeholder={bookingDraft?.recurring && bookingDraft.repeatCount == null ? "旧版长期" : "1"} /><small>{bookingDraft?.recurring && bookingDraft.repeatCount == null ? "当前是旧版长期课程；留空保存会继续保持长期" : "仅勾选固定课时使用；必须明确填写 1-104 节"}</small></label>
           <div className="form-notice span-2"><CircleAlert size={16} /> 提交后会先显示学生、老师、时区、次数和影响范围；确认后才写入。系统不会默认创建试听或 12 节固定课。</div>
           <footer><button className="secondary-button" type="button" onClick={() => { setBookingDraft(null); setBookingPrefillStudentId(null); setBookingPrefillTeacherId(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><CalendarPlus size={16} /> {bookingDraft ? "检查修改范围" : "检查创建范围"}</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "temporaryClassroom" && <Dialog title="立即开临时课堂" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitTemporaryClassroom}>
+          <label>学生<input name="studentId" list="temporary-classroom-students" defaultValue={selectedStudent?.id === "STU-NONE" ? "" : selectedStudent?.id ?? ""} placeholder="从清单选择学生" required /><datalist id="temporary-classroom-students">{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="temporary-classroom-teachers" defaultValue={selectedTeacher?.id ?? ""} placeholder="从清单选择老师" required /><datalist id="temporary-classroom-teachers">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")}</option>)}</datalist></label>}
+          <label>课程名称<input name="course" defaultValue={selectedStudent?.course ? `${selectedStudent.course}（临时课堂）` : "临时课堂"} /></label>
+          <label>课程时长<select name="duration" defaultValue="60"><option value="30">30 分钟</option><option value="45">45 分钟</option><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 保存后会生成一条可追溯的临时排课，并自动准备学生邀请链接。老师进入、结束课堂和录播仍使用同一套网上教室流程。</div>
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={classroomBusy}><Video size={16} /> 创建并生成链接</button></footer>
         </form>
       </Dialog>}
 
