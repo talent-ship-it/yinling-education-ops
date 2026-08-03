@@ -52,25 +52,42 @@ export function buildPayrollExcelXml(month: string, payroll: PayrollExportRow[])
   const header = (labels: string[]) => row(labels.map((value) => ({ value, style: "Header" })));
   const summaryRows = [
     header(["月份", "老师", "教师类别", "币种", "状态", "薪资表课时", "教务宝课时", "课时差异", "建议金额", "银行", "账户", "付款说明", "锁定人", "锁定时间"]),
-    ...payroll.map((entry) => {
+    ...payroll.flatMap((entry) => {
       const sourceHours = entry.sourceHours ?? null;
       const variance = sourceHours === null ? null : entry.payrollHours - sourceHours;
-      return row([
-        { value: entry.month },
-        { value: entry.teacherName },
-        { value: entry.section },
-        { value: entry.currency },
-        { value: entry.status },
-        { value: entry.payrollHours, type: "Number" },
-        { value: sourceHours, type: sourceHours === null ? "String" : "Number" },
-        { value: variance, type: variance === null ? "String" : "Number" },
-        { value: entry.amount, type: "Number", style: entry.currency === "AUD" ? "AudMoney" : "CnyMoney" },
-        { value: entry.bankName },
-        { value: entry.bankAccount },
-        { value: entry.paymentNote },
-        { value: entry.lockedBy },
-        { value: entry.lockedAt },
+      const teacherRow = row([
+        { value: entry.month, style: "TeacherSummary" },
+        { value: entry.teacherName, style: "TeacherSummary" },
+        { value: entry.section, style: "TeacherSummary" },
+        { value: entry.currency, style: "TeacherSummary" },
+        { value: entry.status, style: "TeacherSummary" },
+        { value: entry.payrollHours, type: "Number", style: "TeacherSummaryNumber" },
+        { value: sourceHours, type: sourceHours === null ? "String" : "Number", style: "TeacherSummaryNumber" },
+        { value: variance, type: variance === null ? "String" : "Number", style: "TeacherSummaryNumber" },
+        { value: entry.amount, type: "Number", style: entry.currency === "AUD" ? "AudTeacherMoney" : "CnyTeacherMoney" },
+        { value: entry.bankName, style: "TeacherSummary" },
+        { value: entry.bankAccount, style: "TeacherSummary" },
+        { value: entry.paymentNote, style: "TeacherSummary" },
+        { value: entry.lockedBy, style: "TeacherSummary" },
+        { value: entry.lockedAt, style: "TeacherSummary" },
       ]);
+      const studentRows = entry.lines.map((line) => row([
+        { value: "", style: "StudentDetail" },
+        { value: `↳ ${line.studentName}`, style: "StudentName" },
+        { value: line.isTrial ? "试听" : "常规课", style: "StudentDetail" },
+        { value: entry.currency, style: "StudentDetail" },
+        { value: "学生明细", style: "StudentDetail" },
+        { value: line.hours, type: "Number", style: "StudentNumber" },
+        { value: line.rate, type: "Number", style: entry.currency === "AUD" ? "AudStudentMoney" : "CnyStudentMoney" },
+        { value: "", style: "StudentDetail" },
+        { value: line.subtotal, type: "Number", style: entry.currency === "AUD" ? "AudStudentMoney" : "CnyStudentMoney" },
+        { value: "", style: "StudentDetail" },
+        { value: "", style: "StudentDetail" },
+        { value: line.note, style: "StudentDetail" },
+        { value: "", style: "StudentDetail" },
+        { value: "", style: "StudentDetail" },
+      ]));
+      return [teacherRow, ...studentRows];
     }),
   ];
 
@@ -106,6 +123,15 @@ export function buildPayrollExcelXml(month: string, payroll: PayrollExportRow[])
     <Style ss:ID="Total"><Font ss:Bold="1"/><Interior ss:Color="#DDF4F1" ss:Pattern="Solid"/></Style>
     <Style ss:ID="CnyMoney"><NumberFormat ss:Format="¥#,##0.00"/></Style>
     <Style ss:ID="AudMoney"><NumberFormat ss:Format="A$#,##0.00"/></Style>
+    <Style ss:ID="TeacherSummary"><Font ss:Bold="1"/><Interior ss:Color="#DDF4F1" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="TeacherSummaryNumber"><Font ss:Bold="1"/><Interior ss:Color="#DDF4F1" ss:Pattern="Solid"/><NumberFormat ss:Format="0.00"/></Style>
+    <Style ss:ID="CnyTeacherMoney"><Font ss:Bold="1"/><Interior ss:Color="#DDF4F1" ss:Pattern="Solid"/><NumberFormat ss:Format="¥#,##0.00"/></Style>
+    <Style ss:ID="AudTeacherMoney"><Font ss:Bold="1"/><Interior ss:Color="#DDF4F1" ss:Pattern="Solid"/><NumberFormat ss:Format="A$#,##0.00"/></Style>
+    <Style ss:ID="StudentDetail"><Font ss:Color="#4F625F"/><Interior ss:Color="#F4FAF9" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="StudentName"><Alignment ss:Indent="1"/><Font ss:Color="#2E504B"/><Interior ss:Color="#F4FAF9" ss:Pattern="Solid"/></Style>
+    <Style ss:ID="StudentNumber"><Font ss:Color="#4F625F"/><Interior ss:Color="#F4FAF9" ss:Pattern="Solid"/><NumberFormat ss:Format="0.00"/></Style>
+    <Style ss:ID="CnyStudentMoney"><Font ss:Color="#4F625F"/><Interior ss:Color="#F4FAF9" ss:Pattern="Solid"/><NumberFormat ss:Format="¥#,##0.00"/></Style>
+    <Style ss:ID="AudStudentMoney"><Font ss:Color="#4F625F"/><Interior ss:Color="#F4FAF9" ss:Pattern="Solid"/><NumberFormat ss:Format="A$#,##0.00"/></Style>
   </Styles>
   ${worksheet("老师汇总", summaryRows)}
   ${worksheet("学生明细", detailRows)}
