@@ -15,7 +15,12 @@ test("implements shared Supabase state with conflict protection", async () => {
 
   assert.match(client, /function useSharedState/);
   assert.match(client, /\/api\/app-state\?mode=versions/);
-  assert.match(client, /window\.setInterval\(poll, 2500\)/);
+  assert.match(client, /const activeDelayMs = 15_000/);
+  assert.match(client, /const errorDelayMs = 60_000/);
+  assert.match(client, /window\.setTimeout/);
+  assert.match(client, /window\.addEventListener\("focus", wake\)/);
+  assert.match(client, /window\.addEventListener\("online", wake\)/);
+  assert.doesNotMatch(client, /window\.setInterval\(poll, 2500\)/);
   assert.match(client, /onSync\("conflict"/);
   assert.match(client, /displayPreferencesStorageKey/);
   assert.match(client, /window\.localStorage\.setItem\(displayPreferencesStorageKey/);

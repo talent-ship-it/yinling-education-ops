@@ -1565,10 +1565,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   useEffect(() => {
     let stopped = false;
     let polling = false;
+    let timeout: number | null = null;
+    const activeDelayMs = 15_000;
+    const errorDelayMs = 60_000;
+
+    const schedule = (delayMs: number) => {
+      if (stopped || document.hidden) return;
+      if (timeout !== null) window.clearTimeout(timeout);
+      timeout = window.setTimeout(() => {
+        timeout = null;
+        void poll();
+      }, delayMs);
+    };
 
     const poll = async () => {
-      if (polling || document.hidden) return;
+      if (stopped || polling || document.hidden) return;
       polling = true;
+      let nextDelayMs = activeDelayMs;
       try {
         const versionResponse = await fetch("/api/app-state?mode=versions", { cache: "no-store" });
         const versionBody = await versionResponse.json().catch(() => ({}));
@@ -1587,20 +1600,33 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           reportSharedSync("synced", "Supabase 多人共享已连接");
         }
       } catch (error) {
+        nextDelayMs = errorDelayMs;
         if (!stopped) reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "共享同步暂时不可用");
       } finally {
         polling = false;
+        schedule(nextDelayMs);
       }
     };
 
-    const interval = window.setInterval(poll, 2500);
-    const onVisible = () => { if (!document.hidden) void poll(); };
+    const wake = () => {
+      if (stopped || document.hidden) return;
+      if (timeout !== null) {
+        window.clearTimeout(timeout);
+        timeout = null;
+      }
+      void poll();
+    };
+    const onVisible = () => { if (!document.hidden) wake(); };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", wake);
+    window.addEventListener("online", wake);
     void poll();
     return () => {
       stopped = true;
-      window.clearInterval(interval);
+      if (timeout !== null) window.clearTimeout(timeout);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", wake);
+      window.removeEventListener("online", wake);
     };
   }, [reportSharedSync]);
 
