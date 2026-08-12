@@ -81,7 +81,7 @@ export function getLatestLpDocumentLink(history: readonly LpDocumentLink[]) {
   return sortLpDocumentHistory(history)[0] ?? null;
 }
 
-export const MAX_REPORT_PDF_BYTES = 20 * 1024 * 1024;
+export const MAX_REPORT_PDF_BYTES = 4 * 1024 * 1024;
 
 export type ReportPdfMetadata = {
   name: string;

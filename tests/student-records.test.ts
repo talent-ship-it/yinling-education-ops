@@ -57,7 +57,8 @@ test("keeps every LP link version and returns the newest without mutating histor
   assert.throws(() => appendLpDocumentLink(history, { ...history[1], title: "Conflicting version" }), /already exists/);
 });
 
-test("validates Report uploads as non-empty PDFs no larger than 20 MB", () => {
+test("validates Report uploads as non-empty PDFs no larger than 4 MB", () => {
+  assert.equal(MAX_REPORT_PDF_BYTES, 4 * 1024 * 1024);
   assert.deepEqual(validateReportPdfMetadata({
     name: "Semester report.pdf",
     mimeType: "application/pdf",
