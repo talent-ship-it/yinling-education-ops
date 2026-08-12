@@ -12,6 +12,7 @@ import {
   OpsAccessError,
 } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { OpsRulesValidationError, parseRulesWrite } from "@/lib/ops-rules";
 import {
   getOpsSources,
   getOpsState,
@@ -94,10 +95,11 @@ export async function PUT(request: NextRequest) {
     if (!currentRow || !canReadOpsEntity(access, body.entity)) {
       return noStore({ error: "当前账号没有读取这部分资料的权限。" }, 403);
     }
+    const submittedPayload = body.entity === "rules" ? parseRulesWrite(body.payload) : body.payload;
     const payload = mergeScopedPayload({
       entity: body.entity,
       currentPayload: currentRow.payload,
-      submittedPayload: body.payload,
+      submittedPayload,
       context: access,
     });
     const scopeVersions = getAccessScopeVersions(allRows, access);
@@ -110,6 +112,7 @@ export async function PUT(request: NextRequest) {
     });
     return noStore({ row: filterOpsStateRows(saved, access)[0] });
   } catch (error) {
+    if (error instanceof OpsRulesValidationError) return noStore({ error: error.message }, 400);
     if (error instanceof OpsAccessError) return noStore({ error: error.message }, 403);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) {
       const allRows = await getOpsState().catch(() => []);

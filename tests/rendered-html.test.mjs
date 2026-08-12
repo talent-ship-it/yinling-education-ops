@@ -180,11 +180,11 @@ test("retains core operations workflows and responsive UI", async () => {
     "trial.prep",
     "trial.minimum",
   ]) assert.match(tasks, new RegExp(ruleKey.replace(".", "\\.")));
-  assert.match(tasks, /atLocalHour\(requestedAt, 0, sameDayHour, timeZone\)/);
-  assert.match(tasks, /new Date\(requestedAt\.getTime\(\) \+ 48 \* TASK_SPACING_MS\)/);
-  assert.match(tasks, /atLocalHour\(trialStartsAt, -3, 18, timeZone\)/);
-  assert.match(tasks, /atLocalHour\(trialStartsAt, -2, 18, timeZone\)/);
-  assert.match(tasks, /atLocalHour\(trialStartsAt, -1, 18, timeZone\)/);
+  assert.match(tasks, /FIXED_REMINDER_RULES\.parentSpecifiedContentDaysAfterRequest/);
+  assert.match(tasks, /FIXED_REMINDER_RULES\.schedulingFeedbackHoursAfterRequest \* TASK_SPACING_MS/);
+  assert.match(tasks, /-FIXED_REMINDER_RULES\.lpReviewDaysBeforeTrial/);
+  assert.match(tasks, /-FIXED_REMINDER_RULES\.preparationDaysBeforeTrial/);
+  assert.match(tasks, /-FIXED_REMINDER_RULES\.minimumDaysBeforeTrial/);
   assert.match(tasks, /export function statusForDueAt/);
   assert.match(tasks, /export function sortTasksByDueAt/);
   assert.match(tasks, /export function upsertTaskByRule/);
@@ -238,6 +238,16 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /\.master-detail-layout \.collection-viewport/);
   assert.match(css, /\.master-detail-layout > \.student-detail/);
   assert.match(css, /border-left:1px solid #dbe5df/);
+  assert.match(css, /\.account-admin-layout \.collection-head,[\s\S]*?min-width:0/);
+  assert.match(css, /@media \(min-width:761px\) and \(max-width:1399px\)[\s\S]*?\.student-collection \.master-detail-layout/);
+  assert.match(css, /@media \(max-width:760px\)[\s\S]*?\.fixed-rule-grid,[\s\S]*?\.kanban-board/);
+  assert.match(client, /RULE_OPTIONS\.lowHours\.map/);
+  assert.match(client, /RULE_OPTIONS\.examDays\.map/);
+  assert.match(client, /disabled=\{!rulesDraftTouched \|\| rulesDraftStale\}/);
+  assert.match(client, /writeRulesVersion\(displayedRules, rulesDraftBaseVersion\)/);
+  assert.match(client, /writeRulesVersion\(previousRules, saved\.version\)/);
+  assert.match(client, /response\.status === 409 && body\.current/);
+  assert.doesNotMatch(client, /displayedRules\.(?:lpDays|feedbackHours|renewalDays|escalation)/);
   assert.match(css, /\.topbar\s*\{\s*background:#fff/);
   assert.doesNotMatch(client, /panel student-detail/);
   assert.match(css, /sync-workspace/);
@@ -263,8 +273,8 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(client, /contractHours\?: number/);
   assert.match(client, /contractEffectiveDate\?: string/);
   assert.match(client, /jwbSyncStatus\?: string/);
-  assert.match(client, /教务宝只读同步/);
-  assert.match(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
+  assert.match(client, /教务宝同步/);
+  assert.doesNotMatch(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
   assert.match(client, /useState<"week" \| "agenda">\("agenda"\)/);
   assert.match(client, /const scheduleDensity = displayPreferences\.density/);
   assert.match(client, /Array\.from\(\{ length: 7 \}/);
@@ -300,7 +310,7 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /submitTemporaryClassroom/);
   assert.match(client, /prepareTemporaryClassroomLink/);
   assert.match(client, /立即开临时课堂/);
-  assert.match(client, /排课已自动关联网上教室/);
+  assert.match(client, /已关联网上教室/);
   assert.match(client, /source: "临时课堂"/);
   assert.match(client, /endClassroom/);
   assert.match(client, /classroom:\s*\{\s*meetingId: `yinling-\$\{bookingId\}`/);
@@ -444,15 +454,15 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /下月/);
   assert.match(client, /修改固定可约时段/);
   assert.match(client, /删除固定可约时段/);
-  assert.match(client, /浅绿色为可约，灰色为已排课/);
+  assert.doesNotMatch(client, /浅绿色为可约，灰色为已排课/);
   assert.match(css, /\.agenda-select-grid/);
   assert.match(css, /\.booking-action-grid/);
   assert.match(css, /\.lp-card-actions/);
   assert.match(css, /\.ava-month-grid/);
   assert.match(css, /\.ava-booked/);
   assert.match(client, /历史课程不能重新开课/);
-  assert.match(client, /当前筛选没有匹配课程[\s\S]*新建约课/);
-  assert.match(client, /当前课程缺少有效关联[\s\S]*新建约课/);
+  assert.match(client, /title="当前筛选下没有排课"[\s\S]*新建约课/);
+  assert.match(client, /title="课程关联资料不完整"[\s\S]*新建约课/);
   assert.match(client, /requestConfirmation/);
   assert.match(client, /<form onSubmit=\{\(event\) => \{ event\.preventDefault\(\); void confirmRequestedAction\(\); \}\}>/);
   assert.match(client, /type="submit" disabled=\{confirmBusy\}>\{confirmBusy/);

@@ -1460,7 +1460,7 @@ body {
   .report-card span { font-size:13px; }
   .report-card small { font-size:11px; }
   .settings-panel label,.settings-fields label { font-size:12px; }
-  .settings-panel input,.settings-fields input { font-size:13px; min-height:38px; }
+  .settings-panel input,.settings-panel select,.settings-fields input,.settings-fields select { font-size:13px; min-height:38px; }
 }
 
 @media (min-width:1211px) and (max-width:1360px) {
@@ -1472,6 +1472,12 @@ body {
   .message-layout { grid-template-columns:minmax(500px,1fr) minmax(340px,.46fr); }
   .payroll-layout { grid-template-columns:minmax(560px,1fr) minmax(360px,.5fr); }
   .operations-queue-insight { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+
+@media (max-width:760px) {
+  .fixed-rule-grid {
+    grid-template-columns:1fr;
+  }
 }
 
 @media (min-width:761px) and (max-width:1210px) {
@@ -2464,5 +2470,176 @@ body {
 
   .app-shell[data-text-size="extra-large"] {
     zoom:1.06;
+  }
+}
+
+.card-tags {
+  flex-wrap:wrap;
+}
+
+.fixed-rule-grid {
+  display:grid;
+  gap:1px;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  margin-bottom:16px;
+}
+
+.fixed-rule-grid > div {
+  background:#f3f8f6;
+  border:1px solid #e0e9e4;
+  display:grid;
+  gap:5px;
+  padding:12px;
+}
+
+.fixed-rule-grid span {
+  color:var(--muted);
+  font-size:11px;
+}
+
+.fixed-rule-grid strong {
+  color:var(--brand-ink);
+  font-size:13px;
+}
+
+.settings-fields select {
+  background:#f7f9f7;
+  border:1px solid #dbe4de;
+  border-radius:4px;
+  color:var(--ink);
+  padding:8px;
+  width:100%;
+}
+
+/* Final width safeguards: desktop breakpoints must account for the fixed sidebar. */
+@media (min-width:761px) {
+  .course-grid-row {
+    grid-template-columns:minmax(0,1.55fr) minmax(0,.85fr) minmax(72px,.45fr) minmax(70px,.4fr);
+  }
+
+  .course-grid-row > *,
+  .account-grid-row > * {
+    min-width:0;
+  }
+
+  .account-admin-layout .collection-head,
+  .account-admin-layout .collection-row {
+    min-width:0;
+    width:100%;
+  }
+
+  .course-layout .collection-viewport {
+    overflow-x:auto;
+  }
+
+  .account-grid-row {
+    grid-template-columns:minmax(0,1.5fr) minmax(0,.85fr) minmax(0,.72fr);
+  }
+
+  .kanban-board {
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    overflow-x:visible;
+    padding-bottom:4px;
+  }
+
+  .kanban-board > article,
+  .kanban-card {
+    min-width:0;
+  }
+}
+
+@media (min-width:761px) and (max-width:1210px) {
+  .master-detail-layout,
+  .operations-layout,
+  .teacher-layout,
+  .schedule-layout,
+  .message-layout,
+  .payroll-layout,
+  .course-layout,
+  .account-admin-layout,
+  .classroom-hub-layout {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  .collection-shell > .master-detail-layout,
+  .schedule-shell > .schedule-layout {
+    height:auto;
+  }
+
+  .master-detail-layout > .collection-main {
+    display:block;
+  }
+
+  .master-detail-layout > .record-preview,
+  .master-detail-layout > .student-detail {
+    border-left:0;
+    border-top:1px solid #dbe5df;
+    height:auto;
+    overflow:visible;
+    position:static;
+  }
+
+  .master-detail-layout .collection-viewport {
+    overflow-x:auto;
+  }
+
+  .collection-main,
+  .agenda-list,
+  .schedule-shell .calendar-board,
+  .message-list,
+  .account-list,
+  .classroom-room-list {
+    border-right:0;
+  }
+
+  .account-list,
+  .classroom-room-list {
+    border-bottom:1px solid var(--line);
+  }
+
+  .account-admin-layout,
+  .classroom-hub-layout {
+    min-height:0;
+  }
+
+  .account-preview,
+  .classroom-room-preview {
+    position:static;
+  }
+
+  .fixed-rule-grid {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+}
+
+@media (min-width:761px) and (max-width:1399px) {
+  .student-collection .master-detail-layout {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  .student-collection > .master-detail-layout {
+    height:auto;
+  }
+
+  .student-collection .master-detail-layout > .collection-main {
+    display:block;
+  }
+
+  .student-collection .master-detail-layout > .student-detail {
+    height:auto;
+    overflow:visible;
+  }
+}
+
+@media (max-width:760px) {
+  .fixed-rule-grid,
+  .kanban-board {
+    grid-template-columns:minmax(0,1fr);
+    overflow-x:visible;
+  }
+
+  .kanban-board > article {
+    min-width:0;
   }
 }

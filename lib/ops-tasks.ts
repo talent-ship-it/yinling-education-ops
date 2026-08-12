@@ -1,3 +1,5 @@
+import { FIXED_REMINDER_RULES } from "./ops-rules";
+
 export const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 export const TASK_SPACING_MS = 60 * 60 * 1_000;
 
@@ -335,8 +337,8 @@ export function generateTrialRequestTasks(input: TrialRequestTaskInput): RuleBou
   if (!input.owner.trim()) throw new TypeError("owner is required");
 
   const idealTimes = [
-    atLocalHour(requestedAt, 0, sameDayHour, timeZone),
-    new Date(requestedAt.getTime() + 48 * TASK_SPACING_MS),
+    atLocalHour(requestedAt, FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest, sameDayHour, timeZone),
+    new Date(requestedAt.getTime() + FIXED_REMINDER_RULES.schedulingFeedbackHoursAfterRequest * TASK_SPACING_MS),
   ];
   let previous = now.getTime();
   const scheduledTimes = idealTimes.map((ideal) => {
@@ -376,11 +378,11 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
   if (!input.owner.trim()) throw new TypeError("owner is required");
 
   const idealTimes = [
-    atLocalHour(requestedAt, 0, sameDayHour, timeZone),
-    new Date(requestedAt.getTime() + 48 * TASK_SPACING_MS),
-    atLocalHour(trialStartsAt, -3, 18, timeZone),
-    atLocalHour(trialStartsAt, -2, 18, timeZone),
-    atLocalHour(trialStartsAt, -1, 18, timeZone),
+    atLocalHour(requestedAt, FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest, sameDayHour, timeZone),
+    new Date(requestedAt.getTime() + FIXED_REMINDER_RULES.schedulingFeedbackHoursAfterRequest * TASK_SPACING_MS),
+    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial, 18, timeZone),
+    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.preparationDaysBeforeTrial, 18, timeZone),
+    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.minimumDaysBeforeTrial, 18, timeZone),
   ];
   const scheduledTimes = scheduleWithConstraints(idealTimes, now, trialStartsAt);
   const idFactory = input.idFactory ?? ((ruleKey, anchorBookingId) => `TSK:${anchorBookingId}:${ruleKey}`);

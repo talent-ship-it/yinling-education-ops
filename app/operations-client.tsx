@@ -13,7 +13,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
-  CircleCheck,
   ClipboardCheck,
   Clock3,
   Database,
@@ -31,7 +30,6 @@ import {
   KeyRound,
   Link2,
   LogOut,
-  MapPin,
   MessageCircle,
   MessageSquare,
   MoreHorizontal,
@@ -53,6 +51,12 @@ import {
 } from "lucide-react";
 
 import { cleanTimezone } from "@/lib/timezone";
+import {
+  FIXED_REMINDER_RULES,
+  RULE_OPTIONS,
+  normalizeRules,
+  type Rules,
+} from "@/lib/ops-rules";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel } from "@/lib/payroll-export";
 import {
@@ -398,15 +402,6 @@ type AuditEntry = {
   tone: Tone;
 };
 
-type Rules = {
-  lpDays: string;
-  feedbackHours: string;
-  renewalDays: string;
-  escalation: string;
-  lowHours: string;
-  examDays: string;
-};
-
 export type ImportPayload = {
   meta?: { studentCount?: number; teacherCount?: number; createdAt?: string; replaceExisting?: boolean };
   students?: Student[];
@@ -574,7 +569,7 @@ function buildRuntimeDefaults(importPayload?: ImportPayload) {
     defaultMessages: hasRealData ? importPayload?.messages ?? [] : initialMessages,
     defaultFiles: hasRealData ? importPayload?.files ?? [] : initialFiles,
     defaultAudit: hasRealData ? importPayload?.audit ?? [] : initialAudit,
-    defaultRules: importPayload?.rules ?? defaultRules,
+    defaultRules: normalizeRules(importPayload?.rules),
     defaultDataSnapshot: importPayload?.dataSnapshot ?? (hasRealData
       ? { label: "Supabase 真实资料快照", students: realStudents.length, teachers: realTeachers.length, importedAt }
       : { label: "脱敏示例数据", students: initialStudents.length, teachers: initialTeachers.length, importedAt: "未导入" }),
@@ -594,7 +589,6 @@ const initialMessages: Message[] = [];
 const initialFiles: FileRecord[] = [];
 const initialAudit: AuditEntry[] = [];
 
-const defaultRules: Rules = { lpDays: "N-3", feedbackHours: "48", renewalDays: "8", escalation: "逾期 4 小时后通知主管", lowHours: "5", examDays: "30" };
 const lpStages: LpItem["stage"][] = [...LP_STAGES];
 const lpWorkflowOptions: Array<{ id: LpWorkflowType; lpNeed: LpNeed; title: string; detail: string }> = [
   { id: "试听 LP", lpNeed: "试听LP", title: "试听 LP", detail: "试听资料、老师备课、收费与试听后跟进" },
@@ -1270,12 +1264,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [messages, setMessages, messagesShared] = useSharedState("messages", defaults.defaultMessages, versionFor("messages"), currentOperator, reportSharedSync);
   const [files, setFiles, filesShared] = useSharedState("files", defaults.defaultFiles, versionFor("files"), currentOperator, reportSharedSync);
   const [audit, setAudit, auditShared] = useSharedState("audit", defaults.defaultAudit, versionFor("audit"), currentOperator, reportSharedSync, true);
-  const [rules, setRules, rulesShared] = useSharedState("rules", defaults.defaultRules, versionFor("rules"), currentOperator, reportSharedSync);
+  const [rules, , rulesShared] = useSharedState("rules", defaults.defaultRules, versionFor("rules"), currentOperator, reportSharedSync, true);
   const [dataSnapshot, setDataSnapshot, dataSnapshotShared] = useSharedState("dataSnapshot", defaults.defaultDataSnapshot, versionFor("dataSnapshot"), currentOperator, reportSharedSync);
   const [syncSources, setSyncSources] = useState<SyncSource[]>(initialData?.syncSources ?? []);
   const [syncRefreshBusy, setSyncRefreshBusy] = useState(false);
   const [rulesDraft, setRulesDraft] = useState<Rules>(defaults.defaultRules);
   const [rulesDraftTouched, setRulesDraftTouched] = useState(false);
+  const [rulesDraftBaseVersion, setRulesDraftBaseVersion] = useState(versionFor("rules"));
   const [selectedStudentId, setSelectedStudentId] = useState(defaults.defaultSelectedStudentId);
   const [selectedTeacherId, setSelectedTeacherId] = useState(defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
@@ -1482,7 +1477,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     : staleSources.length
       ? `${staleSources.length} 个来源已超过 36 小时未读取`
       : `外部来源截至 ${formatSourceTime(latestSourceSync?.toISOString(), displayPreferences)}`;
-  const displayedRules = rulesDraftTouched ? rulesDraft : rules;
+  const displayedRules = rulesDraftTouched ? rulesDraft : normalizeRules(rules);
+  const rulesDraftStale = rulesDraftTouched && rulesDraftBaseVersion !== rulesShared.version;
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
     const viewedAs = currentOperator !== sessionOperator ? ` · 当前查看 ${operatorLabel(currentOperator)} 视图` : "";
@@ -1516,6 +1512,26 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const requestConfirmation = (request: ConfirmRequest) => {
     setConfirmRequest(request);
+  };
+
+  const writeRulesVersion = async (payload: Rules, expectedVersion: number) => {
+    const response = await fetch("/api/app-state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entity: "rules", payload, expectedVersion }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 409 && body.current) {
+      rulesShared.applyRemote(body.current as RemoteStateRow<Rules>);
+      throw new Error("规则已被其他人更新，请载入最新规则后再保存");
+    }
+    if (!response.ok || !body.row) throw new Error(body.error || "规则保存失败");
+    const row = body.row as RemoteStateRow<Rules>;
+    rulesShared.applyRemote(row);
+    setRulesDraft(normalizeRules(row.payload));
+    setRulesDraftTouched(false);
+    setRulesDraftBaseVersion(row.version);
+    return row;
   };
 
   const confirmRequestedAction = async () => {
@@ -1739,11 +1755,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const frame = window.requestAnimationFrame(() => setScheduleMode("agenda"));
     return () => window.cancelAnimationFrame(frame);
   }, []);
-
-  useEffect(() => {
-    if (rules.lowHours && rules.examDays) return;
-    setRules((current) => ({ ...defaultRules, ...current, lowHours: current.lowHours ?? defaultRules.lowHours, examDays: current.examDays ?? defaultRules.examDays }));
-  }, [rules.examDays, rules.lowHours, setRules]);
 
   const filteredStudents = useMemo(() => scopedStudents.filter((student) => {
     const haystack = `${student.name} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
@@ -2718,11 +2729,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const totalMinutes = scopedBookings.reduce((sum, booking) => sum + booking.duration, 0);
     const todayLabel = new Intl.DateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
     return <>
-      <ViewHeading eyebrow={todayLabel} title={english ? "My teaching workspace" : "我的教学工作台"} copy={english ? `Students, schedule, and online classrooms for ${currentOperator}. This view only includes data linked directly to this teacher.` : `${currentOperator} 老师的学生、排课与网上教室。这里只显示与当前老师直接关联的真实资料。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
+      <ViewHeading eyebrow={todayLabel} title={english ? "My teaching workspace" : "我的教学工作台"} actions={<><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
       <section className="command-strip teacher-command-strip" aria-label={english ? "Teacher shortcuts" : "老师快捷操作"}>
-        <button type="button" onClick={() => openNewBooking()}><CalendarPlus size={18} /><span><strong>{english ? "Schedule a lesson" : "安排课程"}</strong><small>{english ? "Choose one of your students and check for conflicts" : "从自己的学生中选择并检查时间冲突"}</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setActive("schedule")}><CalendarDays size={18} /><span><strong>{english ? "View schedule" : "查看课表"}</strong><small>{english ? "Review student, teacher, and Melbourne times" : "按学生、老师和墨尔本时间核对"}</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setActive("classroom")}><Video size={18} /><span><strong>{english ? "Online classroom" : "网上教室"}</strong><small>{english ? "Create a room, share student links, and check recordings" : "创建课堂、发送学生链接并查看录播"}</small></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => openNewBooking()}><CalendarPlus size={18} /><span><strong>{english ? "Schedule a lesson" : "安排课程"}</strong></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("schedule")}><CalendarDays size={18} /><span><strong>{english ? "View schedule" : "查看课表"}</strong></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("classroom")}><Video size={18} /><span><strong>{english ? "Online classroom" : "网上教室"}</strong></span><ChevronRight size={16} /></button>
       </section>
       <section className="metric-grid teacher-metric-grid" aria-label={english ? "My teaching overview" : "我的教学概览"}>
         <Metric tone="green" icon={<Users size={21} />} value={scopedStudents.length.toString()} label={english ? "My students" : "我的学生"} detail={english ? "Students linked to this teacher only" : "仅显示当前老师关联学生"} onClick={() => setActive("students")} />
@@ -2761,8 +2772,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       <section className="dashboard-grid">
         <div><ToDoList tasks={visibleTasks} studentName={(studentId) => studentById(studentId)?.name} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onOpen={(task) => goToStudent(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
-        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">墨尔本今日 · 按学生当地时间</p><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /><div className="panel-foot"><MapPin size={15} /> 排课页会同时显示学生、老师与公司时间</div></article>
-        <article className="panel risk-panel"><div className="panel-header"><div><h2>风险与缺口</h2></div><StatusPill tone="amber">{operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 30 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : null}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="排课前需确认" action={() => setActive("teachers")} /></article>
+        <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">墨尔本今日</p><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
+        <article className="panel risk-panel"><div className="panel-header"><div><h2>风险与缺口</h2></div><StatusPill tone="amber">{operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 ${rules.examDays} 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : null}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="排课前需确认" action={() => setActive("teachers")} /></article>
       </section>
     </>;
   };
@@ -2782,7 +2793,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const pageSelected = pageIds.length > 0 && pageIds.every((studentId) => selectedStudentIds.includes(studentId));
     const visibleSelectedStudent = pagedStudents.find((student) => student.id === selectedStudentId) ?? pagedStudents[0];
     return <>
-      <ViewHeading eyebrow={isTeacherView ? (english ? "Teacher workspace · students and bookings" : "老师个人视图 · 学生与约课") : "学生 CRM · 试听、已报名与 LP 分流"} title={isTeacherView && english ? "My students" : isTeacherView ? "我的学生" : "学生档案"} copy={isTeacherView && english ? "View the students you teach and schedule lessons directly. Student status is maintained by Operations." : isTeacherView ? "查看自己负责授课的学生资料，并直接为学生安排课程。学生状态由教务维护。" : "按学员状态、负责教务和 LP 类型筛选；年级按基准年份自动推进，Report、跟进、考试与特殊备注集中在同一档案。"} actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> {isTeacherView && english ? "Find a student" : "查找学生"}</button>{!isTeacherView && <button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button>}</>} />
+      <ViewHeading eyebrow={isTeacherView ? (english ? "Teacher workspace" : "老师工作台") : "学生档案"} title={isTeacherView && english ? "My students" : isTeacherView ? "我的学生" : "学生档案"} actions={<><button className="secondary-button" type="button" onClick={() => setGlobalSearchOpen(true)}><Search size={17} /> {isTeacherView && english ? "Find a student" : "查找学生"}</button>{!isTeacherView && <button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button>}</>} />
       <section className="panel collection-shell student-collection">
         <ViewTabs value={studentView} items={viewItems} onChange={(value) => { setStudentView(value); setStudentPage(1); setSelectedStudentIds([]); }} label="学生保存视图" />
         <ListToolbar query={search} onQuery={(value) => { setSearch(value); setStudentPage(1); }} placeholder={isTeacherView && english ? "Search name, ID, course, teacher, or owner" : "搜索姓名、ID、课程、老师或负责人"} count={`${filteredStudents.length} ${isTeacherView && english ? "students" : "位学生"}`}>
@@ -2795,11 +2806,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <article className="collection-main">
             <div className="collection-head student-grid"><input type="checkbox" disabled={!isAdminView} checked={pageSelected} aria-label={english ? "Select students on this page" : "选择本页学生"} onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>{isTeacherView && english ? "Student / grade / course" : "学生 / 年级 / 课程"}</span><span>{isTeacherView && english ? "Status / teacher" : "学员状态 / 老师"}</span><span>{isTeacherView && english ? "Operations owner" : "负责教务"}</span><span>{isTeacherView && english ? "Next step" : "下一步"}</span></div>
             <div className="collection-viewport">
-              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView} checked={selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
+              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView} checked={selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" title={`${student.name} · ${currentGrade(student)} · ${student.course}`} onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" title={`${displayTerm(student.status, displayPreferences.language)} · ${student.teacher}`} onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" title={student.next} onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onRecord={(section) => openStudentRecord(visibleSelectedStudent.id, section)} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEdit"); }} onEvidence={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEvidence"); }} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
+          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} lowHoursThreshold={Number(rules.lowHours)} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onRecord={(section) => openStudentRecord(visibleSelectedStudent.id, section)} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEdit"); }} onEvidence={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEvidence"); }} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
         </div>
       </section>
     </>;
@@ -2814,7 +2825,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     ];
     const visibleSelectedTeacher = pagedTeachers.find((teacher) => teacher.id === selectedTeacherId) ?? pagedTeachers[0];
     return <>
-      <ViewHeading eyebrow="教师总表 · 中小学与大学合并检索" title="老师资源库" copy="跨部门老师只保留一份主档，可按标准科目、接新状态和 AVA 搜索；原始 AVA 未结构化时明确提示人工确认。" actions={<button className="primary-button" type="button" disabled={!visibleSelectedTeacher} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
+      <ViewHeading eyebrow="教师总表" title="老师资源库" actions={<button className="primary-button" type="button" disabled={!visibleSelectedTeacher} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
       <section className="matching-context"><div><span>当前匹配学生</span><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {selectedStudent.timezone}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
       {visibleSelectedTeacher ? <TeacherAvaBoard teacher={visibleSelectedTeacher} teachers={recordTeachers} bookings={bookings} studentById={studentById} targetTimezone={scheduleTimezone} preferences={displayPreferences} view={avaView} monthOffset={avaMonthOffset} onView={setAvaView} onMonthOffset={setAvaMonthOffset} onTeacherChange={setSelectedTeacherId} onAddAva={() => { setAvaDraft(null); setModal("ava"); }} onEditAva={(slotIndex) => editAvaSlot(visibleSelectedTeacher.id, slotIndex)} onDeleteAva={(slotIndex) => deleteAvaSlot(visibleSelectedTeacher.id, slotIndex)} /> : <section className="panel"><EmptyState title="没有可显示的老师 AVA" detail="调整筛选条件后再选择老师。" /></section>}
       <section className="panel collection-shell">
@@ -2852,7 +2863,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const categoryFor = (name: string) => /试听/.test(name) ? "试听专用课程" : /AEAS|AAS|ACER|AMC/i.test(name) ? "考试与竞赛" : /IB|VCE|HSC|Year\s*\d/i.test(name) ? "中小学课程" : "大学与通用课程";
 
     return <>
-      <ViewHeading eyebrow="教务宝只读课程镜像" title="课程与课包" copy="先将教务宝的在用课程目录完整镜像到本系统；课程名称可搜索、可与真实排课核对。课包价格和扣课规则仍待取得结构化来源后再启用。" actions={<button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={17} /> 查看同步来源</button>} />
+      <ViewHeading eyebrow="课程目录" title="课程与课包" actions={<button className="secondary-button" type="button" onClick={() => setActive("sync")}><RefreshCw size={17} /> 查看同步来源</button>} />
       <section className="panel collection-shell">
         <ListToolbar query={courseQuery} onQuery={(value) => { setCourseQuery(value); setCoursePage(1); }} placeholder="搜索课程名称" count={`${filteredCourses.length} 门在用课程`}>
           <button className="toolbar-button" type="button" onClick={() => { setCourseQuery(""); setCoursePage(1); }}><Filter size={15} /> 清除筛选</button>
@@ -2862,11 +2873,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="collection-head course-grid-row"><span>课程名称</span><span>分类</span><span>本周排课</span><span>状态</span></div>
             <div className="collection-viewport">{pagedCourses.map((course) => {
               const lessonCount = bookings.filter((booking) => booking.course === course.name).length;
-              return <button className={`collection-row course-grid-row ${selectedCourse?.id === course.id ? "selected" : ""}`} type="button" key={course.id} onClick={() => setSelectedCourseId(course.id)}><span><strong>{course.name}</strong><small>{course.id}</small></span><span>{categoryFor(course.name)}</span><strong>{lessonCount} 节</strong><StatusPill tone="green">{course.status}</StatusPill></button>;
+              return <button className={`collection-row course-grid-row ${selectedCourse?.id === course.id ? "selected" : ""}`} type="button" title={course.name} key={course.id} onClick={() => setSelectedCourseId(course.id)}><span><strong>{course.name}</strong><small>{course.id}</small></span><span>{categoryFor(course.name)}</span><strong>{lessonCount} 节</strong><StatusPill tone="green">{course.status}</StatusPill></button>;
             })}</div>
             <Pagination page={safePage} total={filteredCourses.length} pageSize={pageSize} onPage={setCoursePage} />
           </article>
-          {selectedCourse ? <aside className="record-preview course-preview"><div className="preview-header"><div><p className="eyebrow">课程档案</p><h2>{selectedCourse.name}</h2></div><StatusPill tone="green">{selectedCourse.status}</StatusPill></div><div className="detail-section"><span>课程分类</span><strong>{categoryFor(selectedCourse.name)}</strong><p>来源：{selectedCourse.source}</p></div><div className="detail-section split"><div><span>本周排课</span><strong>{selectedCourseBookings.length} 节</strong></div><div><span>关联学生</span><strong>{new Set(selectedCourseBookings.map((booking) => booking.studentId)).size} 人</strong></div></div><div className="detail-section"><span>课包与收费规则</span><strong>待结构化导入</strong><p>当前不会根据课程名称猜测价格、课时或扣课规则。</p></div>{selectedCourseBookings.length ? <button className="primary-button full" type="button" onClick={() => { const booking = selectedCourseBookings[0]; setSelectedBookingId(booking.id); setSelectedBookingDate(booking.date); setSelectedBookingDateId(booking.id); setActive("schedule"); }}><CalendarDays size={16} /> 查看本周排课</button> : <button className="secondary-button full" type="button" onClick={() => openNewBooking()}><CalendarPlus size={16} /> 为课程安排排课</button>}</aside> : <EmptyState title="没有课程记录" detail="清除搜索条件后重试。" />}
+          {selectedCourse ? <aside className="record-preview course-preview"><div className="preview-header"><div><p className="eyebrow">课程档案</p><h2>{selectedCourse.name}</h2></div><StatusPill tone="green">{selectedCourse.status}</StatusPill></div><div className="detail-section"><span>课程分类</span><strong>{categoryFor(selectedCourse.name)}</strong><p>来源：{selectedCourse.source}</p></div><div className="detail-section split"><div><span>本周排课</span><strong>{selectedCourseBookings.length} 节</strong></div><div><span>关联学生</span><strong>{new Set(selectedCourseBookings.map((booking) => booking.studentId)).size} 人</strong></div></div><div className="detail-section"><span>课包与收费规则</span><strong>待结构化导入</strong></div>{selectedCourseBookings.length ? <button className="primary-button full" type="button" onClick={() => { const booking = selectedCourseBookings[0]; setSelectedBookingId(booking.id); setSelectedBookingDate(booking.date); setSelectedBookingDateId(booking.id); setActive("schedule"); }}><CalendarDays size={16} /> 查看本周排课</button> : <button className="secondary-button full" type="button" onClick={() => openNewBooking()}><CalendarPlus size={16} /> 为课程安排排课</button>}</aside> : <EmptyState title="没有课程记录" detail="清除搜索条件后重试。" />}
         </div>
       </section>
     </>;
@@ -2897,13 +2908,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const displayedBookingSeries = displayedBooking ? scopedBookings.find((booking) => booking.id === displayedBooking.id) ?? displayedBooking : undefined;
     if (!scopedBookings.length) {
       return <>
-        <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        <ViewHeading eyebrow={isTeacherView ? "我的课程" : "课程管理"} title={isTeacherView ? "我的排课" : "排课与时区检查"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
         <section className="panel collection-shell"><EmptyState title="暂无真实排课数据" detail="当前 Supabase 只导入了学生和老师档案；排课数据导入后会在这里显示。" /></section>
       </>;
     }
     if (!displayedBooking || !displayedBookingSeries) {
       return <>
-        <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy="当前筛选没有匹配课程，不会继续显示之前选中的课程详情。" actions={<><button className="secondary-button" type="button" onClick={() => { setScheduleFilter("all"); setScheduleDay("all"); setSchedulePage(1); }}>清除排课筛选</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button></>} />
+        <ViewHeading eyebrow={isTeacherView ? "我的课程" : "课程管理"} title={isTeacherView ? "我的排课" : "排课与时区检查"} actions={<><button className="secondary-button" type="button" onClick={() => { setScheduleFilter("all"); setScheduleDay("all"); setSchedulePage(1); }}>清除排课筛选</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button></>} />
         <section className="panel collection-shell"><EmptyState title="当前筛选下没有排课" detail="清除筛选后再选择需要处理的课程。" /></section>
       </>;
     }
@@ -2911,7 +2922,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const bookingTeacher = teacherById(displayedBooking.teacherId);
     if (!bookingStudent || !bookingTeacher) {
       return <>
-        <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy="当前课程缺少有效关联，不会继续显示其他课程的详情。" actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        <ViewHeading eyebrow={isTeacherView ? "我的课程" : "课程管理"} title={isTeacherView ? "我的排课" : "排课与时区检查"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
         <section className="panel collection-shell"><EmptyState title="课程关联资料不完整" detail="课程缺少有效的学生或老师内部 ID，请先在数据来源中修复关联。" /></section>
       </>;
     }
@@ -2919,10 +2930,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const selectedDstRisk = bookingHasDstRisk(displayedBookingSeries, bookingStudent, bookingTeacher);
     const historicalBooking = isPastBooking(displayedBooking);
     return <>
-      <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+      <ViewHeading eyebrow={isTeacherView ? "我的课程" : "课程管理"} title={isTeacherView ? "我的排课" : "排课与时区检查"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
       <section className="panel schedule-shell">
         <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>{displayPreferences.language === "en-AU" ? "Week" : "周视图"}</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => { setScheduleMode("agenda"); setSchedulePage(1); }}>{displayPreferences.language === "en-AU" ? "List" : "日程列表"}</button></div><strong>{weekRangeLabel}</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleDay} onChange={(event) => { setScheduleDay(event.target.value); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule date" : "排课日期筛选"}><option value="all">{displayPreferences.language === "en-AU" ? "All dates" : "全部日期"}</option>{weekDays.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select>{scheduleMode === "week" && <select className="filter-select" value={scheduleDensity} onChange={(event) => updateDisplayPreferences({ density: event.target.value as DisplayPreferences["density"] })} aria-label={displayPreferences.language === "en-AU" ? "Week view density" : "周视图显示密度"}><option value="comfortable">{displayPreferences.language === "en-AU" ? "Comfortable" : "放大显示"}</option><option value="compact">{displayPreferences.language === "en-AU" ? "Compact" : "紧凑显示"}</option></select>}<select className="filter-select" value={scheduleTimezone} onChange={(event) => { updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) }); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule timezone" : "排课显示时区"}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? `Display: ${option.en}` : `显示：${option.zh}`}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule filter" : "排课筛选"}><option value="all">{displayPreferences.language === "en-AU" ? "All lessons" : "全部课程"}</option><option value="pending">{displayPreferences.language === "en-AU" ? "Pending" : "待确认"}</option><option value="trial">{displayPreferences.language === "en-AU" ? "Trials only" : "仅试听"}</option><option value="dst">{displayPreferences.language === "en-AU" ? "DST review" : "夏令时需复核"}</option></select></div></div>
-        <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong><small>系统会按 IANA 时区自动换算；发生相对时差变化时保留课程并要求教务复核，不会静默改时间。</small></span></div>
+        <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong></span></div>
         <div className="master-detail-layout schedule-layout">
           <article className="collection-main schedule-main">
             {scheduleMode === "week" ? (
@@ -3004,9 +3015,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="panel-header"><div><p className="eyebrow">{historicalBooking ? "历史课程 · 只读" : displayedBooking.source ?? "课程预览"}</p><h2>{bookingStudent.name}</h2><small>{displayedBooking.course ?? bookingStudent.course}</small></div><StatusPill tone={historicalBooking ? "blue" : displayedBooking.status === "待确认" ? "amber" : "green"}>{historicalBooking ? "已归档" : displayedBooking.status}</StatusPill></div>
             <TimeLine label={`${displayPreferences.language === "en-AU" ? "Student time" : "学生时间"} · ${timezoneLabel(bookingStudent.timezone, displayPreferences.language)}`} time={formatInstant(selectedInstant, bookingStudent.timezone, displayPreferences)} detail={cleanTimezone(bookingStudent.timezone)} />
             <TimeLine label={`${displayPreferences.language === "en-AU" ? "Teacher time" : "老师时间"} · ${timezoneLabel(bookingTeacher.timezone, displayPreferences.language)}`} time={formatInstant(selectedInstant, bookingTeacher.timezone, displayPreferences)} detail={bookingTeacher.name} />
-            <TimeLine label={displayPreferences.language === "en-AU" ? "Melbourne reference time" : "墨尔本基准时间"} time={formatInstant(selectedInstant, "Australia/Melbourne", displayPreferences)} detail={displayPreferences.language === "en-AU" ? "DST is handled automatically" : "系统按日期自动处理夏令时"} />
+            <TimeLine label={displayPreferences.language === "en-AU" ? "Melbourne reference time" : "墨尔本基准时间"} time={formatInstant(selectedInstant, "Australia/Melbourne", displayPreferences)} detail="Australia/Melbourne" />
             <TimeLine label={`${displayPreferences.language === "en-AU" ? "Viewing" : "当前查看"} · ${timezoneLabel(scheduleTimezone, displayPreferences.language)}`} time={formatInstant(selectedInstant, scheduleTimezone, displayPreferences)} detail={`${displayPreferences.language === "en-AU" ? "Source time" : "来源时段"}：${displayedBooking.sourceTiming ?? (displayPreferences.language === "en-AU" ? "manual entry" : "人工录入")}`} />
-            <div className={`check-list ${selectedDstRisk ? "warning" : ""}`}><span><CircleCheck size={16} /> 课程时段没有检测到重叠</span><span><CircleCheck size={16} /> 已关联学生与老师内部 ID</span>{selectedDstRisk ? <span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span> : <span><CircleCheck size={16} /> 长期课未发现相对时差变化</span>}</div>
+            {selectedDstRisk ? <div className="check-list warning"><span><CircleAlert size={16} /> 长期课未来会发生相对时差变化，需教务复核</span></div> : null}
             {!historicalBooking && displayedBooking.status === "待确认" && <button className="primary-button full" type="button" onClick={() => confirmBookingStatus(displayedBookingSeries, "已确认")}>确认课程</button>}
             {!historicalBooking && <div className="booking-action-grid">
               <button className="secondary-button" type="button" onClick={() => openBookingEditor(displayedBookingSeries)}><Pencil size={15} /> 编辑整个课程系列</button>
@@ -3113,7 +3124,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return (
         <>
           <ViewHeading
-            eyebrow="结构化异常处理"
+            eyebrow="异常管理"
             title="调课、请假、代课与离职"
             copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。"
             actions={
@@ -3181,7 +3192,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="结构化异常处理"
+          eyebrow="异常管理"
           title="调课、请假、代课与离职"
           copy="老师请假或离职时，按日期找出受影响课程，给出可用代课候选，并将每位学生的沟通和交接任务分配到负责人。"
           actions={
@@ -3271,38 +3282,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   />
                 )}
               </div>
-              {visibleOperations.length < 4 && (
-                <div className="operations-queue-insight">
-                  <div>
-                    <span>当前视图</span>
-                    <strong>{visibleOperations.length} 条待处理记录</strong>
-                    <small>切换上方状态标签即可查看其他异常。</small>
-                  </div>
-                  <div>
-                    <span>队列概览</span>
-                    <strong>
-                      {
-                        scopedOperations.filter(
-                          (item) => item.status === "待处理",
-                        ).length
-                      }{" "}
-                      待处理 ·{" "}
-                      {
-                        scopedOperations.filter(
-                          (item) => item.status === "已确认",
-                        ).length
-                      }{" "}
-                      已确认
-                    </strong>
-                    <small>每次确认都会保留在操作审计中。</small>
-                  </div>
-                  <div>
-                    <span>处理顺序</span>
-                    <strong>先确认老师影响，再处理代课与沟通</strong>
-                    <small>请假和离职会自动生成负责人截止任务。</small>
-                  </div>
-                </div>
-              )}
             </article>
             <aside
               className={`record-preview ${mobilePreview === "operation" ? "mobile-detail-open" : ""}`}
@@ -3794,7 +3773,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="教务宝课时证据 + 人工费率表"
+          eyebrow="薪资管理"
           title="课时与薪资"
           copy={`当前显示 ${activePayrollMonth} 薪资。系统保留每位老师的学生明细、课时费、教务宝匹配差异和人工锁定记录。`}
           actions={
@@ -4166,7 +4145,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return (
         <>
           <ViewHeading
-            eyebrow="按学生关系路由 · 发送前确认"
+            eyebrow="消息管理"
             title="消息队列"
             copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
             actions={
@@ -4192,7 +4171,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return (
         <>
           <ViewHeading
-            eyebrow="按学生关系路由 · 发送前确认"
+            eyebrow="消息管理"
             title="消息队列"
             copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
             actions={
@@ -4238,7 +4217,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="按学生关系路由 · 发送前确认"
+          eyebrow="消息管理"
           title="消息队列"
           copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
           actions={
@@ -4434,7 +4413,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="资料索引 · 不依赖文件名猜测"
+          eyebrow="学生资料"
           title="文件中心"
           copy="用类型视图和搜索定位资料；每条文件记录直接关联学生，不需要进入不断变长的文件夹树。"
           actions={!isTeacherView ?
@@ -4566,7 +4545,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renderSync = () => (
     <>
       <ViewHeading
-        eyebrow="Supabase 主数据 · 腾讯文档只读镜像"
+        eyebrow="数据管理"
         title="同步与导入"
         copy="站内新增和修改只写入 Supabase，并实时共享给其他在线成员。腾讯文档当前只读取和留存镜像，不会从本系统回写或删除原文档内容。"
         actions={
@@ -4756,7 +4735,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="运营结果而非单纯运行成功"
+          eyebrow="运营数据"
           title="运营报表"
           copy="先选择负责人再看同一口径指标；生产版还会提供日期范围和团队视图。"
           actions={
@@ -4880,12 +4859,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
   };
 
-  const renderSettings = () => (
+  const renderSettings = () => {
+    const fixedRules = [
+      { label: "家长指定内容", value: FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest === 0 ? "需求当天" : `需求后 ${FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest} 天` },
+      { label: "LP 审核与发送", value: `试听前 N-${FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial}` },
+      { label: "老师备课确认", value: `试听前 N-${FIXED_REMINDER_RULES.preparationDaysBeforeTrial}` },
+      { label: "最低完成底线", value: `试听前 N-${FIXED_REMINDER_RULES.minimumDaysBeforeTrial}` },
+      { label: "排课反馈", value: `需求后 ${FIXED_REMINDER_RULES.schedulingFeedbackHoursAfterRequest} 小时` },
+    ];
+
+    return (
     <>
       <ViewHeading
-        eyebrow="规则应可读、可改、可审计"
+        eyebrow="系统规则"
         title="规则设置"
-        copy="按提醒、数据和集成分区；每项规则都明确当前是否真正生效。"
         actions={
           <button
             className="secondary-button"
@@ -4911,141 +4898,94 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <article className="settings-panel settings-form">
             <div className="settings-intro">
               <div>
-                <p className="eyebrow">强提醒规则</p>
-                <h2>时间节点</h2>
+                <p className="eyebrow">提醒规则</p>
+                <h2>固定时间节点</h2>
               </div>
               <StatusPill tone="amber">多人共享</StatusPill>
             </div>
+            <div className="fixed-rule-grid" aria-label="不可编辑的固定提醒规则">
+              {fixedRules.map((rule) => (
+                <div key={rule.label}>
+                  <span>{rule.label}</span>
+                  <strong>{rule.value}</strong>
+                </div>
+              ))}
+            </div>
             <div className="settings-fields">
               <label>
-                LP 默认提前
-                <input
-                  value={displayedRules.lpDays}
-                  onChange={(event) => {
-                    setRulesDraft({
-                      ...displayedRules,
-                      lpDays: event.target.value,
-                    });
-                    setRulesDraftTouched(true);
-                  }}
-                />
-              </label>
-              <label>
-                课后反馈检查（小时）
-                <input
-                  value={displayedRules.feedbackHours}
-                  onChange={(event) => {
-                    setRulesDraft({
-                      ...displayedRules,
-                      feedbackHours: event.target.value,
-                    });
-                    setRulesDraftTouched(true);
-                  }}
-                />
-              </label>
-              <label>
-                续课预销售提前（天）
-                <input
-                  value={displayedRules.renewalDays}
-                  onChange={(event) => {
-                    setRulesDraft({
-                      ...displayedRules,
-                      renewalDays: event.target.value,
-                    });
-                    setRulesDraftTouched(true);
-                  }}
-                />
-              </label>
-              <label>
-                低课时阈值
-                <input
-                  type="number"
-                  min="1"
+                低课时提醒阈值
+                <select
                   value={displayedRules.lowHours}
                   onChange={(event) => {
+                    if (!rulesDraftTouched) setRulesDraftBaseVersion(rulesShared.version);
                     setRulesDraft({
                       ...displayedRules,
-                      lowHours: event.target.value,
+                      lowHours: event.target.value as Rules["lowHours"],
                     });
                     setRulesDraftTouched(true);
                   }}
-                />
+                >
+                  {RULE_OPTIONS.lowHours.map((value) => <option value={value} key={value}>{value} 节</option>)}
+                </select>
               </label>
               <label>
-                考试提前提醒（天）
-                <input
-                  type="number"
-                  min="1"
+                考试关注窗口
+                <select
                   value={displayedRules.examDays}
                   onChange={(event) => {
+                    if (!rulesDraftTouched) setRulesDraftBaseVersion(rulesShared.version);
                     setRulesDraft({
                       ...displayedRules,
-                      examDays: event.target.value,
+                      examDays: event.target.value as Rules["examDays"],
                     });
                     setRulesDraftTouched(true);
                   }}
-                />
-              </label>
-              <label>
-                逾期升级规则
-                <input
-                  value={displayedRules.escalation}
-                  onChange={(event) => {
-                    setRulesDraft({
-                      ...displayedRules,
-                      escalation: event.target.value,
-                    });
-                    setRulesDraftTouched(true);
-                  }}
-                />
+                >
+                  {RULE_OPTIONS.examDays.map((value) => <option value={value} key={value}>{value} 天</option>)}
+                </select>
               </label>
             </div>
             <button
               className="primary-button settings-save"
               type="button"
-              disabled={!rulesDraftTouched}
+              disabled={!rulesDraftTouched || rulesDraftStale}
               onClick={() => {
-                const numericValues = [
-                  displayedRules.feedbackHours,
-                  displayedRules.renewalDays,
-                  displayedRules.lowHours,
-                  displayedRules.examDays,
-                ].map(Number);
-                if (numericValues.some((value) => !Number.isFinite(value) || value < 1)) {
-                  notify("小时、天数和低课时阈值必须是大于 0 的数字");
-                  return;
-                }
-                const previousRules = rules;
+                if (rulesDraftStale) return;
+                const previousRules = normalizeRules(rules);
                 requestConfirmation({
                   title: "确认更新全局提醒规则",
-                  detail: `LP ${displayedRules.lpDays} · 课后 ${displayedRules.feedbackHours} 小时 · 低课时 ${displayedRules.lowHours} · 考试 ${displayedRules.examDays} 天`,
+                  detail: `低课时 ${displayedRules.lowHours} 节 · 考试关注 ${displayedRules.examDays} 天`,
                   items: [
                     "保存后会影响所有在线教务看到的提醒结果",
-                    `逾期升级：${displayedRules.escalation}`,
+                    "固定时间节点不会被修改",
                     "保存后可在 12 秒内撤销",
                   ],
                   confirmLabel: "保存全局规则",
-                  onConfirm: () => {
-                    setRules(displayedRules);
-                    setRulesDraftTouched(false);
+                  onConfirm: async () => {
+                    const saved = await writeRulesVersion(displayedRules, rulesDraftBaseVersion);
                     addAudit(
                       "保存强提醒规则",
-                      `LP ${displayedRules.lpDays}、课后 ${displayedRules.feedbackHours}h、低课时 ${displayedRules.lowHours}、考试 ${displayedRules.examDays} 天`,
+                      `低课时 ${displayedRules.lowHours} 节、考试关注 ${displayedRules.examDays} 天`,
                       "green",
                     );
                     notify("规则已保存到 Supabase，并同步给其他在线成员", () => {
-                      setRules(previousRules);
-                      setRulesDraft(previousRules);
-                      setRulesDraftTouched(false);
-                      addAudit("撤销强提醒规则更新", "恢复上一个规则版本", "amber");
+                      void writeRulesVersion(previousRules, saved.version)
+                        .then(() => addAudit("撤销强提醒规则更新", "恢复上一个规则版本", "amber"))
+                        .catch((error: unknown) => notify(error instanceof Error ? error.message : "规则撤销失败"));
                     });
                   },
                 });
               }}
             >
               <Check size={17} />
-              {rulesDraftTouched ? "保存规则" : "规则未修改"}
+              {rulesDraftStale ? "规则已被他人更新" : rulesDraftTouched ? "保存规则" : "规则未修改"}
             </button>
+            {rulesDraftStale ? <button className="secondary-button settings-save" type="button" onClick={() => {
+              const latest = normalizeRules(rules);
+              setRulesDraft(latest);
+              setRulesDraftTouched(false);
+              setRulesDraftBaseVersion(rulesShared.version);
+            }}><RefreshCw size={17} /> 载入最新规则</button> : null}
           </article>
         )}
         {settingsTab === "data" && (
@@ -5147,7 +5087,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         )}
       </section>
     </>
-  );
+    );
+  };
 
   const renderAudit = () => {
     const filteredAudit = audit.filter((entry) => {
@@ -5176,7 +5117,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return (
       <>
         <ViewHeading
-          eyebrow="完整操作留痕"
+          eyebrow="审计"
           title="操作审计"
           copy="搜索操作者、动作或关联结果；分页后仍保留统一记录口径。"
           actions={
@@ -5497,19 +5438,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     <Video size={24} />
                     <span>
                       <strong>一对一网上教室</strong>
-                      <small>
-                        {classroomRuntime?.running
-                          ? `${classroomRuntime.participantCount} 人在线 · ${classroomRuntime.moderatorCount} 位老师`
-                          : "老师与学生使用独立权限链接"}
-                      </small>
+                      {classroomRuntime?.running ? <small>{classroomRuntime.participantCount} 人在线 · {classroomRuntime.moderatorCount} 位老师</small> : null}
                     </span>
                   </div>
                   <div className="classroom-auto-room-note">
                     <ShieldCheck size={16} />
-                    <span>
-                      <strong>排课已自动关联网上教室</strong>
-                      <small>第一次进入或复制学生链接时，系统会自动连接课堂服务；无需重复创建。</small>
-                    </span>
+                    <span><strong>已关联网上教室</strong></span>
                   </div>
                   {temporaryClassroomLink?.bookingId === roomBooking.id && (
                     <div className="classroom-share-link">
@@ -5715,18 +5649,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <ViewHeading
           eyebrow="账号权限"
           title="账号与权限"
-          copy="集中查看管理员、运营管理员、教务和老师账号及其权限范围。"
-          actions={
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() =>
-                notify("正式上线时可接 Supabase Auth、强密码与密码重置邮件")
-              }
-            >
-              <UserPlus size={17} /> 新增账号
-            </button>
-          }
         />
         <section className="panel account-admin-shell">
           <div className="account-admin-layout">
@@ -5772,9 +5694,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   >
                     {account.role}
                   </StatusPill>
-                  <span>
-                    受控登录
-                  </span>
+                  <span>姓名登录</span>
                 </button>
               ))}
             </article>
@@ -5790,16 +5710,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <span>
                   <small>角色</small>
                   <strong>{selectedAccount.role}</strong>
-                  <em>演示权限组</em>
                 </span>
                 <span>
                   <small>登录方式</small>
-                  <strong>
-                    受控登录
-                  </strong>
-                  <em>
-                    登录凭证不在页面显示
-                  </em>
+                  <strong>姓名登录</strong>
                 </span>
               </div>
               <div className="detail-section">
@@ -5820,10 +5734,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 >
                   <UserCog size={16} /> 查看此账号视图
                 </button>
-              </div>
-              <div className="form-notice">
-                <CircleAlert size={16} />{" "}
-                正式启用附件前需要独立账号、强密码和可审计的密码重置流程。
               </div>
             </aside>
           </div>
@@ -7563,7 +7473,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>银行名称<input name="bankName" placeholder="可稍后补充" /></label>
           <label>银行账户<input name="bankAccount" placeholder="可稍后补充" /></label>
           <label className="span-2">付款说明<textarea name="paymentNote" rows={3} placeholder="费率规则、线下课程或其他说明" /></label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> 选择现有老师，或填写新老师姓名。新老师会同时加入老师资源表，教学科目和 AVA 可随后补充；新增薪资记录会先标记为“需核对”。</div>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><UserPlus size={16} /> 添加薪资记录</button></footer>
         </form>
       </Dialog>}
@@ -7620,7 +7529,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>原始 AVA 时区<select name="timezone" defaultValue={cleanTimezone(selectedTeacher.availabilityTimezone ?? selectedTeacher.timezone)} disabled>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>开始时间<input name="start" type="time" defaultValue={avaDraft?.slot.start ?? "16:00"} required /></label>
           <label>结束时间<input name="end" type="time" defaultValue={avaDraft?.slot.end ?? "18:00"} required /></label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> 只录入已由老师确认的固定可约时段。保存后会显示在 AVA 日历，并成为排课与代课筛选的依据。</div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 只录入老师已确认的固定时段。</div>
           <footer><button className="secondary-button" type="button" onClick={() => { setAvaDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Clock3 size={16} /> {avaDraft ? "保存修改" : "保存可约时段"}</button></footer>
         </form>
       </Dialog>}
@@ -7712,8 +7621,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   );
 }
 
-function ViewHeading({ eyebrow, title, copy, actions }: { eyebrow: string; title: string; copy?: string; actions: ReactNode }) { return <section className="view-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{copy ? <p className="view-copy">{copy}</p> : null}</div><div className="heading-actions">{actions}</div></section>; }
-function Metric({ tone, icon, value, label, detail, onClick }: { tone: Tone; icon: ReactNode; value: string; label: string; detail: string; onClick?: () => void }) { return <button className={`metric-card ${tone}`} type="button" onClick={onClick}><span className="metric-icon">{icon}</span><span><strong>{value}</strong><b>{label}</b><small>{detail}</small></span><ArrowRight size={17} /></button>; }
+function ViewHeading({ eyebrow, title, actions }: { eyebrow: string; title: string; copy?: string; actions?: ReactNode }) { return <section className="view-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>{actions ? <div className="heading-actions">{actions}</div> : null}</section>; }
+function Metric({ tone, icon, value, label, onClick }: { tone: Tone; icon: ReactNode; value: string; label: string; detail?: string; onClick?: () => void }) { return <button className={`metric-card ${tone}`} type="button" onClick={onClick}><span className="metric-icon">{icon}</span><span><strong>{value}</strong><b>{label}</b></span><ArrowRight size={17} /></button>; }
 function ScheduleList({ bookings, studentById, teacherById, onOpen }: { bookings: Booking[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; onOpen: (booking: Booking) => void }) { if (!bookings.length) return <div className="empty-inline"><CalendarDays size={20} /> 今天没有课程</div>; return <div className="schedule-list">{bookings.slice(0, 6).map((booking) => <button className="schedule-row" type="button" key={`${booking.id}-${booking.date}`} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{booking.start}</strong><small>{booking.date.slice(5).replace("-", "/")}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {booking.kind} · {booking.status}</small></span><ChevronRight size={16} /></button>)}</div>; }
 function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; detail: string; action: () => void }) { return <button className="risk-row" type="button" onClick={action}><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight size={15} /></button>; }
 function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimezone, preferences, view, monthOffset, onView, onMonthOffset, onTeacherChange, onAddAva, onEditAva, onDeleteAva }: { teacher: Teacher; teachers: Teacher[]; bookings: Booking[]; studentById: (id: string) => Student | undefined; targetTimezone: string; preferences: DisplayPreferences; view: "week" | "month"; monthOffset: number; onView: (view: "week" | "month") => void; onMonthOffset: (offset: number) => void; onTeacherChange: (teacherId: string) => void; onAddAva: () => void; onEditAva: (slotIndex: number) => void; onDeleteAva: (slotIndex: number) => void }) {
@@ -7730,11 +7639,11 @@ function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimez
   const renderBookings = (date: string) => teacherBookings.filter((entry) => entry.date === date).map(({ booking, time }) => <p className="ava-booked" key={booking.occurrenceKey}>{english ? "Booked" : "已占用"} {time} · {studentById(booking.studentId)?.name ?? (english ? "Student" : "学生")}</p>);
   const weekdays = english ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
   return <section className="ava-workbench" aria-label={english ? "Teacher availability calendar" : "老师 AVA 日历"}>
-    <header><div><p className="eyebrow">{english ? "Teacher availability · booked times" : "老师 AVA · 已占用时段"}</p><h2>{english ? "Available times" : "可约时间表"}</h2><span>{english ? "Green is available and grey is booked. Times are converted automatically for " : "浅绿色为可约，灰色为已排课；按 "}{timezoneLabel(targetTimezone, preferences.language)}{english ? "." : " 自动换算。"}</span></div><div className="ava-actions"><div className="segmented"><button className={view === "week" ? "active" : ""} type="button" onClick={() => onView("week")}>{english ? "This week" : "本周"}</button><button className={view === "month" && monthOffset === 0 ? "active" : ""} type="button" onClick={() => { onView("month"); onMonthOffset(0); }}>{english ? "This month" : "本月"}</button><button className={view === "month" && monthOffset === 1 ? "active" : ""} type="button" onClick={() => { onView("month"); onMonthOffset(1); }}>{english ? "Next month" : "下月"}</button></div><select className="filter-select" value={teacher.id} onChange={(event) => onTeacherChange(event.target.value)} aria-label={english ? "Teacher availability" : "选择老师查看 AVA"}>{teachers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select><button className="secondary-button" type="button" onClick={onAddAva}><Plus size={16} /> {english ? "Add availability" : "录入 AVA"}</button></div></header>
-    {!teacher.availabilitySlots?.length ? <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>{english ? "This teacher's availability is still unstructured text, so a safe booking calendar cannot be generated." : "这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。"}</strong><span>{teacher.availability || (english ? "No availability received yet" : "尚未收到可用时间")}</span><small>{english ? "Enter confirmed weekday, start, and end times before using availability for booking conflicts or cover-teacher matching." : "录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。"}</small></div></div> : view === "week" ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone, preferences.language)}</span><div>{daySlots.length ? daySlots.map(renderSlot) : <p className="ava-empty-day">{english ? "No available times" : "无可约时段"}</p>}{renderBookings(day.date)}</div></article>; })}</div> : <div className="ava-month"><header><button className="icon-button" type="button" aria-label={english ? "Previous month" : "上一个月"} onClick={() => onMonthOffset(monthOffset - 1)}><ChevronLeft size={16} /></button><strong>{month.label}</strong><button className="icon-button" type="button" aria-label={english ? "Next month" : "下一个月"} onClick={() => onMonthOffset(monthOffset + 1)}><ChevronRight size={16} /></button></header><div className="ava-month-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div><div className="ava-month-grid">{month.days.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article className={day.inMonth ? "" : "outside"} key={day.date}><strong>{day.day}</strong><div>{daySlots.map(renderSlot)}{renderBookings(day.date)}</div></article>; })}</div></div>}
+    <header><div><p className="eyebrow">{english ? "Teacher availability" : "老师 AVA"}</p><h2>{english ? "Available times" : "可约时间表"}</h2><span>{timezoneLabel(targetTimezone, preferences.language)}</span></div><div className="ava-actions"><div className="segmented"><button className={view === "week" ? "active" : ""} type="button" onClick={() => onView("week")}>{english ? "This week" : "本周"}</button><button className={view === "month" && monthOffset === 0 ? "active" : ""} type="button" onClick={() => { onView("month"); onMonthOffset(0); }}>{english ? "This month" : "本月"}</button><button className={view === "month" && monthOffset === 1 ? "active" : ""} type="button" onClick={() => { onView("month"); onMonthOffset(1); }}>{english ? "Next month" : "下月"}</button></div><select className="filter-select" value={teacher.id} onChange={(event) => onTeacherChange(event.target.value)} aria-label={english ? "Teacher availability" : "选择老师查看 AVA"}>{teachers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select><button className="secondary-button" type="button" onClick={onAddAva}><Plus size={16} /> {english ? "Add availability" : "录入 AVA"}</button></div></header>
+    {!teacher.availabilitySlots?.length ? <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>{english ? "Availability needs confirmation" : "AVA 待确认"}</strong><span>{teacher.availability || (english ? "No availability received yet" : "尚未收到可用时间")}</span></div></div> : view === "week" ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone, preferences.language)}</span><div>{daySlots.length ? daySlots.map(renderSlot) : <p className="ava-empty-day">{english ? "No available times" : "无可约时段"}</p>}{renderBookings(day.date)}</div></article>; })}</div> : <div className="ava-month"><header><button className="icon-button" type="button" aria-label={english ? "Previous month" : "上一个月"} onClick={() => onMonthOffset(monthOffset - 1)}><ChevronLeft size={16} /></button><strong>{month.label}</strong><button className="icon-button" type="button" aria-label={english ? "Next month" : "下一个月"} onClick={() => onMonthOffset(monthOffset + 1)}><ChevronRight size={16} /></button></header><div className="ava-month-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div><div className="ava-month-grid">{month.days.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article className={day.inMonth ? "" : "outside"} key={day.date}><strong>{day.day}</strong><div>{daySlots.map(renderSlot)}{renderBookings(day.date)}</div></article>; })}</div></div>}
   </section>;
 }
-function StudentDetail({ student, tasks, bookings, files, teacherById, preferences, mobileOpen, canEditStatus = true, onClose, onRecord, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onRecord: (section: StudentRecordPanelSection) => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
+function StudentDetail({ student, tasks, bookings, files, teacherById, preferences, lowHoursThreshold, mobileOpen, canEditStatus = true, onClose, onRecord, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; lowHoursThreshold: number; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onRecord: (section: StudentRecordPanelSection) => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
   const english = preferences.language === "en-AU";
   const studentTasks = tasks.filter((task) => task.studentId === student.id && task.status !== "done");
   const nextBooking = bookings
@@ -7746,25 +7655,25 @@ function StudentDetail({ student, tasks, bookings, files, teacherById, preferenc
       (left, right) =>
         bookingInstant(left).getTime() - bookingInstant(right).getTime(),
     )[0];
-  const lowHours = isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < 5;
+  const lowHours = isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < lowHoursThreshold;
   return <aside className={`student-detail ${mobileOpen ? "mobile-detail-open" : ""}`}>
     <button className="mobile-preview-close" type="button" aria-label={english ? "Close student details" : "关闭学生详情"} onClick={onClose}><ChevronLeft size={20} /> {english ? "Back to students" : "返回学生列表"}</button>
     <div className="detail-top"><Avatar initials={student.initials} tone={statusTone(student.status)} /><div><p>{student.id}</p><h2>{student.name}</h2><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill></div></div>
-    <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Remaining / contract lessons" : "剩余 / 合约课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "lessons" : "节"}`}</strong><em>{student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? "Threshold: 5 lessons" : "阈值 5 节")}</em></span></div>
-    {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝只读同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong><p>课时与合约数据来自只读镜像；本系统不会回写教务宝。</p></div>}
+    <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Remaining / contract lessons" : "剩余 / 合约课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "lessons" : "节"}`}</strong><em>{student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? `Threshold: ${lowHoursThreshold} lessons` : `阈值 ${lowHoursThreshold} 节`)}</em></span></div>
+    {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong></div>}
     <div className="detail-section"><span>{english ? "Course and teacher" : "课程与老师"}</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
     <div className="detail-section"><span>{english ? "Family contact" : "家长联系"}</span><strong>{student.guardian}</strong>{student.guardianWechat ? <p>{student.guardianWechat}</p> : null}</div>
     <div className="detail-section student-record-entry-grid"><button type="button" onClick={() => onRecord("lp")}><strong>LP / 学校资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Learning Plan" || file.type === "学校资料")).length}</span></button><button type="button" onClick={() => onRecord("report")}><strong>Report 资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Report 资料" || file.type === "成绩单")).length}</span></button><button type="button" onClick={() => onRecord("fu")}><strong>FU</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "FU" || file.type === "续课 FU" || file.type === "课堂反馈")).length}</span></button><button type="button" onClick={() => onRecord("followUp")}><strong>最近跟进</strong><span>{student.followUpHistory?.length ?? (student.followUp ? 1 : 0)}</span></button></div>
     <div className="detail-section split"><button className="inline-link" type="button" onClick={() => onRecord("lessonPackages")}>课包 {student.lessonPackages?.length ?? 0}</button><button className="inline-link" type="button" onClick={() => onRecord("exams")}>考试 {student.exams?.length ?? (student.examDate || student.examSubject ? 1 : 0)}</button></div>
     <div className="detail-section"><span>特殊备注</span><strong>{student.notes ?? "无特殊备注"}</strong></div>
     {canEditStatus && <div className="student-detail-actions"><button className="secondary-button" type="button" onClick={onEdit}><UserCog size={15} /> 编辑档案</button><button className="secondary-button" type="button" onClick={onEvidence}><FilePlus2 size={15} /> 上传沟通/反馈</button></div>}
-    {canEditStatus ? <label className="status-select">{english ? "Student status" : "学生状态"}<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["待确认", "待排课", "试听中", "在读", "待续课", "停课", "非在读", "不活跃"].map((status) => <option value={status} key={status}>{displayTerm(status, preferences.language)}</option>)}</select></label> : <div className="detail-section"><span>{english ? "Student status" : "学生状态"}</span><strong>{displayTerm(student.status, preferences.language)}</strong><p>{english ? "Teacher access is read-only. Contact the operations owner to update this record." : "老师账号只读；如需调整请联系负责教务。"}</p></div>}
+    {canEditStatus ? <label className="status-select">{english ? "Student status" : "学生状态"}<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["待确认", "待排课", "试听中", "在读", "待续课", "停课", "非在读", "不活跃"].map((status) => <option value={status} key={status}>{displayTerm(status, preferences.language)}</option>)}</select></label> : <div className="detail-section"><span>{english ? "Student status" : "学生状态"}</span><strong>{displayTerm(student.status, preferences.language)}</strong></div>}
     <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong><small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small></div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{task.title}</strong><small>{task.due} · {task.owner}</small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div>
     <button className="primary-button full" type="button" onClick={onSchedule}><CalendarPlus size={16} /> {english ? "Schedule a lesson for this student" : "为此学生安排课程"}</button>
   </aside>;
 }
 function TimeLine({ label, time, detail }: { label: string; time: string; detail: string }) { return <div className="booking-line"><span>{label}</span><strong>{time}</strong><small>{detail}</small></div>; }
 function SummaryCard({ icon, tone, title, text }: { icon: ReactNode; tone: Tone; title: string; text: string }) { return <article><span className={`sync-icon ${tone}`}>{icon}</span><span><strong>{title}</strong><small>{text}</small></span></article>; }
-function OwnershipRow({ title, detail, tone, label }: { title: string; detail: string; tone: Tone; label: string }) { return <div className="ownership-row"><span><strong>{title}</strong><small>{detail}</small></span><StatusPill tone={tone}>{label}</StatusPill></div>; }
+function OwnershipRow({ title, tone, label }: { title: string; detail?: string; tone: Tone; label: string }) { return <div className="ownership-row"><strong>{title}</strong><StatusPill tone={tone}>{label}</StatusPill></div>; }
 function ReportCard({ value, label, detail, tone }: { value: string; label: string; detail: string; tone: Tone }) { return <article className={`report-card ${tone}`}><strong>{value}</strong><span>{label}</span><small>{detail}</small></article>; }
 function DataIssue({ title, count, tone }: { title: string; count: string; tone: Tone }) { return <div className="issue-row"><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{count}</small></span></div>; }
