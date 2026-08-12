@@ -38,9 +38,9 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(auth, /DEMO_STAFF_USERS/);
   assert.match(auth, /resolveDemoUser/);
   assert.match(auth, /matchesNixonPassword/);
-  assert.match(auth, /DEMO_ACCOUNT_PASSWORD_HASHES/);
-  assert.match(auth, /process\.env\.NODE_ENV !== "production"/);
-  assert.match(auth, /\^\[a-f\\d\]\{64\}\$/);
+  assert.match(auth, /return identity \?\? null/);
+  assert.doesNotMatch(auth, /DEMO_ACCOUNT_PASSWORD_HASHES/);
+  assert.doesNotMatch(auth, /process\.env\.NODE_ENV !== "production"/);
   assert.doesNotMatch(auth, /DEMO_PASSWORD/);
   assert.doesNotMatch(auth, /"admin"/);
   assert.match(auth, /function safeEquals/);
@@ -332,12 +332,13 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
 });
 
 test("records renewal outcomes, preserves prior contact time and archives FU screenshots securely", async () => {
-  const [client, store, uploadRoute, downloadRoute, migration, css] = await Promise.all([
+  const [client, store, uploadRoute, downloadRoute, migration, pdfMigration, css] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../lib/ops-store.ts"),
     read("../app/api/fu-attachments/route.ts"),
     read("../app/api/fu-attachments/[id]/route.ts"),
     read("../supabase/migrations/20260728_add_student_fu_attachments.sql"),
+    read("../supabase/migrations/20260812220509_allow_pdf_student_fu_attachments.sql"),
     read("../app/globals.css"),
   ]);
 
@@ -368,6 +369,9 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(migration, /student_fu_attachments enable row level security/);
   assert.match(migration, /perform internal\.verify_ops_secret\(p_secret\)/);
   assert.match(migration, /revoke all on table internal\.student_fu_attachments from anon, authenticated/);
+  assert.match(pdfMigration, /application\/pdf/);
+  assert.match(pdfMigration, /octet_length\(decoded\) > 4194304/);
+  assert.match(pdfMigration, /perform internal\.verify_ops_secret\(p_secret\)/);
   assert.match(css, /\.renewal-status-cell/);
   assert.match(css, /\.upload-field/);
 });

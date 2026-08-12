@@ -28,24 +28,6 @@ function normalise(value: string) {
   return value.trim().toLocaleLowerCase();
 }
 
-function accountPasswordHashes() {
-  const configured = process.env.DEMO_ACCOUNT_PASSWORD_HASHES;
-  if (!configured) return {} as Record<string, string>;
-  try {
-    const parsed: unknown = JSON.parse(configured);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {} as Record<string, string>;
-    return Object.fromEntries(
-      Object.entries(parsed).flatMap(([user, hash]) =>
-        typeof hash === "string" && /^[a-f\d]{64}$/i.test(hash)
-          ? [[normalise(user), hash.toLocaleLowerCase()]]
-          : [],
-      ),
-    );
-  } catch {
-    return {} as Record<string, string>;
-  }
-}
-
 export function resolveDemoUser(candidate: unknown): DemoUser | null {
   if (typeof candidate !== "string" || !candidate.trim()) return null;
   if (matchesNixonPassword(candidate)) return DEMO_ADMIN_USER;
@@ -55,12 +37,7 @@ export function resolveDemoUser(candidate: unknown): DemoUser | null {
 
   const normalisedCandidate = normalise(candidate);
   const identity = [...DEMO_STAFF_USERS, ...DEMO_TEACHER_USERS].find((user) => normalise(user) === normalisedCandidate);
-  if (identity && process.env.NODE_ENV !== "production") return identity;
-
-  const configuredIdentity = Object.entries(accountPasswordHashes()).find(([, hash]) => safeEquals(candidateHash, hash))?.[0];
-  return configuredIdentity
-    ? [...DEMO_STAFF_USERS, ...DEMO_TEACHER_USERS].find((user) => normalise(user) === configuredIdentity) ?? null
-    : null;
+  return identity ?? null;
 }
 
 export function demoSessionToken(user: DemoUser) {

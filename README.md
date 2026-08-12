@@ -21,7 +21,7 @@ The login password determines the demo work view:
 - The Admin password opens the global management workspace and can switch into every staff view.
 - The limited Admin password opens a global operations workspace except all payroll data and payroll pages.
 - In local development, a staff member can enter their own name as the demo password and see only their own work view.
-- Production staff and teacher access uses per-account SHA-256 password hashes configured in `DEMO_ACCOUNT_PASSWORD_HASHES`; name-only login is disabled there.
+- Staff and teacher access temporarily uses the account name itself as the password in the internal review environment.
 - Logging in as staff clears any prior Admin session in that browser, including payroll access.
 
 This is intentional for the current internal MVP. It is not the final production authentication model.
@@ -42,7 +42,6 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 
 - `NIXON_PASSWORD_HASH` optional; the internal Admin password hash has a fallback for the current demo
 - `LIMITED_ADMIN_PASSWORD_HASH` optional; the limited Admin password hash has a fallback for the current demo
-- `DEMO_ACCOUNT_PASSWORD_HASHES` required for production staff/teacher login; JSON object mapping account names to unique SHA-256 password hashes
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `OPS_API_SECRET`
