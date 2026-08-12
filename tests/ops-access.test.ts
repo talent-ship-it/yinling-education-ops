@@ -104,6 +104,12 @@ test("teachers receive only their own assigned and booked students", () => {
   assert.deepEqual((visible.find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((item) => item.id), ["STU-ABBY"]);
   assert.deepEqual((visible.find((item) => item.entity === "bookings")?.payload as Array<{ id: string }>).map((item) => item.id), ["BOOK-ABBY"]);
   assert.deepEqual((visible.find((item) => item.entity === "teachers")?.payload as Array<{ id: string }>).map((item) => item.id), ["TEA-HELEN"]);
+  assert.throws(() => mergeScopedPayload({
+    entity: "files",
+    currentPayload: row("files").payload,
+    submittedPayload: [{ id: "FILE-NEW", studentId: "STU-ABBY", title: "Teacher upload" }],
+    context: access,
+  }), OpsAccessError);
 });
 
 test("test teacher can create a classroom booking only for the linked test student", () => {

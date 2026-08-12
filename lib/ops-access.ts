@@ -31,7 +31,7 @@ const TEACHER_READ_ENTITIES = new Set([
 const STAFF_WRITE_ENTITIES = new Set([
   "students", "tasks", "bookings", "lpItems", "operations", "renewals", "messages", "files",
 ]);
-const TEACHER_WRITE_ENTITIES = new Set(["tasks", "bookings", "messages", "files"]);
+const TEACHER_WRITE_ENTITIES = new Set(["tasks", "bookings", "messages"]);
 
 function normalise(value: unknown) {
   return typeof value === "string" ? value.trim().toLocaleLowerCase() : "";

@@ -38,6 +38,9 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(auth, /DEMO_STAFF_USERS/);
   assert.match(auth, /resolveDemoUser/);
   assert.match(auth, /matchesNixonPassword/);
+  assert.match(auth, /DEMO_ACCOUNT_PASSWORD_HASHES/);
+  assert.match(auth, /process\.env\.NODE_ENV !== "production"/);
+  assert.match(auth, /\^\[a-f\\d\]\{64\}\$/);
   assert.doesNotMatch(auth, /DEMO_PASSWORD/);
   assert.doesNotMatch(auth, /"admin"/);
   assert.match(auth, /function safeEquals/);
@@ -138,16 +141,23 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
 });
 
 test("retains core operations workflows and responsive UI", async () => {
-  const [client, css, packageJson, devServer] = await Promise.all([
+  const [client, css, packageJson, devServer, tasks, toDoList] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/globals.css"),
     read("../package.json").then(JSON.parse),
     read("../scripts/dev-fixed-port.mjs"),
+    read("../lib/ops-tasks.ts"),
+    read("../app/to-do-list.tsx"),
   ]);
 
   for (const contract of [
     "scheduleConflict",
-    "createWorkflowTasks",
+    "createLpWorkflow",
+    "generateTrialRequestTasks",
+    "linkTrialRequestTasksToBooking",
+    "reconcileTrialBookingTasks",
+    "closeTasksForBooking",
+    "ToDoList",
     "renderOperations",
     "renderRenewals",
     "renderPayroll",
@@ -159,6 +169,39 @@ test("retains core operations workflows and responsive UI", async () => {
     "bookingHasDstRisk",
     "examReminderStudents",
   ]) assert.match(client, new RegExp(contract));
+
+  for (const field of ["ruleKey", "dueAt", "anchorBookingId"]) {
+    assert.match(tasks, new RegExp(`${field}\\?: string`));
+  }
+  for (const ruleKey of [
+    "trial.parent-follow-up",
+    "trial.scheduling",
+    "trial.lp-review",
+    "trial.prep",
+    "trial.minimum",
+  ]) assert.match(tasks, new RegExp(ruleKey.replace(".", "\\.")));
+  assert.match(tasks, /atLocalHour\(requestedAt, 0, sameDayHour, timeZone\)/);
+  assert.match(tasks, /new Date\(requestedAt\.getTime\(\) \+ 48 \* TASK_SPACING_MS\)/);
+  assert.match(tasks, /atLocalHour\(trialStartsAt, -3, 18, timeZone\)/);
+  assert.match(tasks, /atLocalHour\(trialStartsAt, -2, 18, timeZone\)/);
+  assert.match(tasks, /atLocalHour\(trialStartsAt, -1, 18, timeZone\)/);
+  assert.match(tasks, /export function statusForDueAt/);
+  assert.match(tasks, /export function sortTasksByDueAt/);
+  assert.match(tasks, /export function upsertTaskByRule/);
+  assert.match(tasks, /id: existing\.id/);
+  assert.match(tasks, /export function linkTrialRequestTasksToBooking/);
+  assert.match(tasks, /id: canonicalRequest\.id/);
+  assert.match(tasks, /export function closeTasksForBooking/);
+  assert.match(tasks, /export function restoreTrialRequestTasksToWorkflow/);
+  assert.match(client, /setTasks\(\(current\) => sortTasksByDueAt\(upsertTasksByRule\(current, generated\)\)\)/);
+  assert.match(client, /if \(!isAdminView\) \{\s*notify\("删除排课需要管理员处理"\)/);
+  assert.match(client, /kind !== "代课" && firstTeacherStudentBooking/);
+  assert.match(client, /<ToDoList tasks=\{visibleTasks\}/);
+  assert.match(toDoList, /TO_DO_FILTERS = \["all", "LP", "考试", "续课", "请假代课"\]/);
+  assert.match(toDoList, /title="今日到期"/);
+  assert.match(toDoList, /title="已逾期"/);
+  assert.match(toDoList, /sortTasksByDueAt/);
+  assert.match(toDoList, /\{task\.due\}/);
 
   assert.match(css, /--brand:#75C9C2/);
   assert.match(client, /teacherTotalHours/);
@@ -303,7 +346,11 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(client, /lastContactedAt\?: string/);
   assert.match(client, /renewal\.status === "本次未跟进"/);
   assert.match(client, /lastContactedAt: contacted \? attemptedAt : renewalDraft\.lastContactedAt/);
-  assert.match(client, /student && isActiveStudent\(student\)/);
+  assert.match(client, /if \(!isActiveStudent\(student\)\) return false/);
+  assert.match(client, /mapLessonPackageDepletionEstimates\(packages, projectedOccurrences/);
+  assert.match(client, /normalizeRenewalBusinessStatus\(renewal\.status\)/);
+  assert.match(client, /getLatestStudentFollowUp\(student\?\.followUpHistory \?\? \[\]\)/);
+  assert.match(client, /appendStudentFollowUp\(item\.followUpHistory \?\? \[\], followUp\)/);
   assert.match(client, /addAudit\(\s*"记录续课跟进"/);
   assert.match(client, /fetch\("\/api\/fu-attachments"/);
   assert.match(client, /type: "续课 FU"/);
@@ -323,10 +370,12 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(css, /\.upload-field/);
 });
 
-test("covers the July 28 and 29 scheduling, LP, AVA and student record changes", async () => {
-  const [client, css] = await Promise.all([
+test("covers current scheduling, LP, AVA and student record changes", async () => {
+  const [client, css, lpWorkflows, lpFields] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/globals.css"),
+    read("../lib/lp-workflows.ts"),
+    read("../app/lp-workflow-fields.tsx"),
   ]);
 
   assert.match(client, /repeatCount\?: number/);
@@ -338,13 +387,10 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
   assert.match(client, /const displayedBooking = currentScheduleScope\.find/);
   assert.match(client, /bookingHasDstRisk\(displayedBookingSeries/);
-  assert.match(client, /周期课会整组更新/);
   assert.match(client, /const conflictDate = proposedDates\.find/);
   assert.match(client, /const unavailableDate = proposedDates\.find/);
   assert.match(client, /!teacherAvailableAt\(/);
   assert.match(client, /本轮排课节数/);
-  assert.match(client, /批量更新课程/);
-  assert.match(client, /设为已完成/);
   assert.match(client, /学生请假/);
   assert.match(client, /老师请假/);
   assert.match(client, /启动代课/);
@@ -352,9 +398,34 @@ test("covers the July 28 and 29 scheduling, LP, AVA and student record changes",
   assert.match(client, /!substitution \|\| booking\.studentId === studentId/);
   assert.match(client, /\{!isTeacherView && <>/);
   assert.match(client, /选择可代课老师/);
-  assert.match(client, /setLpStage/);
-  assert.match(client, /retreatLp/);
-  assert.match(client, /试听、二次试听和直报可先不填姓名/);
+  for (const workflowType of [
+    "试听 LP",
+    "老师新 LP",
+    "老师 LP 修改",
+    "换老师试听",
+    "代课 LP",
+    "学生直报（无试听）",
+    "学生报名交接",
+  ]) assert.match(lpWorkflows, new RegExp(workflowType));
+  assert.match(lpWorkflows, /LP_STAGES = \["待资料", "写作中", "待审核", "需修改", "已发老师", "待备课确认", "完成"\]/);
+  assert.match(lpWorkflows, /export function reviseLpWorkflow/);
+  assert.match(lpWorkflows, /export function changeLpStage/);
+  assert.match(lpFields, /export function parseLpWorkflowFormData/);
+  assert.match(lpFields, /export function LpWorkflowFields/);
+  assert.match(lpFields, /export function LpRevisionHistory/);
+  assert.match(client, /<LpWorkflowFields/);
+  assert.match(client, /parsedLp\.fields as unknown as LpFieldValues/);
+  assert.match(client, /const revised = reviseLpWorkflow/);
+  assert.match(client, /const changed = changeLpStage/);
+  assert.match(client, /lpFilter === "revision" \? item\.stage === "需修改"/);
+  assert.match(client, /<LpRevisionHistory/);
+  assert.match(client, /name="guardianWechat"/);
+  assert.match(client, /试听学生请填写家长 \/ 沟通对象或家长微信名其中一项/);
+  assert.match(client, /canAdd=\{!isTeacherView\}/);
+  assert.match(client, /if \(isTeacherView\) \{ notify\("老师账号只能查看学生资料"\); return; \}/);
+  assert.match(client, /openStudentRecord\(visibleSelectedStudent\.id, section\)/);
+  assert.match(client, /直报录入课时/);
+  assert.match(client, /暂未有学生姓名，先按科目创建临时档案/);
   assert.match(client, /if \(!isAdminView\) \{\s*notify\("无姓名临时建档需要管理员处理/);
   assert.match(client, /\{isAdminView && <>/);
   assert.match(client, /姓名待补/);

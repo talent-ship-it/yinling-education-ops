@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { isDemoTeacher } from "@/lib/demo-users";
 import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, putStudentFuAttachment } from "@/lib/ops-store";
@@ -22,6 +23,7 @@ export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
   const actor = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!actor) return noStore({ error: "请先输入访问密码。" }, 401);
+  if (isDemoTeacher(actor)) return noStore({ error: "老师账号只能查看学生资料。" }, 403);
 
   const formData = await request.formData().catch(() => null);
   const studentId = String(formData?.get("studentId") ?? "").trim();

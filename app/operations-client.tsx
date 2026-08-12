@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AlertTriangle,
   ArrowUpDown,
   ArrowRight,
   BookOpen,
@@ -70,6 +69,55 @@ import {
 } from "@/lib/display-preferences";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS, DEMO_TEACHER_USERS, isDemoTeacher } from "@/lib/demo-users";
+import {
+  generateTrialBookingTasks,
+  generateTrialRequestTasks,
+  linkTrialRequestTasksToBooking,
+  closeTasksForBooking,
+  reconcileTrialBookingTasks,
+  refreshTaskStatus,
+  restoreTrialRequestTasksToWorkflow,
+  sortTasksByDueAt,
+  statusForDueAt,
+  upsertTasksByRule,
+  type OpsTask,
+  type TaskCategory,
+  type TaskStatus,
+} from "@/lib/ops-tasks";
+import {
+  LP_STAGES,
+  LP_WORKFLOW_TYPES,
+  changeLpStage,
+  reviseLpWorkflow,
+  type LpFieldValues,
+  type LpRevision,
+  type LpStage,
+  type LpStageAuditEntry,
+  type LpWorkflowType,
+} from "@/lib/lp-workflows";
+import {
+  RENEWAL_STATUS_LABELS,
+  addLessonPackageHours,
+  appendStudentFollowUp,
+  bindSubjectToLessonPackage,
+  buildExamTaskDefinitions,
+  createStudentLessonPackage,
+  estimateExamResultDate,
+  getLatestStudentFollowUp,
+  getLessonPackageBalance,
+  mapLessonPackageDepletionEstimates,
+  normalizeRenewalBusinessStatus,
+  sortStudentExams,
+  type LessonHourLedgerEntry,
+  type RenewalStatus as RenewalBusinessStatus,
+  type StudentExamRecord,
+  type StudentFollowUp,
+  type StudentLessonPackage,
+} from "@/lib/student-records";
+import { LpRevisionHistory, LpWorkflowFields, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
+import { ToDoList, type ToDoFilter } from "@/app/to-do-list";
+import { StudentRecordsPanel, type StudentRecordPanelSection } from "@/app/student-records-panel";
+import { ExamForm, FollowUpForm, LessonPackageForm, parseExamFormData, parseFollowUpFormData, parseLessonPackageFormData } from "@/app/student-record-forms";
 
 type Section =
   | "dashboard"
@@ -91,8 +139,7 @@ type Section =
   | "audit";
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
-type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -106,7 +153,6 @@ function operatorProfile(operator: string): OperatorProfile {
 type StudentStatus = "待确认" | "待排课" | "试听中" | "在读" | "待续课" | "停课" | "非在读" | "不活跃";
 type StudentSegment = "试听" | "已报名";
 type LpNeed = "待确认" | "无需LP" | "试听LP" | "新生LP" | "老生新LP" | "代课LP" | "LP修改";
-type LpWorkflowType = "试听 LP" | "老生新 LP" | "直报 LP" | "二次试听" | "老生 LP 修改" | "代课 LP";
 
 type AvailabilitySlot = {
   day: number;
@@ -124,6 +170,7 @@ type Student = {
   course: string;
   timezone: string;
   guardian: string;
+  guardianWechat?: string;
   teacher: string;
   next: string;
   nextTone: Tone;
@@ -142,6 +189,10 @@ type Student = {
   jwbSyncStatus?: string;
   reportProgress?: string;
   followUp?: string;
+  followUpHistory?: StudentFollowUp[];
+  exams?: StudentExamRecord[];
+  lessonPackages?: StudentLessonPackage[];
+  lessonLedger?: LessonHourLedgerEntry[];
   notes?: string;
   lpNeed?: LpNeed;
   renewalMonth?: string;
@@ -169,20 +220,11 @@ type Teacher = {
   availabilitySlots?: AvailabilitySlot[];
   offlineArea?: string;
   sourceCategories?: string[];
+  newStudentCapacity?: number;
+  capacityAssignments?: string[];
 };
 
-type Task = {
-  id: string;
-  title: string;
-  owner: string;
-  studentId: string;
-  due: string;
-  status: TaskStatus;
-  tone: Tone;
-  category: "试听" | "LP" | "排课" | "课后" | "续课" | "薪资" | "资料";
-  trigger: string;
-  result?: string;
-};
+type Task = OpsTask;
 
 type Booking = {
   id: string;
@@ -202,6 +244,9 @@ type Booking = {
   sourceStudentName?: string;
   sourceTeacherName?: string;
   sourceTiming?: "已结束" | "未开始";
+  requestedAt?: string;
+  packageId?: string;
+  completedAt?: string;
   classroom?: {
     meetingId: string;
     status: "ready" | "running" | "ended";
@@ -239,12 +284,16 @@ type LpItem = {
   studentId: string;
   title: string;
   workflowType?: LpWorkflowType;
-  stage: "待资料" | "写作中" | "待审核" | "已发老师" | "待备课确认" | "完成";
+  stage: LpStage;
   owner: string;
   due: string;
   needsParentFollowUp?: boolean;
   needsTeacherPrep?: boolean;
   publishedDate?: string;
+  fields?: LpFieldValues;
+  revisionNumber?: number;
+    revisions?: LpRevision[];
+  stageAudit?: LpStageAuditEntry[];
 };
 
 type Operation = {
@@ -263,7 +312,7 @@ type Operation = {
   sourceBookingId?: string;
 };
 
-type RenewalStatus = "待跟进" | "已联系" | "已跟进" | "本次未跟进" | "等待家长" | "已确认";
+type RenewalStatus = "已续课" | "未续课-活跃" | "未续课-不活跃" | "未续课-不活跃（已考完）" | "待跟进" | "已联系" | "已跟进" | "本次未跟进" | "等待家长" | "已确认";
 
 type Renewal = {
   id: string;
@@ -271,12 +320,14 @@ type Renewal = {
   remaining: number;
   estimate: string;
   status: RenewalStatus;
+  businessStatus?: RenewalBusinessStatus;
   owner: string;
   lastAttemptAt?: string;
   lastContactedAt?: string;
   followUpNote?: string;
   followUpAttachmentId?: string;
   followUpAttachmentTitle?: string;
+  renewalDateNote?: string;
 };
 
 type PayrollRow = {
@@ -333,7 +384,7 @@ type FileRecord = {
   id: string;
   studentId: string;
   title: string;
-  type: "Learning Plan" | "成绩单" | "课堂反馈" | "续课 FU" | "资料链接" | "其他";
+  type: "Learning Plan" | "学校资料" | "Report 资料" | "成绩单" | "课堂反馈" | "FU" | "续课 FU" | "资料链接" | "其他";
   source: string;
   addedAt: string;
 };
@@ -439,7 +490,7 @@ function navigationFor(language: InterfaceLanguage) {
 }
 
 const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files"]);
-const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom", "files"]);
+const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom"]);
 const noPayrollAdminSectionIds = new Set<Section>(navigationDefinitions.filter((item) => item.id !== "payroll").map((item) => item.id));
 
 const baseStudents: Student[] = [
@@ -543,15 +594,16 @@ const initialMessages: Message[] = [];
 const initialFiles: FileRecord[] = [];
 const initialAudit: AuditEntry[] = [];
 
-const defaultRules: Rules = { lpDays: "N-3", feedbackHours: "24", renewalDays: "8", escalation: "逾期 4 小时后通知主管", lowHours: "5", examDays: "30" };
-const lpStages: LpItem["stage"][] = ["待资料", "写作中", "待审核", "已发老师", "待备课确认", "完成"];
+const defaultRules: Rules = { lpDays: "N-3", feedbackHours: "48", renewalDays: "8", escalation: "逾期 4 小时后通知主管", lowHours: "5", examDays: "30" };
+const lpStages: LpItem["stage"][] = [...LP_STAGES];
 const lpWorkflowOptions: Array<{ id: LpWorkflowType; lpNeed: LpNeed; title: string; detail: string }> = [
   { id: "试听 LP", lpNeed: "试听LP", title: "试听 LP", detail: "试听资料、老师备课、收费与试听后跟进" },
-  { id: "老生新 LP", lpNeed: "老生新LP", title: "老生新 LP", detail: "老生新增课程或新老师的交接" },
-  { id: "直报 LP", lpNeed: "新生LP", title: "学生报名（直报）", detail: "直报学生的课程、频率、来源与交接" },
-  { id: "二次试听", lpNeed: "试听LP", title: "二次试听", detail: "记录重听原因、注意事项与备课要求" },
-  { id: "老生 LP 修改", lpNeed: "LP修改", title: "老生 LP 修改", detail: "课程或课时安排变动后的强提醒" },
+  { id: "老师新 LP", lpNeed: "老生新LP", title: "老师新 LP", detail: "新老师接手课程的资料交接" },
+  { id: "老师 LP 修改", lpNeed: "LP修改", title: "老师 LP 修改", detail: "老师反馈修改后重新审核" },
+  { id: "换老师试听", lpNeed: "试听LP", title: "换老师试听", detail: "更换老师后的试听交接" },
   { id: "代课 LP", lpNeed: "代课LP", title: "代课 LP", detail: "原老师指定内容、资料和新老师交接" },
+  { id: "学生直报（无试听）", lpNeed: "新生LP", title: "学生直报（无试听）", detail: "直报学生的课程与购买课时交接" },
+  { id: "学生报名交接", lpNeed: "新生LP", title: "学生报名交接", detail: "试听后报名的信息交接" },
 ];
 
 function mergeConcurrentPayload<T>(committed: T, local: T, remote: T) {
@@ -675,6 +727,11 @@ function currentLocalDateTimeValue() {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function currentDateTimeValueInTimezone(timezone: string) {
+  const parts = zonedParts(new Date(), cleanTimezone(timezone));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 function formatFollowUpTime(value?: string, preferences = defaultDisplayPreferences()) {
@@ -875,10 +932,15 @@ function bookingOccurrencesWithinRange(booking: Booking, rangeStart: string, ran
   return occurrences;
 }
 
-function taskTiming(due: string, timezone = "Australia/Melbourne", futureTone: Tone = "blue") {
-  const today = isoDateInTimezone(new Date(), timezone);
-  const status: TaskStatus = due < today ? "overdue" : due === today ? "today" : "upcoming";
-  return { due, status, tone: status === "overdue" ? "red" : status === "today" ? "amber" : futureTone };
+function taskTiming(dueDate: string, timezone = "Australia/Melbourne", futureTone: Tone = "blue") {
+  const dueAt = zonedDateTimeToUtc(dueDate, "18:00", timezone);
+  const status = statusForDueAt(dueAt, new Date(), timezone);
+  return {
+    due: `${dueDate} 18:00`,
+    dueAt: dueAt.toISOString(),
+    status,
+    tone: status === "overdue" ? "red" as const : status === "today" ? "amber" as const : futureTone,
+  };
 }
 
 function displayAvaSlotsForDates(teacher: Teacher, targetTimezone: string, dates: string[], preferences = defaultDisplayPreferences()) {
@@ -996,6 +1058,7 @@ function statusTone(status: Student["status"] | TaskStatus | PayrollRow["status"
     overdue: "red", today: "amber", upcoming: "blue", waiting: "purple", done: "green",
     "需核对": "amber", "可审核": "blue", "已锁定": "green",
     "待跟进": "amber", "已联系": "blue", "已跟进": "blue", "本次未跟进": "amber", "等待家长": "purple", "已确认": "green",
+    "已续课": "green", "未续课-活跃": "amber", "未续课-不活跃": "neutral", "未续课-不活跃（已考完）": "neutral",
   };
   return map[status] ?? "neutral";
 }
@@ -1039,8 +1102,8 @@ function Pagination({ page, total, pageSize, onPage }: { page: number; total: nu
   return <footer className="pagination"><span>显示 {start}-{end}，共 {total} 条</span><div><button type="button" aria-label="上一页" disabled={safePage <= 1} onClick={() => onPage(safePage - 1)}><ChevronLeft size={16} /></button><strong>第 {safePage} / {pageCount} 页</strong><button type="button" aria-label="下一页" disabled={safePage >= pageCount} onClick={() => onPage(safePage + 1)}><ChevronRight size={16} /></button></div></footer>;
 }
 
-function EmptyState({ title, detail }: { title: string; detail: string }) {
-  return <div className="collection-empty"><Search size={22} /><strong>{title}</strong><span>{detail}</span></div>;
+function EmptyState({ title, detail }: { title: string; detail?: string }) {
+  return <div className="collection-empty"><Search size={22} /><strong>{title}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
 function AuthStatusScreen({ title, detail }: { title: string; detail: string }) {
@@ -1216,7 +1279,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [selectedStudentId, setSelectedStudentId] = useState(defaults.defaultSelectedStudentId);
   const [selectedTeacherId, setSelectedTeacherId] = useState(defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
-  const [taskFilter, setTaskFilter] = useState<"all" | "mine" | "overdue">("all");
+  const [taskFilter, setTaskFilter] = useState<ToDoFilter>("all");
+  const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [search, setSearch] = useState("");
   const [studentView, setStudentView] = useState("all");
   const [studentOwner, setStudentOwner] = useState("all");
@@ -1225,6 +1289,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [teacherQuery, setTeacherQuery] = useState("");
   const [teacherView, setTeacherView] = useState("available");
   const [teacherSubject, setTeacherSubject] = useState("all");
+  const [teacherDay, setTeacherDay] = useState("all");
   const [teacherPage, setTeacherPage] = useState(1);
   const [scheduleMode, setScheduleMode] = useState<"week" | "agenda">("agenda");
   const [scheduleFilter, setScheduleFilter] = useState("all");
@@ -1247,6 +1312,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [selectedCourseId, setSelectedCourseId] = useState(defaults.defaultCourses[0]?.id ?? "");
   const [lpMode, setLpMode] = useState<"board" | "table">("board");
   const [lpFilter, setLpFilter] = useState("active");
+  const [lpDraftType, setLpDraftType] = useState<LpWorkflowType>(LP_WORKFLOW_TYPES[0]);
+  const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
   const [avaView, setAvaView] = useState<"week" | "month">("week");
   const [avaMonthOffset, setAvaMonthOffset] = useState(0);
   const [avaDraft, setAvaDraft] = useState<{ teacherId: string; slotIndex: number; slot: AvailabilitySlot } | null>(null);
@@ -1255,6 +1322,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [renewalFilter, setRenewalFilter] = useState("attention");
   const [renewalPage, setRenewalPage] = useState(1);
   const [renewalDraft, setRenewalDraft] = useState<Renewal | null>(null);
+  const [studentRecordKind, setStudentRecordKind] = useState<StudentRecordPanelSection>("lp");
+  const [teacherCapacityDraft, setTeacherCapacityDraft] = useState<Teacher | null>(null);
   const [renewalUploadBusy, setRenewalUploadBusy] = useState(false);
   const [evidenceUploadBusy, setEvidenceUploadBusy] = useState(false);
   const [payrollFilter, setPayrollFilter] = useState("all");
@@ -1309,6 +1378,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       setDisplayPreferencesReady(true);
     }
   }, [sessionOperator]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setTaskRefreshKey(new Date().getTime()), 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!displayPreferencesReady || displayPreferencesOwner !== sessionOperator) return;
@@ -1378,7 +1452,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     ? { ...selectedBookingSeries, date: selectedBookingDate }
     : selectedBookingSeries;
   const selectedOperationState = scopedOperations.find((operation) => operation.id === selectedOperationId);
-  const activeLowHourStudents = useMemo(() => scopedStudents.filter((student) => isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < Number(rules.lowHours || 5)), [scopedStudents, rules.lowHours]);
   const examReminderStudents = useMemo(() => {
     const now = new Date();
     const threshold = Number(rules.examDays || 30);
@@ -1461,7 +1534,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === "done") return;
     const before = { ...task };
-    setTasks((current) => current.map((item) => item.id === taskId ? { ...item, status: "done", tone: "green", due: "已完成", result: "已由当前操作员确认完成" } : item));
+    setTasks((current) => current.map((item) => item.id === taskId ? { ...item, status: "done", tone: "green", closedAt: new Date().toISOString(), result: "已由当前操作员确认完成" } : item));
     addAudit("完成强提醒任务", `${task.title} · ${studentById(task.studentId)?.name ?? "未关联学生"}`, "green");
     notify("已完成并写入操作记录", () => {
       setTasks((current) => current.map((item) => item.id === taskId ? before : item));
@@ -1470,11 +1543,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const visibleTasks = useMemo(() => {
-    const filtered = scopedTasks.filter((task) => task.status !== "done");
-    if (taskFilter === "overdue") return filtered.filter((task) => task.status === "overdue");
-    if (taskFilter === "mine") return filtered.filter((task) => task.owner === currentOperator || scopedStudentIds.has(task.studentId));
-    return filtered;
-  }, [currentOperator, scopedStudentIds, scopedTasks, taskFilter]);
+    const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
+    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now)).filter((task) => task.status !== "done"));
+  }, [scopedTasks, taskRefreshKey]);
 
   const switchOperator = (operator: string) => {
     const teacherView = isDemoTeacher(operator);
@@ -1483,7 +1554,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
     const allowedStudents = adminScope ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
     setCurrentOperator(operator);
-    setTaskFilter(adminScope ? "all" : "mine");
+    setTaskFilter("all");
     setStudentView(adminScope || teacherView ? "all" : "mine");
     setStudentOwner("all");
     setStudentPage(1);
@@ -1693,6 +1764,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const filteredTeachers = recordTeachers.filter((teacher) => {
     const matchesSearch = `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")} ${teacher.subjectDetail ?? ""} ${teacher.location ?? ""} ${teacher.timezone}`.toLowerCase().includes(teacherQuery.trim().toLowerCase());
     if (!matchesSearch || (teacherSubject !== "all" && !teacher.subjects.includes(teacherSubject))) return false;
+    if (teacherDay !== "all" && !(teacher.availabilitySlots ?? []).some((slot) => slot.day === Number(teacherDay))) return false;
     if (teacherView === "available") return teacher.acceptsStudents;
     if (teacherView === "capacity") return teacher.load < teacher.capacity * 0.8;
     if (teacherView === "matched") return teacherMatch(teacher) >= 85;
@@ -1728,6 +1800,27 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const openStudentPreview = (studentId: string) => {
     setSelectedStudentId(studentId);
     setMobilePreview("student");
+  };
+
+  const openStudentRecord = (studentId: string, section: StudentRecordPanelSection) => {
+    setSelectedStudentId(studentId);
+    setStudentRecordKind(section);
+    setMobilePreview(null);
+    setModal("studentRecords");
+  };
+
+  const addStudentRecord = (section: StudentRecordPanelSection) => {
+    if (isTeacherView) {
+      notify("老师账号只能查看学生资料");
+      return;
+    }
+    setStudentRecordKind(section);
+    if (section === "report") setModal("file");
+    else if (section === "fu") setModal("studentEvidence");
+    else if (section === "followUp") setModal("studentFollowUp");
+    else if (section === "lessonPackages") setModal("lessonPackage");
+    else if (section === "exams") setModal("exam");
+    else setModal("file");
   };
 
   const navigateMobile = (section: Section) => {
@@ -1776,55 +1869,66 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }).slice(0, 5);
   };
 
-  const createLpWorkflow = (studentId: string, workflowType: LpWorkflowType, needsParentFollowUp: boolean, needsTeacherPrep: boolean, studentOverride?: Student) => {
+  const createLpWorkflow = (studentId: string, workflowType: LpWorkflowType, fields: LpFieldValues, studentOverride?: Student) => {
     const student = studentOverride ?? studentById(studentId);
     if (!student) return false;
     const option = lpWorkflowOptions.find((item) => item.id === workflowType) ?? lpWorkflowOptions[0];
+    const createdAt = new Date();
+    const dueAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
+    const responsibleOperations = typeof fields.responsibleOperations === "string" ? fields.responsibleOperations : student.owner;
+    const needsParentFollowUp = fields.specifiedContentStatus === "需要跟进";
+    const needsTeacherPrep = fields.preparationFollowUp === "是";
+    const workflowId = id("LP");
     const item: LpItem = {
-      id: id("LP"),
+      id: workflowId,
       studentId,
       title: `${option.title} · ${student.name}`,
       workflowType,
       stage: "待资料",
-      owner: student.owner,
-      due: workflowType === "老生 LP 修改" ? "发布当天" : workflowType === "试听 LP" || workflowType === "二次试听" ? "试听前 N-3" : "发布后 24 小时",
+      owner: responsibleOperations,
+      due: formatInstant(dueAt, "Australia/Melbourne", displayPreferences),
       needsParentFollowUp,
       needsTeacherPrep,
-      publishedDate: workflowType === "老生 LP 修改" ? isoDateInTimezone(new Date(), "Australia/Melbourne") : undefined,
+      publishedDate: workflowType === "老师 LP 修改" ? isoDateInTimezone(createdAt, "Australia/Melbourne") : undefined,
+      fields,
+      revisionNumber: 1,
+      revisions: [{
+        id: id("LPR"),
+        workflowId,
+        number: 1,
+        changedAt: createdAt.toISOString(),
+        changedBy: operatorLabel(sessionOperator),
+        note: "创建 LP",
+        before: {},
+        after: fields,
+      }],
+      stageAudit: [],
     };
     const generated: Task[] = [
-      { id: id("TSK"), title: `${option.title}：核对交接信息`, owner: student.owner, studentId, due: "发布后立即", status: "today", tone: "blue", category: "LP", trigger: `${option.title} 创建后自动生成` },
+      { id: id("TSK"), title: `${option.title}：核对交接信息`, owner: responsibleOperations, studentId, due: formatInstant(dueAt, "Australia/Melbourne", displayPreferences), dueAt: dueAt.toISOString(), status: statusForDueAt(dueAt, createdAt), tone: "blue", category: "LP", trigger: `${option.title} 创建后自动生成`, ruleKey: "lp.handover", anchorBookingId: item.id },
     ];
-    if (workflowType === "老生 LP 修改") generated.push({ id: id("TSK"), title: "确认 LP 修改已发布", owner: student.owner, studentId, due: "发布当天", status: "today", tone: "red", category: "LP", trigger: "老生 LP 修改强提醒" });
-    if (needsParentFollowUp) generated.push(
-      { id: id("TSK"), title: "跟进家长指定内容", owner: student.owner, studentId, due: "发布后立即", status: "today", tone: "red", category: "资料", trigger: `${option.title}：需要跟进家长指定内容` },
-      { id: id("TSK"), title: "确认家长在 48 小时内完成指定资料/试卷", owner: student.owner, studentId, due: "发布后 48 小时", status: "upcoming", tone: "amber", category: "资料", trigger: `${option.title}：家长指定内容时限` },
-    );
-    if (needsTeacherPrep) generated.push({ id: id("TSK"), title: "确认老师备课内容与资料", owner: student.owner, studentId, due: "课前 N-1", status: "upcoming", tone: "amber", category: "LP", trigger: `${option.title}：需要跟进老师备课` });
-    if (workflowType === "试听 LP" || workflowType === "二次试听") {
-      generated.push(
-        { id: id("TSK"), title: "最迟 24 小时内完成试听排课", owner: student.owner, studentId, due: "发布后 24 小时", status: "today", tone: "red", category: "排课", trigger: `${option.title} 排课时限` },
-        { id: id("TSK"), title: "将 LP 发审核群并发给老师", owner: student.owner, studentId, due: "试听前 N-2", status: "upcoming", tone: "amber", category: "LP", trigger: `${option.title} 课前资料交接` },
-        { id: id("TSK"), title: "试听收费确认", owner: student.planner ?? "Tara", studentId, due: "试听前 N-3", status: "upcoming", tone: "blue", category: "试听", trigger: `${option.title} 收费提醒` },
-        { id: id("TSK"), title: "试听当天课后跟进", owner: student.planner ?? "Tara", studentId, due: "试听当天（墨尔本时间）", status: "waiting", tone: "purple", category: "试听", trigger: `${option.title} 课后跟进` },
-      );
+    if (workflowType === "试听 LP" || workflowType === "换老师试听") {
+      generated.push(...generateTrialRequestTasks({
+        anchorBookingId: item.id,
+        studentId,
+        owner: responsibleOperations,
+        requestedAt: createdAt,
+        now: createdAt,
+      }));
+    }
+    const alreadyHasParentRequestTask = workflowType === "试听 LP" || workflowType === "换老师试听";
+    if (fields.specifiedContentStatus === "需要跟进" && !alreadyHasParentRequestTask) {
+      const contentDueAt = zonedDateTimeToUtc(isoDateInTimezone(createdAt, "Australia/Melbourne"), "18:00", "Australia/Melbourne");
+      generated.push({ id: id("TSK"), title: "跟进指定内容", owner: responsibleOperations, studentId, due: formatInstant(contentDueAt, "Australia/Melbourne", displayPreferences), dueAt: contentDueAt.toISOString(), status: statusForDueAt(contentDueAt, createdAt), tone: "red", category: "LP", trigger: `${option.title} 指定内容需要跟进`, ruleKey: "lp.specified-content", anchorBookingId: item.id });
+    }
+    if (fields.preparationFollowUp === "是") {
+      generated.push({ id: id("TSK"), title: "跟进老师备课", owner: responsibleOperations, studentId, due: formatInstant(dueAt, "Australia/Melbourne", displayPreferences), dueAt: dueAt.toISOString(), status: statusForDueAt(dueAt, createdAt), tone: "amber", category: "LP", trigger: `${option.title} 需要跟进备课`, ruleKey: "lp.preparation-follow-up", anchorBookingId: item.id });
     }
     setLpItems((current) => [item, ...current]);
-    setTasks((current) => [...generated, ...current]);
+    setTasks((current) => sortTasksByDueAt(upsertTasksByRule(current, generated)));
     setStudents((current) => current.map((entry) => entry.id === studentId ? { ...entry, lpNeed: option.lpNeed, next: `${option.title} 已创建`, nextTone: "amber" } : entry));
     addAudit("创建 LP 工作流", `${student.name} · ${option.title} · ${generated.length} 项强提醒`, "green");
     return true;
-  };
-
-  const createWorkflowTasks = (studentId: string, isTrial: boolean) => {
-    const prefix = isTrial ? "试听" : "新课程";
-    const generated: Task[] = [
-      { id: id("TSK"), title: "确认 LP 资料与目标", owner: studentById(studentId)?.owner ?? "待分配", studentId, due: "开课前 N-3", status: "upcoming", tone: "blue", category: "LP", trigger: `${prefix}排课后自动生成` },
-      { id: id("TSK"), title: "确认收费、资料与老师备课", owner: studentById(studentId)?.owner ?? "待分配", studentId, due: "开课前 N-2", status: "upcoming", tone: "amber", category: "试听", trigger: `${prefix}排课后自动生成` },
-      { id: id("TSK"), title: "课后反馈与作业检查", owner: studentById(studentId)?.owner ?? "待分配", studentId, due: "课后 24 小时", status: "waiting", tone: "purple", category: "课后", trigger: `${prefix}排课后自动生成` },
-    ];
-    setTasks((current) => [...generated, ...current]);
-    return generated;
   };
 
   const assignTeacher = (teacher: Teacher) => {
@@ -1879,6 +1983,32 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
   };
 
+  const submitTeacherCapacity = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!teacherCapacityDraft) return;
+    if (!isAdminView) {
+      notify("可接新生数量需要管理员调整");
+      return;
+    }
+    const data = new FormData(event.currentTarget);
+    const capacity = Number(data.get("newStudentCapacity"));
+    if (!Number.isSafeInteger(capacity) || capacity < 0) {
+      notify("可接新生数量必须是 0 或正整数");
+      return;
+    }
+    const previous = teacherCapacityDraft.newStudentCapacity;
+    setTeachers((current) => current.map((teacher) => teacher.id === teacherCapacityDraft.id ? {
+      ...teacher,
+      newStudentCapacity: capacity,
+      acceptsStudents: capacity > 0 ? teacher.acceptsStudents : false,
+      availabilityStatus: capacity > 0 ? teacher.availabilityStatus : "暂停接新",
+    } : teacher));
+    addAudit("调整可接新生数量", `${teacherCapacityDraft.name}：${previous ?? "待录入"} → ${capacity}`, capacity === 0 ? "amber" : "blue");
+    setTeacherCapacityDraft(null);
+    setModal(null);
+    notify("可接新生数量已保存");
+  };
+
   const toggleStudentSelection = (studentId: string) => {
     setSelectedStudentIds((current) => current.includes(studentId) ? current.filter((idValue) => idValue !== studentId) : [...current, studentId]);
   };
@@ -1921,10 +2051,36 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       items: stage === "完成" ? ["完成后会离开进行中队列", "相关提醒不会被自动删除"] : undefined,
       confirmLabel: `调整为 ${stage}`,
       onConfirm: () => {
-        setLpItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, stage } : entry));
+        const changedAt = new Date().toISOString();
+        setLpItems((current) => current.map((entry) => {
+          if (entry.id !== item.id) return entry;
+          const changed = changeLpStage({
+            id: entry.id,
+            type: entry.workflowType ?? "试听 LP",
+            stage: entry.stage,
+            fields: entry.fields ?? {},
+            revisionNumber: entry.revisionNumber ?? 1,
+            revisions: entry.revisions ?? [],
+            audit: entry.stageAudit ?? [],
+          }, stage, { id: id("LPA"), at: changedAt, actor: operatorLabel(sessionOperator) });
+          return { ...entry, stage: changed.stage, stageAudit: [...changed.audit] };
+        }));
         addAudit("调整 LP 阶段", `${item.title}：${previousStage} → ${stage}`, stage === "完成" ? "green" : "blue");
         notify(`LP 已调整到「${stage}」`, () => {
-          setLpItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, stage: previousStage } : entry));
+          const revertedAt = new Date().toISOString();
+          setLpItems((current) => current.map((entry) => {
+            if (entry.id !== item.id || entry.stage !== stage) return entry;
+            const reverted = changeLpStage({
+              id: entry.id,
+              type: entry.workflowType ?? "试听 LP",
+              stage: entry.stage,
+              fields: entry.fields ?? {},
+              revisionNumber: entry.revisionNumber ?? 1,
+              revisions: entry.revisions ?? [],
+              audit: entry.stageAudit ?? [],
+            }, previousStage, { id: id("LPA"), at: revertedAt, actor: operatorLabel(sessionOperator) });
+            return { ...entry, stage: reverted.stage, stageAudit: [...reverted.audit] };
+          }));
           addAudit("撤销 LP 阶段调整", `${item.title}：${stage} → ${previousStage}`, "amber");
         });
       },
@@ -1948,7 +2104,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const openNewBooking = (studentId?: string, teacherId?: string) => {
     setBookingDraft(null);
-    setBookingPrefillStudentId(studentId ?? null);
+    setBookingPrefillStudentId(studentId ?? selectedStudent.id);
     setBookingPrefillTeacherId(teacherId ?? null);
     setModal("booking");
   };
@@ -1974,17 +2130,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const bulkUpdateBookingStatus = (status: Booking["status"]) => {
     if (!selectedBookingIds.length) return;
+    if (status === "已完成") {
+      notify("完成课程请按具体课次处理，不能整组完成周期课");
+      return;
+    }
     const targetIds = [...selectedBookingIds];
     const before = bookings.filter((booking) => targetIds.includes(booking.id)).map((booking) => ({ id: booking.id, status: booking.status }));
     requestConfirmation({
       title: "确认批量更新课程系列",
       detail: `${targetIds.length} 个课程系列将统一改为「${status}」。周期课会整组更新。`,
-      items: status === "已完成" ? ["完成状态会影响课时与薪资核对", "请确认不是只完成单次课程"] : undefined,
       confirmLabel: `整组设为${status}`,
-      tone: status === "已完成" ? "danger" : "primary",
+      tone: "primary",
       onConfirm: () => {
         setBookings((current) => current.map((booking) => targetIds.includes(booking.id) ? { ...booking, status } : booking));
-        addAudit("批量更新课程", `${targetIds.length} 个课程系列 → ${status}`, status === "已完成" ? "green" : "blue");
+        addAudit("批量更新课程", `${targetIds.length} 个课程系列 → ${status}`, "blue");
         setSelectedBookingIds([]);
         notify(`已更新 ${targetIds.length} 个课程系列`, () => {
           const previous = new Map(before.map((entry) => [entry.id, entry.status]));
@@ -1997,12 +2156,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const confirmBookingStatus = (booking: Booking, status: Booking["status"]) => {
     if (booking.status === status) return;
+    if (status === "已完成" && booking.recurring) {
+      notify("周期课需要按具体课次完成，不能整组标记完成");
+      return;
+    }
     const previousStatus = booking.status;
     const student = studentById(booking.studentId);
     requestConfirmation({
       title: status === "已完成" ? "确认课程已完成" : "确认课程状态",
       detail: `${student?.name ?? booking.studentId} · ${booking.date} ${booking.start} 将从「${previousStatus}」调整为「${status}」。`,
-      items: status === "已完成" ? ["完成状态会进入课时与薪资核对", "周期课这里只更新整个课程系列，请先确认范围"] : ["不会修改上课时间或在线教室链接"],
+      items: status === "已完成" ? ["完成状态会进入课时与薪资核对", "本次只更新课程状态，不会自动扣课时或写入薪资"] : ["不会修改上课时间或在线教室链接"],
       confirmLabel: `调整为 ${status}`,
       tone: status === "已完成" ? "danger" : "primary",
       onConfirm: () => {
@@ -2011,6 +2174,53 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify("课程状态已更新", () => {
           setBookings((current) => current.map((entry) => entry.id === booking.id ? { ...entry, status: previousStatus } : entry));
           addAudit("撤销课程状态更新", `${student?.name ?? booking.studentId}：${status} → ${previousStatus}`, "amber");
+        });
+      },
+    });
+  };
+
+  const deleteBookingSeries = (booking: Booking) => {
+    if (!isAdminView) {
+      notify("删除排课需要管理员处理");
+      return;
+    }
+    const student = studentById(booking.studentId);
+    const teacher = teacherById(booking.teacherId);
+    const previousTasks = tasks.filter((task) => task.anchorBookingId === booking.id);
+    const assignedThroughCapacity = Boolean(teacher?.capacityAssignments?.includes(booking.studentId));
+    const otherTeacherStudentBooking = bookings.some((entry) => entry.id !== booking.id && entry.teacherId === booking.teacherId && entry.studentId === booking.studentId);
+    requestConfirmation({
+      title: booking.recurring ? "确认删除整个课程系列" : "确认删除课程",
+      detail: `${student?.name ?? booking.studentId} · ${booking.date} ${booking.start}`,
+      items: booking.recurring ? ["整个周期课程系列都会删除", "已完成的试听提醒会保留，未完成提醒会关闭"] : ["未完成的试听提醒会同时关闭"],
+      confirmLabel: booking.recurring ? "删除整个系列" : "删除课程",
+      tone: "danger",
+      onConfirm: () => {
+        setBookings((current) => current.filter((entry) => entry.id !== booking.id));
+        if (booking.kind === "试听") {
+          setTasks((current) => closeTasksForBooking(current, booking.id, new Date(), "试听排课已删除"));
+        }
+        if (teacher && assignedThroughCapacity && !otherTeacherStudentBooking) {
+          setTeachers((current) => current.map((entry) => entry.id === teacher.id ? {
+            ...entry,
+            newStudentCapacity: entry.newStudentCapacity === undefined ? undefined : entry.newStudentCapacity + 1,
+            capacityAssignments: (entry.capacityAssignments ?? []).filter((studentId) => studentId !== booking.studentId),
+          } : entry));
+        }
+        addAudit("删除排课", `${student?.name ?? booking.studentId} · ${booking.recurring ? "整个系列" : "单次课程"}`, "amber");
+        setSelectedBookingId(bookings.find((entry) => entry.id !== booking.id)?.id ?? "");
+        setSelectedBookingDate(null);
+        setSelectedBookingDateId(null);
+        notify("排课已删除", () => {
+          setBookings((current) => current.some((entry) => entry.id === booking.id) ? current : [booking, ...current]);
+          if (previousTasks.length) setTasks((current) => sortTasksByDueAt([
+            ...current.filter((task) => task.anchorBookingId !== booking.id),
+            ...previousTasks,
+          ]));
+          if (teacher && assignedThroughCapacity && !otherTeacherStudentBooking) {
+            setTeachers((current) => current.map((entry) => entry.id === teacher.id ? teacher : entry));
+          }
+          addAudit("撤销删除排课", `${student?.name ?? booking.studentId} · 已恢复`, "amber");
         });
       },
     });
@@ -2144,9 +2354,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const importedTeachers = (payload.teachers ?? []).filter((teacher) => teacher?.id && teacher?.name);
       if (!importedStudents.length || !importedTeachers.length) throw new Error("missing-records");
       const replaceExisting = payload.meta?.replaceExisting === true;
-      const previousStudents = students;
-      const previousTeachers = teachers;
-      const previousSnapshot = dataSnapshot;
       requestConfirmation({
         title: replaceExisting ? "确认覆盖导入共享资料" : "确认合并导入共享资料",
         detail: `${file.name} · ${importedStudents.length} 位学生、${importedTeachers.length} 位老师`,
@@ -2155,7 +2362,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             ? "同类资料将按导入包重新建立，请先确认这是完整资料包"
             : "相同内部 ID 会以导入包内容更新，其余资料保留",
           "保存后其他在线用户也会看到变更",
-          "导入完成后可在 12 秒内撤销",
+          "导入前会再次确认范围",
         ],
         confirmLabel: replaceExisting ? "确认覆盖导入" : "确认合并导入",
         tone: replaceExisting ? "danger" : "primary",
@@ -2175,12 +2382,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           addAudit("导入真实资料快照", `${importedStudents.length} 位学生、${importedTeachers.length} 位老师；已写入共享数据库`, "green");
           setStudentPage(1);
           setTeacherPage(1);
-          notify(`已导入并共享 ${importedStudents.length} 位学生和 ${importedTeachers.length} 位老师`, () => {
-            setStudents(previousStudents);
-            setTeachers(previousTeachers);
-            setDataSnapshot(previousSnapshot);
-            addAudit("撤销资料快照导入", file.name, "amber");
-          });
+          notify(`已导入并共享 ${importedStudents.length} 位学生和 ${importedTeachers.length} 位老师`);
         },
       });
     } catch {
@@ -2448,7 +2650,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     requestConfirmation({
       title: "确认结束在线课堂",
       detail: `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.date} ${booking.start}`,
-      items: ["所有在线参与者会立即离开", "排课会自动标记为已完成", "录播处理完成后才会出现回放"],
+      items: ["所有在线参与者会立即离开", "排课状态会更新为已完成", "课时与薪资仍需人工核对", "录播处理完成后才会出现回放"],
       confirmLabel: "结束课堂并结课",
       tone: "danger",
       onConfirm: async () => {
@@ -2458,7 +2660,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           persistClassroom(booking.id, String(result.meetingId || booking.classroom?.meetingId || ""), "ended");
           setClassroomRuntime((current) => current ? { ...current, running: false, participantCount: 0, moderatorCount: 0 } : current);
           addAudit("结束在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
-          notify("课堂已结束，排课已自动结课；录播处理完成后会显示回放");
+          notify("课堂已结束并更新课程状态；课时和薪资仍需人工核对");
         } catch (error) {
           notify(error instanceof Error ? error.message : "在线教室结束失败");
         } finally {
@@ -2536,7 +2738,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderDashboard = () => {
     if (isTeacherView) return renderTeacherDashboard();
-    const operatorTasks = scopedTasks;
     const operatorStudents = scopedStudents;
     const operatorStudentIds = new Set(operatorStudents.map((student) => student.id));
     const operatorBookings = currentOperator === "Nixon" ? bookings : bookings.filter((booking) => operatorStudentIds.has(booking.studentId));
@@ -2544,38 +2745,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const operatorTodayBookings = operatorBookings
       .flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate(todayDate, -1), shiftIsoDate(todayDate, 1)))
       .filter((booking) => isoDateInTimezone(bookingInstant(booking), "Australia/Melbourne") === todayDate);
-    const operatorLowHourStudents = activeLowHourStudents.filter((student) => operatorStudentIds.has(student.id));
     const operatorExamStudents = examReminderStudents.filter((student) => operatorStudentIds.has(student.id));
     const operatorDstBookings = dstRiskBookings.filter((booking) => operatorStudentIds.has(booking.studentId));
-    const overdue = operatorTasks.filter((task) => task.status === "overdue").length;
-    const today = operatorTasks.filter((task) => task.status === "today").length;
-    const lowHours = operatorLowHourStudents.length;
     const nearestExam = operatorExamStudents[0];
-    const firstLowHours = operatorLowHourStudents[0];
     const pendingAva = recordTeachers.filter((teacher) => (teacher.availabilityStatus ?? "待确认") === "待确认").length;
     const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date());
     return <>
-      <ViewHeading eyebrow={todayLabel} title="今天先处理什么" copy={`${currentOperator === "Nixon" ? "全局管理视图" : `${currentOperator} 的个人工作视图`} · 所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：${dataSnapshot.label}。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
+      <ViewHeading eyebrow={todayLabel} title="To Do List" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="command-strip" aria-label="快速工作流">
-        <button type="button" onClick={() => openNewBooking()}><CalendarPlus size={18} /><span><strong>安排课程</strong><small>检查时区、老师与学生冲突</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setActive("lp")}><BookOpen size={18} /><span><strong>处理 LP</strong><small>审核、发送与老师备课确认</small></span><ChevronRight size={16} /></button>
-        <button type="button" onClick={() => setModal("operation")}><RefreshCw size={18} /><span><strong>记录异常</strong><small>调课、请假、代课或换老师</small></span><ChevronRight size={16} /></button>
-        {canViewPayroll && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong><small>先处理异常，再人工锁定</small></span><ChevronRight size={16} /></button>}
-      </section>
-      <section className="metric-grid" aria-label="今日工作概览">
-        <Metric tone="blue" icon={<ListTodo size={21} />} value={visibleTasks.length.toString()} label="待处理" detail={`今天到期 ${today} 项`} onClick={() => { setTaskFilter("all"); }} />
-        <Metric tone="red" icon={<AlertTriangle size={21} />} value={overdue.toString()} label="已逾期" detail="需要立即处理" onClick={() => { setTaskFilter("overdue"); }} />
-        <Metric tone="amber" icon={<Clock3 size={21} />} value={lowHours.toString()} label="低于 5 课时" detail="只统计在读/待续课" onClick={() => setActive("renewals")} />
-        <Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${Math.round((operatorTasks.filter((task) => task.status === "done").length / Math.max(operatorTasks.length, 1)) * 100)}%`} label="已完成" detail={currentOperator === "Nixon" ? "全局任务" : `${currentOperator} 的任务`} onClick={() => setActive(isAdminView ? "audit" : "dashboard")} />
+        <button type="button" onClick={() => openNewBooking()}><CalendarPlus size={18} /><span><strong>安排课程</strong></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setActive("lp")}><BookOpen size={18} /><span><strong>处理 LP</strong></span><ChevronRight size={16} /></button>
+        <button type="button" onClick={() => setModal("operation")}><RefreshCw size={18} /><span><strong>记录异常</strong></span><ChevronRight size={16} /></button>
+        {canViewPayroll && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong></span><ChevronRight size={16} /></button>}
       </section>
       <section className="dashboard-grid">
-        <article className="panel task-panel">
-          <div className="panel-header"><div><p className="eyebrow">强提醒队列</p><h2>优先处理</h2></div><div className="segmented" role="group" aria-label="筛选任务">{([ ["all", "全部"], ["mine", "我的"], ["overdue", "逾期"] ] as const).map(([filter, label]) => <button className={taskFilter === filter ? "active" : ""} key={filter} type="button" onClick={() => setTaskFilter(filter)}>{label}</button>)}</div></div>
-          <TaskList tasks={visibleTasks} studentById={studentById} onComplete={completeTask} onOpen={(task) => goToStudent(task.studentId)} />
-          <button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button>
-        </article>
+        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => studentById(studentId)?.name} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onOpen={(task) => goToStudent(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">墨尔本今日 · 按学生当地时间</p><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /><div className="panel-foot"><MapPin size={15} /> 排课页会同时显示学生、老师与公司时间</div></article>
-        <article className="panel risk-panel"><div className="panel-header"><div><p className="eyebrow">需要人工判断</p><h2>风险与缺口</h2></div><StatusPill tone="amber">{lowHours + operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{firstLowHours ? <RiskRow tone="red" title={`${firstLowHours.name} 仅剩 ${firstLowHours.remainingHours} 课时`} detail="仅在读或待续课学生进入强提醒" action={() => goToStudent(firstLowHours.id, "renewals")} /> : <RiskRow tone="green" title="当前没有低课时学生" detail="非在读与不活跃学生已排除" action={() => setActive("renewals")} />}{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 30 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : <RiskRow tone="green" title="考试提醒窗口正常" detail="当前没有 30 天内考试" action={() => setActive("renewals")} />}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化，需在转换日前复核" action={() => setActive("schedule")} /> : <RiskRow tone="blue" title="长期课时差检查通过" detail="IANA 时区会自动处理夏令时" action={() => setActive("schedule")} />}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="保留原文，但排课前必须人工确认" action={() => setActive("teachers")} /></article>
+        <article className="panel risk-panel"><div className="panel-header"><div><h2>风险与缺口</h2></div><StatusPill tone="amber">{operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 30 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : null}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}<RiskRow tone="blue" title={`${pendingAva} 位老师的 AVA 待结构化`} detail="排课前需确认" action={() => setActive("teachers")} /></article>
       </section>
     </>;
   };
@@ -2612,7 +2798,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => setModal("studentEdit")} onEvidence={() => setModal("studentEvidence")} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
+          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onRecord={(section) => openStudentRecord(visibleSelectedStudent.id, section)} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEdit"); }} onEvidence={() => { setSelectedStudentId(visibleSelectedStudent.id); setModal("studentEvidence"); }} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
         </div>
       </section>
     </>;
@@ -2634,7 +2820,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <ViewTabs value={teacherView} items={viewItems} onChange={(value) => { setTeacherView(value); setTeacherPage(1); }} label="老师保存视图" />
         <ListToolbar query={teacherQuery} onQuery={(value) => { setTeacherQuery(value); setTeacherPage(1); }} placeholder="搜索老师、科目、ID 或时区" count={`${filteredTeachers.length} 位老师`}>
           <select className="filter-select" value={teacherSubject} onChange={(event) => { setTeacherSubject(event.target.value); setTeacherPage(1); }} aria-label="按标准科目筛选"><option value="all">全部科目</option>{teacherSubjectOptions.map((subject) => <option key={subject}>{subject}</option>)}</select>
-          <button className="toolbar-button" type="button" onClick={() => { setTeacherQuery(""); setTeacherSubject("all"); setTeacherView("available"); }}><Filter size={15} /> 清除筛选</button>
+          <select className="filter-select" value={teacherDay} onChange={(event) => { setTeacherDay(event.target.value); setTeacherPage(1); }} aria-label="按星期可排筛选"><option value="all">全部星期</option><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select>
+          <button className="toolbar-button" type="button" onClick={() => { setTeacherQuery(""); setTeacherSubject("all"); setTeacherDay("all"); setTeacherView("available"); }}><Filter size={15} /> 清除筛选</button>
         </ListToolbar>
         <div className="master-detail-layout teacher-layout">
           <article className="collection-main">
@@ -2642,12 +2829,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="collection-viewport">
               {pagedTeachers.length ? pagedTeachers.map((teacher) => {
                 const ava = availabilitySummary(teacher);
-                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span className="teacher-load"><strong>{teacher.capacity > 0 ? `${teacher.load}/${teacher.capacity} 节` : "待确认"}</strong><small>{teacher.capacity > 0 ? `${Math.max(0, teacher.capacity - teacher.load)} 节余量` : "未导入实际课时"}</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
+                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span className="teacher-load"><strong className={teacher.newStudentCapacity === 0 ? "low-hours" : ""}>{teacher.newStudentCapacity === undefined ? "待录入" : `${teacher.newStudentCapacity} 人`}</strong><small>可接新生</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
               }) : <EmptyState title="没有匹配的老师" detail="切换视图或清除搜索条件。" />}
             </div>
             <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={(page) => { setTeacherPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(visibleSelectedTeacher)}%</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>可接余量</span><strong>{visibleSelectedTeacher.capacity > 0 ? `${Math.max(0, visibleSelectedTeacher.capacity - visibleSelectedTeacher.load)} 节` : "待确认"}</strong></div></div><div className="detail-section availability-converter"><span>AVA 换算显示</span><select className="filter-select" value={scheduleTimezone} onChange={(event) => updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) })} aria-label="AVA 显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? option.en : option.zh}</option>)}</select><strong className={`availability-value ${(visibleSelectedTeacher.availabilitySlots?.length ?? 0) ? "structured" : "raw"}`}>{availabilityInTimezone(visibleSelectedTeacher, scheduleTimezone, displayPreferences)}</strong><p>来源：{visibleSelectedTeacher.availabilityUpdated ?? "教师总表"} · 原时区 {timezoneLabel(visibleSelectedTeacher.availabilityTimezone ?? visibleSelectedTeacher.timezone, displayPreferences.language)}</p></div><button className="primary-button full" type="button" disabled={!visibleSelectedTeacher.acceptsStudents} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
+          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(visibleSelectedTeacher)}%</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>可接新生</span><strong className={visibleSelectedTeacher.newStudentCapacity === 0 ? "low-hours" : ""}>{visibleSelectedTeacher.newStudentCapacity === undefined ? "待录入" : `${visibleSelectedTeacher.newStudentCapacity} 人`}</strong></div></div><div className="detail-section availability-converter"><span>AVA 换算显示</span><select className="filter-select" value={scheduleTimezone} onChange={(event) => updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) })} aria-label="AVA 显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? option.en : option.zh}</option>)}</select><strong className={`availability-value ${(visibleSelectedTeacher.availabilitySlots?.length ?? 0) ? "structured" : "raw"}`}>{availabilityInTimezone(visibleSelectedTeacher, scheduleTimezone, displayPreferences)}</strong><p>来源：{visibleSelectedTeacher.availabilityUpdated ?? "教师总表"} · 原时区 {timezoneLabel(visibleSelectedTeacher.availabilityTimezone ?? visibleSelectedTeacher.timezone, displayPreferences.language)}</p></div><button className="primary-button full" type="button" disabled={!visibleSelectedTeacher.acceptsStudents} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button>{isAdminView && <><button className="secondary-button full" type="button" onClick={() => { setTeacherCapacityDraft(visibleSelectedTeacher); setModal("teacherCapacity"); }}>调整可接新生数量</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></>}</aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
         </div>
       </section>
     </>;
@@ -2785,7 +2972,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </div>
             ) : (
               <div className="agenda-list">
-                {selectedBookingIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedBookingIds.length} 个课程系列 <small>周期课会整组更新</small></strong><button type="button" onClick={() => bulkUpdateBookingStatus("待确认")}>整组设为待确认</button><button type="button" onClick={() => bulkUpdateBookingStatus("已确认")}>整组设为已确认</button><button type="button" onClick={() => bulkUpdateBookingStatus("已完成")}>整组设为已完成</button><button className="bulk-clear" type="button" onClick={() => setSelectedBookingIds([])}>取消选择</button></div>}
+                {selectedBookingIds.length > 0 && <div className="bulk-bar"><strong>已选 {selectedBookingIds.length} 个课程系列</strong><button type="button" onClick={() => bulkUpdateBookingStatus("待确认")}>设为待确认</button><button type="button" onClick={() => bulkUpdateBookingStatus("已确认")}>设为已确认</button><button className="bulk-clear" type="button" onClick={() => setSelectedBookingIds([])}>取消选择</button></div>}
                 <div className="collection-head agenda-select-grid"><input type="checkbox" aria-label="选择本页全部课程系列；周期课会整组更新" checked={pagedScheduleBookings.length > 0 && pagedScheduleBookings.every((booking) => selectedBookingIds.includes(booking.id))} onChange={(event) => setSelectedBookingIds((current) => event.target.checked ? Array.from(new Set([...current, ...pagedScheduleBookings.map((booking) => booking.id)])) : current.filter((idValue) => !pagedScheduleBookings.some((booking) => booking.id === idValue)))} /><span>显示时间</span><span>学生 / 课程</span><span>老师</span><span>类型</span><span>状态</span></div>
                 <div className="collection-viewport">
                   {pagedScheduleBookings.length ? pagedScheduleBookings.map((booking) => {
@@ -2824,7 +3011,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <button className="secondary-button" type="button" onClick={() => openBookingEditor(displayedBookingSeries)}><Pencil size={15} /> 编辑整个课程系列</button>
               {!isTeacherView && <><button className="secondary-button" type="button" onClick={() => openBookingOperation(displayedBooking, "学生请假")}><UserRoundX size={15} /> 学生请假</button>
               <button className="secondary-button" type="button" onClick={() => openBookingOperation(displayedBooking, "老师请假")}><CalendarOff size={15} /> 老师请假</button>
-              <button className="secondary-button" type="button" onClick={() => openBookingOperation(displayedBooking, "代课")}><RefreshCw size={15} /> 启动代课</button></>}
+              <button className="secondary-button" type="button" onClick={() => openBookingOperation(displayedBooking, "代课")}><RefreshCw size={15} /> 启动代课</button>
+              {isAdminView && <button className="danger-button" type="button" onClick={() => deleteBookingSeries(displayedBookingSeries)}><X size={15} /> {displayedBookingSeries.recurring ? "删除整个系列" : "删除课程"}</button>}</>}
             </div>}
             {historicalBooking ? <div className="form-notice"><CircleAlert size={16} /> 历史课程已归档，只能查看已有录播和课堂记录，不能重新创建教室或学生链接。</div> : !displayedBooking.classroom?.meetingId ? <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void createClassroom(displayedBooking)}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建在线教室"}</button> : displayedBooking.classroom.status === "ended" ? <button className="secondary-button full" type="button" onClick={() => { setActive("classroom"); setMobilePreview(null); }}><Video size={16} /> 查看录播与课堂记录</button> : <>
               <button className="primary-button full" type="button" disabled={classroomBusy} onClick={() => void joinTeacherClassroom(displayedBooking)}><ExternalLink size={16} /> {classroomBusy ? "正在处理…" : "老师进入教室"}</button>
@@ -2839,9 +3027,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderLp = () => {
-    const visibleLp = scopedLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
-    const viewItems = [{ id: "active", label: "进行中", count: scopedLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: scopedLpItems.filter((item) => item.stage === "待审核").length }, { id: "waiting", label: "等待资料/确认", count: scopedLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: scopedLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: scopedLpItems.length }];
-    const stageTone = (stage: LpItem["stage"]): Tone => stage === "完成" ? "green" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple";
+    const visibleLp = scopedLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "revision" ? item.stage === "需修改" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
+    const viewItems = [{ id: "active", label: "进行中", count: scopedLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: scopedLpItems.filter((item) => item.stage === "待审核").length }, { id: "revision", label: "需修改", count: scopedLpItems.filter((item) => item.stage === "需修改").length }, { id: "waiting", label: "等待资料/确认", count: scopedLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: scopedLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: scopedLpItems.length }];
+    const stageTone = (stage: LpItem["stage"]): Tone => stage === "完成" ? "green" : stage === "需修改" ? "red" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple";
     const stageControls = (item: LpItem, compact = false) => (
       <div className={compact ? "lp-row-actions" : "lp-card-actions"}>
         <button className="icon-button" type="button" disabled={item.stage === lpStages[0]} aria-label="退回上一阶段" title="退回上一阶段" onClick={() => retreatLp(item)}><ChevronLeft size={15} /></button>
@@ -2849,14 +3037,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {lpStages.map((stage) => <option value={stage} key={stage}>{stage}</option>)}
         </select>
         <button className="icon-button" type="button" disabled={item.stage === lpStages.at(-1)} aria-label="推进下一阶段" title="推进下一阶段" onClick={() => advanceLp(item)}><ChevronRight size={15} /></button>
+        <button className="icon-button" type="button" aria-label="新增 LP 修订版本" title="新增 LP 修订版本" onClick={() => { setLpRevisionDraft(item); setModal("lpRevision"); }}><Pencil size={15} /></button>
       </div>
     );
 
     return <>
-      <ViewHeading eyebrow="Learning Plan · 类型、时限与审批" title="试听与 LP 工作流" copy="创建时可先用科目占位，之后补录学生姓名；规划人与教务负责人分开管理，所有阶段都可前进、回退或直接调整。" actions={<button className="primary-button" type="button" onClick={() => setModal("lp")}><Plus size={17} /> 创建 LP 工作流</button>} />
-      <section className="lp-template-strip" aria-label="LP 模板说明">
-        {lpWorkflowOptions.map((option) => <article key={option.id}><strong>{option.title}</strong><span>{option.detail}</span></article>)}
-      </section>
+      <ViewHeading eyebrow="Learning Plan" title="试听与 LP" actions={<button className="primary-button" type="button" onClick={() => setModal("lp")}><Plus size={17} /> 创建 LP</button>} />
       <section className="panel collection-shell">
         <div className="view-bar">
           <ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" />
@@ -3326,38 +3512,98 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderRenewals = () => {
+    const today = isoDateInTimezone(new Date(), "Australia/Melbourne");
+    const now = new Date();
+    const projectionEnd = shiftIsoDate(today, 365);
+    const projections = new Map(scopedStudents.map((student) => {
+      const packages = student.lessonPackages ?? [];
+      const projectedOccurrences = scopedBookings
+        .filter((booking) => booking.studentId === student.id && booking.packageId)
+        .flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate(today, -1), projectionEnd))
+        .filter((occurrence) => bookingInstant(occurrence).getTime() >= now.getTime())
+        .flatMap((occurrence) => {
+          const lessonPackage = packages.find((entry) => entry.id === occurrence.packageId);
+          const subjectId = occurrence.course ?? student.course;
+          if (!lessonPackage || !lessonPackage.subjectIds.includes(subjectId)) return [];
+          return [{
+            id: occurrence.occurrenceKey,
+            packageId: occurrence.packageId,
+            subjectId,
+            date: occurrence.date,
+            start: occurrence.start,
+            timezone: occurrence.timezone,
+            duration: occurrence.duration,
+            status: occurrence.status,
+          }];
+        });
+      let estimates: ReturnType<typeof mapLessonPackageDepletionEstimates> = [];
+      try {
+        estimates = mapLessonPackageDepletionEstimates(packages, projectedOccurrences);
+      } catch {
+        estimates = [];
+      }
+      const earliest = estimates
+        .filter((estimate) => estimate.depletionDate)
+        .sort((left, right) => left.depletionDate!.localeCompare(right.depletionDate!))[0];
+      const remaining = packages.length
+        ? packages.reduce((sum, lessonPackage) => sum + getLessonPackageBalance(lessonPackage).remainingHours, 0)
+        : student.remainingHours ?? 0;
+      return [student.id, { earliest, remaining }] as const;
+    }));
+    const automaticStudents = scopedStudents.filter((student) => {
+      if (!isActiveStudent(student)) return false;
+      const projection = projections.get(student.id);
+      return Boolean(projection?.earliest?.depletionDate || (projection && projection.remaining < Number(rules.lowHours || 5)));
+    });
     const renewalRows: Renewal[] = [
       ...scopedRenewals
-        .filter((renewal) => {
-          const student = studentById(renewal.studentId);
-          return Boolean(student && isActiveStudent(student));
-        })
-        .map((renewal) => ({ ...renewal, remaining: studentById(renewal.studentId)?.remainingHours ?? renewal.remaining })),
-      ...activeLowHourStudents.filter((student) => !scopedRenewals.some((renewal) => renewal.studentId === student.id)).map((student) => ({ id: `REN-AUTO-${student.id}`, studentId: student.id, remaining: student.remainingHours ?? 0, estimate: student.renewalDate || student.renewalMonth || "待确认", status: "待跟进" as const, owner: student.owner })),
+        .filter((renewal) => Boolean(studentById(renewal.studentId)))
+        .map((renewal) => {
+          const student = studentById(renewal.studentId)!;
+          const projection = projections.get(student.id);
+          return {
+            ...renewal,
+            remaining: projection?.remaining ?? student.remainingHours ?? renewal.remaining,
+            estimate: projection?.earliest?.depletionDate ?? renewal.estimate ?? student.renewalDate ?? student.renewalMonth ?? "待确认",
+            businessStatus: renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status),
+          };
+        }),
+      ...automaticStudents
+        .filter((student) => !scopedRenewals.some((renewal) => renewal.studentId === student.id))
+        .map((student) => {
+          const projection = projections.get(student.id)!;
+          return {
+            id: `REN-AUTO-${student.id}`,
+            studentId: student.id,
+            remaining: projection.remaining,
+            estimate: projection.earliest?.depletionDate ?? student.renewalDate ?? student.renewalMonth ?? "待确认",
+            status: "待跟进" as const,
+            businessStatus: "not_renewed_active" as const,
+            owner: student.owner,
+          };
+        }),
     ];
+    const businessStatusFor = (renewal: Renewal) => renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status);
     const visibleRenewals = renewalRows.filter((renewal) => renewalFilter === "attention"
-      ? renewal.status === "待跟进" || renewal.status === "等待家长" || renewal.status === "本次未跟进"
-      : renewalFilter === "contacted"
-        ? renewal.status === "已联系" || renewal.status === "已跟进"
-        : renewalFilter === "missed"
-          ? renewal.status === "本次未跟进"
-          : renewalFilter === "confirmed"
-            ? renewal.status === "已确认"
-            : true);
+      ? businessStatusFor(renewal) !== "renewed"
+      : renewalFilter === "renewed"
+        ? businessStatusFor(renewal) === "renewed"
+        : renewalFilter === "inactive"
+          ? businessStatusFor(renewal) === "not_renewed_inactive" || businessStatusFor(renewal) === "not_renewed_exam_finished"
+          : true);
     const renewalPageSize = 10;
     const safeRenewalPage = Math.min(renewalPage, Math.max(1, Math.ceil(visibleRenewals.length / renewalPageSize)));
     const pagedRenewals = visibleRenewals.slice((safeRenewalPage - 1) * renewalPageSize, safeRenewalPage * renewalPageSize);
     return <>
-      <ViewHeading eyebrow="低课时与考试节点 · 自动避免遗漏" title="考试与续课" copy={`剩余课时低于 ${rules.lowHours} 的在读/待续课学生进入强提醒；停课、非在读与不活跃学生自动排除。考试在提前 ${rules.examDays} 天和考试当天提醒负责教务。`} actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加内部跟进任务</button>} />
-      <section className="exam-reminder-strip"><div><span className="risk-icon amber"><CalendarDays size={17} /></span><span><strong>{examReminderStudents.length} 位学生进入考试提醒窗口</strong><small>考试当天仍会保留一条“考后关心”任务，完成后写入跟进记录。</small></span></div>{examReminderStudents.slice(0, 4).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><strong>{student.name}</strong><small>{student.examSubject || "考试"} · {student.examDate}</small><ChevronRight size={15} /></button>)}</section>
+      <ViewHeading eyebrow="学生档案联动" title="考试与续课" actions={<button className="secondary-button" type="button" onClick={() => setModal("task")}><Plus size={17} /> 添加任务</button>} />
+      <section className="exam-reminder-strip"><div><span className="risk-icon amber"><CalendarDays size={17} /></span><span><strong>{examReminderStudents.length} 位学生进入考试提醒窗口</strong></span></div>{examReminderStudents.slice(0, 4).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><strong>{student.name}</strong><small>{student.examSubject || "考试"} · {student.examDate}</small><ChevronRight size={15} /></button>)}</section>
       <section className="panel collection-shell renewal-collection">
         <ViewTabs
           value={renewalFilter}
           items={[
-            { id: "attention", label: "需要关注", count: renewalRows.filter((item) => item.status === "待跟进" || item.status === "等待家长" || item.status === "本次未跟进").length },
-            { id: "contacted", label: "已跟进", count: renewalRows.filter((item) => item.status === "已联系" || item.status === "已跟进").length },
-            { id: "missed", label: "本次未跟进", count: renewalRows.filter((item) => item.status === "本次未跟进").length },
-            { id: "confirmed", label: "已确认", count: renewalRows.filter((item) => item.status === "已确认").length },
+            { id: "attention", label: "需要关注", count: renewalRows.filter((item) => businessStatusFor(item) !== "renewed").length },
+            { id: "renewed", label: "已续课", count: renewalRows.filter((item) => businessStatusFor(item) === "renewed").length },
+            { id: "inactive", label: "不活跃", count: renewalRows.filter((item) => businessStatusFor(item) === "not_renewed_inactive" || businessStatusFor(item) === "not_renewed_exam_finished").length },
             { id: "all", label: "全部", count: renewalRows.length },
           ]}
           onChange={(value) => { setRenewalFilter(value); setRenewalPage(1); }}
@@ -3369,17 +3615,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             {pagedRenewals.length ? pagedRenewals.map((renewal) => {
               const student = studentById(renewal.studentId);
               const lowHours = renewal.remaining < Number(rules.lowHours || 5);
-              const lastContactedAt = renewal.lastContactedAt || (/^\d{4}-\d{2}-\d{2}$/.test(student?.followUp ?? "") ? student?.followUp : undefined);
-              const displayStatus = renewal.status === "已联系" ? "已跟进" : renewal.status;
+              const latestFollowUp = getLatestStudentFollowUp(student?.followUpHistory ?? []);
+              const lastContactedAt = latestFollowUp?.followedUpAt ?? renewal.lastContactedAt ?? (/^\d{4}-\d{2}-\d{2}$/.test(student?.followUp ?? "") ? student?.followUp : undefined);
+              const businessStatus = businessStatusFor(renewal);
+              const displayStatus = RENEWAL_STATUS_LABELS[businessStatus];
+              const businessTone: Tone = businessStatus === "renewed" ? "green" : businessStatus === "not_renewed_active" ? "amber" : "neutral";
               return <div className="collection-row renewal-grid-row" key={renewal.id}>
-                <button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : statusTone(renewal.status)} /><span><strong>{student?.name}</strong><small>{student?.course} · {student?.status}</small></span></button>
-                <strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 节</strong>
-                <span>{renewal.estimate}</span>
+                <button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : businessTone} /><span><strong>{student?.name}</strong><small>{student?.course} · {student?.status}</small></span></button>
+                <strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 小时</strong>
+                <span><strong>{renewal.estimate}</strong>{renewal.renewalDateNote ? <small>{renewal.renewalDateNote}</small> : null}</span>
                 <span>{renewal.owner}</span>
-                <span className="renewal-status-cell"><StatusPill tone={statusTone(renewal.status)}>{displayStatus}</StatusPill><small>{renewal.lastAttemptAt ? `本次 ${formatFollowUpTime(renewal.lastAttemptAt, displayPreferences)}` : `上次成功 ${formatFollowUpTime(lastContactedAt, displayPreferences)}`}</small>{renewal.status === "本次未跟进" && <small>上次成功 {formatFollowUpTime(lastContactedAt, displayPreferences)}</small>}</span>
+                <span className="renewal-status-cell"><StatusPill tone={businessTone}>{displayStatus}</StatusPill><small>{renewal.lastAttemptAt ? `本次 ${formatFollowUpTime(renewal.lastAttemptAt, displayPreferences)}` : `上次成功 ${formatFollowUpTime(lastContactedAt, displayPreferences)}`}</small>{renewal.status === "本次未跟进" && <small>上次成功 {formatFollowUpTime(lastContactedAt, displayPreferences)}</small>}</span>
                 <button className="compact-button" type="button" onClick={() => { setRenewalDraft({ ...renewal, lastContactedAt }); setModal("renewal"); }}>记录跟进</button>
               </div>;
-            }) : <EmptyState title="当前没有续课记录" detail="非在读学生不会因为低课时进入此列表。" />}
+            }) : <EmptyState title="当前没有续课记录" />}
           </div>
           <Pagination page={safeRenewalPage} total={visibleRenewals.length} pageSize={renewalPageSize} onPage={setRenewalPage} />
         </div>
@@ -4187,7 +4436,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           eyebrow="资料索引 · 不依赖文件名猜测"
           title="文件中心"
           copy="用类型视图和搜索定位资料；每条文件记录直接关联学生，不需要进入不断变长的文件夹树。"
-          actions={
+          actions={!isTeacherView ?
             <button
               className="primary-button"
               type="button"
@@ -4195,7 +4444,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             >
               <FilePlus2 size={17} /> 登记资料链接
             </button>
-          }
+          : undefined}
         />
         <section className="panel collection-shell">
           <ViewTabs
@@ -5452,65 +5701,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderAccounts = () => {
     const accounts = [
-      {
-        name: "Admin",
-        operator: "Nixon",
-        role: "超级管理员",
-        login: "管理员独立密码",
-        permissions: [
-          "全局学生与老师",
-          "排课与运营",
-          "课时与薪资",
-          "账号与权限",
-        ],
-      },
-      {
-        name: DEMO_LIMITED_ADMIN_USER,
-        operator: DEMO_LIMITED_ADMIN_USER,
-        role: "运营管理员",
-        login: "独立密码",
-        permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"],
-      },
-      ...DEMO_STAFF_USERS.map((name) => ({
-        name,
-        operator: name,
-        role: "教务账号",
-        login: name,
-        permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"],
-      })),
-      ...DEMO_TEACHER_USERS.map((name) => ({
-        name,
-        operator: name,
-        role: "老师账号",
-        login: name,
-        permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"],
-      })),
+      { name: "Admin", operator: "Nixon", role: "超级管理员", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
+      { name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, role: "运营管理员", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
+      ...DEMO_STAFF_USERS.map((name) => ({ name, operator: name, role: "教务账号", permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"] })),
+      ...DEMO_TEACHER_USERS.map((name) => ({ name, operator: name, role: "老师账号", permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"] })),
     ];
     const selectedAccount =
       accounts.find((account) => account.name === selectedAccountName) ??
       accounts[0];
-    const copyCredential = async () => {
-      if (
-        selectedAccount.operator === "Nixon" ||
-        selectedAccount.operator === DEMO_LIMITED_ADMIN_USER
-      ) {
-        notify("管理员密码不会在页面中显示或复制");
-        return;
-      }
-      await navigator.clipboard.writeText(selectedAccount.login);
-      addAudit(
-        "复制演示登录凭证",
-        `${selectedAccount.name} · ${selectedAccount.role}`,
-        "blue",
-      );
-      notify(`${selectedAccount.name} 的演示登录名已复制`);
-    };
     return (
       <>
         <ViewHeading
-          eyebrow="演示账号 · 正式上线前再升级强密码"
+          eyebrow="账号权限"
           title="账号与权限"
-          copy="集中查看管理员、运营管理员、教务和老师账号。演示阶段教务和老师使用姓名登录；管理员使用独立密码。"
+          copy="集中查看管理员、运营管理员、教务和老师账号及其权限范围。"
           actions={
             <button
               className="secondary-button"
@@ -5568,10 +5772,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     {account.role}
                   </StatusPill>
                   <span>
-                    {account.operator === "Nixon" ||
-                    account.operator === DEMO_LIMITED_ADMIN_USER
-                      ? "独立密码"
-                      : "姓名登录"}
+                    受控登录
                   </span>
                 </button>
               ))}
@@ -5593,16 +5794,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <span>
                   <small>登录方式</small>
                   <strong>
-                    {selectedAccount.operator === "Nixon" ||
-                    selectedAccount.operator === DEMO_LIMITED_ADMIN_USER
-                      ? "独立密码"
-                      : "姓名登录"}
+                    受控登录
                   </strong>
                   <em>
-                    {selectedAccount.operator === "Nixon" ||
-                    selectedAccount.operator === DEMO_LIMITED_ADMIN_USER
-                      ? "密码不在页面显示"
-                      : "当前演示阶段"}
+                    登录凭证不在页面显示
                   </em>
                 </span>
               </div>
@@ -5624,21 +5819,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 >
                   <UserCog size={16} /> 查看此账号视图
                 </button>
-                <button
-                  className="secondary-button full"
-                  type="button"
-                  onClick={copyCredential}
-                >
-                  <Copy size={16} />{" "}
-                  {selectedAccount.operator === "Nixon" ||
-                  selectedAccount.operator === DEMO_LIMITED_ADMIN_USER
-                    ? "管理员密码保持隐藏"
-                    : "复制演示登录名"}
-                </button>
               </div>
               <div className="form-notice">
                 <CircleAlert size={16} />{" "}
-                正式上线前会把姓名登录替换成独立账号、强密码和可审计的密码重置流程。
+                正式启用附件前需要独立账号、强密码和可审计的密码重置流程。
               </div>
             </aside>
           </div>
@@ -5699,6 +5883,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const course = String(data.get("course") ?? "").trim();
     if (!name || !course) return;
     const segment = String(data.get("segment") ?? "试听") as StudentSegment;
+    const guardian = String(data.get("guardian") ?? "").trim();
+    const guardianWechat = String(data.get("guardianWechat") ?? "").trim();
+    if (segment === "试听" && !guardian && !guardianWechat) {
+      notify("试听学生请填写家长 / 沟通对象或家长微信名其中一项");
+      return;
+    }
     const lpNeed = String(
       data.get("lpNeed") ?? (segment === "试听" ? "试听LP" : "无需LP"),
     ) as LpNeed;
@@ -5715,7 +5905,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       gradeBaseYear: new Date().getFullYear(),
       location: String(data.get("location") ?? "VIC"),
       timezone: cleanTimezone(data.get("timezone")),
-      guardian: String(data.get("guardian") ?? "待补充"),
+      guardian: guardian || "待补充",
+      guardianWechat: guardianWechat || undefined,
       teacher: "待匹配",
       next:
         segment === "试听"
@@ -5742,11 +5933,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           segment === "试听" ? "完成试听交接与老师匹配" : "确认首次排课与资料",
         owner: newStudent.owner,
         studentId: newStudent.id,
-        due: "今天",
-        status: "today",
-        tone: "blue",
+        ...taskTiming(isoDateInTimezone(new Date(), "Australia/Melbourne")),
         category: segment === "试听" ? "试听" : "排课",
         trigger: "新建学生记录",
+        ruleKey: "student.initial-handover",
+        anchorBookingId: `student:${newStudent.id}`,
       },
     ];
     if (lpNeed !== "无需LP")
@@ -5755,13 +5946,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         title: `创建${lpNeed}`,
         owner: newStudent.owner,
         studentId: newStudent.id,
-        due: "开课前 N-3",
-        status: "upcoming",
-        tone: "amber",
+        ...taskTiming(shiftIsoDate(isoDateInTimezone(new Date(), "Australia/Melbourne"), 1), "Australia/Melbourne", "amber"),
         category: "LP",
         trigger: "建档时选择需要 LP",
+        ruleKey: "student.create-lp",
+        anchorBookingId: `student:${newStudent.id}`,
       });
-    setTasks((current) => [...generatedTasks, ...current]);
+    setTasks((current) => sortTasksByDueAt(upsertTasksByRule(current, generatedTasks)));
     addAudit("新建学生档案", `${newStudent.name} · ${newStudent.id}`, "green");
     setModal(null);
     setActive("students");
@@ -5775,6 +5966,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const course = String(data.get("course") ?? "").trim();
     if (!name || !course) {
       notify("学生姓名和课程不能为空");
+      return;
+    }
+    const guardian = String(data.get("guardian") ?? "").trim();
+    const guardianWechat = String(data.get("guardianWechat") ?? "").trim();
+    const trialStudent = selectedStudent.segment === "试听" || selectedStudent.status === "试听中" || selectedStudent.status === "待排课";
+    if (trialStudent && !guardian && !guardianWechat) {
+      notify("试听学生请填写家长 / 沟通对象或家长微信名其中一项");
       return;
     }
     const before = selectedStudent;
@@ -5793,7 +5991,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               planner: String(
                 data.get("planner") ?? student.planner ?? "待分配",
               ),
-              guardian: String(data.get("guardian") ?? "待补充"),
+              guardian: guardian || "待补充",
+              guardianWechat: guardianWechat || undefined,
               notes: String(data.get("notes") ?? "无特殊备注"),
               location: String(
                 data.get("location") ?? student.location ?? "VIC",
@@ -5850,7 +6049,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             ? {
                 ...student,
                 files: student.files + 1,
-                followUp: new Date().toISOString(),
               }
             : student,
         ),
@@ -5869,24 +6067,114 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
+  const submitStudentFollowUp = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      const parsed = parseFollowUpFormData(new FormData(event.currentTarget));
+      const followUp: StudentFollowUp = { id: id("FUH"), followedUpAt: parsed.followedUpAt, note: parsed.note, recordedBy: operatorLabel(sessionOperator) };
+      setStudents((current) => current.map((student) => student.id === selectedStudent.id ? {
+        ...student,
+        followUp: followUp.followedUpAt,
+        followUpHistory: appendStudentFollowUp(student.followUpHistory ?? [], followUp),
+      } : student));
+      addAudit("记录学生跟进", `${selectedStudent.name} · ${formatFollowUpTime(followUp.followedUpAt, displayPreferences)}${followUp.note ? ` · ${followUp.note}` : ""}`, "green");
+      setModal(null);
+      notify("跟进日期已追加到历史");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "跟进记录无效");
+    }
+  };
+
+  const submitLessonPackage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      const parsed = parseLessonPackageFormData(new FormData(event.currentTarget));
+      const purchasedAt = new Date().toISOString();
+      setStudents((current) => current.map((student) => {
+        if (student.id !== selectedStudent.id) return student;
+        let packages = [...(student.lessonPackages ?? [])];
+        if (parsed.packageMode === "new") {
+          const packageId = id("PKG");
+          packages.push(createStudentLessonPackage({
+            id: packageId,
+            name: parsed.newPackageName,
+            subjectIds: parsed.subjectIds,
+            initialPurchase: { id: id("PUR"), purchasedAt, hours: parsed.totalHours, note: [parsed.purchaseNote, parsed.bonusHours ? `含赠送 ${parsed.bonusHours} 课时` : ""].filter(Boolean).join(" · ") || undefined },
+          }));
+          for (const subjectId of parsed.subjectIds) packages = bindSubjectToLessonPackage(packages, packageId, subjectId);
+        } else {
+          packages = packages.map((lessonPackage) => lessonPackage.id === parsed.packageId ? addLessonPackageHours(lessonPackage, {
+            id: id("PUR"),
+            purchasedAt,
+            hours: parsed.totalHours,
+            note: [parsed.purchaseNote, parsed.bonusHours ? `含赠送 ${parsed.bonusHours} 课时` : ""].filter(Boolean).join(" · ") || undefined,
+          }) : lessonPackage);
+          for (const subjectId of parsed.subjectIds) packages = bindSubjectToLessonPackage(packages, parsed.packageId, subjectId);
+        }
+        const remainingHours = packages.reduce((sum, lessonPackage) => sum + getLessonPackageBalance(lessonPackage).remainingHours, 0);
+        return { ...student, lessonPackages: packages, remainingHours, contractHours: packages.reduce((sum, lessonPackage) => sum + getLessonPackageBalance(lessonPackage).totalHours, 0) };
+      }));
+      addAudit("录入学生课包", `${selectedStudent.name} · ${parsed.packageMode === "new" ? parsed.newPackageName : parsed.packageId} · +${parsed.totalHours} 课时`, "green");
+      setModal(null);
+      notify("课包与购买记录已保存");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "课包内容无效");
+    }
+  };
+
+  const submitExam = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      const parsed = parseExamFormData(new FormData(event.currentTarget));
+      const exam: StudentExamRecord = { id: id("EXM"), subject: parsed.subject, examType: parsed.examType, examMonth: parsed.examMonth, examDate: parsed.examDate };
+      const resultDate = estimateExamResultDate(exam);
+      setStudents((current) => current.map((student) => student.id === selectedStudent.id ? {
+        ...student,
+        exams: sortStudentExams([...(student.exams ?? []), exam]),
+        examSubject: exam.subject,
+        examDate: exam.examDate,
+        resultDate: resultDate ?? undefined,
+      } : student));
+      const taskDefinitions = buildExamTaskDefinitions(exam, { includeRecall: parsed.includeRecall, resultDate: resultDate ?? undefined });
+      const examTasks: Task[] = taskDefinitions.map((definition) => {
+        const dueAt = zonedDateTimeToUtc(definition.dueDate, "18:00", "Australia/Melbourne");
+        return { id: id("TSK"), title: definition.title, owner: definition.assigneeRole === "course_planner" ? (selectedStudent.planner ?? "Tara") : selectedStudent.owner, studentId: selectedStudent.id, due: formatInstant(dueAt, "Australia/Melbourne", displayPreferences), dueAt: dueAt.toISOString(), status: statusForDueAt(dueAt, new Date()), tone: definition.kind === "exam_results_follow_up" ? "purple" : "amber", category: "考试", trigger: `${exam.subject} 考试记录`, ruleKey: definition.key, anchorBookingId: `exam:${exam.id}` };
+      });
+      setTasks((current) => sortTasksByDueAt(upsertTasksByRule(current, examTasks)));
+      addAudit("记录学生考试", `${selectedStudent.name} · ${exam.subject} · ${exam.examDate ?? exam.examMonth}`, "amber");
+      setModal(null);
+      notify(examTasks.length ? `考试已保存，并生成 ${examTasks.length} 项提醒` : "考试月份已保存；确定日期后再生成提醒");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "考试内容无效");
+    }
+  };
+
   const submitTask = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const studentId = String(data.get("studentId") ?? selectedStudent.id);
     const title = String(data.get("title") ?? "").trim();
     if (!title) return;
+    const dueInput = String(data.get("dueAt") ?? "").trim();
+    const dueParts = dueInput.match(/^(\d{4}-\d{2}-\d{2})T([0-2]\d:[0-5]\d)$/);
+    const parsedDue = dueParts ? zonedDateTimeToUtc(dueParts[1], dueParts[2], "Australia/Melbourne") : null;
+    if (!parsedDue || Number.isNaN(parsedDue.getTime())) {
+      notify("请选择准确的截止日期和时间");
+      return;
+    }
     const task: Task = {
       id: id("TSK"),
       title,
       owner: String(data.get("owner") ?? "思佳"),
       studentId,
-      due: String(data.get("due") ?? "待设定"),
-      status: "today",
+      due: formatInstant(parsedDue, "Australia/Melbourne", displayPreferences),
+      dueAt: parsedDue.toISOString(),
+      status: statusForDueAt(parsedDue, new Date()),
       tone: "blue",
-      category: String(data.get("category") ?? "资料") as Task["category"],
+      category: String(data.get("category") ?? "资料") as TaskCategory,
       trigger: "人工创建",
     };
-    setTasks((current) => [task, ...current]);
+    setTasks((current) => sortTasksByDueAt([...current, task]));
     addAudit(
       "创建内部任务",
       `${title} · ${studentById(studentId)?.name}`,
@@ -6038,14 +6326,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const submitLp = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    let parsedLp: ReturnType<typeof parseLpWorkflowFormData>;
+    try {
+      parsedLp = parseLpWorkflowFormData(data);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "LP 表单内容无效");
+      return;
+    }
     const provisional = data.get("provisional") === "on";
     let studentId = String(data.get("studentId") ?? selectedStudent.id);
-    const workflowType = String(
-      data.get("workflowType") ?? "试听 LP",
-    ) as LpWorkflowType;
-    const owner = isAdminView
-      ? String(data.get("owner") ?? selectedStudent.owner ?? "思佳")
-      : selectedStudent.owner;
+    const workflowType = parsedLp.workflowType;
+    const owner = isAdminView ? parsedLp.fields.responsibleOperations : selectedStudent.owner;
     const planner = String(
       data.get("planner") ?? selectedStudent.planner ?? "Tara",
     );
@@ -6071,7 +6362,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         name: displayName,
         initials: provisionalName ? initials(provisionalName) : "待",
         status: "待确认",
-        segment: workflowType === "直报 LP" ? "已报名" : "试听",
+        segment: workflowType === "学生直报（无试听）" ? "已报名" : "试听",
         owner,
         planner,
         course: provisionalCourse,
@@ -6113,18 +6404,86 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       !createLpWorkflow(
         studentId,
         workflowType,
-        data.get("parentFollowUp") === "on",
-        data.get("teacherPrep") === "on",
+        parsedLp.fields as unknown as LpFieldValues,
         workflowStudent,
       )
     ) {
       notify("没有找到该学生，未创建 LP 工作流");
       return;
     }
+    if (workflowType === "学生直报（无试听）") {
+      const purchasedHours = Number(parsedLp.fields.purchasedHours ?? 0);
+      const bonusHours = Number(parsedLp.fields.bonusHours ?? 0);
+      const totalHours = purchasedHours + bonusHours;
+      const subject = String(parsedLp.fields.subject ?? workflowStudent?.course ?? "").trim();
+      if (totalHours > 0 && subject) {
+        const packageId = id("PKG");
+        const purchaseId = id("PUR");
+        const lessonPackage = createStudentLessonPackage({
+          id: packageId,
+          name: `${subject} · 直报课包`,
+          subjectIds: [subject],
+          initialPurchase: {
+            id: purchaseId,
+            purchasedAt: new Date().toISOString(),
+            hours: totalHours,
+            note: bonusHours > 0 ? `购买 ${purchasedHours} · 赠送 ${bonusHours}` : `购买 ${purchasedHours}`,
+          },
+        });
+        setStudents((current) => current.map((student) => {
+          if (student.id !== studentId) return student;
+          const lessonPackages = bindSubjectToLessonPackage([...(student.lessonPackages ?? []), lessonPackage], packageId, subject);
+          const remainingHours = lessonPackages.reduce((sum, entry) => sum + getLessonPackageBalance(entry).remainingHours, 0);
+          const contractHours = lessonPackages.reduce((sum, entry) => sum + getLessonPackageBalance(entry).totalHours, 0);
+          return { ...student, lessonPackages, remainingHours, contractHours };
+        }));
+        addAudit("直报录入课时", `${workflowStudent?.name ?? studentId} · ${subject} · ${purchasedHours}+${bonusHours}`, "green");
+      }
+    }
     setSelectedStudentId(studentId);
     setModal(null);
     setActive("lp");
     notify("已创建 LP 工作流和对应强提醒");
+  };
+
+  const submitLpRevision = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!lpRevisionDraft) return;
+    const data = new FormData(event.currentTarget);
+    const documentUrl = String(data.get("documentUrl") ?? "").trim();
+    const revisionNote = String(data.get("revisionNote") ?? "").trim();
+    if (!documentUrl) {
+      notify("请填写本次 LP 版本的腾讯文档链接");
+      return;
+    }
+    try {
+      const parsed = new URL(documentUrl);
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error();
+    } catch {
+      notify("请填写完整的 http 或 https 链接");
+      return;
+    }
+    const changedAt = new Date().toISOString();
+    setLpItems((current) => current.map((entry) => {
+      if (entry.id !== lpRevisionDraft.id) return entry;
+      const revised = reviseLpWorkflow({
+        id: entry.id,
+        type: entry.workflowType ?? "试听 LP",
+        stage: entry.stage,
+        fields: entry.fields ?? {},
+        revisionNumber: entry.revisionNumber ?? 1,
+        revisions: entry.revisions ?? [],
+        audit: entry.stageAudit ?? [],
+      }, { documentUrl }, { id: id("LPR"), at: changedAt, actor: operatorLabel(sessionOperator), note: revisionNote });
+      return { ...entry, fields: revised.fields, revisionNumber: revised.revisionNumber, revisions: [...revised.revisions] };
+    }));
+    const fileRecord: FileRecord = { id: id("FIL"), studentId: lpRevisionDraft.studentId, title: `${lpRevisionDraft.title} · 版本 ${(lpRevisionDraft.revisionNumber ?? 1) + 1}`, type: "Learning Plan", source: documentUrl, addedAt: changedAt };
+    setFiles((current) => [fileRecord, ...current]);
+    setStudents((current) => current.map((student) => student.id === lpRevisionDraft.studentId ? { ...student, files: student.files + 1 } : student));
+    addAudit("修订 LP", `${lpRevisionDraft.title} · 版本 ${(lpRevisionDraft.revisionNumber ?? 1) + 1}${revisionNote ? ` · ${revisionNote}` : ""}`, "purple");
+    setLpRevisionDraft(null);
+    setModal(null);
+    notify("LP 新版本和修订历史已保存");
   };
 
   const submitAva = (event: FormEvent<HTMLFormElement>) => {
@@ -6187,16 +6546,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const duration = Number(data.get("duration") ?? 60);
     const inputTimezone = cleanTimezone(data.get("timezone"));
     const kind = String(data.get("kind") ?? "常规课") as Booking["kind"];
+    const packageId = String(data.get("packageId") ?? bookingDraft?.packageId ?? "").trim();
     const recurring = data.get("recurring") === "on";
     const repeatCountRaw = String(data.get("repeatCount") ?? "").trim();
     const parsedRepeatCount = Number(repeatCountRaw);
-    const repeatCount: number | undefined = recurring
+  const repeatCount: number | undefined = recurring
       ? repeatCountRaw && Number.isFinite(parsedRepeatCount)
         ? Math.max(1, Math.min(104, parsedRepeatCount))
         : bookingDraft?.recurring && bookingDraft.repeatCount == null
           ? undefined
           : undefined
       : 1;
+    const submittedAt = new Date();
     const student = studentById(studentId);
     const teacher = teacherById(teacherId);
     if (!student) {
@@ -6217,6 +6578,34 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     if (!date || !start) {
       notify("请填写课程日期和开始时间。");
+      return;
+    }
+    const studentPackages = student.lessonPackages ?? [];
+    if (kind !== "试听" && studentPackages.length) {
+      const lessonPackage = studentPackages.find((item) => item.id === packageId);
+      if (!lessonPackage) {
+        notify("请选择本节课要使用的课包。");
+        return;
+      }
+      if (!lessonPackage.subjectIds.includes(student.course)) {
+        notify(`课包“${lessonPackage.name}”未绑定 ${student.course}。`);
+        return;
+      }
+    }
+    const firstTeacherStudentBooking = !bookingDraft && !bookings.some((item) => item.teacherId === teacherId && item.studentId === studentId);
+    const movingTeacherOrStudent = Boolean(bookingDraft && (bookingDraft.teacherId !== teacherId || bookingDraft.studentId !== studentId));
+    const newTeacherStudentBooking = movingTeacherOrStudent && !bookings.some((item) => item.id !== bookingDraft?.id && item.teacherId === teacherId && item.studentId === studentId);
+    const targetCapacityAvailable = teacher.newStudentCapacity === undefined || teacher.newStudentCapacity > 0;
+    if (kind !== "代课" && firstTeacherStudentBooking && teacher.newStudentCapacity !== undefined && teacher.newStudentCapacity <= 0) {
+      notify(`${teacher.name} 的可接新生数量为 0，请先选择其他老师或由教务调整数量。`);
+      return;
+    }
+    if (bookingDraft && movingTeacherOrStudent && !isAdminView) {
+      notify("更换老师或学生需要管理员处理，以保持可接新生数量准确。");
+      return;
+    }
+    if (bookingDraft && kind !== "代课" && newTeacherStudentBooking && !targetCapacityAvailable) {
+      notify(`${teacher.name} 的可接新生数量为 0，请先选择其他老师或由教务调整数量。`);
       return;
     }
     if (
@@ -6279,14 +6668,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       timezone: inputTimezone,
       recurring,
       repeatCount,
+      requestedAt: bookingDraft?.requestedAt ?? submittedAt.toISOString(),
+      packageId: packageId || undefined,
+      course: student.course,
       classroom: {
         meetingId: `yinling-${bookingId}`,
         status: "ready",
-        createdAt: new Date().toISOString(),
+        createdAt: submittedAt.toISOString(),
       },
     };
     if (isPastBooking(booking) && !bookingDraft) {
       notify("不能创建已经过去的课程，请检查日期、时间和录入时区。");
+      return;
+    }
+    if (kind === "试听" && bookingInstant(booking).getTime() <= submittedAt.getTime()) {
+      notify("试听开始时间必须晚于当前时间，才能生成准确提醒。");
       return;
     }
     if (bookingDraft && isPastBooking(bookingDraft)) {
@@ -6296,6 +6692,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const scheduleSummary = `${student.name} · ${date} ${start} · ${teacher.name} · ${recurring ? (repeatCount == null ? "旧版长期" : `${repeatCount} 节固定课`) : "单次课"}`;
     const previousBooking = bookingDraft ? { ...bookingDraft } : undefined;
     const previousStudent = { ...student };
+    const previousBookingTasks = bookingDraft ? tasks.filter((task) => task.anchorBookingId === bookingDraft.id) : [];
+    const requestWorkflowBeforeEdit = bookingDraft && kind === "试听"
+      ? [...lpItems]
+          .filter((item) => item.studentId === studentId && (item.workflowType === "试听 LP" || item.workflowType === "换老师试听"))
+          .find((item) => tasks.some((task) => task.anchorBookingId === item.id))
+      : undefined;
+    const previousRequestTasks = requestWorkflowBeforeEdit
+      ? tasks.filter((task) => task.studentId === studentId && task.anchorBookingId === requestWorkflowBeforeEdit.id)
+      : [];
     requestConfirmation({
       title: bookingDraft ? "确认修改整个课程系列" : "确认创建排课",
       detail: scheduleSummary,
@@ -6313,12 +6718,62 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       confirmLabel: bookingDraft ? "保存整个系列" : "确认创建",
       onConfirm: () => {
         if (bookingDraft && previousBooking) {
+          const previousTeacher = teacherById(previousBooking.teacherId);
+          const targetTeacherBeforeEdit = teacherById(teacher.id);
+          const previousTeacherStudentBooking = bookings.some((entry) => entry.id !== previousBooking.id && entry.teacherId === previousBooking.teacherId && entry.studentId === previousBooking.studentId);
+          const previousCapacityAssigned = Boolean(previousTeacher?.capacityAssignments?.includes(previousBooking.studentId));
+          const shouldReleasePreviousCapacity = movingTeacherOrStudent && previousCapacityAssigned && !previousTeacherStudentBooking;
+          const shouldAssignTargetCapacity = isAdminView && booking.kind !== "代课" && newTeacherStudentBooking && teacher.newStudentCapacity !== undefined;
           booking.classroom = bookingDraft.classroom;
           setBookings((current) =>
             current.map((entry) =>
               entry.id === bookingDraft.id ? { ...entry, ...booking } : entry,
             ),
           );
+          if (booking.kind === "试听") {
+            const requestWorkflow = requestWorkflowBeforeEdit;
+            setTasks((current) => requestWorkflow
+              ? linkTrialRequestTasksToBooking(current, {
+                  requestAnchorBookingId: requestWorkflow.id,
+                  anchorBookingId: booking.id,
+                  studentId,
+                  owner: student.owner,
+                  requestedAt: booking.requestedAt ?? submittedAt.toISOString(),
+                  trialStartsAt: bookingInstant(booking),
+                  now: submittedAt,
+                  idFactory: () => id("TSK"),
+                })
+              : reconcileTrialBookingTasks(current, {
+                  anchorBookingId: booking.id,
+                  studentId,
+                  owner: student.owner,
+                  requestedAt: booking.requestedAt ?? submittedAt.toISOString(),
+                  trialStartsAt: bookingInstant(booking),
+                  now: submittedAt,
+                  idFactory: () => id("TSK"),
+                }));
+          } else if (previousBooking.kind === "试听") {
+            setTasks((current) => closeTasksForBooking(current, booking.id, new Date(), "试听已改为其他课程类型"));
+          }
+          if (shouldReleasePreviousCapacity || shouldAssignTargetCapacity) {
+            setTeachers((current) => current.map((entry) => {
+              if (shouldReleasePreviousCapacity && previousTeacher && entry.id === previousTeacher.id) {
+                return {
+                  ...entry,
+                  newStudentCapacity: entry.newStudentCapacity === undefined ? undefined : entry.newStudentCapacity + 1,
+                  capacityAssignments: (entry.capacityAssignments ?? []).filter((assignment) => assignment !== previousBooking.studentId),
+                };
+              }
+              if (shouldAssignTargetCapacity && entry.id === teacher.id) {
+                return {
+                  ...entry,
+                  newStudentCapacity: Math.max(0, (entry.newStudentCapacity ?? 0) - 1),
+                  capacityAssignments: Array.from(new Set([...(entry.capacityAssignments ?? []), studentId])),
+                };
+              }
+              return entry;
+            }));
+          }
           addAudit("编辑排课", scheduleSummary, "blue");
           notify("课程已更新并重新完成冲突检查", () => {
             setBookings((current) =>
@@ -6326,6 +6781,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 entry.id === previousBooking.id ? previousBooking : entry,
               ),
             );
+            const taskSnapshotById = new Map(
+              [...previousBookingTasks, ...previousRequestTasks].map((task) => [task.id, task]),
+            );
+            setTasks((current) => sortTasksByDueAt([
+              ...current.filter((task) => task.anchorBookingId !== previousBooking.id && !taskSnapshotById.has(task.id)),
+              ...taskSnapshotById.values(),
+            ].map((task) => ({ ...task }))));
+            if (shouldReleasePreviousCapacity || shouldAssignTargetCapacity) {
+              setTeachers((current) => current.map((entry) => {
+                if (previousTeacher && entry.id === previousTeacher.id) return previousTeacher;
+                if (targetTeacherBeforeEdit && entry.id === targetTeacherBeforeEdit.id) return targetTeacherBeforeEdit;
+                return entry;
+              }));
+            }
             addAudit(
               "撤销编辑排课",
               `${student.name} · 恢复原课程系列`,
@@ -6334,9 +6803,43 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           });
         } else {
           setBookings((current) => [...current, booking]);
-          const generatedTasks = isTeacherView
-            ? []
-            : createWorkflowTasks(studentId, kind === "试听");
+          const requestWorkflow = kind === "试听" ? [...lpItems]
+            .filter((item) => item.studentId === studentId && (item.workflowType === "试听 LP" || item.workflowType === "换老师试听"))
+            .find((item) => tasks.some((task) => task.anchorBookingId === item.id)) : undefined;
+          const previousRequestTasksForCreate = requestWorkflow
+            ? tasks.filter((task) => task.studentId === studentId && task.anchorBookingId === requestWorkflow.id)
+            : [];
+          const generatedTasks = kind === "试听"
+            ? generateTrialBookingTasks({
+                anchorBookingId: booking.id,
+                studentId,
+                owner: student.owner,
+                requestedAt: booking.requestedAt ?? submittedAt.toISOString(),
+                trialStartsAt: bookingInstant(booking),
+                now: submittedAt,
+                idFactory: () => id("TSK"),
+              })
+            : [];
+          if (generatedTasks.length) setTasks((current) => requestWorkflow
+            ? linkTrialRequestTasksToBooking(current, {
+                requestAnchorBookingId: requestWorkflow.id,
+                anchorBookingId: booking.id,
+                studentId,
+                owner: student.owner,
+                requestedAt: booking.requestedAt ?? submittedAt.toISOString(),
+                trialStartsAt: bookingInstant(booking),
+                now: submittedAt,
+                idFactory: () => id("TSK"),
+              })
+            : reconcileTrialBookingTasks(current, {
+                anchorBookingId: booking.id,
+                studentId,
+                owner: student.owner,
+                requestedAt: booking.requestedAt ?? submittedAt.toISOString(),
+                trialStartsAt: bookingInstant(booking),
+                now: submittedAt,
+                idFactory: () => id("TSK"),
+              }));
           if (!isTeacherView)
             setStudents((current) =>
               current.map((item) =>
@@ -6351,30 +6854,51 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   : item,
               ),
             );
+          if (isAdminView && kind !== "代课" && firstTeacherStudentBooking && teacher.newStudentCapacity !== undefined) {
+            setTeachers((current) => current.map((item) => item.id === teacher.id ? {
+              ...item,
+              newStudentCapacity: Math.max(0, (item.newStudentCapacity ?? 0) - 1),
+              capacityAssignments: Array.from(new Set([...(item.capacityAssignments ?? []), studentId])),
+            } : item));
+          }
           addAudit("创建排课", scheduleSummary, "green");
           notify(
             isTeacherView
               ? "约课已创建，等待教务确认"
-              : "排课已创建，并生成 LP、N-2 和课后检查任务",
-            () => {
+              : kind === "试听" ? "试听排课已创建，准确提醒时间已生成" : "排课已创建",
+            isAdminView ? () => {
               const generatedTaskIds = new Set(
                 generatedTasks.map((task) => task.id),
               );
               setBookings((current) =>
                 current.filter((entry) => entry.id !== booking.id),
               );
-              if (generatedTaskIds.size)
-                setTasks((current) =>
-                  current.filter((task) => !generatedTaskIds.has(task.id)),
-                );
+              if (generatedTaskIds.size) setTasks((current) => sortTasksByDueAt([
+                ...current.filter((task) => task.anchorBookingId !== booking.id && !generatedTaskIds.has(task.id)),
+                ...previousRequestTasksForCreate.filter((task) => !current.some((entry) => entry.id === task.id && entry.anchorBookingId !== booking.id)),
+              ]));
+              if (requestWorkflow) {
+                setTasks((current) => restoreTrialRequestTasksToWorkflow(current, {
+                  bookingAnchorBookingId: booking.id,
+                  requestAnchorBookingId: requestWorkflow.id,
+                  studentId,
+                }));
+              }
               if (!isTeacherView)
                 setStudents((current) =>
                   current.map((item) =>
                     item.id === previousStudent.id ? previousStudent : item,
                   ),
                 );
+              if (isAdminView && kind !== "代课" && firstTeacherStudentBooking && teacher.newStudentCapacity !== undefined) {
+                setTeachers((current) => current.map((item) => item.id === teacher.id ? {
+                  ...item,
+                  newStudentCapacity: teacher.newStudentCapacity,
+                  capacityAssignments: (item.capacityAssignments ?? []).filter((assignment) => assignment !== studentId),
+                } : item));
+              }
               addAudit("撤销创建排课", scheduleSummary, "amber");
-            },
+            } : undefined,
           );
         }
         setSelectedBookingId(booking.id);
@@ -6627,17 +7151,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             title: `${type}：${detail}`,
             owner: student?.owner ?? "待分配",
             studentId: targetId,
-            due: "待人工确认",
-            status: "today" as const,
-            tone: "amber" as const,
-            category: "排课" as const,
+            ...taskTiming(isoDateInTimezone(new Date(), "Australia/Melbourne"), "Australia/Melbourne", "amber"),
+            category: "请假代课" as const,
             trigger: `${type} 记录后自动生成`,
           },
         ];
       },
     );
+    const operationByStudent = new Map(generatedOperations.map((operation) => [operation.studentId, operation]));
+    const operationTasks = generatedTasks.map((task, index) => {
+      const operation = operationByStudent.get(task.studentId);
+      return {
+        ...task,
+        category: "请假代课" as const,
+        ruleKey: task.ruleKey ?? `operation.${type}.${index}`,
+        anchorBookingId: task.anchorBookingId ?? operation?.id ?? `operation:${task.studentId}`,
+      };
+    });
     setOperations((current) => [...generatedOperations, ...current]);
-    setTasks((current) => [...generatedTasks, ...current]);
+    setTasks((current) => sortTasksByDueAt(upsertTasksByRule(current, operationTasks)));
     setSelectedOperationId(generatedOperations[0].id);
     setSelectedStudentId(generatedOperations[0].studentId);
     const teacher = teacherById(teacherId);
@@ -6653,7 +7185,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     setActive("operations");
     notify(
       teacherImpact
-        ? `已识别 ${affectedOccurrences.length} 节受影响课程，并生成 ${generatedTasks.length} 项后续任务`
+        ? `已识别 ${affectedOccurrences.length} 节受影响课程，并生成 ${operationTasks.length} 项后续任务`
         : "异常已记录，并生成后续处理任务",
     );
   };
@@ -6664,16 +7196,22 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
     const data = new FormData(event.currentTarget);
     const student = studentById(renewalDraft.studentId);
-    if (!student || !isActiveStudent(student)) {
-      notify("该学生当前不是在读/待续课状态，未保存本次跟进");
+    if (!student) {
+      notify("未找到关联学生，未保存本次跟进");
       return;
     }
 
     const result = String(data.get("result") ?? "已跟进") as RenewalStatus;
+    const businessStatus = String(data.get("businessStatus") ?? "not_renewed_active") as RenewalBusinessStatus;
     const note = String(data.get("note") ?? "").trim();
+    const renewalDateNote = String(data.get("renewalDateNote") ?? "").trim();
     const attemptedAtInput = String(data.get("attemptedAt") ?? currentLocalDateTimeValue());
-    const attemptedAtDate = new Date(attemptedAtInput);
-    const attemptedAt = Number.isNaN(attemptedAtDate.getTime()) ? new Date().toISOString() : attemptedAtDate.toISOString();
+    const attemptedAtParts = attemptedAtInput.match(/^(\d{4}-\d{2}-\d{2})T([0-2]\d:[0-5]\d)$/);
+    if (!attemptedAtParts) {
+      notify("请选择有效的本次操作时间");
+      return;
+    }
+    const attemptedAt = zonedDateTimeToUtc(attemptedAtParts[1], attemptedAtParts[2], displayPreferences.timezone).toISOString();
     const attachment = data.get("attachment");
     let attachmentId: string | undefined;
     let attachmentTitle: string | undefined;
@@ -6702,13 +7240,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         setStudents((current) => current.map((item) => item.id === renewalDraft.studentId ? { ...item, files: item.files + 1 } : item));
       }
 
-      const contacted = result !== "本次未跟进";
+      const contacted = result === "已跟进" || result === "等待家长";
       const updated: Renewal = {
         ...renewalDraft,
         status: result,
+        businessStatus,
         lastAttemptAt: attemptedAt,
         lastContactedAt: contacted ? attemptedAt : renewalDraft.lastContactedAt,
         followUpNote: note,
+        renewalDateNote,
         followUpAttachmentId: attachmentId,
         followUpAttachmentTitle: attachmentTitle,
       };
@@ -6716,12 +7256,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ? current.map((item) => item.id === updated.id ? updated : item)
         : [updated, ...current]);
       if (contacted) {
-        setStudents((current) => current.map((item) => item.id === updated.studentId ? { ...item, followUp: attemptedAt } : item));
+        const followUp: StudentFollowUp = { id: id("FUH"), followedUpAt: attemptedAt, note: note ? `续课：${result} · ${note}` : `续课：${result}`, recordedBy: operatorLabel(sessionOperator) };
+        setStudents((current) => current.map((item) => item.id === updated.studentId ? {
+          ...item,
+          followUp: attemptedAt,
+          followUpHistory: appendStudentFollowUp(item.followUpHistory ?? [], followUp),
+        } : item));
       }
       addAudit(
         "记录续课跟进",
-        `${student.name} · ${result} · ${formatFollowUpTime(attemptedAt, displayPreferences)}${attachmentTitle ? ` · 已归档截图 ${attachmentTitle}` : ""}${note ? ` · ${note}` : ""}`,
-        result === "本次未跟进" ? "amber" : result === "已确认" ? "green" : "blue",
+        `${student.name} · ${RENEWAL_STATUS_LABELS[businessStatus]} · ${result} · ${formatFollowUpTime(attemptedAt, displayPreferences)}${attachmentTitle ? ` · 已归档截图 ${attachmentTitle}` : ""}${note ? ` · ${note}` : ""}`,
+        result === "本次未跟进" ? "amber" : businessStatus === "renewed" ? "green" : "blue",
       );
       setModal(null);
       setRenewalDraft(null);
@@ -6734,7 +7279,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const submitFile = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const title = String(data.get("title") ?? "").trim(); if (!title) return;
+    event.preventDefault();
+    if (isTeacherView) { notify("老师账号只能查看学生资料"); return; }
+    const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const title = String(data.get("title") ?? "").trim(); if (!title) return;
     const file: FileRecord = { id: id("FIL"), studentId, title, type: String(data.get("type") ?? "其他") as FileRecord["type"], source: String(data.get("source") ?? "人工登记") || "人工登记", addedAt: `今天 ${nowLabel()}` };
     setFiles((current) => [file, ...current]); setStudents((current) => current.map((student) => student.id === studentId ? { ...student, files: student.files + 1 } : student)); addAudit("登记资料链接", `${title} · ${studentById(studentId)?.name}`, "blue"); setModal(null); notify("已在文件索引中登记资料");
   };
@@ -6889,7 +7436,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>学生时区<select name="timezone">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>LP 类型<select name="lpNeed"><option>试听LP</option><option>新生LP</option><option>老生新LP</option><option>代课LP</option><option>LP修改</option><option>无需LP</option></select></label>
           <label>剩余课时<input name="remainingHours" type="number" min="0" step="0.5" placeholder="未导入可留空" /></label>
-          <label className="span-2">家长 / 沟通对象<input name="guardian" placeholder="例如 Chen 先生 · 企业微信客户群" /></label>
+          <label>家长 / 沟通对象<input name="guardian" placeholder="例如 Chen 先生" /></label>
+          <label>家长微信名<input name="guardianWechat" placeholder="例如 Daisy" /></label>
           <label className="span-2">注意事项<textarea name="notes" rows={3} placeholder="特殊安排、Report 或跟进时需要注意的内容" /></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><UserPlus size={16} /> 创建档案</button></footer>
         </form>
@@ -6904,7 +7452,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>规划老师<select name="planner" defaultValue={selectedStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option></select></label>
           <label>所在地<select name="location" defaultValue={selectedStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(selectedStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
-          <label className="span-2">家长 / 沟通对象<input name="guardian" defaultValue={selectedStudent.guardian} /></label>
+          <label>家长 / 沟通对象<input name="guardian" defaultValue={selectedStudent.guardian === "待补充" ? "" : selectedStudent.guardian} /></label>
+          <label>家长微信名<input name="guardianWechat" defaultValue={selectedStudent.guardianWechat ?? ""} /></label>
           <label className="span-2">注意事项<textarea name="notes" rows={3} defaultValue={selectedStudent.notes ?? ""} /></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存修改</button></footer>
         </form>
@@ -6919,13 +7468,32 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
+      {modal === "studentRecords" && <Dialog title={`${selectedStudent.name} · 学生资料`} onClose={() => setModal(null)} wide>
+        <StudentRecordsPanel student={selectedStudent} files={scopedFiles} initialSection={studentRecordKind} canAdd={!isTeacherView} callbacks={{
+          onAdd: (section) => addStudentRecord(section),
+          onOpenFile: (file) => { if (/^https?:\/\//.test(file.source) || file.source.startsWith("/api/")) window.open(file.source, "_blank", "noopener,noreferrer"); },
+        }} />
+      </Dialog>}
+
+      {modal === "studentFollowUp" && <Dialog title="记录最近跟进" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitStudentFollowUp}><FollowUpForm initialFollowedUpAt={new Date().toISOString()} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存跟进</button></footer></form>
+      </Dialog>}
+
+      {modal === "lessonPackage" && <Dialog title="录入课包与课时" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitLessonPackage}><LessonPackageForm existingPackages={(selectedStudent.lessonPackages ?? []).map((lessonPackage) => ({ value: lessonPackage.id, label: lessonPackage.name }))} subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course])).map((value) => ({ value }))} initialSubjectIds={[selectedStudent.course]} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存课包</button></footer></form>
+      </Dialog>}
+
+      {modal === "exam" && <Dialog title="记录学生考试" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitExam}><ExamForm subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course])).map((value) => ({ value }))} initialSubject={selectedStudent.course} initialMonth={new Date().toISOString().slice(0, 7)} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><CalendarPlus size={16} /> 保存考试</button></footer></form>
+      </Dialog>}
+
       {modal === "task" && <Dialog title="添加内部任务" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitTask}>
           <label className="span-2">任务内容<input name="title" autoFocus placeholder="例如确认家长是否收到上课链接" required /></label>
           <label>关联学生<input name="studentId" list="task-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="task-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
           <label>负责人<select name="owner">{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select></label>
-          <label>截止时间<input name="due" defaultValue="今天" /></label>
-          <label>任务分类<select name="category"><option>资料</option><option>试听</option><option>LP</option><option>排课</option><option>课后</option><option>续课</option><option>薪资</option></select></label>
+          <label>截止时间（墨尔本）<input name="dueAt" type="datetime-local" defaultValue={currentDateTimeValueInTimezone("Australia/Melbourne")} required /></label>
+          <label>任务分类<select name="category"><option>资料</option><option>试听</option><option>LP</option><option>排课</option><option>课后</option><option>续课</option><option>考试</option><option>请假代课</option><option>薪资</option></select></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Plus size={16} /> 加入队列</button></footer>
         </form>
       </Dialog>}
@@ -6965,16 +7533,29 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "lp" && <Dialog title="创建 LP 工作流" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitLp}>
           <label>关联学生<input name="studentId" list="lp-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="lp-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          <label>LP 类型<select name="workflowType">{lpWorkflowOptions.map((option) => <option value={option.id} key={option.id}>{option.title}</option>)}</select></label>
           <label>规划老师<select name="planner" defaultValue={selectedStudent.planner ?? "Tara"}><option value="Tara">龙老师</option><option>Eileen</option></select></label>
-          <label>负责教务<select name="owner" defaultValue={selectedStudent.owner} disabled={!isAdminView}>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责教务调整需由管理员处理</small>}</label>
           {isAdminView && <><label className="checkbox-field span-2"><input name="provisional" type="checkbox" /> 暂未有学生姓名，先按科目创建临时档案</label>
           <label>临时姓名（可留空）<input name="provisionalName" placeholder="之后可在学生档案补充" /></label>
           <label>科目 / 课程<input name="provisionalCourse" placeholder="临时建档时必填，例如 Year 9 English" /></label></>}
-          <label className="checkbox-field span-2"><input name="parentFollowUp" type="checkbox" /> 需要跟进家长指定内容（创建后立即生成强提醒）</label>
-          <label className="checkbox-field span-2"><input name="teacherPrep" type="checkbox" defaultChecked /> 需要跟进老师备课内容（课前 N-1 强提醒）</label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> {isAdminView ? "试听、二次试听和直报可先不填姓名；系统会建立“姓名待补”的临时档案，之后在学生详情编辑。" : "如学生尚未建档，请先由管理员建立临时档案。"}试听流程仍会生成 24 小时排课、N-3、N-2 和 N-1 提醒。</div>
-          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><BookOpen size={16} /> 创建并生成提醒</button></footer>
+          <LpWorkflowFields
+            initialType={lpDraftType}
+            initialValues={{ responsibleOperations: selectedStudent.owner, assignedTeacher: selectedStudent.teacher === "待匹配" ? "" : selectedStudent.teacher, subject: selectedStudent.course, locationTimezone: selectedStudent.timezone }}
+            responsibleOperationsOptions={teamOwnerOptions.map((value) => ({ value }))}
+            teacherOptions={recordTeachers.map((teacher) => ({ value: teacher.name, label: `${teacher.name} · ${teacher.id}` }))}
+            subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course])).map((value) => ({ value }))}
+            timezoneOptions={timezoneOptions.map((option) => ({ value: option.id, label: option.label }))}
+            onTypeChange={setLpDraftType}
+          />
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><BookOpen size={16} /> 创建 LP</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "lpRevision" && lpRevisionDraft && <Dialog title="新增 LP 修订版本" onClose={() => { setLpRevisionDraft(null); setModal(null); }}>
+        <form className="form-grid" onSubmit={submitLpRevision}>
+          <label className="span-2">腾讯文档链接<input name="documentUrl" type="url" autoFocus defaultValue={typeof lpRevisionDraft.fields?.documentUrl === "string" ? lpRevisionDraft.fields.documentUrl : ""} required /></label>
+          <label className="span-2">修订说明<textarea name="revisionNote" rows={3} required /></label>
+          <div className="span-2"><LpRevisionHistory revisions={lpRevisionDraft.revisions ?? []} stageAudit={lpRevisionDraft.stageAudit ?? []} /></div>
+          <footer><button className="secondary-button" type="button" onClick={() => { setLpRevisionDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存新版本</button></footer>
         </form>
       </Dialog>}
 
@@ -6990,14 +7571,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
+      {modal === "teacherCapacity" && teacherCapacityDraft && <Dialog title="可接新生数量" onClose={() => { setTeacherCapacityDraft(null); setModal(null); }}>
+        <form className="form-grid" onSubmit={submitTeacherCapacity}>
+          <label>老师<input value={teacherCapacityDraft.name} disabled /></label>
+          <label>剩余可接人数<input name="newStudentCapacity" type="number" min="0" step="1" defaultValue={teacherCapacityDraft.newStudentCapacity ?? 0} required /></label>
+          <footer><button className="secondary-button" type="button" onClick={() => { setTeacherCapacityDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存</button></footer>
+        </form>
+      </Dialog>}
+
       {modal === "booking" && <Dialog title={bookingDraft ? "编辑排课" : "新建排课"} onClose={() => { setBookingDraft(null); setBookingPrefillStudentId(null); setBookingPrefillTeacherId(null); setModal(null); }}>
         <form className="form-grid" onSubmit={submitBooking}>
-          <label>学生<input name="studentId" list="booking-student-options" defaultValue={bookingDraft?.studentId ?? bookingPrefillStudentId ?? ""} placeholder="必须从清单选择学生" required /><datalist id="booking-student-options">{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={bookingDraft?.teacherId ?? bookingPrefillTeacherId ?? ""} placeholder="必须从清单选择老师" required /><datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>}
+          <label>学生<input name="studentId" list="booking-student-options" defaultValue={bookingDraft?.studentId ?? bookingPrefillStudentId ?? ""} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择学生" required />{bookingDraft && !isAdminView ? <input name="studentId" type="hidden" value={bookingDraft.studentId} /> : null}<datalist id="booking-student-options">{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
+          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={bookingDraft?.teacherId ?? bookingPrefillTeacherId ?? ""} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择老师" required />{bookingDraft && !isAdminView ? <input name="teacherId" type="hidden" value={bookingDraft.teacherId} /> : null}<datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>}
           <label>日期<input name="date" type="date" min={bookingDraft ? undefined : isoDateInTimezone(new Date(), scheduleTimezone)} defaultValue={bookingDraft?.date ?? isoDateInTimezone(new Date(), scheduleTimezone)} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue={bookingDraft?.start ?? "16:00"} required /></label>
           <label>录入时区<select name="timezone" defaultValue={bookingDraft?.timezone ?? scheduleTimezone}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>课程类型<select name="kind" defaultValue={bookingDraft?.kind ?? "常规课"}><option>常规课</option><option>试听</option><option>代课</option></select></label>
+          <label>课包<select name="packageId" defaultValue={bookingDraft?.packageId ?? ""}><option value="">试听或暂无课包</option>{(studentById(bookingDraft?.studentId ?? bookingPrefillStudentId ?? selectedStudent.id)?.lessonPackages ?? []).map((lessonPackage) => <option value={lessonPackage.id} key={lessonPackage.id}>{lessonPackage.name} · 剩余 {getLessonPackageBalance(lessonPackage).remainingHours} 小时</option>)}</select></label>
           <label>课程时长<select name="duration" defaultValue={String(bookingDraft?.duration ?? 60)}><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
           <label className="checkbox-field"><input name="recurring" type="checkbox" defaultChecked={bookingDraft?.recurring ?? false} /> 每周固定课程</label>
           <label>本轮排课节数<input name="repeatCount" type="number" min="1" max="104" defaultValue={bookingDraft ? bookingDraft.repeatCount : 1} placeholder={bookingDraft?.recurring && bookingDraft.repeatCount == null ? "旧版长期" : "1"} /><small>{bookingDraft?.recurring && bookingDraft.repeatCount == null ? "当前是旧版长期课程；留空保存会继续保持长期" : "仅勾选固定课时使用；必须明确填写 1-104 节"}</small></label>
@@ -7033,12 +7623,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "renewal" && renewalDraft && <Dialog title="记录续课跟进" onClose={() => { setModal(null); setRenewalDraft(null); }}>
         <form className="form-grid renewal-followup-form" onSubmit={submitRenewalFollowUp}>
           <label>学生<input value={studentById(renewalDraft.studentId)?.name ?? renewalDraft.studentId} disabled /></label>
-          <label>本次结果<select name="result" defaultValue={renewalDraft.status === "本次未跟进" ? "本次未跟进" : renewalDraft.status === "等待家长" ? "等待家长" : renewalDraft.status === "已确认" ? "已确认" : "已跟进"}><option>已跟进</option><option>本次未跟进</option><option>等待家长</option><option>已确认</option></select></label>
+          <label>续课状态<select name="businessStatus" defaultValue={renewalDraft.businessStatus ?? normalizeRenewalBusinessStatus(renewalDraft.status)}>{Object.entries(RENEWAL_STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+          <label>本次结果<select name="result" defaultValue={renewalDraft.status === "本次未跟进" ? "本次未跟进" : renewalDraft.status === "等待家长" ? "等待家长" : "已跟进"}><option>已跟进</option><option>本次未跟进</option><option>等待家长</option></select></label>
           <label>本次操作时间<input name="attemptedAt" type="datetime-local" defaultValue={currentLocalDateTimeValue()} required /></label>
           <label>上次成功跟进<input value={formatFollowUpTime(renewalDraft.lastContactedAt, displayPreferences)} disabled /></label>
+          <label className="span-2">续课日期备注<input name="renewalDateNote" defaultValue={renewalDraft.renewalDateNote ?? ""} placeholder="不足一节、下一节日期或需续费科目" /></label>
           <label className="span-2">跟进说明<textarea name="note" rows={3} defaultValue={renewalDraft.followUpNote ?? ""} placeholder="例如：已联系家长，等待确认下月课时；或本次电话未接通" /></label>
-          <label className="span-2 upload-field">聊天记录截图（可选）<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" /><small>支持 PNG、JPG、WebP，最多 4MB。上传后自动归档到该学生的“续课 FU”。</small></label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> “本次未跟进”只记录本次尝试，不会覆盖上次成功跟进时间。停课、非在读或不活跃学生不会出现在续课列表。</div>
+          <label className="span-2 upload-field">聊天记录截图（可选）<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" /></label>
           <footer><button className="secondary-button" type="button" disabled={renewalUploadBusy} onClick={() => { setModal(null); setRenewalDraft(null); }}>取消</button><button className="primary-button" type="submit" disabled={renewalUploadBusy}><ClipboardCheck size={16} /> {renewalUploadBusy ? "正在保存..." : "保存跟进记录"}</button></footer>
         </form>
       </Dialog>}
@@ -7046,7 +7637,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "file" && <Dialog title="登记资料链接" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitFile}>
           <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="file-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
-          <label>资料类型<select name="type"><option>Learning Plan</option><option>成绩单</option><option>课堂反馈</option><option>续课 FU</option><option>资料链接</option><option>其他</option></select></label>
+          <label>资料类型<select name="type" defaultValue={studentRecordKind === "lp" ? "Learning Plan" : studentRecordKind === "report" ? "Report 资料" : studentRecordKind === "fu" ? "FU" : "资料链接"}><option>Learning Plan</option><option>学校资料</option><option>Report 资料</option><option>成绩单</option><option>FU</option><option>课堂反馈</option><option>续课 FU</option><option>资料链接</option><option>其他</option></select></label>
           <label className="span-2">资料名称<input name="title" autoFocus placeholder="例如 2026 Semester 2 Learning Plan" required /></label>
           <label className="span-2">来源链接或说明<input name="source" placeholder="例如 Google Drive · https://..." /></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><FilePlus2 size={16} /> 登记资料</button></footer>
@@ -7067,9 +7658,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   );
 }
 
-function ViewHeading({ eyebrow, title, copy, actions }: { eyebrow: string; title: string; copy: string; actions: ReactNode }) { return <section className="view-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="view-copy">{copy}</p></div><div className="heading-actions">{actions}</div></section>; }
+function ViewHeading({ eyebrow, title, copy, actions }: { eyebrow: string; title: string; copy?: string; actions: ReactNode }) { return <section className="view-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{copy ? <p className="view-copy">{copy}</p> : null}</div><div className="heading-actions">{actions}</div></section>; }
 function Metric({ tone, icon, value, label, detail, onClick }: { tone: Tone; icon: ReactNode; value: string; label: string; detail: string; onClick?: () => void }) { return <button className={`metric-card ${tone}`} type="button" onClick={onClick}><span className="metric-icon">{icon}</span><span><strong>{value}</strong><b>{label}</b><small>{detail}</small></span><ArrowRight size={17} /></button>; }
-function TaskList({ tasks, studentById, onComplete, onOpen }: { tasks: Task[]; studentById: (id: string) => Student | undefined; onComplete: (id: string) => void; onOpen: (task: Task) => void }) { if (!tasks.length) return <div className="empty-inline"><CircleCheck size={20} /> 当前筛选下没有待处理事项</div>; return <div className="task-list">{tasks.map((task) => <div className="task-row" key={task.id}><span className={`task-dot ${task.tone}`} /><button className="task-copy" type="button" onClick={() => onOpen(task)}><strong>{task.title}</strong><span>{studentById(task.studentId)?.name ?? "未关联学生"} · {task.owner}</span><small>{task.trigger}</small></button><span className={`due-label ${task.status}`}>{task.due}</span><button className="complete-button" type="button" title="标记完成" onClick={() => onComplete(task.id)}><Check size={16} /></button></div>)}</div>; }
 function ScheduleList({ bookings, studentById, teacherById, onOpen }: { bookings: Booking[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; onOpen: (booking: Booking) => void }) { if (!bookings.length) return <div className="empty-inline"><CalendarDays size={20} /> 今天没有课程</div>; return <div className="schedule-list">{bookings.slice(0, 6).map((booking) => <button className="schedule-row" type="button" key={`${booking.id}-${booking.date}`} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{booking.start}</strong><small>{booking.date.slice(5).replace("-", "/")}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {booking.kind} · {booking.status}</small></span><ChevronRight size={16} /></button>)}</div>; }
 function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; detail: string; action: () => void }) { return <button className="risk-row" type="button" onClick={action}><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span><ChevronRight size={15} /></button>; }
 function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimezone, preferences, view, monthOffset, onView, onMonthOffset, onTeacherChange, onAddAva, onEditAva, onDeleteAva }: { teacher: Teacher; teachers: Teacher[]; bookings: Booking[]; studentById: (id: string) => Student | undefined; targetTimezone: string; preferences: DisplayPreferences; view: "week" | "month"; monthOffset: number; onView: (view: "week" | "month") => void; onMonthOffset: (offset: number) => void; onTeacherChange: (teacherId: string) => void; onAddAva: () => void; onEditAva: (slotIndex: number) => void; onDeleteAva: (slotIndex: number) => void }) {
@@ -7090,7 +7680,7 @@ function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimez
     {!teacher.availabilitySlots?.length ? <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>{english ? "This teacher's availability is still unstructured text, so a safe booking calendar cannot be generated." : "这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。"}</strong><span>{teacher.availability || (english ? "No availability received yet" : "尚未收到可用时间")}</span><small>{english ? "Enter confirmed weekday, start, and end times before using availability for booking conflicts or cover-teacher matching." : "录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。"}</small></div></div> : view === "week" ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone, preferences.language)}</span><div>{daySlots.length ? daySlots.map(renderSlot) : <p className="ava-empty-day">{english ? "No available times" : "无可约时段"}</p>}{renderBookings(day.date)}</div></article>; })}</div> : <div className="ava-month"><header><button className="icon-button" type="button" aria-label={english ? "Previous month" : "上一个月"} onClick={() => onMonthOffset(monthOffset - 1)}><ChevronLeft size={16} /></button><strong>{month.label}</strong><button className="icon-button" type="button" aria-label={english ? "Next month" : "下一个月"} onClick={() => onMonthOffset(monthOffset + 1)}><ChevronRight size={16} /></button></header><div className="ava-month-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div><div className="ava-month-grid">{month.days.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article className={day.inMonth ? "" : "outside"} key={day.date}><strong>{day.day}</strong><div>{daySlots.map(renderSlot)}{renderBookings(day.date)}</div></article>; })}</div></div>}
   </section>;
 }
-function StudentDetail({ student, tasks, bookings, files, teacherById, preferences, mobileOpen, canEditStatus = true, onClose, onFiles, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
+function StudentDetail({ student, tasks, bookings, files, teacherById, preferences, mobileOpen, canEditStatus = true, onClose, onRecord, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onRecord: (section: StudentRecordPanelSection) => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
   const english = preferences.language === "en-AU";
   const studentTasks = tasks.filter((task) => task.studentId === student.id && task.status !== "done");
   const nextBooking = bookings
@@ -7109,11 +7699,10 @@ function StudentDetail({ student, tasks, bookings, files, teacherById, preferenc
     <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Remaining / contract lessons" : "剩余 / 合约课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "lessons" : "节"}`}</strong><em>{student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? "Threshold: 5 lessons" : "阈值 5 节")}</em></span></div>
     {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝只读同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong><p>课时与合约数据来自只读镜像；本系统不会回写教务宝。</p></div>}
     <div className="detail-section"><span>{english ? "Course and teacher" : "课程与老师"}</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
-    <div className="detail-section split"><div><span>{english ? "LP type" : "LP 类型"}</span><strong>{student.lpNeed ?? (english ? "Not set" : "未设置")}</strong></div><div><span>{english ? "Files" : "资料"}</span><button className="inline-link" type="button" onClick={onFiles}>{files.filter((file) => file.studentId === student.id).length || student.files} {english ? "indexed files" : "项索引"} <ChevronRight size={14} /></button></div></div>
-    <div className="detail-section split"><div><span>{english ? "Report progress" : "Report 进度"}</span><strong>{student.reportProgress ?? (english ? "No record" : "未记录")}</strong></div><div><span>{english ? "Latest follow-up" : "最近跟进"}</span><strong>{student.followUp ?? (english ? "No record" : "未记录")}</strong></div></div>
-    {(student.examDate || student.examSubject) && <div className="detail-section"><span>考试节点</span><strong>{student.examSubject || "考试科目待确认"} · {student.examDate || "日期待确认"}</strong><p>{student.resultDate ? `预计出分 ${student.resultDate}` : "考前 30 天与考试当天提醒"}</p></div>}
+    <div className="detail-section"><span>{english ? "Family contact" : "家长联系"}</span><strong>{student.guardian}</strong>{student.guardianWechat ? <p>{student.guardianWechat}</p> : null}</div>
+    <div className="detail-section student-record-entry-grid"><button type="button" onClick={() => onRecord("lp")}><strong>LP / 学校资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Learning Plan" || file.type === "学校资料")).length}</span></button><button type="button" onClick={() => onRecord("report")}><strong>Report 资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Report 资料" || file.type === "成绩单")).length}</span></button><button type="button" onClick={() => onRecord("fu")}><strong>FU</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "FU" || file.type === "续课 FU" || file.type === "课堂反馈")).length}</span></button><button type="button" onClick={() => onRecord("followUp")}><strong>最近跟进</strong><span>{student.followUpHistory?.length ?? (student.followUp ? 1 : 0)}</span></button></div>
+    <div className="detail-section split"><button className="inline-link" type="button" onClick={() => onRecord("lessonPackages")}>课包 {student.lessonPackages?.length ?? 0}</button><button className="inline-link" type="button" onClick={() => onRecord("exams")}>考试 {student.exams?.length ?? (student.examDate || student.examSubject ? 1 : 0)}</button></div>
     <div className="detail-section"><span>特殊备注</span><strong>{student.notes ?? "无特殊备注"}</strong></div>
-    <div className="detail-section"><span>家长与沟通路由</span><strong>{student.guardian}</strong></div>
     {canEditStatus && <div className="student-detail-actions"><button className="secondary-button" type="button" onClick={onEdit}><UserCog size={15} /> 编辑档案</button><button className="secondary-button" type="button" onClick={onEvidence}><FilePlus2 size={15} /> 上传沟通/反馈</button></div>}
     {canEditStatus ? <label className="status-select">{english ? "Student status" : "学生状态"}<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["待确认", "待排课", "试听中", "在读", "待续课", "停课", "非在读", "不活跃"].map((status) => <option value={status} key={status}>{displayTerm(status, preferences.language)}</option>)}</select></label> : <div className="detail-section"><span>{english ? "Student status" : "学生状态"}</span><strong>{displayTerm(student.status, preferences.language)}</strong><p>{english ? "Teacher access is read-only. Contact the operations owner to update this record." : "老师账号只读；如需调整请联系负责教务。"}</p></div>}
     <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong><small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small></div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{task.title}</strong><small>{task.due} · {task.owner}</small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div>
