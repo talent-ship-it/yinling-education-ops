@@ -358,8 +358,10 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(store, /putStudentFuAttachment/);
   assert.match(store, /getStudentFuAttachment/);
   assert.match(uploadRoute, /getDemoSessionUser/);
-  assert.match(uploadRoute, /MAX_IMAGE_BYTES = 4 \* 1024 \* 1024/);
-  assert.match(uploadRoute, /ALLOWED_IMAGE_TYPES/);
+  assert.match(uploadRoute, /MAX_STUDENT_ATTACHMENT_BYTES/);
+  assert.match(uploadRoute, /isStudentAttachmentContentType/);
+  assert.match(uploadRoute, /hasStudentAttachmentMagicBytes/);
+  assert.match(uploadRoute, /application\/pdf|studentAttachmentKind/);
   assert.match(downloadRoute, /getDemoSessionUser/);
   assert.match(downloadRoute, /canAccessStudent/);
   assert.match(downloadRoute, /Cache-Control": "private, no-store"/);

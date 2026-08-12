@@ -6,11 +6,15 @@ import { isDemoTeacher } from "@/lib/demo-users";
 import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, putStudentFuAttachment } from "@/lib/ops-store";
+import {
+  MAX_STUDENT_ATTACHMENT_BYTES,
+  hasStudentAttachmentMagicBytes,
+  isStudentAttachmentContentType,
+  sanitiseStudentAttachmentName,
+  studentAttachmentKind,
+} from "@/lib/student-attachment-validation";
 
 export const dynamic = "force-dynamic";
-
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, {
@@ -29,13 +33,14 @@ export async function POST(request: NextRequest) {
   const studentId = String(formData?.get("studentId") ?? "").trim();
   const file = formData?.get("file");
   if (!studentId || !(file instanceof File) || !file.size) {
-    return noStore({ error: "请选择需要归档的聊天记录截图。" }, 400);
+    return noStore({ error: "请选择需要归档的附件。" }, 400);
   }
-  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-    return noStore({ error: "只支持 PNG、JPG 或 WebP 截图。" }, 415);
+  const contentType = file.type.toLowerCase();
+  if (!isStudentAttachmentContentType(contentType)) {
+    return noStore({ error: "只支持 PDF、PNG、JPG 或 WebP 文件。" }, 415);
   }
-  if (file.size > MAX_IMAGE_BYTES) {
-    return noStore({ error: "截图不能超过 4MB。" }, 413);
+  if (file.size > MAX_STUDENT_ATTACHMENT_BYTES) {
+    return noStore({ error: "附件不能超过 4MB。" }, 413);
   }
 
   try {
@@ -44,10 +49,17 @@ export async function POST(request: NextRequest) {
     const access = buildOpsAccessContext(allRows, actor, fullAdmin);
     if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
     const bytes = Buffer.from(await file.arrayBuffer());
+    if (bytes.byteLength !== file.size || !hasStudentAttachmentMagicBytes(contentType, bytes)) {
+      return noStore({ error: "文件内容与所选格式不一致。" }, 415);
+    }
+    const attachmentKind = studentAttachmentKind(contentType);
     const attachment = await putStudentFuAttachment({
       studentId,
-      fileName: file.name.slice(0, 180) || "follow-up-screenshot",
-      contentType: file.type,
+      fileName: sanitiseStudentAttachmentName(
+        file.name,
+        attachmentKind === "report" ? "student-report.pdf" : "follow-up-screenshot",
+      ),
+      contentType,
       contentBase64: bytes.toString("base64"),
       actor,
     });
@@ -57,8 +69,9 @@ export async function POST(request: NextRequest) {
       byteSize: attachment.byte_size,
       uploadedAt: attachment.uploaded_at,
       url: `/api/fu-attachments/${attachment.id}`,
+      kind: attachmentKind,
     });
   } catch (error) {
-    return noStore({ error: error instanceof Error ? error.message : "截图归档失败。" }, 503);
+    return noStore({ error: error instanceof Error ? error.message : "附件归档失败。" }, 503);
   }
 }

@@ -139,7 +139,7 @@ type Section =
   | "audit";
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentReport" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -1326,6 +1326,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [teacherCapacityDraft, setTeacherCapacityDraft] = useState<Teacher | null>(null);
   const [renewalUploadBusy, setRenewalUploadBusy] = useState(false);
   const [evidenceUploadBusy, setEvidenceUploadBusy] = useState(false);
+  const [reportUploadBusy, setReportUploadBusy] = useState(false);
   const [payrollFilter, setPayrollFilter] = useState("all");
   const [payrollCurrency, setPayrollCurrency] = useState("all");
   const [payrollMonthSelection, setPayrollMonthSelection] = useState("");
@@ -1815,7 +1816,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
     setStudentRecordKind(section);
-    if (section === "report") setModal("file");
+    if (section === "report") setModal("studentReport");
     else if (section === "fu") setModal("studentEvidence");
     else if (section === "followUp") setModal("studentFollowUp");
     else if (section === "lessonPackages") setModal("lessonPackage");
@@ -6067,6 +6068,50 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
+  const submitStudentReport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (reportUploadBusy) return;
+    const data = new FormData(event.currentTarget);
+    const attachment = data.get("attachment");
+    const title = String(data.get("title") ?? "Report 资料").trim() || "Report 资料";
+    if (!(attachment instanceof File) || !attachment.size) {
+      notify("请选择需要归档的 PDF");
+      return;
+    }
+    setReportUploadBusy(true);
+    try {
+      const upload = new FormData();
+      upload.set("studentId", selectedStudent.id);
+      upload.set("file", attachment);
+      const response = await fetch("/api/fu-attachments", { method: "POST", body: upload });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.kind !== "report" || !body.id || !body.url) {
+        throw new Error(body.error || "Report PDF 上传失败");
+      }
+      const fileRecord: FileRecord = {
+        id: `REPORT-${body.id}`,
+        studentId: selectedStudent.id,
+        title: `${title} · ${body.fileName || attachment.name}`,
+        type: "Report 资料",
+        source: String(body.url),
+        addedAt: String(body.uploadedAt ?? new Date().toISOString()),
+      };
+      setFiles((current) => current.some((file) => file.id === fileRecord.id) ? current : [fileRecord, ...current]);
+      setStudents((current) => current.map((student) => student.id === selectedStudent.id ? {
+        ...student,
+        files: student.files + 1,
+        reportProgress: "已上传",
+      } : student));
+      addAudit("上传 Report PDF", `${selectedStudent.name} · ${body.fileName || attachment.name}`, "green");
+      setModal(null);
+      notify("Report PDF 已归档到学生资料");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Report PDF 上传失败");
+    } finally {
+      setReportUploadBusy(false);
+    }
+  };
+
   const submitStudentFollowUp = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     try {
@@ -7465,6 +7510,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>记录名称<input name="title" defaultValue="家长沟通记录" required /></label>
           <label className="span-2 upload-field">图片文件<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" required /><small>支持 PNG、JPG、WebP，最多 4MB。文件使用现有私有存储和学生权限范围。</small></label>
           <footer><button className="secondary-button" type="button" disabled={evidenceUploadBusy} onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={evidenceUploadBusy}><FilePlus2 size={16} /> {evidenceUploadBusy ? "正在上传..." : "上传并归档"}</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "studentReport" && <Dialog title="上传 Report PDF" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={submitStudentReport}>
+          <label>关联学生<input value={`${selectedStudent.name} · ${selectedStudent.id}`} disabled /></label>
+          <label>资料名称<input name="title" defaultValue={`${selectedStudent.name} Report`} required /></label>
+          <label className="span-2 upload-field">PDF 文件<input name="attachment" type="file" accept="application/pdf" required /><small>仅支持 PDF，最多 4MB。</small></label>
+          <footer><button className="secondary-button" type="button" disabled={reportUploadBusy} onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={reportUploadBusy}><FilePlus2 size={16} /> {reportUploadBusy ? "正在上传..." : "上传并归档"}</button></footer>
         </form>
       </Dialog>}
 
