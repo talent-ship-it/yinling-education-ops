@@ -158,24 +158,111 @@ export function getLatestStudentFollowUp(history: readonly StudentFollowUp[]) {
   return sortStudentFollowUpHistory(history)[0] ?? null;
 }
 
-export type ExamType = "scholarship" | "selective" | "aeas" | "other";
+/**
+ * Kept as the four values already stored by the current form. More specific
+ * exam behaviour belongs in `examVariant`, so old records and UI consumers do
+ * not need a destructive type migration.
+ */
+export const LEGACY_EXAM_TYPES = ["scholarship", "selective", "aeas", "other"] as const;
+export type ExamType = (typeof LEGACY_EXAM_TYPES)[number];
+
+export const EXAM_VARIANTS = [
+  "scholarship",
+  "selective",
+  "oc",
+  "mgs",
+  "gate",
+  "jmss",
+  "aeas",
+  "school_interview",
+  "australian_university_final",
+  "australian_university_assignment",
+  "vce",
+  "wace",
+  "hsc",
+  "qce",
+  "sace",
+  "icas",
+  "amc",
+  "ielts_paper",
+  "ielts_computer",
+  "pte",
+  "ccl",
+  "other",
+] as const;
+
+export type ExamVariant = (typeof EXAM_VARIANTS)[number];
+export type ExamTaskKind = "exam_care" | "exam_recall" | "exam_results_follow_up";
+
+export const EXAM_FOLLOW_UP_STATUSES = ["pending", "completed", "not_required"] as const;
+export type ExamFollowUpStatus = (typeof EXAM_FOLLOW_UP_STATUSES)[number];
+
+export type ExamFollowUpStepState =
+  | Readonly<{ status: "pending" | "not_required"; completedAt?: never; completedBy?: never }>
+  | Readonly<{ status: "completed"; completedAt: string; completedBy?: string }>;
+
+export type ExamFollowUpState = Readonly<Partial<Record<ExamTaskKind, ExamFollowUpStepState>>>;
 
 export type StudentExamRecord = {
   id: string;
   subject: string;
   examType: ExamType;
+  /** Canonical rule selector. Omitted legacy records fall back to examType. */
+  examVariant?: ExamVariant;
   examMonth: string;
   examDate?: string;
+  /** Per-exam exact date supplied by operations when a result date is known. */
+  resultDateOverride?: string;
+  /** Whether the operations team should collect an exam recall. Legacy records default to true. */
+  includeRecall?: boolean;
+  /** Durable completion state that can later be derived from linked Tasks. */
+  followUpState?: ExamFollowUpState;
 };
 
 function validateExam(record: StudentExamRecord) {
   if (!MONTH_ONLY_PATTERN.test(record.examMonth)) throw new Error("examMonth must use YYYY-MM");
+  if (record.includeRecall !== undefined && typeof record.includeRecall !== "boolean") {
+    throw new Error("includeRecall must be a boolean");
+  }
+  if (record.examVariant && !(EXAM_VARIANTS as readonly string[]).includes(record.examVariant)) {
+    throw new Error("examVariant is not supported");
+  }
   if (record.examDate) {
     requireDateOnly(record.examDate, "examDate");
     if (!record.examDate.startsWith(`${record.examMonth}-`)) {
       throw new Error("examDate must be within examMonth");
     }
   }
+  if (record.resultDateOverride) requireDateOnly(record.resultDateOverride, "resultDateOverride");
+  Object.entries(record.followUpState ?? {}).forEach(([kind, state]) => {
+    if (!["exam_care", "exam_recall", "exam_results_follow_up"].includes(kind)) {
+      throw new Error(`unsupported exam follow-up kind ${kind}`);
+    }
+    if (!state || !(EXAM_FOLLOW_UP_STATUSES as readonly string[]).includes(state.status)) {
+      throw new Error(`invalid exam follow-up status for ${kind}`);
+    }
+    if (state.status === "completed") requireDateTime(state.completedAt, `${kind}.completedAt`);
+  });
+}
+
+/** Replaces or removes one durable follow-up step without mutating the record. */
+export function setExamFollowUpStepState(
+  record: StudentExamRecord,
+  kind: ExamTaskKind,
+  state?: ExamFollowUpStepState,
+): StudentExamRecord {
+  validateExam(record);
+  const followUpState: Partial<Record<ExamTaskKind, ExamFollowUpStepState>> = {
+    ...(record.followUpState ?? {}),
+  };
+  if (state) followUpState[kind] = state;
+  else delete followUpState[kind];
+  const next = {
+    ...record,
+    followUpState: Object.keys(followUpState).length ? followUpState : undefined,
+  };
+  validateExam(next);
+  return next;
 }
 
 export function compareStudentExams(left: StudentExamRecord, right: StudentExamRecord) {
@@ -193,11 +280,27 @@ export function sortStudentExams(records: readonly StudentExamRecord[]) {
   return [...records].sort(compareStudentExams);
 }
 
-function addCalendarDays(dateOnly: string, days: number) {
+export function addCalendarDays(dateOnly: string, days: number) {
   requireDateOnly(dateOnly, "date");
+  if (!Number.isSafeInteger(days) || days < 0) {
+    throw new RangeError("days must be a non-negative integer");
+  }
   const date = new Date(`${dateOnly}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+/** Adds whole calendar months and clamps to the target month's final day. */
+export function addCalendarMonths(dateOnly: string, months: number) {
+  requireDateOnly(dateOnly, "date");
+  if (!Number.isSafeInteger(months) || months < 0) {
+    throw new RangeError("months must be a non-negative integer");
+  }
+  const [year, month, day] = dateOnly.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastTargetDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(day, lastTargetDay));
+  return target.toISOString().slice(0, 10);
 }
 
 /** Counts Monday-Friday only. Public holidays are deliberately not inferred. */
@@ -216,17 +319,94 @@ export function addWeekdays(dateOnly: string, weekdays: number) {
   return date.toISOString().slice(0, 10);
 }
 
-export function estimateExamResultDate(record: StudentExamRecord) {
-  validateExam(record);
-  if (!record.examDate) return null;
-  if (record.examType === "scholarship" || record.examType === "selective") {
-    return addCalendarDays(record.examDate, 30);
-  }
-  if (record.examType === "aeas") return addWeekdays(record.examDate, 10);
-  return null;
+export type ExamResultDateRule = Readonly<
+  | { kind: "calendar_days"; days: number }
+  | { kind: "weekdays"; days: number }
+  | { kind: "calendar_months"; months: number }
+  | { kind: "fixed_date"; date: string }
+  | { kind: "explicit_date_required" }
+>;
+
+const CALENDAR_DAYS_30 = Object.freeze({ kind: "calendar_days", days: 30 } as const);
+const CALENDAR_MONTHS_2 = Object.freeze({ kind: "calendar_months", months: 2 } as const);
+const EXPLICIT_DATE_REQUIRED = Object.freeze({ kind: "explicit_date_required" } as const);
+
+/**
+ * Default estimates from the operations specification. State exam result dates
+ * and `other` deliberately require an explicit current-year date: historical
+ * dates such as the document's 2025 examples must never become permanent rules.
+ */
+export const DEFAULT_EXAM_RESULT_DATE_RULES: Readonly<Record<ExamVariant, ExamResultDateRule>> = Object.freeze({
+  scholarship: CALENDAR_DAYS_30,
+  selective: CALENDAR_DAYS_30,
+  oc: CALENDAR_DAYS_30,
+  mgs: CALENDAR_DAYS_30,
+  gate: CALENDAR_DAYS_30,
+  jmss: CALENDAR_DAYS_30,
+  aeas: Object.freeze({ kind: "weekdays", days: 10 }),
+  school_interview: Object.freeze({ kind: "calendar_days", days: 3 }),
+  australian_university_final: Object.freeze({ kind: "calendar_months", months: 1 }),
+  australian_university_assignment: Object.freeze({ kind: "calendar_days", days: 14 }),
+  vce: EXPLICIT_DATE_REQUIRED,
+  wace: EXPLICIT_DATE_REQUIRED,
+  hsc: EXPLICIT_DATE_REQUIRED,
+  qce: EXPLICIT_DATE_REQUIRED,
+  sace: EXPLICIT_DATE_REQUIRED,
+  icas: CALENDAR_MONTHS_2,
+  amc: CALENDAR_MONTHS_2,
+  ielts_paper: Object.freeze({ kind: "weekdays", days: 10 }),
+  ielts_computer: Object.freeze({ kind: "calendar_days", days: 3 }),
+  pte: Object.freeze({ kind: "calendar_days", days: 1 }),
+  ccl: Object.freeze({ kind: "calendar_days", days: 28 }),
+  other: EXPLICIT_DATE_REQUIRED,
+});
+
+export type ExamResultDateConfig = Readonly<{
+  /** Highest-precedence one-off override for the current calculation. */
+  resultDateOverride?: string;
+  /** Current, externally maintained fixed dates, commonly for state exams. */
+  fixedResultDates?: Readonly<Partial<Record<ExamVariant, string>>>;
+  /** Allows a deployment to replace an approximate default without code edits. */
+  ruleOverrides?: Readonly<Partial<Record<ExamVariant, ExamResultDateRule>>>;
+}>;
+
+export function resolveExamVariant(record: Pick<StudentExamRecord, "examType" | "examVariant">): ExamVariant {
+  return record.examVariant ?? record.examType;
 }
 
-export type ExamTaskKind = "exam_care" | "exam_recall" | "exam_results_follow_up";
+export function resolveExamResultDateRule(
+  record: StudentExamRecord,
+  config: ExamResultDateConfig = {},
+): ExamResultDateRule {
+  validateExam(record);
+  const variant = resolveExamVariant(record);
+  const exactDate = config.resultDateOverride ?? record.resultDateOverride ?? config.fixedResultDates?.[variant];
+  if (exactDate) {
+    requireDateOnly(exactDate, "resultDateOverride");
+    return { kind: "fixed_date", date: exactDate };
+  }
+  return config.ruleOverrides?.[variant] ?? DEFAULT_EXAM_RESULT_DATE_RULES[variant];
+}
+
+/** Applies a result-date rule without reading the clock or external state. */
+export function applyExamResultDateRule(examDate: string, rule: ExamResultDateRule): string | null {
+  requireDateOnly(examDate, "examDate");
+  if (rule.kind === "explicit_date_required") return null;
+  if (rule.kind === "fixed_date") {
+    requireDateOnly(rule.date, "fixed result date");
+    return rule.date;
+  }
+  if (rule.kind === "calendar_days") return addCalendarDays(examDate, rule.days);
+  if (rule.kind === "weekdays") return addWeekdays(examDate, rule.days);
+  return addCalendarMonths(examDate, rule.months);
+}
+
+export function estimateExamResultDate(record: StudentExamRecord, config: ExamResultDateConfig = {}) {
+  validateExam(record);
+  if (!record.examDate) return null;
+  return applyExamResultDateRule(record.examDate, resolveExamResultDateRule(record, config));
+}
+
 export type ExamTaskAssigneeRole = "academic_coordinator" | "course_planner";
 
 export type ExamTaskDefinition = {
@@ -236,17 +416,29 @@ export type ExamTaskDefinition = {
   title: string;
   dueDate: string;
   assigneeRole: ExamTaskAssigneeRole;
+  completionStatus: ExamFollowUpStatus;
+  completedAt?: string;
+  completedBy?: string;
 };
 
-export type ExamTaskOptions = {
+export type ExamTaskOptions = ExamResultDateConfig & {
   includeRecall?: boolean;
+  /** Legacy call-site override retained for compatibility. */
   resultDate?: string;
 };
+
+function followUpFields(record: StudentExamRecord, kind: ExamTaskKind) {
+  const state = record.followUpState?.[kind];
+  if (!state) return { completionStatus: "pending" as const };
+  return state.status === "completed"
+    ? { completionStatus: state.status, completedAt: state.completedAt, completedBy: state.completedBy }
+    : { completionStatus: state.status };
+}
 
 export function buildExamTaskDefinitions(record: StudentExamRecord, options: ExamTaskOptions = {}) {
   validateExam(record);
   if (!record.examDate) return [];
-  const includeRecall = options.includeRecall ?? true;
+  const includeRecall = options.includeRecall ?? record.includeRecall ?? true;
   const tasks: ExamTaskDefinition[] = [{
     key: `exam:${record.id}:care`,
     examId: record.id,
@@ -254,6 +446,7 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
     title: `${record.subject}考试当天关心`,
     dueDate: record.examDate,
     assigneeRole: "academic_coordinator",
+    ...followUpFields(record, "exam_care"),
   }];
   if (includeRecall) {
     tasks.push({
@@ -263,9 +456,10 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
       title: `${record.subject}考试回忆`,
       dueDate: record.examDate,
       assigneeRole: "academic_coordinator",
+      ...followUpFields(record, "exam_recall"),
     });
   }
-  const resultDate = options.resultDate ?? estimateExamResultDate(record);
+  const resultDate = options.resultDate ?? estimateExamResultDate(record, options);
   if (resultDate) {
     requireDateOnly(resultDate, "resultDate");
     tasks.push({
@@ -275,9 +469,28 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
       title: `${record.subject}出分关心`,
       dueDate: resultDate,
       assigneeRole: "course_planner",
+      ...followUpFields(record, "exam_results_follow_up"),
     });
   }
   return tasks;
+}
+
+export type ExamFollowUpStatuses = Readonly<Record<ExamTaskKind, ExamFollowUpStatus>>;
+
+/** Derives filter-ready completion values from scheduled definitions plus saved state. */
+export function deriveExamFollowUpStatuses(
+  record: StudentExamRecord,
+  options: ExamTaskOptions = {},
+): ExamFollowUpStatuses {
+  const scheduled = new Set(buildExamTaskDefinitions(record, options).map((task) => task.kind));
+  const statusFor = (kind: ExamTaskKind): ExamFollowUpStatus => scheduled.has(kind)
+    ? record.followUpState?.[kind]?.status ?? "pending"
+    : "not_required";
+  return {
+    exam_care: statusFor("exam_care"),
+    exam_recall: statusFor("exam_recall"),
+    exam_results_follow_up: statusFor("exam_results_follow_up"),
+  };
 }
 
 export type LessonPackagePurchase = {

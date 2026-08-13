@@ -1,8 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
-import { isDemoTeacher } from "@/lib/demo-users";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, putStudentFuAttachment } from "@/lib/ops-store";
@@ -25,9 +24,11 @@ function noStore(payload: unknown, status = 200) {
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
-  const actor = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
-  if (!actor) return noStore({ error: "请先输入访问密码。" }, 401);
-  if (isDemoTeacher(actor)) return noStore({ error: "老师账号只能查看学生资料。" }, 403);
+  const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
+  const { session } = resolved;
+  const actor = session.user;
+  if (session.role === "teacher") return noStore({ error: "老师账号只能查看学生资料。" }, 403);
 
   const formData = await request.formData().catch(() => null);
   const studentId = String(formData?.get("studentId") ?? "").trim();
@@ -45,8 +46,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const allRows = await getOpsState();
-    const fullAdmin = actor === "Nixon" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-    const access = buildOpsAccessContext(allRows, actor, fullAdmin);
+    const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session.role);
     if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.byteLength !== file.size || !hasStudentAttachmentMagicBytes(contentType, bytes)) {

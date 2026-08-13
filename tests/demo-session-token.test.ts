@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  createDemoSessionToken,
+  parseDemoSessionToken,
+} from "../lib/demo-session-token";
+
+const SECRET = "test-only-session-secret";
+const NOW = new Date("2026-08-13T08:00:00.000Z");
+
+test("signed session restores a teacher outside the seeded demo list", () => {
+  const token = createDemoSessionToken({ user: "Derek Jiang", role: "teacher" }, SECRET, NOW);
+  assert.ok(token);
+  assert.deepEqual(parseDemoSessionToken(token, SECRET, NOW), { user: "Derek Jiang", role: "teacher" });
+});
+
+test("tampering with either the teacher name or role invalidates the cookie", () => {
+  const token = createDemoSessionToken({ user: "Derek Jiang", role: "teacher" }, SECRET, NOW);
+  assert.ok(token);
+  const [encoded, signature] = token.split(".");
+  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  const alteredName = Buffer.from(JSON.stringify({ ...payload, user: "Other Teacher" }), "utf8").toString("base64url");
+  const alteredRole = Buffer.from(JSON.stringify({ ...payload, role: "admin" }), "utf8").toString("base64url");
+
+  assert.equal(parseDemoSessionToken(`${alteredName}.${signature}`, SECRET, NOW), null);
+  assert.equal(parseDemoSessionToken(`${alteredRole}.${signature}`, SECRET, NOW), null);
+  assert.equal(parseDemoSessionToken(token, "wrong-secret", NOW), null);
+});
+
+test("a teacher cannot claim an admin identity while a colliding staff name stays role-separated", () => {
+  assert.equal(createDemoSessionToken({ user: "Nixon", role: "teacher" }, SECRET, NOW), null);
+  assert.equal(createDemoSessionToken({ user: "Derek Jiang", role: "admin" }, SECRET, NOW), null);
+  const teacherToken = createDemoSessionToken({ user: "Abby", role: "teacher" }, SECRET, NOW);
+  const staffToken = createDemoSessionToken({ user: "Abby", role: "staff" }, SECRET, NOW);
+  assert.ok(teacherToken);
+  assert.ok(staffToken);
+  assert.deepEqual(parseDemoSessionToken(teacherToken, SECRET, NOW), { user: "Abby", role: "teacher" });
+  assert.deepEqual(parseDemoSessionToken(staffToken, SECRET, NOW), { user: "Abby", role: "staff" });
+});
+
+test("expired session cookies are rejected", () => {
+  const token = createDemoSessionToken({ user: "Derek Jiang", role: "teacher" }, SECRET, NOW);
+  assert.ok(token);
+  assert.equal(parseDemoSessionToken(token, SECRET, new Date("2026-08-21T08:00:01.000Z")), null);
+});

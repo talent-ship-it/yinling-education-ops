@@ -2,13 +2,14 @@
 
 import { ChevronDown, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isDemoTeacher } from "@/lib/demo-users";
+import type { DemoSessionRole } from "@/lib/demo-session-token";
 import styles from "./account-menu.module.css";
 
 type ViewOption = { label: string; value: string };
 
 export default function AccountMenu() {
   const [sessionUser, setSessionUser] = useState("");
+  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
   const [currentView, setCurrentView] = useState("");
   const [viewOptions, setViewOptions] = useState<ViewOption[]>([]);
   const [busy, setBusy] = useState(false);
@@ -23,6 +24,7 @@ export default function AccountMenu() {
         if (body.ok && typeof body.user === "string") {
           resolved = true;
           setSessionUser(body.user);
+          setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
         }
       } catch {
         // The login screen remains usable while the session endpoint is unavailable.
@@ -90,7 +92,7 @@ export default function AccountMenu() {
 
   if (!sessionUser) return null;
   const isAdmin = sessionUser === "Nixon";
-  const isTeacher = isDemoTeacher(sessionUser);
+  const isTeacher = sessionRole === "teacher";
   const displayName = isAdmin ? "Admin" : sessionUser;
   const initials = isAdmin ? "AD" : sessionUser.slice(0, 2).toUpperCase();
 

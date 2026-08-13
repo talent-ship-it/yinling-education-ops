@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   defaultDisplayPreferences,
+  displayTerm,
   displayPreferencesStorageKey,
+  displayTimezoneOptions,
   parseDisplayPreferences,
   timezoneLabelFor,
 } from "../lib/display-preferences";
@@ -45,6 +47,10 @@ test("partitions browser display preferences by login account", () => {
   assert.equal(displayPreferencesStorageKey("  Helen Ceperkovic  "), displayPreferencesStorageKey("helen ceperkovic"));
   assert.equal(timezoneLabelFor("Australia/Melbourne", "en-AU"), "Melbourne");
   assert.equal(timezoneLabelFor("Australia/Melbourne", "zh-CN"), "墨尔本");
+  assert.ok(displayTimezoneOptions.some((option) => option.id === "Pacific/Auckland"));
+  assert.ok(displayTimezoneOptions.some((option) => option.id === "America/Argentina/Buenos_Aires"));
+  assert.ok(displayTimezoneOptions.some((option) => option.id === "Europe/Sarajevo"));
+  assert.equal(displayTerm("在读 + 加课待排", "en-AU"), "Active · additional lessons pending");
 });
 
 test("translates shared controls and schedule details without changing names", () => {

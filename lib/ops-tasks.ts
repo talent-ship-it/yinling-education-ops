@@ -1,7 +1,11 @@
 import { FIXED_REMINDER_RULES } from "./ops-rules";
+import { DEMO_LIMITED_ADMIN_USER } from "./demo-users";
 
 export const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 export const TASK_SPACING_MS = 60 * 60 * 1_000;
+export const TRIAL_SHORT_NOTICE_THRESHOLD_HOURS = 72;
+/** Stable recipient used by automatic teaching-operations tasks. */
+export const DEFAULT_TEACHING_CONTROL_WATCHER = DEMO_LIMITED_ADMIN_USER;
 
 export type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
 export type TaskTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
@@ -22,6 +26,9 @@ export interface OpsTask {
   id: string;
   title: string;
   owner: string;
+  /** Explicit recipients; optional so persisted single-owner tasks remain readable. */
+  assignees?: string[];
+  watchers?: string[];
   studentId: string;
   due: string;
   status: TaskStatus;
@@ -43,6 +50,7 @@ export interface RuleBoundTask extends OpsTask {
   anchorBookingId: string;
 }
 
+/** Legacy name retained for the five rules used by a standard-notice trial. */
 export const TRIAL_TASK_RULES = [
   "trial.parent-follow-up",
   "trial.scheduling",
@@ -51,7 +59,21 @@ export const TRIAL_TASK_RULES = [
   "trial.minimum",
 ] as const;
 
-export type TrialTaskRuleKey = (typeof TRIAL_TASK_RULES)[number];
+export const TRIAL_STANDARD_TASK_RULES = TRIAL_TASK_RULES;
+
+export const TRIAL_SHORT_NOTICE_TASK_RULES = [
+  "trial.parent-follow-up",
+  "trial.scheduling",
+  "trial.short-notice-prep",
+] as const;
+
+/** Every trial rule managed by reconciliation, including mutually exclusive rules. */
+export const TRIAL_MANAGED_TASK_RULES = [
+  ...TRIAL_TASK_RULES,
+  "trial.short-notice-prep",
+] as const;
+
+export type TrialTaskRuleKey = (typeof TRIAL_MANAGED_TASK_RULES)[number];
 
 export const TRIAL_REQUEST_TASK_RULES = [
   "trial.parent-follow-up",
@@ -59,6 +81,8 @@ export const TRIAL_REQUEST_TASK_RULES = [
 ] as const satisfies readonly TrialTaskRuleKey[];
 
 export type TrialRequestTaskRuleKey = (typeof TRIAL_REQUEST_TASK_RULES)[number];
+
+export const TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT = "试听时距规则已切换，任务自动关闭";
 
 export interface TrialRequestTaskInput {
   /** A workflow/request id is valid until a real booking id exists. */
@@ -294,29 +318,53 @@ const trialRuleDetails: Record<
     category: "试听",
     trigger: "试听前 N-1 最低检查",
   },
+  "trial.short-notice-prep": {
+    title: "短通知备课确认",
+    tone: "red",
+    category: "LP",
+    trigger: "试听距开课不足 72 小时，立即确认老师备课与试听资料",
+  },
 };
 
-function scheduleWithConstraints(idealTimes: readonly Date[], now: Date, trialStartsAt: Date) {
-  const availableMs = trialStartsAt.getTime() - now.getTime();
-  if (availableMs <= 0) throw new RangeError("trialStartsAt must be after now");
+function automaticTaskRecipients(owner: string) {
+  return {
+    assignees: [owner],
+    watchers: [DEFAULT_TEACHING_CONTROL_WATCHER],
+  };
+}
 
-  // Retain the one-hour workflow spacing when there is room. For a last-minute
-  // trial, divide the remaining open interval into N+1 slices so all N tasks
-  // remain strictly ordered, after now, and before the lesson.
-  const spacingMs = Math.min(TASK_SPACING_MS, Math.floor(availableMs / (idealTimes.length + 1)));
-  if (spacingMs < 1) throw new RangeError("trialStartsAt is too close to now to represent unique task deadlines");
-  const firstAllowed = now.getTime() + spacingMs;
-  const lastAllowed = trialStartsAt.getTime() - spacingMs;
+/**
+ * Keep an already-due request deadline as history. Only a still-open request
+ * deadline is clamped, and every clamped instant remains strictly before the
+ * lesson. `reservedAfterNow` leaves the earliest millisecond for short notice.
+ */
+function requestDeadlinesForBooking(
+  idealTimes: readonly Date[],
+  now: Date,
+  trialStartsAt: Date,
+  reservedAfterNow = 0,
+) {
+  const nowTime = now.getTime();
+  const trialTime = trialStartsAt.getTime();
+  if (trialTime <= nowTime) throw new RangeError("trialStartsAt must be after now");
 
-  let previous = firstAllowed - spacingMs;
-  return idealTimes.map((ideal, index) => {
-    const earliest = Math.max(firstAllowed, previous + spacingMs);
-    const remaining = idealTimes.length - index - 1;
-    const latest = lastAllowed - remaining * spacingMs;
-    const scheduled = Math.min(Math.max(ideal.getTime(), earliest), latest);
+  const futureIndexes = idealTimes
+    .map((ideal, index) => ({ ideal, index }))
+    .filter(({ ideal }) => ideal.getTime() > nowTime);
+  if (trialTime - nowTime <= futureIndexes.length + reservedAfterNow) {
+    throw new RangeError("trialStartsAt is too close to now to represent task deadlines");
+  }
+
+  const result = idealTimes.map((ideal) => new Date(ideal));
+  let previous = nowTime + reservedAfterNow;
+  futureIndexes.forEach(({ ideal, index }, futureIndex) => {
+    const remaining = futureIndexes.length - futureIndex - 1;
+    const latest = trialTime - remaining - 1;
+    const scheduled = Math.min(Math.max(ideal.getTime(), previous + 1), latest);
+    result[index] = new Date(scheduled);
     previous = scheduled;
-    return new Date(scheduled);
   });
+  return result;
 }
 
 /**
@@ -354,6 +402,7 @@ export function generateTrialRequestTasks(input: TrialRequestTaskInput): RuleBou
       id: idFactory(ruleKey, input.anchorBookingId),
       ...trialRuleDetails[ruleKey],
       owner: input.owner,
+      ...automaticTaskRecipients(input.owner),
       studentId: input.studentId,
       due: formatDue(dueAt, timeZone),
       dueAt: dueAt.toISOString(),
@@ -377,22 +426,39 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
   if (!input.studentId.trim()) throw new TypeError("studentId is required");
   if (!input.owner.trim()) throw new TypeError("owner is required");
 
-  const idealTimes = [
+  const trialLeadTime = trialStartsAt.getTime() - now.getTime();
+  if (trialLeadTime <= 0) throw new RangeError("trialStartsAt must be after now");
+  const shortNotice = trialLeadTime < TRIAL_SHORT_NOTICE_THRESHOLD_HOURS * TASK_SPACING_MS;
+  const requestIdealTimes = [
     atLocalHour(requestedAt, FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest, sameDayHour, timeZone),
     new Date(requestedAt.getTime() + FIXED_REMINDER_RULES.schedulingFeedbackHoursAfterRequest * TASK_SPACING_MS),
-    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial, 18, timeZone),
-    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.preparationDaysBeforeTrial, 18, timeZone),
-    atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.minimumDaysBeforeTrial, 18, timeZone),
   ];
-  const scheduledTimes = scheduleWithConstraints(idealTimes, now, trialStartsAt);
+  const requestTimes = requestDeadlinesForBooking(
+    requestIdealTimes,
+    now,
+    trialStartsAt,
+    shortNotice ? 1 : 0,
+  );
+  const activeRules: readonly TrialTaskRuleKey[] = shortNotice
+    ? TRIAL_SHORT_NOTICE_TASK_RULES
+    : TRIAL_STANDARD_TASK_RULES;
+  const scheduledTimes = shortNotice
+    ? [...requestTimes, new Date(now.getTime() + 1)]
+    : [
+        ...requestTimes,
+        atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial, 18, timeZone),
+        atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.preparationDaysBeforeTrial, 18, timeZone),
+        atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.minimumDaysBeforeTrial, 18, timeZone),
+      ];
   const idFactory = input.idFactory ?? ((ruleKey, anchorBookingId) => `TSK:${anchorBookingId}:${ruleKey}`);
 
-  return TRIAL_TASK_RULES.map((ruleKey, index) => {
+  return activeRules.map((ruleKey, index) => {
     const dueAt = scheduledTimes[index];
     return {
       id: idFactory(ruleKey, input.anchorBookingId),
       ...trialRuleDetails[ruleKey],
       owner: input.owner,
+      ...automaticTaskRecipients(input.owner),
       studentId: input.studentId,
       due: formatDue(dueAt, timeZone),
       dueAt: dueAt.toISOString(),
@@ -404,17 +470,73 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
 }
 
 /** Generate/recalculate trial tasks and preserve ids for the same booking rules. */
+function isAutomaticallyClosedTrialRule(task: OpsTask) {
+  return task.status === "done" && task.result === TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT;
+}
+
+function reconcileGeneratedTrialTasks<T extends OpsTask>(
+  tasks: readonly T[],
+  incoming: readonly RuleBoundTask[],
+  input: Pick<TrialBookingTaskInput, "anchorBookingId" | "studentId" | "now">,
+) {
+  const activeRules = new Set(incoming.map((task) => task.ruleKey));
+  const managedRules = new Set<string>(TRIAL_MANAGED_TASK_RULES);
+  const closedAt = asDate(input.now, "now").toISOString();
+  const prepared: OpsTask[] = [];
+
+  for (const task of tasks) {
+    const managedForBooking = task.studentId === input.studentId
+      && task.anchorBookingId === input.anchorBookingId
+      && Boolean(task.ruleKey && managedRules.has(task.ruleKey));
+    if (!managedForBooking) {
+      prepared.push({ ...task });
+      continue;
+    }
+
+    const active = activeRules.has(task.ruleKey!);
+    // An automatic rule-switch closure is made reopenable with the same id
+    // when that rule applies again. A task completed by a person remains done.
+    if (active && isAutomaticallyClosedTrialRule(task)) {
+      prepared.push({ ...task, status: "waiting", result: undefined, closedAt: undefined });
+      continue;
+    }
+
+    const next = !active && task.status !== "done"
+      ? {
+          ...task,
+          status: "done" as const,
+          tone: "green" as const,
+          result: TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT,
+          closedAt,
+        }
+      : { ...task };
+    const identity = taskRuleIdentity(next);
+    const duplicateIndex = prepared.findIndex((candidate) => taskRuleIdentity(candidate) === identity);
+    if (duplicateIndex < 0) {
+      prepared.push(next);
+      continue;
+    }
+
+    const existing = prepared[duplicateIndex];
+    const existingManuallyCompleted = existing.status === "done" && !isAutomaticallyClosedTrialRule(existing);
+    const nextManuallyCompleted = next.status === "done" && !isAutomaticallyClosedTrialRule(next);
+    if (nextManuallyCompleted && !existingManuallyCompleted) prepared[duplicateIndex] = next;
+  }
+
+  return sortTasksByDueAt(upsertTasksByRule<OpsTask>(prepared, incoming));
+}
+
 export function reconcileTrialBookingTasks<T extends OpsTask>(
   tasks: readonly T[],
   input: TrialBookingTaskInput,
 ): OpsTask[] {
-  return sortTasksByDueAt(upsertTasksByRule<OpsTask>(tasks, generateTrialBookingTasks(input)));
+  return reconcileGeneratedTrialTasks(tasks, generateTrialBookingTasks(input), input);
 }
 
 /**
  * Move the two request-stage tasks from a temporary workflow anchor to the real
- * booking, then reconcile all five booking rules. Request task ids (and any
- * completion state) win over duplicate booking-stage copies.
+ * booking, then reconcile the applicable booking rules. Request task ids (and
+ * any completion state) win over duplicate booking-stage copies.
  */
 export function linkTrialRequestTasksToBooking<T extends OpsTask>(
   tasks: readonly T[],
@@ -457,7 +579,10 @@ export function linkTrialRequestTasksToBooking<T extends OpsTask>(
     const futureDueFitsBookingSchedule = hasCanonicalDueTime
       && canonicalDueTime > previousOpenDueTime
       && canonicalDueTime <= generatedDueTime;
-    const preserveRequestTiming = Boolean(completed) || isActuallyOverdue || futureDueFitsBookingSchedule;
+    // Completion state is preserved independently below. A completed task with
+    // a still-future deadline after the lesson must still have that deadline
+    // clamped; only genuine overdue history keeps an out-of-window timestamp.
+    const preserveRequestTiming = isActuallyOverdue || futureDueFitsBookingSchedule;
     const timingSource = preserveRequestTiming && hasCanonicalDueTime ? canonicalRequest : generated;
     overrides.set(ruleKey, {
       ...generated,
@@ -495,7 +620,7 @@ export function linkTrialRequestTasksToBooking<T extends OpsTask>(
     if (!requestRuleSet.has(task.ruleKey)) return task;
     return overrides.get(task.ruleKey as TrialRequestTaskRuleKey) ?? task;
   });
-  return sortTasksByDueAt(upsertTasksByRule<OpsTask>(base, incoming));
+  return reconcileGeneratedTrialTasks(base, incoming, input);
 }
 
 /** Restore request-stage tasks to their workflow anchor when a booking link is undone. */

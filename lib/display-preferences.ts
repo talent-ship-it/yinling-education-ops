@@ -19,9 +19,13 @@ export const displayTimezoneOptions = [
   { id: "Australia/Melbourne", zh: "墨尔本", en: "Melbourne" },
   { id: "Australia/Adelaide", zh: "阿德莱德", en: "Adelaide" },
   { id: "Australia/Sydney", zh: "悉尼", en: "Sydney" },
+  { id: "Australia/Hobart", zh: "霍巴特", en: "Hobart" },
   { id: "Australia/Brisbane", zh: "布里斯班", en: "Brisbane" },
   { id: "Australia/Perth", zh: "珀斯", en: "Perth" },
+  { id: "Pacific/Auckland", zh: "新西兰", en: "New Zealand" },
   { id: "Asia/Shanghai", zh: "中国", en: "China" },
+  { id: "America/Argentina/Buenos_Aires", zh: "阿根廷", en: "Argentina" },
+  { id: "Europe/Sarajevo", zh: "波斯尼亚", en: "Bosnia" },
 ] as const;
 
 const validTimezones = new Set<string>(displayTimezoneOptions.map((option) => option.id));
@@ -108,6 +112,11 @@ const englishTerms: Record<string, string> = {
   "待排课": "Awaiting schedule",
   "试听中": "Trial",
   "在读": "Active",
+  "不活跃 + 无课时": "Inactive · no hours",
+  "活跃 + 无课时": "Active · no hours",
+  "活跃 + 有课时": "Active · has hours",
+  "不活跃 + 有课时": "Inactive · has hours",
+  "在读 + 加课待排": "Active · additional lessons pending",
   "待续课": "Renewal due",
   "停课": "Paused",
   "非在读": "Inactive",

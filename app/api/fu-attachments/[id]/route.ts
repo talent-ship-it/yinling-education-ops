@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, getStudentFuAttachment } from "@/lib/ops-store";
@@ -11,10 +11,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const cookieStore = await cookies();
-  const actor = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
-  if (!actor) {
-    return NextResponse.json({ error: "请先输入访问密码。" }, { status: 401 });
+  const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  if (!("session" in resolved)) {
+    return NextResponse.json({ error: resolved.error }, { status: resolved.status });
   }
+  const { session } = resolved;
 
   try {
     const { id } = await context.params;
@@ -23,8 +24,9 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ id
       return NextResponse.json({ error: "未找到该附件。" }, { status: 404 });
     }
     const allRows = await getOpsState();
-    const fullAdmin = actor === "Nixon" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-    const access = buildOpsAccessContext(allRows, actor, fullAdmin);
+    const actor = session.user;
+    const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session.role);
     if (!canAccessStudent(access, attachment.student_id)) {
       return NextResponse.json({ error: "未找到该附件。" }, { status: 404 });
     }

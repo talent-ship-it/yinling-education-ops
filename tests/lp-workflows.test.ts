@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  allowedLpResultStatuses,
+  changeLpResultStatus,
   changeLpStage,
   getLpWorkflowSchema,
   LP_STAGES,
+  LP_RESULT_STATUSES,
   LP_WORKFLOW_SCHEMAS,
   LP_WORKFLOW_TYPES,
   PREPARATION_FOLLOW_UP_OPTIONS,
   reviseLpWorkflow,
   SPECIFIED_CONTENT_STATUSES,
+  validateLpDate,
+  validateLpDocumentUrl,
+  validateLpResultStatus,
+  validateLpWorkflowFields,
   type LpWorkflowRecord,
 } from "../lib/lp-workflows.ts";
 
@@ -63,7 +70,7 @@ test("makes university major and year conditional rather than adding unconfirmed
   assert.equal(year?.requirement, "university-only");
 });
 
-test("adds only documented trial fields and models direct-enrolment purchased and bonus hours separately", () => {
+test("adds the minimal system handover fields without claiming a group-template copy", () => {
   const trialKeys = fieldKeys("试听 LP");
   for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson"]) {
     assert.ok(trialKeys.includes(key as never));
@@ -76,10 +83,92 @@ test("adds only documented trial fields and models direct-enrolment purchased an
   assert.equal(directSchema.fields.find((field) => field.key === "purchasedHours")?.min, 0);
   assert.equal(directSchema.fields.find((field) => field.key === "bonusHours")?.min, 0);
 
-  for (const type of ["老师新 LP", "老师 LP 修改", "换老师试听", "代课 LP", "学生报名交接"] as const) {
-    assert.equal(getLpWorkflowSchema(type).typeSpecificFieldsDocumented, false);
-    assert.deepEqual(fieldKeys(type), commonKeys);
+  const expected = {
+    "老师新 LP": ["teacher", "subject", "documentUrl", "modificationRequirements"],
+    "老师 LP 修改": ["teacher", "subject", "documentUrl", "modificationRequirements"],
+    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation"],
+    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "handoverNotes"],
+    "学生报名交接": ["planner", "coursePackage", "subject", "enrollmentHandoverNotes"],
+  } as const;
+  for (const [type, keys] of Object.entries(expected)) {
+    const schema = getLpWorkflowSchema(type as keyof typeof expected);
+    assert.equal(schema.typeSpecificFieldsDocumented, true);
+    assert.deepEqual(fieldKeys(type as keyof typeof expected), [...commonKeys, ...keys]);
+    for (const key of keys) assert.ok(schema.fields.find((field) => field.key === key)?.label);
   }
+  assert.equal(getLpWorkflowSchema("老师新 LP").fields.find((field) => field.key === "documentUrl")?.control, "url");
+  assert.equal(getLpWorkflowSchema("代课 LP").fields.find((field) => field.key === "coverageStartDate")?.control, "date");
+});
+
+function commonFields() {
+  return {
+    responsibleOperations: "Abby",
+    specifiedContentStatus: "已指定",
+    preparationFollowUp: "是",
+    isUniversityStudent: false,
+  } as const;
+}
+
+test("validates the minimum dedicated handover fields, URLs and coverage dates", () => {
+  assert.doesNotThrow(() => validateLpWorkflowFields("老师新 LP", {
+    ...commonFields(), teacher: "Teacher A", subject: "Math", documentUrl: "https://docs.example/lp",
+  }));
+  assert.throws(() => validateLpWorkflowFields("老师 LP 修改", {
+    ...commonFields(), teacher: "Teacher A", subject: "Math", documentUrl: "javascript:alert(1)",
+  }), /http or https/);
+  assert.doesNotThrow(() => validateLpWorkflowFields("换老师试听", {
+    ...commonFields(), originalTeacher: "A", newTeacher: "B", subject: "English", changeReason: "Availability", trialInformation: "Saturday trial",
+  }));
+  assert.doesNotThrow(() => validateLpWorkflowFields("代课 LP", {
+    ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", handoverNotes: "Use current plan",
+  }));
+  assert.throws(() => validateLpWorkflowFields("代课 LP", {
+    ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-30", coverageEndDate: "2026-09-01", handoverNotes: "Use current plan",
+  }), /must not be before/);
+  assert.doesNotThrow(() => validateLpWorkflowFields("学生报名交接", {
+    ...commonFields(), planner: "Tara", coursePackage: "Year 8 English / 20h", subject: "English", enrollmentHandoverNotes: "Enrolled after trial",
+  }));
+  assert.equal(validateLpDocumentUrl("https://docs.example/lp"), "https://docs.example/lp");
+  assert.equal(validateLpDate("2028-02-29"), "2028-02-29");
+  assert.throws(() => validateLpDate("2027-02-29"), /valid calendar date/);
+});
+
+test("keeps business result independent from stage and restricts it by workflow type", () => {
+  assert.deepEqual(LP_RESULT_STATUSES, ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"]);
+  assert.deepEqual(allowedLpResultStatuses("试听 LP"), ["试听成功", "试听失败", "有希望报名", "试听未进行"]);
+  assert.deepEqual(allowedLpResultStatuses("换老师试听"), ["在读试听成功", "在读试听失败"]);
+  assert.deepEqual(allowedLpResultStatuses("老师新 LP"), []);
+  assert.doesNotThrow(() => validateLpResultStatus("试听 LP", "有希望报名"));
+  assert.throws(() => validateLpResultStatus("试听 LP", "在读试听成功"), /not valid/);
+  assert.throws(() => validateLpResultStatus("老师新 LP", "试听成功"), /not valid/);
+
+  const current = workflow();
+  const changed = changeLpResultStatus(current, "试听成功", {
+    id: "AUD-RESULT-1", at: "2026-08-13T10:00:00.000Z", actor: "Abby", note: "Family confirmed",
+  });
+  assert.equal(changed.stage, "待审核");
+  assert.equal(changed.resultStatus, "试听成功");
+  assert.equal(changed.audit.length, 0);
+  assert.deepEqual(changed.resultAudit?.at(-1), {
+    id: "AUD-RESULT-1",
+    workflowId: "LP-001",
+    action: "result_status_changed",
+    occurredAt: "2026-08-13T10:00:00.000Z",
+    actor: "Abby",
+    toResultStatus: "试听成功",
+    note: "Family confirmed",
+  });
+  assert.equal(changeLpResultStatus(changed, "试听成功", { id: "unused", at: "2026-08-13", actor: "Abby" }), changed);
+  const cleared = changeLpResultStatus(changed, undefined, { id: "AUD-RESULT-2", at: "2026-08-13T11:00:00.000Z", actor: "Abby" });
+  assert.equal(cleared.resultStatus, undefined);
+  assert.deepEqual(cleared.resultAudit?.at(-1), {
+    id: "AUD-RESULT-2",
+    workflowId: "LP-001",
+    action: "result_status_changed",
+    occurredAt: "2026-08-13T11:00:00.000Z",
+    actor: "Abby",
+    fromResultStatus: "试听成功",
+  });
 });
 
 test("includes the needs-revision LP stage", () => {

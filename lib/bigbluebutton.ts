@@ -3,6 +3,12 @@ import "server-only";
 import { createHash, createHmac } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 
+import {
+  bbbCallbackNonce,
+  bbbCallbackSignature,
+  meetingIdForOccurrenceValue,
+} from "@/lib/bbb-analytics";
+
 type BbbRecord = Record<string, unknown>;
 
 export type BbbRecording = {
@@ -69,8 +75,40 @@ export function normalizeMeetingId(value: string) {
   return normalized;
 }
 
-export function meetingIdForBooking(bookingId: string) {
-  return normalizeMeetingId(`yinling-${bookingId}`);
+export function meetingIdForOccurrence(occurrenceId: string) {
+  return normalizeMeetingId(meetingIdForOccurrenceValue(occurrenceId));
+}
+
+function callbackOrigin() {
+  const configured = process.env.APP_ORIGIN?.trim();
+  const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() || process.env.VERCEL_URL?.trim();
+  const raw = configured || (vercelHost ? `https://${vercelHost}` : "");
+  if (!raw) {
+    throw new BigBlueButtonError("在线教室回调域名尚未配置。", "missing_callback_origin", 503);
+  }
+  let origin: URL;
+  try {
+    origin = new URL(raw);
+  } catch {
+    throw new BigBlueButtonError("在线教室回调域名无效。", "invalid_callback_origin", 503);
+  }
+  const local = ["localhost", "127.0.0.1", "::1"].includes(origin.hostname);
+  if (origin.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && local)) {
+    throw new BigBlueButtonError("在线教室回调必须使用 HTTPS。", "invalid_callback_origin", 503);
+  }
+  return origin.origin;
+}
+
+function analyticsCallbackUrl(occurrenceId: string, meetingId: string) {
+  const { secret } = configuration();
+  const nonce = bbbCallbackNonce(secret, occurrenceId, meetingId);
+  const signature = bbbCallbackSignature(secret, occurrenceId, meetingId, nonce);
+  const url = new URL("/api/classroom/analytics", callbackOrigin());
+  url.searchParams.set("occurrenceId", occurrenceId);
+  url.searchParams.set("meetingId", meetingId);
+  url.searchParams.set("nonce", nonce);
+  url.searchParams.set("signature", signature);
+  return url.toString();
 }
 
 export function buildBigBlueButtonUrl(action: string, params: Record<string, string | number | boolean | undefined>) {
@@ -124,6 +162,7 @@ export async function createMeeting(input: {
   name: string;
   durationMinutes: number;
   logoutUrl: string;
+  occurrenceId: string;
   bookingId: string;
   studentId: string;
   teacherId: string;
@@ -141,6 +180,8 @@ export async function createMeeting(input: {
     logoutURL: input.logoutUrl,
     meetingExpireIfNoUserJoinedInMinutes: 45,
     meetingExpireWhenLastUserLeftInMinutes: 10,
+    "meta_analytics-callback-url": analyticsCallbackUrl(input.occurrenceId, meetingId),
+    "meta_occurrence-id": input.occurrenceId,
     "meta_booking-id": input.bookingId,
     "meta_student-id": input.studentId,
     "meta_teacher-id": input.teacherId,

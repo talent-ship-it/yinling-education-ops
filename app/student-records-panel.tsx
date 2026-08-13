@@ -3,11 +3,14 @@
 import { useId, useState } from "react";
 
 import {
+  deriveExamFollowUpStatuses,
   estimateExamResultDate,
   getLatestStudentFollowUp,
   getLessonPackageBalance,
   sortStudentExams,
   sortStudentFollowUpHistory,
+  type ExamFollowUpStatuses,
+  type ExamVariant,
   type LessonPackageBalance,
   type StudentExamRecord,
   type StudentFollowUp,
@@ -41,8 +44,12 @@ export type StudentRecordsPanelExam = Readonly<{
   id: string;
   subject: string;
   examType: StudentExamRecord["examType"] | null;
+  examVariant?: ExamVariant;
   examMonth?: string;
   examDate?: string;
+  resultDateOverride?: string;
+  includeRecall?: boolean;
+  followUpState?: StudentExamRecord["followUpState"];
 }>;
 
 /** Compatible with the existing FileRecord shape; URL and explicit grouping are optional. */
@@ -60,6 +67,7 @@ export type StudentRecordsPanelFile = Readonly<{
 export type StudentRecordsPanelCallbacks = Readonly<{
   onAdd: (section: StudentRecordPanelSection, student: StudentRecordsPanelStudent) => void;
   onOpenFile?: (file: StudentRecordsPanelFile) => void;
+  onEditExam?: (exam: StudentExamRecord) => void;
 }>;
 
 export type StudentRecordsPanelProps = Readonly<{
@@ -81,6 +89,7 @@ export type StudentRecordsPanelData = Readonly<{
   exams: readonly Readonly<{
     exam: StudentRecordsPanelExam;
     estimatedResultDate: string | null;
+    followUpStatuses: ExamFollowUpStatuses | null;
   }>[];
 }>;
 
@@ -179,10 +188,11 @@ export function buildStudentRecordsPanelData(
       balance: getLessonPackageBalance(lessonPackage),
     })),
     exams: fallbackExam
-      ? [{ exam: fallbackExam, estimatedResultDate: null }]
+      ? [{ exam: fallbackExam, estimatedResultDate: null, followUpStatuses: null }]
       : sortStudentExams(structuredExams).map((exam) => ({
           exam: { ...exam },
-          estimatedResultDate: estimateExamResultDate(exam),
+          estimatedResultDate: exam.resultDateOverride ?? estimateExamResultDate(exam),
+          followUpStatuses: deriveExamFollowUpStatuses(exam),
         })),
   };
 }
@@ -292,22 +302,95 @@ const EXAM_TYPE_LABELS: Record<StudentExamRecord["examType"], string> = {
   other: "其他",
 };
 
-function ExamHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) {
+const EXAM_VARIANT_LABELS: Readonly<Partial<Record<ExamVariant, string>>> = {
+  oc: "OC",
+  mgs: "MGS",
+  gate: "GATE",
+  jmss: "JMSS",
+  school_interview: "学校面试",
+  australian_university_final: "大学期末",
+  australian_university_assignment: "大学作业",
+  vce: "VCE",
+  wace: "WACE",
+  hsc: "HSC",
+  qce: "QCE",
+  sace: "SACE",
+  icas: "ICAS",
+  amc: "AMC",
+  ielts_paper: "IELTS 纸笔",
+  ielts_computer: "IELTS 机考",
+  pte: "PTE",
+  ccl: "CCL",
+};
+
+const FOLLOW_UP_LABELS = {
+  pending: "待完成",
+  completed: "完成",
+  not_required: "无需",
+} as const;
+
+export type ExamHistoryFilter = "all" | "incomplete";
+
+function examMonth(exam: StudentRecordsPanelExam) {
+  return exam.examMonth ?? exam.examDate?.slice(0, 7);
+}
+
+export function filterStudentRecordExams(
+  exams: StudentRecordsPanelData["exams"],
+  currentMonth: string,
+  filter: ExamHistoryFilter,
+) {
+  return exams.filter(({ exam, followUpStatuses }) => {
+    if (examMonth(exam) !== currentMonth) return false;
+    if (filter === "all") return true;
+    return followUpStatuses !== null
+      && Object.values(followUpStatuses).some((status) => status === "pending");
+  });
+}
+
+function FollowUpStatuses({ statuses }: Readonly<{ statuses: ExamFollowUpStatuses | null }>) {
+  if (!statuses) return null;
+  return <span className="exam-follow-up-statuses">
+    <small>关心 {FOLLOW_UP_LABELS[statuses.exam_care]}</small>
+    <small>回忆 {FOLLOW_UP_LABELS[statuses.exam_recall]}</small>
+    <small>出分 {FOLLOW_UP_LABELS[statuses.exam_results_follow_up]}</small>
+  </span>;
+}
+
+function ExamHistory({
+  data,
+  currentMonth,
+  onEditExam,
+}: Readonly<{
+  data: StudentRecordsPanelData;
+  currentMonth: string;
+  onEditExam?: (exam: StudentExamRecord) => void;
+}>) {
+  const [filter, setFilter] = useState<ExamHistoryFilter>("all");
   if (!data.exams.length) return <EmptyRecords />;
+  const exams = filterStudentRecordExams(data.exams, currentMonth, filter);
   return (
-    <div className="record-list">
-      {data.exams.map(({ exam, estimatedResultDate }) => (
+    <>
+      <div className="view-tabs" aria-label={`${currentMonth} 考试筛选`}>
+        <button className={filter === "all" ? "active" : ""} type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>本月全部</button>
+        <button className={filter === "incomplete" ? "active" : ""} type="button" aria-pressed={filter === "incomplete"} onClick={() => setFilter("incomplete")}>未完成</button>
+      </div>
+      {!exams.length ? <EmptyRecords /> : <div className="record-list">
+      {exams.map(({ exam, estimatedResultDate, followUpStatuses }) => (
         <article className="record-row" key={exam.id}>
           <span className="record-icon amber" aria-hidden="true">考</span>
           <div>
             <strong>{exam.subject}</strong>
-            {exam.examType ? <span>{EXAM_TYPE_LABELS[exam.examType]}</span> : null}
+            {exam.examVariant ? <span>{EXAM_VARIANT_LABELS[exam.examVariant] ?? EXAM_TYPE_LABELS[exam.examType ?? "other"]}</span> : exam.examType ? <span>{EXAM_TYPE_LABELS[exam.examType]}</span> : null}
+            <FollowUpStatuses statuses={followUpStatuses} />
           </div>
           <small>{exam.examDate ?? exam.examMonth ?? "日期待确认"}</small>
           <span>预计出分 {estimatedResultDate ?? "待定"}</span>
+          {onEditExam && exam.examType && exam.examMonth ? <button className="inline-link" type="button" onClick={() => onEditExam(exam as StudentExamRecord)}>编辑</button> : null}
         </article>
       ))}
-    </div>
+      </div>}
+    </>
   );
 }
 
@@ -315,17 +398,21 @@ function SectionContent({
   section,
   data,
   onOpenFile,
+  currentMonth,
+  onEditExam,
 }: Readonly<{
   section: StudentRecordPanelSection;
   data: StudentRecordsPanelData;
   onOpenFile?: (file: StudentRecordsPanelFile) => void;
+  currentMonth: string;
+  onEditExam?: (exam: StudentExamRecord) => void;
 }>) {
   if (section === "lp" || section === "report" || section === "fu") {
     return <FileHistory files={data.files[section]} onOpen={onOpenFile} />;
   }
   if (section === "followUp") return <FollowUpHistory data={data} />;
   if (section === "lessonPackages") return <LessonPackageHistory data={data} />;
-  return <ExamHistory data={data} />;
+  return <ExamHistory data={data} currentMonth={currentMonth} onEditExam={onEditExam} />;
 }
 
 export function StudentRecordsPanel({
@@ -338,6 +425,7 @@ export function StudentRecordsPanel({
   const [section, setSection] = useState<StudentRecordPanelSection>(initialSection);
   const panelId = useId();
   const data = buildStudentRecordsPanelData(student, files);
+  const currentMonth = new Date().toISOString().slice(0, 7);
 
   return (
     <section className="panel collection-shell" aria-label={`${student.name} 学生资料`}>
@@ -363,7 +451,7 @@ export function StudentRecordsPanel({
         </button> : null}
       </header>
       <div id={`${panelId}-${section}`} role="tabpanel">
-        <SectionContent section={section} data={data} onOpenFile={callbacks.onOpenFile} />
+        <SectionContent section={section} data={data} onOpenFile={callbacks.onOpenFile} currentMonth={currentMonth} onEditExam={callbacks.onEditExam} />
       </div>
     </section>
   );

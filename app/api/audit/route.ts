@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, getAccessScopeVersions } from "@/lib/ops-access";
 import { getOpsState, OpsStoreError, putOpsState } from "@/lib/ops-store";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
@@ -18,9 +18,11 @@ function noStore(payload: unknown, status = 200) {
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
-  const actor = getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value);
-  if (!actor) return noStore({ error: "请先输入访问密码。" }, 401);
-  const fullAdmin = actor === "Nixon" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
+  const { session } = resolved;
+  const actor = session.user;
+  const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   const body = await request.json().catch(() => null);
   const action = typeof body?.action === "string" ? body.action.trim() : "";
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
       const rows = await getOpsState();
       const row = rows.find((item) => item.entity === "audit");
       if (!row || !Array.isArray(row.payload)) return noStore({ error: "操作审计尚未初始化。" }, 503);
-      const scopeVersions = getAccessScopeVersions(rows, buildOpsAccessContext(rows, actor, fullAdmin));
+      const scopeVersions = getAccessScopeVersions(rows, buildOpsAccessContext(rows, actor, fullAdmin, session.role));
       const saved = await putOpsState({
         entity: "audit",
         payload: [entry, ...row.payload],

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildStudentRecordsPanelData,
+  filterStudentRecordExams,
   studentFileRecordSection,
   type StudentRecordsPanelFile,
   type StudentRecordsPanelStudent,
@@ -47,6 +48,72 @@ test("groups the existing FileRecord shape into complete student histories", () 
   assert.deepEqual(data.files.report.map((file) => file.id), ["report"]);
   assert.deepEqual(data.files.fu.map((file) => file.id), ["fu"]);
   assert.equal(data.files.lp.some((file) => file.id === "other-student"), false);
+});
+
+test("derives the three care/recall/results states and filters current-month incomplete exams", () => {
+  const currentMonthStudent: StudentRecordsPanelStudent = {
+    id: "student-exams",
+    name: "Exam Student",
+    exams: [
+      {
+        id: "month-only",
+        subject: "Writing",
+        examType: "other",
+        examVariant: "vce",
+        examMonth: "2026-08",
+        resultDateOverride: "2026-09-10",
+        followUpState: {
+          exam_care: { status: "completed", completedAt: "2026-08-01T00:00:00Z" },
+          exam_recall: { status: "not_required" },
+          exam_results_follow_up: { status: "pending" },
+        },
+      },
+      {
+        id: "dated-complete",
+        subject: "English",
+        examType: "aeas",
+        examVariant: "aeas",
+        examMonth: "2026-08",
+        examDate: "2026-08-02",
+        followUpState: {
+          exam_care: { status: "completed", completedAt: "2026-08-02T00:00:00Z" },
+          exam_recall: { status: "completed", completedAt: "2026-08-02T00:00:00Z" },
+          exam_results_follow_up: { status: "completed", completedAt: "2026-08-16T00:00:00Z" },
+        },
+      },
+      {
+        id: "dated-incomplete",
+        subject: "Science",
+        examType: "selective",
+        examVariant: "selective",
+        examMonth: "2026-08",
+        examDate: "2026-08-03",
+        followUpState: {
+          exam_care: { status: "completed", completedAt: "2026-08-03T00:00:00Z" },
+          exam_recall: { status: "pending" },
+          exam_results_follow_up: { status: "pending" },
+        },
+      },
+      { id: "later", subject: "Math", examType: "selective", examMonth: "2026-09" },
+    ],
+  };
+  const data = buildStudentRecordsPanelData(currentMonthStudent, []);
+
+  assert.deepEqual(data.exams.map(({ exam }) => exam.id), ["month-only", "dated-complete", "dated-incomplete", "later"]);
+  assert.deepEqual(data.exams[0].followUpStatuses, {
+    exam_care: "not_required",
+    exam_recall: "not_required",
+    exam_results_follow_up: "not_required",
+  });
+  assert.deepEqual(filterStudentRecordExams(data.exams, "2026-08", "all").map(({ exam }) => exam.id), [
+    "month-only",
+    "dated-complete",
+    "dated-incomplete",
+  ]);
+  assert.deepEqual(filterStudentRecordExams(data.exams, "2026-08", "incomplete").map(({ exam }) => exam.id), [
+    "dated-incomplete",
+  ]);
+  assert.equal(data.exams[0].estimatedResultDate, "2026-09-10");
 });
 
 test("supports explicit file grouping and stable legacy defaults", () => {
@@ -134,8 +201,9 @@ test("shows a legacy dated exam without manufacturing a typed exam month", () =>
       examDate: "2026-10-29",
     },
     estimatedResultDate: null,
+    followUpStatuses: null,
   });
-  assert.equal(data.exams[0].exam.examMonth, undefined);
+  assert.equal("examMonth" in data.exams[0].exam, false);
 });
 
 test("keeps a subject-only legacy exam visible without guessing its month", () => {

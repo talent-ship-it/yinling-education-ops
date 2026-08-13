@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getDemoSessionUser } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   matchesNixonPassword,
   NIXON_COOKIE_NAME,
@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
-  if (getDemoSessionUser(cookieStore.get(DEMO_COOKIE_NAME)?.value) !== DEMO_ADMIN_USER) {
+  const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  if (!("session" in resolved) || resolved.session.user !== DEMO_ADMIN_USER || resolved.session.role !== "admin") {
     return NextResponse.json({ error: "请使用 Admin 密码从登录页进入全局视图。" }, { status: 401 });
   }
 

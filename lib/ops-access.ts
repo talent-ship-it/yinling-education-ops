@@ -1,15 +1,16 @@
 import {
   DEMO_LIMITED_ADMIN_USER,
   isDemoStaff,
-  isDemoTeacher,
   type DemoUser,
 } from "@/lib/demo-users";
+import type { DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow, OpsVersionRow } from "@/lib/ops-store";
 
 type RecordValue = Record<string, unknown>;
 
 export type OpsAccessContext = {
   actor: DemoUser;
+  role: DemoSessionRole;
   fullAdmin: boolean;
   limitedAdmin: boolean;
   staff: boolean;
@@ -31,7 +32,7 @@ const TEACHER_READ_ENTITIES = new Set([
 const STAFF_WRITE_ENTITIES = new Set([
   "students", "tasks", "bookings", "lpItems", "operations", "renewals", "messages", "files",
 ]);
-const TEACHER_WRITE_ENTITIES = new Set(["tasks", "bookings", "messages"]);
+const TEACHER_WRITE_ENTITIES = new Set(["bookings", "messages"]);
 
 function normalise(value: unknown) {
   return typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
@@ -50,6 +51,10 @@ function payloadRecords(rows: OpsStateRow[], entity: string) {
   return Array.isArray(payload) ? payload.filter(isRecord) : [];
 }
 
+function teachersIncludeActor(rows: OpsStateRow[], actor: string) {
+  return payloadRecords(rows, "teachers").some((teacher) => samePerson(teacher.name, actor));
+}
+
 function rowStudentId(value: RecordValue) {
   return typeof value.studentId === "string" ? value.studentId : "";
 }
@@ -58,13 +63,68 @@ function rowId(value: RecordValue) {
   return typeof value.id === "string" ? value.id : "";
 }
 
-export function buildOpsAccessContext(rows: OpsStateRow[], actor: DemoUser, fullAdmin: boolean): OpsAccessContext {
+/**
+ * Optional Task recipient fields support dual assignment without breaking the
+ * legacy single-owner records already persisted in ops_state.
+ */
+function taskRecipients(value: RecordValue, field: "assignees" | "watchers") {
+  const recipients = value[field];
+  return Array.isArray(recipients)
+    ? recipients.filter((recipient): recipient is string => typeof recipient === "string" && Boolean(recipient.trim()))
+    : [];
+}
+
+function taskInvolves(value: RecordValue, actor: string) {
+  return samePerson(value.owner, actor)
+    || taskRecipients(value, "assignees").some((recipient) => samePerson(recipient, actor))
+    || taskRecipients(value, "watchers").some((recipient) => samePerson(recipient, actor));
+}
+
+function taskAssignedTo(value: RecordValue, actor: string) {
+  return samePerson(value.owner, actor)
+    || taskRecipients(value, "assignees").some((recipient) => samePerson(recipient, actor));
+}
+
+function isManagedExamTask(value: RecordValue) {
+  if (value.category !== "考试" || typeof value.ruleKey !== "string" || typeof value.anchorBookingId !== "string") return false;
+  const match = value.ruleKey.match(/^exam:([^:]+):(care|recall|results)$/);
+  return Boolean(match && value.anchorBookingId === `exam:${match[1]}`);
+}
+
+function managedExamAssigneeChangeAllowed(existing: RecordValue, replacement: RecordValue, actor: string) {
+  if (!isManagedExamTask(existing) || !isManagedExamTask(replacement)) return false;
+  if (!taskAssignedTo(existing, actor) || !taskAssignedTo(replacement, actor)) return false;
+  const mutable = new Set(["status", "tone", "closedAt", "result"]);
+  const stable = (value: RecordValue) => Object.fromEntries(
+    Object.entries(value).filter(([key]) => !mutable.has(key)),
+  );
+  return JSON.stringify(stable(existing)) === JSON.stringify(stable(replacement));
+}
+
+function taskExplicitlyVisibleToTeacher(value: RecordValue, actor: string) {
+  return taskRecipients(value, "assignees").some((recipient) => samePerson(recipient, actor))
+    || (value.teacherVisible === true && taskInvolves(value, actor));
+}
+
+export function buildOpsAccessContext(
+  rows: OpsStateRow[],
+  actor: DemoUser,
+  fullAdmin: boolean,
+  signedRole?: DemoSessionRole,
+): OpsAccessContext {
   const limitedAdmin = actor === DEMO_LIMITED_ADMIN_USER;
-  const staff = isDemoStaff(actor);
-  const teacher = isDemoTeacher(actor);
+  const staff = signedRole ? signedRole === "staff" : isDemoStaff(actor);
+  const teacher = signedRole ? signedRole === "teacher" : teachersIncludeActor(rows, actor);
+  const role: DemoSessionRole = fullAdmin
+    ? "admin"
+    : limitedAdmin
+      ? "limited-admin"
+      : teacher
+        ? "teacher"
+        : "staff";
 
   if (fullAdmin || limitedAdmin) {
-    return { actor, fullAdmin, limitedAdmin, staff, teacher, studentIds: new Set(), teacherIds: new Set() };
+    return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds: new Set(), teacherIds: new Set() };
   }
 
   const teachers = payloadRecords(rows, "teachers");
@@ -83,7 +143,7 @@ export function buildOpsAccessContext(rows: OpsStateRow[], actor: DemoUser, full
       .filter(Boolean),
   );
 
-  return { actor, fullAdmin, limitedAdmin, staff, teacher, studentIds, teacherIds };
+  return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds, teacherIds };
 }
 
 /**
@@ -126,7 +186,12 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   if (entity === "courses") return true;
   if (entity === "teachers") return context.staff || (context.teacher && context.teacherIds.has(rowId(value)));
   if (entity === "students") return canAccessStudent(context, rowId(value));
-  if (["tasks", "lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
+  if (entity === "tasks") {
+    if (!canAccessStudent(context, rowStudentId(value))) return false;
+    if (context.teacher) return taskExplicitlyVisibleToTeacher(value, context.actor);
+    return context.staff && taskInvolves(value, context.actor);
+  }
+  if (["lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
   if (entity === "bookings") {
     return context.teacher
       ? context.teacherIds.has(String(value.teacherId ?? ""))
@@ -156,7 +221,12 @@ function canModifyRecord(context: OpsAccessContext, entity: string, value: Recor
       ? context.teacherIds.has(String(value.teacherId ?? "")) && canAccessStudent(context, rowStudentId(value))
       : context.staff && canAccessStudent(context, rowStudentId(value));
   }
-  if (["tasks", "lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
+  if (entity === "tasks") {
+    return context.staff
+      && canAccessStudent(context, rowStudentId(value))
+      && samePerson(value.owner, context.actor);
+  }
+  if (["lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
   if (["operations", "messages", "files"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
   return false;
 }
@@ -189,7 +259,13 @@ export function mergeScopedPayload(input: {
   const merged = current.map((existing) => {
     const replacement = submittedById.get(rowId(existing));
     if (!replacement) return existing;
-    if (!canModifyRecord(context, entity, existing) || !canModifyRecord(context, entity, replacement)) {
+    const unchanged = JSON.stringify(existing) === JSON.stringify(replacement);
+    if (unchanged) return existing;
+    const managedExamAssigneeUpdate = entity === "tasks"
+      && context.staff
+      && !samePerson(existing.owner, context.actor)
+      && managedExamAssigneeChangeAllowed(existing, replacement, context.actor);
+    if ((!canModifyRecord(context, entity, existing) || !canModifyRecord(context, entity, replacement)) && !managedExamAssigneeUpdate) {
       throw new OpsAccessError("不能修改未分配给当前账号的资料。");
     }
     return replacement;

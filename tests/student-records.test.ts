@@ -3,16 +3,21 @@ import test from "node:test";
 
 import {
   FU_ATTACHMENT_CATEGORIES,
+  DEFAULT_EXAM_RESULT_DATE_RULES,
+  EXAM_VARIANTS,
   MAX_REPORT_PDF_BYTES,
   RENEWAL_STATUS_LABELS,
+  addCalendarMonths,
   addLessonPackageHours,
   addWeekdays,
+  applyExamResultDateRule,
   appendLpDocumentLink,
   appendStudentFollowUp,
   bindSubjectToLessonPackage,
   buildExamTaskDefinitions,
   createStudentLessonPackage,
   deductCompletedLesson,
+  deriveExamFollowUpStatuses,
   estimateExamResultDate,
   estimateLessonPackageDepletion,
   getLatestLpDocumentLink,
@@ -22,7 +27,10 @@ import {
   isFuAttachmentCategory,
   mapLessonPackageDepletionEstimates,
   normalizeRenewalBusinessStatus,
+  resolveExamResultDateRule,
+  resolveExamVariant,
   reverseLessonDeduction,
+  setExamFollowUpStepState,
   sortLpDocumentHistory,
   sortStudentExams,
   sortStudentFollowUpHistory,
@@ -121,6 +129,60 @@ test("estimates results at 30 calendar days or 10 weekdays without holiday assum
   assert.equal(addWeekdays("2026-08-08", 1), "2026-08-10");
 });
 
+test("exposes every specified exam variant while resolving legacy records", () => {
+  assert.deepEqual(EXAM_VARIANTS, [
+    "scholarship", "selective", "oc", "mgs", "gate", "jmss", "aeas", "school_interview",
+    "australian_university_final", "australian_university_assignment", "vce", "wace", "hsc", "qce", "sace",
+    "icas", "amc", "ielts_paper", "ielts_computer", "pte", "ccl", "other",
+  ]);
+  assert.equal(resolveExamVariant({ examType: "selective" }), "selective");
+  assert.equal(resolveExamVariant({ examType: "other", examVariant: "jmss" }), "jmss");
+});
+
+test("applies reusable calendar, weekday, month and fixed-date rules", () => {
+  assert.equal(applyExamResultDateRule("2026-01-31", { kind: "calendar_days", days: 1 }), "2026-02-01");
+  assert.equal(applyExamResultDateRule("2026-08-07", { kind: "weekdays", days: 1 }), "2026-08-10");
+  assert.equal(addCalendarMonths("2027-01-31", 1), "2027-02-28");
+  assert.equal(addCalendarMonths("2028-01-31", 1), "2028-02-29");
+  assert.equal(applyExamResultDateRule("2026-08-10", { kind: "fixed_date", date: "2026-12-10" }), "2026-12-10");
+  assert.equal(applyExamResultDateRule("2026-08-10", { kind: "explicit_date_required" }), null);
+  assert.throws(() => addCalendarMonths("2026-01-01", -1), /non-negative integer/);
+});
+
+test("covers every documented relative exam result-date rule", () => {
+  const base = { id: "exam", subject: "Exam", examType: "other" as const, examMonth: "2026-08", examDate: "2026-08-10" };
+  const expected: Partial<Record<(typeof EXAM_VARIANTS)[number], string | null>> = {
+    scholarship: "2026-09-09", selective: "2026-09-09", oc: "2026-09-09", mgs: "2026-09-09",
+    gate: "2026-09-09", jmss: "2026-09-09", aeas: "2026-08-24", school_interview: "2026-08-13",
+    australian_university_final: "2026-09-10", australian_university_assignment: "2026-08-24",
+    icas: "2026-10-10", amc: "2026-10-10", ielts_paper: "2026-08-24", ielts_computer: "2026-08-13",
+    pte: "2026-08-11", ccl: "2026-09-07", other: null,
+  };
+  for (const [examVariant, resultDate] of Object.entries(expected)) {
+    assert.equal(estimateExamResultDate({ ...base, examVariant: examVariant as (typeof EXAM_VARIANTS)[number] }), resultDate, examVariant);
+  }
+});
+
+test("requires current fixed state-exam dates and honours explicit override precedence", () => {
+  const stateVariants = ["vce", "wace", "hsc", "qce", "sace"] as const;
+  const exam: StudentExamRecord = {
+    id: "state", subject: "State exam", examType: "other", examVariant: "vce", examMonth: "2026-11", examDate: "2026-11-10",
+  };
+  for (const examVariant of stateVariants) {
+    const record = { ...exam, examVariant };
+    assert.equal(DEFAULT_EXAM_RESULT_DATE_RULES[examVariant].kind, "explicit_date_required");
+    assert.equal(estimateExamResultDate(record), null);
+  }
+  assert.equal(estimateExamResultDate(exam, { fixedResultDates: { vce: "2026-12-11" } }), "2026-12-11");
+  assert.deepEqual(resolveExamResultDateRule(
+    { ...exam, resultDateOverride: "2026-12-12" },
+    { resultDateOverride: "2026-12-13", fixedResultDates: { vce: "2026-12-11" } },
+  ), { kind: "fixed_date", date: "2026-12-13" });
+  assert.equal(estimateExamResultDate(exam, {
+    ruleOverrides: { vce: { kind: "calendar_days", days: 20 } },
+  }), "2026-11-30");
+});
+
 test("builds stable care, recall and results task definitions", () => {
   const exam: StudentExamRecord = {
     id: "exam-1",
@@ -140,6 +202,79 @@ test("builds stable care, recall and results task definitions", () => {
     "exam_results_follow_up",
   ]);
   assert.deepEqual(buildExamTaskDefinitions({ ...exam, examDate: undefined }), []);
+});
+
+test("persists the recall preference on the exam record with a legacy true default", () => {
+  const exam: StudentExamRecord = {
+    id: "exam-recall",
+    subject: "English",
+    examType: "selective",
+    examMonth: "2026-09",
+    examDate: "2026-09-01",
+    includeRecall: false,
+  };
+  assert.deepEqual(buildExamTaskDefinitions(exam).map((task) => task.kind), [
+    "exam_care",
+    "exam_results_follow_up",
+  ]);
+  assert.equal(deriveExamFollowUpStatuses(exam).exam_recall, "not_required");
+  assert.equal(buildExamTaskDefinitions({ ...exam, includeRecall: undefined }).some((task) => task.kind === "exam_recall"), true);
+  assert.throws(() => buildExamTaskDefinitions({ ...exam, includeRecall: "false" as unknown as boolean }), /must be a boolean/);
+});
+
+test("updates and restores one durable exam follow-up step without mutation", () => {
+  const exam: StudentExamRecord = {
+    id: "exam-state-helper",
+    subject: "English",
+    examType: "selective",
+    examMonth: "2026-09",
+    examDate: "2026-09-01",
+  };
+  const completed = setExamFollowUpStepState(exam, "exam_recall", {
+    status: "completed",
+    completedAt: "2026-09-01T09:00:00.000Z",
+    completedBy: "Abby",
+  });
+  assert.equal(exam.followUpState, undefined);
+  assert.equal(completed.followUpState?.exam_recall?.status, "completed");
+  assert.equal(setExamFollowUpStepState(completed, "exam_recall").followUpState, undefined);
+});
+
+test("builds three stable definitions with completion state and never schedules a month-only exam", () => {
+  const completedAt = "2026-09-01T19:00:00+10:00";
+  const exam: StudentExamRecord = {
+    id: "exam-state",
+    subject: "VCE English",
+    examType: "other",
+    examVariant: "vce",
+    examMonth: "2026-09",
+    examDate: "2026-09-01",
+    followUpState: {
+      exam_care: { status: "completed", completedAt, completedBy: "Abby" },
+      exam_recall: { status: "pending" },
+    },
+  };
+  const tasks = buildExamTaskDefinitions(exam, { fixedResultDates: { vce: "2026-12-10" } });
+  assert.deepEqual(tasks.map((task) => task.key), [
+    "exam:exam-state:care",
+    "exam:exam-state:recall",
+    "exam:exam-state:results",
+  ]);
+  assert.deepEqual(tasks.map((task) => task.completionStatus), ["completed", "pending", "pending"]);
+  assert.equal(tasks[0].completedAt, completedAt);
+  assert.deepEqual(deriveExamFollowUpStatuses(exam, { fixedResultDates: { vce: "2026-12-10" } }), {
+    exam_care: "completed",
+    exam_recall: "pending",
+    exam_results_follow_up: "pending",
+  });
+
+  const monthOnly = { ...exam, examDate: undefined };
+  assert.deepEqual(buildExamTaskDefinitions(monthOnly, { fixedResultDates: { vce: "2026-12-10" } }), []);
+  assert.deepEqual(deriveExamFollowUpStatuses(monthOnly, { fixedResultDates: { vce: "2026-12-10" } }), {
+    exam_care: "not_required",
+    exam_recall: "not_required",
+    exam_results_follow_up: "not_required",
+  });
 });
 
 function packageFixture(): StudentLessonPackage {

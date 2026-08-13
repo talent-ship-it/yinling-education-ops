@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  EXAM_VARIANT_LABELS,
   parseExamFormData,
   parseFollowUpFormData,
   parseLessonPackageFormData,
@@ -105,11 +106,13 @@ test("exam parser accepts an optional date and recall flag", () => {
   assert.deepEqual(parseExamFormData(form({
     examSubject: "AEAS English",
     examType: "aeas",
+    examVariant: "aeas",
     examMonth: "2026-09",
     examDate: "",
   })), {
     subject: "AEAS English",
     examType: "aeas",
+    examVariant: "aeas",
     examMonth: "2026-09",
     includeRecall: false,
   });
@@ -117,6 +120,7 @@ test("exam parser accepts an optional date and recall flag", () => {
   assert.deepEqual(parseExamFormData(form({
     examSubject: "Scholarship test",
     examType: "scholarship",
+    examVariant: "scholarship",
     examMonth: "2026-10",
     examDate: "2026-10-18",
     includeRecall: "true",
@@ -127,6 +131,7 @@ test("exam parser requires a real date inside the selected month", () => {
   const base = {
     examSubject: "Scholarship test",
     examType: "scholarship",
+    examVariant: "scholarship",
     examMonth: "2026-10",
     includeRecall: "true",
   };
@@ -137,5 +142,46 @@ test("exam parser requires a real date inside the selected month", () => {
   assertFieldError(
     () => parseExamFormData(form({ ...base, examMonth: "2026-02", examDate: "2026-02-30" })),
     STUDENT_RECORD_FORM_NAMES.examDate,
+  );
+});
+
+test("exam parser keeps a stable edit id, full variant and exact result-date override", () => {
+  assert.deepEqual(parseExamFormData(form({
+    examId: "EXAM-STABLE",
+    examSubject: "State English",
+    examType: "other",
+    examVariant: "vce",
+    examMonth: "2026-11",
+    examDate: "2026-11-10",
+    resultDateOverride: "2026-12-11",
+    includeRecall: "true",
+  })), {
+    examId: "EXAM-STABLE",
+    subject: "State English",
+    examType: "other",
+    examVariant: "vce",
+    examMonth: "2026-11",
+    examDate: "2026-11-10",
+    resultDateOverride: "2026-12-11",
+    includeRecall: true,
+  });
+  assert.equal(EXAM_VARIANT_LABELS.vce, "VCE");
+  assert.equal(Object.keys(EXAM_VARIANT_LABELS).length, 22);
+});
+
+test("exam parser rejects unsupported variants and invalid result dates", () => {
+  const base = {
+    examSubject: "Exam",
+    examType: "other",
+    examVariant: "vce",
+    examMonth: "2026-11",
+  };
+  assertFieldError(
+    () => parseExamFormData(form({ ...base, examVariant: "invented" })),
+    STUDENT_RECORD_FORM_NAMES.examVariant,
+  );
+  assertFieldError(
+    () => parseExamFormData(form({ ...base, resultDateOverride: "2026-02-30" })),
+    STUDENT_RECORD_FORM_NAMES.resultDateOverride,
   );
 });

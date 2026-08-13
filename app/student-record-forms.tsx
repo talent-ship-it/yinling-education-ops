@@ -2,7 +2,11 @@
 
 import { useState, type ChangeEvent } from "react";
 
-import type { ExamType } from "../lib/student-records";
+import {
+  EXAM_VARIANTS,
+  type ExamType,
+  type ExamVariant,
+} from "../lib/student-records";
 
 export const STUDENT_RECORD_FORM_NAMES = Object.freeze({
   followedUpAt: "followedUpAt",
@@ -15,9 +19,12 @@ export const STUDENT_RECORD_FORM_NAMES = Object.freeze({
   bonusHours: "bonusHours",
   purchaseNote: "purchaseNote",
   examSubject: "examSubject",
+  examId: "examId",
   examType: "examType",
+  examVariant: "examVariant",
   examMonth: "examMonth",
   examDate: "examDate",
+  resultDateOverride: "resultDateOverride",
   includeRecall: "includeRecall",
 } as const);
 
@@ -201,16 +208,21 @@ export function parseLessonPackageFormData(formData: FormData): ParsedLessonPack
 export const EXAM_TYPES = ["scholarship", "selective", "aeas", "other"] as const satisfies readonly ExamType[];
 
 export type ParsedExamForm = Readonly<{
+  examId?: string;
   subject: string;
   examType: ExamType;
+  examVariant: ExamVariant;
   examMonth: string;
   examDate?: string;
+  resultDateOverride?: string;
   includeRecall: boolean;
 }>;
 
 export function parseExamFormData(formData: FormData): ParsedExamForm {
+  const examId = stringValue(formData, STUDENT_RECORD_FORM_NAMES.examId);
   const subject = requiredString(formData, STUDENT_RECORD_FORM_NAMES.examSubject, "考试科目");
-  const examType = enumValue(formData, STUDENT_RECORD_FORM_NAMES.examType, EXAM_TYPES, "考试类型");
+  const examVariant = enumValue(formData, STUDENT_RECORD_FORM_NAMES.examVariant, EXAM_VARIANTS, "考试类型");
+  const examType = enumValue(formData, STUDENT_RECORD_FORM_NAMES.examType, EXAM_TYPES, "兼容考试类型");
   const examMonth = requiredString(formData, STUDENT_RECORD_FORM_NAMES.examMonth, "考试月份");
   if (!MONTH_PATTERN.test(examMonth)) {
     throw new StudentRecordFormDataError(STUDENT_RECORD_FORM_NAMES.examMonth, "考试月份无效");
@@ -224,11 +236,18 @@ export function parseExamFormData(formData: FormData): ParsedExamForm {
       throw new StudentRecordFormDataError(STUDENT_RECORD_FORM_NAMES.examDate, "考试日期必须属于考试月份");
     }
   }
+  const resultDateOverride = stringValue(formData, STUDENT_RECORD_FORM_NAMES.resultDateOverride);
+  if (resultDateOverride && !validDateOnly(resultDateOverride)) {
+    throw new StudentRecordFormDataError(STUDENT_RECORD_FORM_NAMES.resultDateOverride, "出分日期无效");
+  }
   return {
+    ...(examId ? { examId } : {}),
     subject,
     examType,
+    examVariant,
     examMonth,
     ...(examDate ? { examDate } : {}),
+    ...(resultDateOverride ? { resultDateOverride } : {}),
     includeRecall: checked(formData, STUDENT_RECORD_FORM_NAMES.includeRecall),
   };
 }
@@ -355,31 +374,61 @@ export function LessonPackageForm({
   </>;
 }
 
-const EXAM_TYPE_LABELS: Readonly<Record<ExamType, string>> = Object.freeze({
+export const EXAM_VARIANT_LABELS: Readonly<Record<ExamVariant, string>> = Object.freeze({
   scholarship: "奖学金",
   selective: "精英考试",
+  oc: "OC 精英班",
+  mgs: "MGS",
+  gate: "GATE",
+  jmss: "JMSS",
   aeas: "AEAS",
+  school_interview: "学校面试",
+  australian_university_final: "澳洲大学期末考试",
+  australian_university_assignment: "澳洲大学作业",
+  vce: "VCE",
+  wace: "WACE",
+  hsc: "HSC",
+  qce: "QCE",
+  sace: "SACE",
+  icas: "ICAS",
+  amc: "AMC",
+  ielts_paper: "IELTS 纸笔",
+  ielts_computer: "IELTS 机考",
+  pte: "PTE",
+  ccl: "CCL",
   other: "其他",
 });
 
+function legacyExamType(variant: ExamVariant): ExamType {
+  return EXAM_TYPES.includes(variant as ExamType) ? variant as ExamType : "other";
+}
+
 export type ExamFormProps = Readonly<{
+  initialExamId?: string;
   subjectOptions?: readonly StudentRecordFormOption[];
   initialSubject?: string;
   initialType?: ExamType;
+  initialVariant?: ExamVariant;
   initialMonth?: string;
   initialDate?: string;
+  initialResultDateOverride?: string;
   initialIncludeRecall?: boolean;
 }>;
 
 export function ExamForm({
+  initialExamId,
   subjectOptions = [],
   initialSubject,
   initialType = "other",
+  initialVariant,
   initialMonth,
   initialDate,
+  initialResultDateOverride,
   initialIncludeRecall = true,
 }: ExamFormProps) {
+  const [examVariant, setExamVariant] = useState<ExamVariant>(initialVariant ?? initialType);
   return <>
+    {initialExamId ? <input name={STUDENT_RECORD_FORM_NAMES.examId} type="hidden" value={initialExamId} /> : null}
     <label>考试科目
       {subjectOptions.length ? <select
         name={STUDENT_RECORD_FORM_NAMES.examSubject}
@@ -391,15 +440,24 @@ export function ExamForm({
       </select> : <input name={STUDENT_RECORD_FORM_NAMES.examSubject} defaultValue={initialSubject} required />}
     </label>
     <label>考试类型
-      <select name={STUDENT_RECORD_FORM_NAMES.examType} defaultValue={initialType} required>
-        {EXAM_TYPES.map((type) => <option value={type} key={type}>{EXAM_TYPE_LABELS[type]}</option>)}
+      <select
+        name={STUDENT_RECORD_FORM_NAMES.examVariant}
+        value={examVariant}
+        onChange={(event) => setExamVariant(event.target.value as ExamVariant)}
+        required
+      >
+        {EXAM_VARIANTS.map((variant) => <option value={variant} key={variant}>{EXAM_VARIANT_LABELS[variant]}</option>)}
       </select>
+      <input name={STUDENT_RECORD_FORM_NAMES.examType} type="hidden" value={legacyExamType(examVariant)} />
     </label>
     <label>考试月份
       <input name={STUDENT_RECORD_FORM_NAMES.examMonth} type="month" defaultValue={initialMonth} required />
     </label>
     <label>考试日期
       <input name={STUDENT_RECORD_FORM_NAMES.examDate} type="date" defaultValue={initialDate} />
+    </label>
+    <label className="span-2">出分日期
+      <input name={STUDENT_RECORD_FORM_NAMES.resultDateOverride} type="date" defaultValue={initialResultDateOverride} />
     </label>
     <label className="checkbox-field span-2">
       <input

@@ -1399,7 +1399,6 @@ const englishInterfaceFragments: Record<string, string> = {
   "布里斯班": "Brisbane",
   "珀斯": "Perth",
   "学生时区": "Student timezone",
-  "家长 / 沟通对象": "Parent / contact",
   "注意事项": "Important notes",
   "创建档案": "Create record",
   "负责人调整需由管理员处理": "Owner changes must be handled by an administrator",
