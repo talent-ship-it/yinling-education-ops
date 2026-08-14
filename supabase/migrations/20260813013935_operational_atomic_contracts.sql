@@ -2547,7 +2547,8 @@ begin
                 '不活跃 + 有课时', '在读 + 加课待排'
               )
               or (r ? 'attributes' and jsonb_typeof(r -> 'attributes') <> 'object')
-              or (r ? 'attributes' and r -> 'attributes' - 'location' - 'year' - 'owner' - 'planner' <> '{}'::jsonb)
+              or (r ? 'attributes' and (r -> 'attributes')
+                - ARRAY['location', 'year', 'owner', 'planner']::text[] <> '{}'::jsonb)
               or exists (
                 select 1
                 from jsonb_each(coalesce(r -> 'attributes', '{}'::jsonb)) attribute(key, value)
@@ -2591,16 +2592,17 @@ begin
               )
               or not (r ? 'attributes')
               or jsonb_typeof(r -> 'attributes') <> 'object'
-              or r -> 'attributes' - 'jiaowubaoPackageImport' <> '{}'::jsonb
+              or (r -> 'attributes') - ARRAY['jiaowubaoPackageImport']::text[] <> '{}'::jsonb
               or jsonb_typeof(r -> 'attributes' -> 'jiaowubaoPackageImport') <> 'object'
               or not (r -> 'attributes' -> 'jiaowubaoPackageImport' ? 'status')
               or not (r -> 'attributes' -> 'jiaowubaoPackageImport' ? 'currentTotalHours')
               or not (r -> 'attributes' -> 'jiaowubaoPackageImport' ? 'currentUsedHours')
               or not (r -> 'attributes' -> 'jiaowubaoPackageImport' ? 'currentRemainingHours')
               or not (r -> 'attributes' -> 'jiaowubaoPackageImport' ? 'adjustmentContracts')
-              or r -> 'attributes' -> 'jiaowubaoPackageImport'
-                - 'status' - 'currentTotalHours' - 'currentUsedHours' - 'currentRemainingHours'
-                - 'unresolvedCourseBalances' - 'adjustmentContracts' <> '{}'::jsonb
+              or (r -> 'attributes' -> 'jiaowubaoPackageImport') - ARRAY[
+                'status', 'currentTotalHours', 'currentUsedHours', 'currentRemainingHours',
+                'unresolvedCourseBalances', 'adjustmentContracts'
+              ]::text[] <> '{}'::jsonb
               or coalesce(r -> 'attributes' -> 'jiaowubaoPackageImport' ->> 'status', '') not in (
                 'aggregate_only_missing_purchase_history',
                 'aggregate_only_negative_adjustment',
@@ -4903,7 +4905,7 @@ begin
           or jsonb_typeof(r -> 'name') <> 'string'
           or nullif(trim(r ->> 'name'), '') is null
           or (r ? 'attributes' and jsonb_typeof(r -> 'attributes') <> 'object')
-          or (r ? 'attributes' and r -> 'attributes' - 'location' <> '{}'::jsonb)
+          or (r ? 'attributes' and (r -> 'attributes') - ARRAY['location']::text[] <> '{}'::jsonb)
           or (r -> 'attributes' ? 'location' and jsonb_typeof(r -> 'attributes' -> 'location') <> 'string')
           or (r ? 'availabilityText' and jsonb_typeof(r -> 'availabilityText') not in ('string', 'null'))
           or (r ? 'capacityText' and jsonb_typeof(r -> 'capacityText') not in ('string', 'null'))

@@ -7,6 +7,13 @@ const migrationUrl = new URL(
   import.meta.url,
 );
 const sql = await readFile(migrationUrl, "utf8");
+const sourcePrecedenceFixSql = await readFile(
+  new URL(
+    "../supabase/migrations/20260814142638_fix_import_source_jsonb_precedence.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 const publicRpcSignatures = [
   "put_lesson_attendance_evidence(text, text, text, timestamptz, jsonb, text, text)",
@@ -136,8 +143,11 @@ test("student import uses raw server-owned source rows, source revision locks an
     sql.indexOf("create or replace function public.put_student_import_source_rows"),
     sql.indexOf("create or replace function public.get_latest_student_import_source_rows"),
   );
-  assert.match(sourceBody, /r -> 'attributes' - 'location' - 'year' - 'owner' - 'planner'/i);
-  assert.match(sourceBody, /r -> 'attributes' - 'jiaowubaoPackageImport'/i);
+  assert.match(sourceBody, /\(r -> 'attributes'\)[\s\S]*ARRAY\['location', 'year', 'owner', 'planner'\]::text\[\]/i);
+  assert.match(sourceBody, /\(r -> 'attributes'\) - ARRAY\['jiaowubaoPackageImport'\]::text\[\]/i);
+  assert.match(sourceBody, /\(r -> 'attributes' -> 'jiaowubaoPackageImport'\) - ARRAY\[[\s\S]*'adjustmentContracts'[\s\S]*\]::text\[\]/i);
+  assert.doesNotMatch(sourceBody, /\br -> 'attributes'\s*-\s*'(?:location|jiaowubaoPackageImport)'/i);
+  assert.doesNotMatch(sourceBody, /\br -> 'attributes'\s*->\s*'jiaowubaoPackageImport'\s*-\s*'status'/i);
   assert.match(sourceBody, /r - 'sourceRow' - 'name' - 'remainingHours' - 'contractHours'/i);
   assert.match(sourceBody, /packageCoverage.*complete.*partial.*none/is);
   assert.match(sourceBody, /pg_catalog\.pg_advisory_xact_lock/i);
@@ -537,7 +547,52 @@ test("teacher source ingest is revision-idempotent and serialises first writes",
   assert.match(functionBody, /saved\.snapshot_sha256 = snapshot_hash/i);
   assert.match(functionBody, /'unchanged', true/i);
   assert.match(functionBody, /teacher_import\.source_ingested/i);
-  assert.match(functionBody, /r -> 'attributes' - 'location' <> '\{\}'::jsonb/i);
+  assert.match(functionBody, /\(r -> 'attributes'\) - ARRAY\['location'\]::text\[\] <> '\{\}'::jsonb/i);
+});
+
+test("source ingest repair disambiguates JSONB subtraction and preserves the teacher RPC contract", () => {
+  const functionBody = sourcePrecedenceFixSql.slice(
+    sourcePrecedenceFixSql.indexOf("create or replace function public.put_teacher_import_source"),
+    sourcePrecedenceFixSql.indexOf("revoke all on function public.put_teacher_import_source"),
+  );
+  assert.match(functionBody, /\(r -> 'attributes'\) - ARRAY\['location'\]::text\[\] <> '\{\}'::jsonb/i);
+  assert.doesNotMatch(functionBody, /\br -> 'attributes' - 'location'/i);
+  assert.match(functionBody, /security definer[\s\S]*set search_path = ''/i);
+  assert.match(functionBody, /internal\.verify_ops_secret\(p_secret\)/i);
+  assert.match(functionBody, /teacher_import\.source_ingested/i);
+  assert.match(
+    sourcePrecedenceFixSql,
+    /revoke all on function public\.put_teacher_import_source\(text, text, text, text, jsonb, jsonb, jsonb, text\)[\s\S]*grant execute/i,
+  );
+});
+
+test("source ingest repair disambiguates every student JSONB attributes allow-list", () => {
+  const functionBody = sourcePrecedenceFixSql.slice(
+    sourcePrecedenceFixSql.indexOf("create or replace function public.put_student_import_source_rows"),
+    sourcePrecedenceFixSql.indexOf("revoke all on function public.put_student_import_source_rows"),
+  );
+  assert.match(functionBody, /\(r -> 'attributes'\)[\s\S]*ARRAY\['location', 'year', 'owner', 'planner'\]::text\[\]/i);
+  assert.match(functionBody, /\(r -> 'attributes'\) - ARRAY\['jiaowubaoPackageImport'\]::text\[\]/i);
+  assert.match(functionBody, /\(r -> 'attributes' -> 'jiaowubaoPackageImport'\) - ARRAY\[[\s\S]*'adjustmentContracts'[\s\S]*\]::text\[\]/i);
+  assert.doesNotMatch(functionBody, /\br -> 'attributes'\s*-\s*'(?:location|jiaowubaoPackageImport)'/i);
+  assert.doesNotMatch(functionBody, /\br -> 'attributes'\s*->\s*'jiaowubaoPackageImport'\s*-\s*'status'/i);
+  assert.match(functionBody, /security definer[\s\S]*set search_path = ''/i);
+  assert.match(functionBody, /internal\.verify_ops_secret\(p_secret\)/i);
+  assert.match(functionBody, /student_import\.source_ingested/i);
+  assert.match(
+    sourcePrecedenceFixSql,
+    /revoke all on function public\.put_student_import_source_rows\(text, text, text, text, jsonb, text\)[\s\S]*grant execute/i,
+  );
+  assert.match(sourcePrecedenceFixSql, /import_source_jsonb_precedence_fixture_mismatch_teacher/i);
+  assert.match(sourcePrecedenceFixSql, /import_source_jsonb_precedence_fixture_mismatch_student_master/i);
+  assert.match(sourcePrecedenceFixSql, /import_source_jsonb_precedence_fixture_mismatch_student_jwb_outer/i);
+  assert.match(sourcePrecedenceFixSql, /import_source_jsonb_precedence_fixture_mismatch_student_jwb_nested/i);
+});
+
+test("import migrations contain no unparenthesized JSON extraction followed by text subtraction", () => {
+  const ambiguousJsonbSubtraction = /->\s*'[^']+'\s*-\s*'[^']+'/i;
+  assert.doesNotMatch(sql, ambiguousJsonbSubtraction);
+  assert.doesNotMatch(sourcePrecedenceFixSql, ambiguousJsonbSubtraction);
 });
 
 test("teacher identity links are opaque, revision-bound, auditable and revalidated on commit", () => {
