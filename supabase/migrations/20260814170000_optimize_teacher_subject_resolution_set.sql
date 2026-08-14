@@ -239,7 +239,7 @@ as $$
     select *
     from internal.teacher_import_subject_hard_candidate_basis(p_k12, p_university)
   ), first_in_group as materialized (
-    select distinct on (b.resolution_group_key)
+    select distinct on (b.resolution_group_key collate "C")
       b.*
     from basis b
     order by

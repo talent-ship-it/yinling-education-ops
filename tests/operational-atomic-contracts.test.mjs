@@ -775,6 +775,8 @@ test("teacher resolution lookup hotfix removes the timeout-shaped query plans", 
   const rowsBody = sqlFunction(teacherSubjectResolutionSetFixSql, "internal.teacher_import_subject_hard_candidate_rows");
   assert.match(rowsBody, /p_resolution_key text/i);
   assert.match(rowsBody, /assignment_keys as materialized/i);
+  assert.match(rowsBody, /select distinct on \(b\.resolution_group_key collate "C"\)[\s\S]*order by\s+b\.resolution_group_key collate "C"/i);
+  assert.doesNotMatch(rowsBody, /select distinct on \(b\.resolution_group_key\)/i);
   assert.match(rowsBody, /p_resolution_key is null or a\.resolution_key = p_resolution_key/i);
   assert.match(rowsBody, /jsonb_build_array\(b\.subject_ref_key, b\.roster_ref_key\), 'assign'/i);
 
