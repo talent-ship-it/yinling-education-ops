@@ -317,6 +317,8 @@ test("student import treats FU attachments as server-owned, race-safe student re
   );
 
   assert.match(sql, /create or replace function internal\.student_fu_attachment_reference_snapshot\(\)/i);
+  assert.doesNotMatch(sql, /\bwith\s+references\s+as\b/i);
+  assert.match(sql, /\bwith\s+reference_snapshot\s+as\b/i);
   assert.match(sql, /revoke all on function internal\.student_fu_attachment_reference_snapshot\(\)[\s\S]*from public, anon, authenticated/i);
   assert.match(sql, /select distinct a\.student_id[\s\S]*order by a\.student_id/i);
   assert.match(sql, /alter table internal\.student_fu_attachments enable row level security/i);

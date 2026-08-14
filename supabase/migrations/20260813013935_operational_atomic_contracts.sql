@@ -1064,7 +1064,7 @@ language sql
 stable
 set search_path = ''
 as $$
-  with references as (
+  with reference_snapshot as (
     select coalesce(jsonb_agg(student_id order by student_id), '[]'::jsonb) as student_ids
     from (
       select distinct a.student_id
@@ -1073,15 +1073,15 @@ as $$
     ) distinct_references
   )
   select jsonb_build_object(
-    'studentIds', references.student_ids,
+    'studentIds', reference_snapshot.student_ids,
     'fingerprint', 'sha256:' || encode(extensions.digest(
       convert_to('student-fu-attachment-references-v1', 'UTF8')
         || decode('00', 'hex')
-        || convert_to(references.student_ids::text, 'UTF8'),
+        || convert_to(reference_snapshot.student_ids::text, 'UTF8'),
       'sha256'
     ), 'hex')
   )
-  from references
+  from reference_snapshot
 $$;
 
 revoke all on function internal.student_fu_attachment_reference_snapshot()
