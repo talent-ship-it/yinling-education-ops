@@ -1012,6 +1012,11 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.doesNotMatch(assertion, /teacher_import_(?:hard_resolutions|identity_links)/i);
 
   const shapeBody = sqlFunction(teacherAuthoritySql, "internal.assert_teacher_import_plan_shape");
+  assert.match(shapeBody, /teacher_item jsonb;/i);
+  assert.match(shapeBody, /teacher_ref_item jsonb;/i);
+  assert.match(shapeBody, /for teacher_item in select value from jsonb_array_elements\(p_teachers\)/i);
+  assert.match(shapeBody, /for teacher_ref_item in select value from jsonb_array_elements\(teacher_item -> 'teacherSourceRefs'\)/i);
+  assert.doesNotMatch(shapeBody, /\bteacher(?:_ref)? jsonb;|for teacher(?:_ref)? in select value/i);
   const mandatoryTypes = new Map([
     ["id", "string"], ["name", "string"], ["initials", "string"],
     ["subjects", "array"], ["departments", "array"], ["sourceCategories", "array"],
@@ -1022,18 +1027,18 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   for (const [field, type] of mandatoryTypes) {
     assert.match(
       shapeBody,
-      new RegExp(`jsonb_typeof\\(teacher -> '${field}'\\) is distinct from '${type}'`, "i"),
+      new RegExp(`jsonb_typeof\\(teacher_item -> '${field}'\\) is distinct from '${type}'`, "i"),
       `${field} must reject missing and JSON-null values`,
     );
   }
   assert.match(shapeBody, /jsonb_typeof\(p_teachers\) is distinct from 'array'/i);
-  assert.match(shapeBody, /teacher ->> 'availabilityStatus' in \('可接新生', '暂停接新', '待确认'\)/i);
+  assert.match(shapeBody, /teacher_item ->> 'availabilityStatus' in \('可接新生', '暂停接新', '待确认'\)/i);
   assert.match(shapeBody, /foreach optional_field in array array\[[\s\S]*'subjectDetail'[\s\S]*'location'[\s\S]*'availabilitySourceText'[\s\S]*'capacitySourceText'/i);
-  assert.match(shapeBody, /teacher \? optional_field[\s\S]*jsonb_typeof\(teacher -> optional_field\) is distinct from 'string'/i);
+  assert.match(shapeBody, /teacher_item \? optional_field[\s\S]*jsonb_typeof\(teacher_item -> optional_field\) is distinct from 'string'/i);
   assert.match(shapeBody, /department #>> '\{\}' in \('中小学', '大学'\)/i);
-  assert.match(shapeBody, /jsonb_array_length\(teacher -> 'departments'\) <> \([\s\S]*count\(distinct department #>> '\{\}'\)/i);
-  assert.match(shapeBody, /\(teacher ->> 'load'\)::numeric < 0/i);
-  assert.match(shapeBody, /\(teacher ->> 'capacity'\)::numeric < 0/i);
+  assert.match(shapeBody, /jsonb_array_length\(teacher_item -> 'departments'\) <> \([\s\S]*count\(distinct department #>> '\{\}'\)/i);
+  assert.match(shapeBody, /\(teacher_item ->> 'load'\)::numeric < 0/i);
+  assert.match(shapeBody, /\(teacher_item ->> 'capacity'\)::numeric < 0/i);
   assert.doesNotMatch(shapeBody, /jsonb_typeof\([^\n]*\)\s*<>/i);
 
   const commitBody = sqlFunction(teacherAuthoritySql, "public.commit_teacher_import_plan_atomic");

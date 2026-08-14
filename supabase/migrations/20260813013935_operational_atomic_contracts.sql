@@ -7719,8 +7719,8 @@ immutable
 set search_path = ''
 as $$
 declare
-  teacher jsonb;
-  teacher_ref jsonb;
+  teacher_item jsonb;
+  teacher_ref_item jsonb;
   optional_field text;
 begin
   if jsonb_typeof(p_teachers) is distinct from 'array' then
@@ -7731,38 +7731,38 @@ begin
     raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
   end if;
 
-  for teacher in select value from jsonb_array_elements(p_teachers)
+  for teacher_item in select value from jsonb_array_elements(p_teachers)
   loop
-    if jsonb_typeof(teacher) is distinct from 'object'
-       or jsonb_typeof(teacher -> 'id') is distinct from 'string'
-       or internal.teacher_import_clean_text(teacher ->> 'id') is null
-       or jsonb_typeof(teacher -> 'name') is distinct from 'string'
-       or internal.teacher_import_name_key(teacher ->> 'name') = ''
-       or jsonb_typeof(teacher -> 'initials') is distinct from 'string'
-       or internal.teacher_import_clean_text(teacher ->> 'initials') is null
-       or jsonb_typeof(teacher -> 'subjects') is distinct from 'array'
-       or jsonb_typeof(teacher -> 'departments') is distinct from 'array'
-       or jsonb_typeof(teacher -> 'sourceCategories') is distinct from 'array'
-       or jsonb_typeof(teacher -> 'teacherSourceRefs') is distinct from 'array'
-       or jsonb_typeof(teacher -> 'availability') is distinct from 'string'
-       or internal.teacher_import_clean_text(teacher ->> 'availability') is null
-       or jsonb_typeof(teacher -> 'availabilityStatus') is distinct from 'string'
+    if jsonb_typeof(teacher_item) is distinct from 'object'
+       or jsonb_typeof(teacher_item -> 'id') is distinct from 'string'
+       or internal.teacher_import_clean_text(teacher_item ->> 'id') is null
+       or jsonb_typeof(teacher_item -> 'name') is distinct from 'string'
+       or internal.teacher_import_name_key(teacher_item ->> 'name') = ''
+       or jsonb_typeof(teacher_item -> 'initials') is distinct from 'string'
+       or internal.teacher_import_clean_text(teacher_item ->> 'initials') is null
+       or jsonb_typeof(teacher_item -> 'subjects') is distinct from 'array'
+       or jsonb_typeof(teacher_item -> 'departments') is distinct from 'array'
+       or jsonb_typeof(teacher_item -> 'sourceCategories') is distinct from 'array'
+       or jsonb_typeof(teacher_item -> 'teacherSourceRefs') is distinct from 'array'
+       or jsonb_typeof(teacher_item -> 'availability') is distinct from 'string'
+       or internal.teacher_import_clean_text(teacher_item ->> 'availability') is null
+       or jsonb_typeof(teacher_item -> 'availabilityStatus') is distinct from 'string'
        or not coalesce(
-         teacher ->> 'availabilityStatus' in ('可接新生', '暂停接新', '待确认'),
+         teacher_item ->> 'availabilityStatus' in ('可接新生', '暂停接新', '待确认'),
          false
        )
-       or jsonb_typeof(teacher -> 'timezone') is distinct from 'string'
-       or internal.teacher_import_clean_text(teacher ->> 'timezone') is null
-       or jsonb_typeof(teacher -> 'load') is distinct from 'number'
-       or jsonb_typeof(teacher -> 'capacity') is distinct from 'number'
-       or jsonb_typeof(teacher -> 'acceptsStudents') is distinct from 'boolean'
-       or jsonb_typeof(teacher -> 'note') is distinct from 'string'
-       or internal.teacher_import_clean_text(teacher ->> 'note') is null then
+       or jsonb_typeof(teacher_item -> 'timezone') is distinct from 'string'
+       or internal.teacher_import_clean_text(teacher_item ->> 'timezone') is null
+       or jsonb_typeof(teacher_item -> 'load') is distinct from 'number'
+       or jsonb_typeof(teacher_item -> 'capacity') is distinct from 'number'
+       or jsonb_typeof(teacher_item -> 'acceptsStudents') is distinct from 'boolean'
+       or jsonb_typeof(teacher_item -> 'note') is distinct from 'string'
+       or internal.teacher_import_clean_text(teacher_item ->> 'note') is null then
       raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
     end if;
 
-    if (teacher ->> 'load')::numeric < 0
-       or (teacher ->> 'capacity')::numeric < 0 then
+    if (teacher_item ->> 'load')::numeric < 0
+       or (teacher_item ->> 'capacity')::numeric < 0 then
       raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
     end if;
 
@@ -7770,9 +7770,9 @@ begin
       'subjectDetail', 'location', 'availabilitySourceText', 'capacitySourceText'
     ]::text[]
     loop
-      if teacher ? optional_field and (
-        jsonb_typeof(teacher -> optional_field) is distinct from 'string'
-        or internal.teacher_import_clean_text(teacher ->> optional_field) is null
+      if teacher_item ? optional_field and (
+        jsonb_typeof(teacher_item -> optional_field) is distinct from 'string'
+        or internal.teacher_import_clean_text(teacher_item ->> optional_field) is null
       ) then
         raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
       end if;
@@ -7780,41 +7780,41 @@ begin
 
     if exists (
       select 1
-      from jsonb_array_elements(teacher -> 'subjects') subject
+      from jsonb_array_elements(teacher_item -> 'subjects') subject
       where jsonb_typeof(subject) is distinct from 'string'
          or internal.teacher_import_clean_text(subject #>> '{}') is null
     ) or exists (
       select 1
-      from jsonb_array_elements(teacher -> 'sourceCategories') category
+      from jsonb_array_elements(teacher_item -> 'sourceCategories') category
       where jsonb_typeof(category) is distinct from 'string'
          or internal.teacher_import_clean_text(category #>> '{}') is null
     ) or exists (
       select 1
-      from jsonb_array_elements(teacher -> 'departments') department
+      from jsonb_array_elements(teacher_item -> 'departments') department
       where jsonb_typeof(department) is distinct from 'string'
          or not coalesce(department #>> '{}' in ('中小学', '大学'), false)
-    ) or jsonb_array_length(teacher -> 'departments') <> (
+    ) or jsonb_array_length(teacher_item -> 'departments') <> (
       select count(distinct department #>> '{}')
-      from jsonb_array_elements(teacher -> 'departments') department
+      from jsonb_array_elements(teacher_item -> 'departments') department
     ) then
       raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
     end if;
 
-    for teacher_ref in select value from jsonb_array_elements(teacher -> 'teacherSourceRefs')
+    for teacher_ref_item in select value from jsonb_array_elements(teacher_item -> 'teacherSourceRefs')
     loop
-      if jsonb_typeof(teacher_ref) is distinct from 'object' then
+      if jsonb_typeof(teacher_ref_item) is distinct from 'object' then
         raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
       end if;
-      if jsonb_typeof(teacher_ref -> 'workbook') is distinct from 'string'
-         or not coalesce(teacher_ref ->> 'workbook' in ('k12', 'university'), false)
-         or jsonb_typeof(teacher_ref -> 'sourceId') is distinct from 'string'
-         or internal.teacher_import_clean_text(teacher_ref ->> 'sourceId') is null
+      if jsonb_typeof(teacher_ref_item -> 'workbook') is distinct from 'string'
+         or not coalesce(teacher_ref_item ->> 'workbook' in ('k12', 'university'), false)
+         or jsonb_typeof(teacher_ref_item -> 'sourceId') is distinct from 'string'
+         or internal.teacher_import_clean_text(teacher_ref_item ->> 'sourceId') is null
          or (
-           jsonb_typeof(teacher_ref -> 'sourceRow') is distinct from 'string'
-           and jsonb_typeof(teacher_ref -> 'sourceRow') is distinct from 'number'
+           jsonb_typeof(teacher_ref_item -> 'sourceRow') is distinct from 'string'
+           and jsonb_typeof(teacher_ref_item -> 'sourceRow') is distinct from 'number'
          )
-         or internal.teacher_import_clean_text(teacher_ref ->> 'sourceRow') is null
-         or teacher_ref - 'workbook' - 'sourceId' - 'sourceRow' is distinct from '{}'::jsonb then
+         or internal.teacher_import_clean_text(teacher_ref_item ->> 'sourceRow') is null
+         or teacher_ref_item - 'workbook' - 'sourceId' - 'sourceRow' is distinct from '{}'::jsonb then
         raise exception using errcode = '22023', message = 'invalid_teacher_import_commit';
       end if;
     end loop;
