@@ -4500,40 +4500,40 @@ declare
   );
 begin
   if location_key ~ '(^|[^a-z0-9_])(melbourne|vic|victoria)([^a-z0-9_]|$)'
-     or pg_catalog.position('墨尔本' in location_key) > 0
-     or pg_catalog.position('维州' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '墨尔本') > 0
+     or pg_catalog.strpos(location_key, '维州') > 0 then
     return 'Australia/Melbourne';
   elsif location_key ~ '(^|[^a-z0-9_])(sydney|nsw|new south wales|canberra|act)([^a-z0-9_]|$)'
-     or pg_catalog.position('悉尼' in location_key) > 0
-     or pg_catalog.position('新州' in location_key) > 0
-     or pg_catalog.position('堪培拉' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '悉尼') > 0
+     or pg_catalog.strpos(location_key, '新州') > 0
+     or pg_catalog.strpos(location_key, '堪培拉') > 0 then
     return 'Australia/Sydney';
   elsif location_key ~ '(^|[^a-z0-9_])(brisbane|qld|queensland)([^a-z0-9_]|$)'
-     or pg_catalog.position('布里斯班' in location_key) > 0
-     or pg_catalog.position('昆州' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '布里斯班') > 0
+     or pg_catalog.strpos(location_key, '昆州') > 0 then
     return 'Australia/Brisbane';
   elsif location_key ~ '(^|[^a-z0-9_])(adelaide|sa|south australia)([^a-z0-9_]|$)'
-     or pg_catalog.position('阿德莱德' in location_key) > 0
-     or pg_catalog.position('南澳' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '阿德莱德') > 0
+     or pg_catalog.strpos(location_key, '南澳') > 0 then
     return 'Australia/Adelaide';
   elsif location_key ~ '(^|[^a-z0-9_])(perth|wa|western australia)([^a-z0-9_]|$)'
-     or pg_catalog.position('珀斯' in location_key) > 0
-     or pg_catalog.position('西澳' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '珀斯') > 0
+     or pg_catalog.strpos(location_key, '西澳') > 0 then
     return 'Australia/Perth';
   elsif location_key ~ '(^|[^a-z0-9_])(hobart|tas|tasmania)([^a-z0-9_]|$)'
-     or pg_catalog.position('霍巴特' in location_key) > 0
-     or pg_catalog.position('塔州' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '霍巴特') > 0
+     or pg_catalog.strpos(location_key, '塔州') > 0 then
     return 'Australia/Hobart';
   elsif location_key ~ '(^|[^a-z0-9_])(darwin|nt|northern territory)([^a-z0-9_]|$)'
-     or pg_catalog.position('达尔文' in location_key) > 0
-     or pg_catalog.position('北领地' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '达尔文') > 0
+     or pg_catalog.strpos(location_key, '北领地') > 0 then
     return 'Australia/Darwin';
   elsif location_key ~ '(^|[^a-z0-9_])(china|beijing|shanghai|guangzhou|shenzhen)([^a-z0-9_]|$)'
-     or pg_catalog.position('中国' in location_key) > 0
-     or pg_catalog.position('北京' in location_key) > 0
-     or pg_catalog.position('上海' in location_key) > 0
-     or pg_catalog.position('广州' in location_key) > 0
-     or pg_catalog.position('深圳' in location_key) > 0 then
+     or pg_catalog.strpos(location_key, '中国') > 0
+     or pg_catalog.strpos(location_key, '北京') > 0
+     or pg_catalog.strpos(location_key, '上海') > 0
+     or pg_catalog.strpos(location_key, '广州') > 0
+     or pg_catalog.strpos(location_key, '深圳') > 0 then
     return 'Asia/Shanghai';
   end if;
   return null;

@@ -870,7 +870,8 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   ]) assert.match(timezoneBody, new RegExp(timezone.replace("/", "\\/")));
   assert.match(timezoneBody, /\(\^\|\[\^a-z0-9_\]\)\(melbourne\|vic\|victoria\)/i);
   assert.match(timezoneBody, /'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[\s\S]*'abcdefghijklmnopqrstuvwxyz'/i);
-  assert.doesNotMatch(timezoneBody, /pg_catalog\.lower|auckland|argentina|bosnia/i);
+  assert.match(timezoneBody, /pg_catalog\.strpos\(location_key, '墨尔本'\)/i);
+  assert.doesNotMatch(timezoneBody, /pg_catalog\.(?:lower|position|substring)|auckland|argentina|bosnia/i);
 
   const nameKeyBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_name_key");
   assert.match(nameKeyBody, /normalize\(coalesce\(p_name, ''\), NFKC\)/i);
