@@ -6060,11 +6060,14 @@ as $$
       roster_ordinality as ref_order,
       internal.teacher_import_clean_text(roster_row ->> 'name') as row_name,
       case when jsonb_typeof(roster_row -> 'availabilityText') = 'string'
-        then internal.teacher_import_clean_text(roster_row ->> 'availabilityText') end,
+        then internal.teacher_import_clean_text(roster_row ->> 'availabilityText') end
+        as availability_text,
       case when jsonb_typeof(roster_row -> 'capacityText') = 'string'
-        then internal.teacher_import_clean_text(roster_row ->> 'capacityText') end,
+        then internal.teacher_import_clean_text(roster_row ->> 'capacityText') end
+        as capacity_text,
       case when jsonb_typeof(roster_row #> '{attributes,location}') = 'string'
         then internal.teacher_import_clean_text(roster_row #>> '{attributes,location}') end
+        as location
     from jsonb_array_elements(p_k12.roster_rows) with ordinality
       as roster_rows(roster_row, roster_ordinality)
 

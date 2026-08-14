@@ -908,6 +908,7 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.match(rowBasis, /returns table \([\s\S]*availability_text text[\s\S]*capacity_text text[\s\S]*location text/i);
   assert.match(rowBasis, /jsonb_typeof\(roster_row #> '\{attributes,location\}'\) = 'string'/i);
   assert.match(rowBasis, /jsonb_typeof\(roster_row -> 'availabilityText'\) = 'string'/i);
+  assert.match(rowBasis, /end\s+as availability_text[\s\S]*end\s+as capacity_text[\s\S]*end\s+as location/i);
   assert.match(rowBasis, /source_id \|\| '#subjects'/i);
   assert.match(rowBasis, /array_agg\([\s\S]*row_name order by raw_subject_names\.subject_ordinality/i);
   assert.doesNotMatch(rowBasis, /hard_resolution|identity_link/i);
