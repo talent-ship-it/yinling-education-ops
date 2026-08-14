@@ -143,33 +143,27 @@ test("client commit request accepts only fingerprint and expected version", () =
   assert.throws(() => parseTeacherImportCommitRequest({ ...valid, planFingerprint: "not-a-fingerprint" }), serviceError("invalid_commit_request"));
 });
 
-test("blocked identity issues cannot commit", () => {
-  const blocked = snapshot({ duplicateAcrossBooks: true });
-  blocked.k12.rosterRows[0].name = "Shared Teacher";
-  blocked.k12.subjectRows[0].name = "Shared Teacher";
-  const prepared = prepareTeacherImport({ sourceSnapshot: blocked, teachersRow: teachersRow() });
-  assert.equal(prepared.response.canCommit, false);
-  assert.equal(prepared.response.summary.blocked, 2);
-  assert.throws(() => assertTeacherImportCommit({
-    planFingerprint: prepared.response.planFingerprint,
-    expectedTeacherVersion: prepared.response.expectedTeacherVersion,
-  }, prepared), serviceError("blocked_plan"));
+test("exact same-name rows auto-merge and can commit without identity choices", () => {
+  const source = snapshot({ duplicateAcrossBooks: true });
+  source.k12.rosterRows[0].name = "Shared Teacher";
+  source.k12.subjectRows[0].name = "Shared Teacher";
+  const prepared = prepareTeacherImport({ sourceSnapshot: source, teachersRow: teachersRow() });
+  assert.equal(prepared.response.canCommit, true);
+  assert.equal(prepared.response.summary.blocked, 0);
+  assert.equal(prepared.plan.teachers.length, 1);
+  assert.deepEqual(prepared.response.identityResolutions, []);
+  assert.deepEqual(prepared.response.subjectResolutions, []);
 });
 
-test("identity confirmation accepts only a current server-provided resolution key", () => {
-  const blocked = snapshot({ duplicateAcrossBooks: true });
-  blocked.k12.rosterRows[0].name = "Shared Teacher";
-  blocked.k12.subjectRows[0].name = "Shared Teacher";
-  const prepared = prepareTeacherImport({ sourceSnapshot: blocked, teachersRow: teachersRow() });
-  const candidate = prepared.response.identityResolutions[0];
-  assert.ok(candidate);
-  const request = parseTeacherIdentityResolutionRequest({ resolutionKey: candidate.resolutionKey, decision: "merge" });
-  assert.deepEqual(resolveTeacherIdentityCandidate(request, prepared), candidate);
-  assert.throws(() => parseTeacherIdentityResolutionRequest({ resolutionKey: candidate.resolutionKey, teacherId: "TEA-X" }), serviceError("invalid_identity_resolution_request"));
-  assert.throws(() => resolveTeacherIdentityCandidate({ resolutionKey: `sha256:${"0".repeat(64)}`, decision: "merge" }, prepared), serviceError("identity_resolution_unavailable"));
+test("identity confirmation is unavailable because authoritative projection has no choices", () => {
+  const prepared = prepareTeacherImport({ sourceSnapshot: snapshot(), teachersRow: teachersRow() });
+  const key = `sha256:${"0".repeat(64)}`;
+  const request = parseTeacherIdentityResolutionRequest({ resolutionKey: key, decision: "merge" });
+  assert.throws(() => resolveTeacherIdentityCandidate(request, prepared), serviceError("identity_resolution_unavailable"));
+  assert.throws(() => parseTeacherIdentityResolutionRequest({ resolutionKey: key, teacherId: "TEA-X" }), serviceError("invalid_identity_resolution_request"));
 });
 
-test("subject confirmation accepts only an exact closed option key and enumerated decision", () => {
+test("subject-only names are projected directly and expose no assign or ignore choice", () => {
   const source = snapshot();
   source.k12.rosterRows = [
     { workbook: "k12", sourceRow: 2, name: "Roster One" },
@@ -177,33 +171,32 @@ test("subject confirmation accepts only an exact closed option key and enumerate
   ];
   source.k12.subjectRows = [{ workbook: "k12", sheetName: "IB", sourceRow: 20, name: "Legacy Alias" }];
   const prepared = prepareTeacherImport({ sourceSnapshot: source, teachersRow: teachersRow() });
-  const candidate = prepared.response.subjectResolutions[0];
-  const option = candidate.options[0];
-  assert.ok(option);
-  const request = parseTeacherIdentityResolutionRequest({ resolutionKey: option.resolutionKey, decision: option.decision });
-  const resolved = resolveTeacherIdentityCandidate(request, prepared);
-  assert.equal("selectedOption" in resolved && resolved.selectedOption.resolutionKey, option.resolutionKey);
-  assert.throws(() => resolveTeacherIdentityCandidate({ resolutionKey: option.resolutionKey, decision: "ignore" }, prepared), serviceError("identity_resolution_unavailable"));
-  assert.throws(() => parseTeacherIdentityResolutionRequest({ resolutionKey: option.resolutionKey, decision: "Roster One" }), serviceError("invalid_identity_resolution_request"));
+  assert.deepEqual(prepared.response.subjectResolutions, []);
+  assert.deepEqual(prepared.plan.teachers.find((teacher) => teacher.name === "Legacy Alias")?.subjects, ["IB"]);
+  const key = `sha256:${"1".repeat(64)}`;
+  assert.throws(() => resolveTeacherIdentityCandidate({ resolutionKey: key, decision: "ignore" }, prepared), serviceError("identity_resolution_unavailable"));
+  assert.throws(() => parseTeacherIdentityResolutionRequest({ resolutionKey: key, decision: "Roster One" }), serviceError("invalid_identity_resolution_request"));
 });
 
-test("source snapshot accepts revision-bound V2 decisions and ignores old revisions in the plan", () => {
+test("current and stale V2 decisions are CAS evidence but cannot alter the plan", () => {
   const source = snapshot();
   source.k12.rosterRows = [
     { workbook: "k12", sourceRow: 2, name: "Duplicate Teacher" },
     { workbook: "k12", sourceRow: 3, name: "duplicate teacher" },
   ];
   source.k12.subjectRows = [];
-  const pending = prepareTeacherImport({ sourceSnapshot: source, teachersRow: teachersRow() });
-  const option = pending.response.identityResolutions[0]?.options.find((candidate) => candidate.decision === "separate");
-  assert.ok(option);
-  const refs = pending.response.identityResolutions[0].sourceRefs;
+  const baseline = prepareTeacherImport({ sourceSnapshot: source, teachersRow: teachersRow() });
+  const refs = [
+    { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 2 },
+    { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 3 },
+  ];
+  const resolutionKey = `sha256:${"2".repeat(64)}`;
   const persisted = prepareTeacherImport({
     sourceSnapshot: {
       ...source,
       hardResolutions: [{
         kind: "same_workbook_identity",
-        resolutionKey: option.resolutionKey,
+        resolutionKey,
         decision: "separate",
         sourceRevisions: { k12: "k12-r1", university: "university-r1" },
         sourceRefs: refs,
@@ -212,13 +205,15 @@ test("source snapshot accepts revision-bound V2 decisions and ignores old revisi
     teachersRow: teachersRow(),
   });
   assert.equal(persisted.response.canCommit, true);
+  assert.deepEqual(persisted.plan, baseline.plan);
+  assert.notEqual(persisted.response.planFingerprint, baseline.response.planFingerprint);
 
   const stale = prepareTeacherImport({
     sourceSnapshot: {
       ...source,
       hardResolutions: [{
         kind: "same_workbook_identity",
-        resolutionKey: option.resolutionKey,
+        resolutionKey,
         decision: "separate",
         sourceRevisions: { k12: "old", university: "university-r1" },
         sourceRefs: refs,
@@ -226,29 +221,32 @@ test("source snapshot accepts revision-bound V2 decisions and ignores old revisi
     },
     teachersRow: teachersRow(),
   });
-  assert.equal(stale.response.canCommit, false);
-  assert.ok(stale.response.identityResolutions.length > 0);
+  assert.equal(stale.response.canCommit, true);
+  assert.deepEqual(stale.plan, baseline.plan);
+  assert.deepEqual(stale.response.identityResolutions, []);
 });
 
-test("persisted identity links are part of the source snapshot and fingerprint", () => {
-  const blocked = snapshot({ duplicateAcrossBooks: true });
-  blocked.k12.rosterRows[0].name = "Shared Teacher";
-  blocked.k12.subjectRows[0].name = "Shared Teacher";
-  const first = prepareTeacherImport({ sourceSnapshot: blocked, teachersRow: teachersRow() });
-  const resolution = first.response.identityResolutions[0];
-  assert.ok(resolution);
+test("persisted identity links remain fingerprint CAS evidence without changing projection", () => {
+  const source = snapshot({ duplicateAcrossBooks: true });
+  source.k12.rosterRows[0].name = "Shared Teacher";
+  source.k12.subjectRows[0].name = "Shared Teacher";
+  const first = prepareTeacherImport({ sourceSnapshot: source, teachersRow: teachersRow() });
   const linkedSnapshot = {
-    ...blocked,
+    ...source,
     identityLinks: [{
-      resolutionKey: resolution.resolutionKey,
-      decision: "merge",
+      resolutionKey: `sha256:${"3".repeat(64)}`,
+      decision: "separate",
       sourceRevisions: { k12: "k12-r1", university: "university-r1" },
-      sourceRefs: resolution.sourceRefs,
+      sourceRefs: [
+        { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 2 },
+        { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 4 },
+      ],
     }],
   };
   const linked = prepareTeacherImport({ sourceSnapshot: linkedSnapshot, teachersRow: teachersRow() });
   assert.equal(linked.response.canCommit, true);
   assert.equal(linked.plan.teachers.length, 1);
+  assert.deepEqual(linked.plan, first.plan);
   assert.notEqual(linked.response.planFingerprint, first.response.planFingerprint);
 });
 

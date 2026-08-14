@@ -28,6 +28,13 @@ const teacherSubjectResolutionSetFixSql = await readFile(
   ),
   "utf8",
 );
+const teacherAuthoritySql = await readFile(
+  new URL(
+    "../supabase/migrations/20260814184500_enforce_authoritative_teacher_import.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 function sqlFunction(source, qualifiedName) {
   const marker = `create or replace function ${qualifiedName}(`;
@@ -523,29 +530,29 @@ test("teacher import locks both workbook revisions, teacher state and stable ide
     sql.indexOf("create or replace function public.commit_teacher_import_plan_atomic"),
     sql.indexOf("revoke all on function public.commit_teacher_import_plan_atomic"),
   );
-  assert.match(functionBody, /where s\.workbook = 'k12' for update/i);
-  assert.match(functionBody, /where s\.workbook = 'university' for update/i);
-  assert.match(functionBody, /where s\.entity = 'teachers' for update/i);
+  assert.match(functionBody, /where source_row\.workbook = 'k12'\s+for update/i);
+  assert.match(functionBody, /where source_row\.workbook = 'university'\s+for update/i);
+  assert.match(functionBody, /where state_row\.entity = 'teachers'\s+for update/i);
   assert.match(functionBody, /k12\.revision <> p_source_revisions ->> 'k12'/i);
   assert.match(functionBody, /university\.revision <> p_source_revisions ->> 'university'/i);
   assert.match(functionBody, /current_state\.version <> p_expected_teacher_version/i);
-  assert.match(functionBody, /teacher_import_existing_teacher_removed/i);
-  assert.match(functionBody, /teacher_import_roster_reference_mismatch/i);
+  assert.match(sql, /teacher_import_existing_teacher_removed/i);
+  assert.match(functionBody, /assert_teacher_import_authoritative_plan/i);
+  assert.match(sql, /teacher_import_authoritative_reference_mismatch/i);
   assert.match(functionBody, /teacher_import_sheet_contract_changed/i);
   assert.match(functionBody, /insert into internal\.teacher_import_commits/i);
   assert.match(functionBody, /teacher_import\.committed/i);
 });
 
-test("teacher import replay revalidates current sources, decisions and committed state", () => {
+test("teacher import replay revalidates current sources, authority closure and committed state", () => {
   const functionBody = sql.slice(
     sql.indexOf("create or replace function public.commit_teacher_import_plan_atomic"),
     sql.indexOf("revoke all on function public.commit_teacher_import_plan_atomic"),
   );
   const priorAt = functionBody.indexOf("from internal.teacher_import_commits c");
-  const sourceLockAt = functionBody.indexOf("where s.workbook = 'k12' for update");
+  const sourceLockAt = functionBody.indexOf("where source_row.workbook = 'k12'");
   const replayReturnAt = functionBody.indexOf("prior.committed_by,\n      false");
-  const hardResolutionCheckAt = functionBody.indexOf("teacher_import_hard_resolutions_changed");
-  const identityResolutionCheckAt = functionBody.lastIndexOf("teacher_import_identity_links_changed");
+  const authorityCheckAt = functionBody.indexOf("assert_teacher_import_authoritative_plan");
 
   assert.match(functionBody, /replaying_prior boolean := false/i);
   assert.match(functionBody, /replaying_prior := true/i);
@@ -555,8 +562,8 @@ test("teacher import replay revalidates current sources, decisions and committed
   assert.match(functionBody, /elsif current_state\.version <> p_expected_teacher_version/i);
   assert.ok(priorAt >= 0 && sourceLockAt > priorAt, "replay lookup must precede canonical source locks");
   assert.ok(replayReturnAt > sourceLockAt, "replay must not return before source and state locks");
-  assert.ok(replayReturnAt > hardResolutionCheckAt, "replay must revalidate hard resolutions");
-  assert.ok(replayReturnAt > identityResolutionCheckAt, "replay must revalidate identity resolutions");
+  assert.ok(replayReturnAt > authorityCheckAt, "replay must revalidate exact-name authority closure");
+  assert.doesNotMatch(functionBody, /teacher_import_(?:hard_resolutions|identity_links)/i);
   assert.match(functionBody, /current_state\.updated_by,\n\s+true/i);
 });
 
@@ -616,9 +623,10 @@ test("import migrations contain no unparenthesized JSON extraction followed by t
   const ambiguousJsonbSubtraction = /->\s*'[^']+'\s*-\s*'[^']+'/i;
   assert.doesNotMatch(sql, ambiguousJsonbSubtraction);
   assert.doesNotMatch(sourcePrecedenceFixSql, ambiguousJsonbSubtraction);
+  assert.doesNotMatch(teacherAuthoritySql, ambiguousJsonbSubtraction);
 });
 
-test("teacher identity links are opaque, revision-bound, auditable and revalidated on commit", () => {
+test("teacher identity links remain opaque, revision-bound audit history", () => {
   assert.match(sql, /create table if not exists internal\.teacher_import_identity_links/i);
   const putBody = sql.slice(
     sql.indexOf("create or replace function public.put_teacher_import_identity_link"),
@@ -648,14 +656,12 @@ test("teacher identity links are opaque, revision-bound, auditable and revalidat
     sql.indexOf("create or replace function public.commit_teacher_import_plan_atomic"),
     sql.indexOf("revoke all on function public.commit_teacher_import_plan_atomic"),
   );
-  assert.match(commitBody, /teacher_import_identity_link_required/i);
-  assert.match(commitBody, /existing_teacher ->> 'id' = t ->> 'id'/i);
-  assert.match(commitBody, /current_state\.payload\) existing_teacher/i);
-  assert.match(commitBody, /teacher_import_identity_links_changed/i);
-  assert.match(commitBody, /case l\.decision/i);
+  assert.doesNotMatch(commitBody, /teacher_import_identity_links/i);
+  assert.doesNotMatch(commitBody, /teacher_import_identity_link_required/i);
+  assert.match(commitBody, /assert_teacher_import_authoritative_plan/i);
 });
 
-test("teacher V2 hard resolutions are closed, revision-bound and enforced again at commit", () => {
+test("teacher V2 hard resolutions remain closed, revision-bound audit history", () => {
   assert.match(sql, /create table if not exists internal\.teacher_import_hard_resolutions/i);
   assert.match(sql, /create or replace function internal\.teacher_import_hard_candidates/i);
   const keyBody = sql.slice(
@@ -713,18 +719,10 @@ test("teacher V2 hard resolutions are closed, revision-bound and enforced again 
     sql.indexOf("create or replace function public.commit_teacher_import_plan_atomic"),
     sql.indexOf("revoke all on function public.commit_teacher_import_plan_atomic"),
   );
-  assert.match(commitBody, /teacher_import_hard_resolution_required/i);
-  assert.match(commitBody, /teacher_import_hard_resolutions_changed/i);
-  assert.match(commitBody, /teacher_import_subject_hard_candidate_basis\(k12, university\)/i);
-  assert.doesNotMatch(commitBody, /hard_candidates := internal\.teacher_import_hard_candidates/i);
-  assert.match(commitBody, /subjectRefKey/i);
-  assert.match(commitBody, /rosterRefKey/i);
-  assert.match(commitBody, /select distinct basis ->> 'resolutionGroupKey'/i);
-  assert.match(commitBody, /r\.decision = 'assign'/i);
-  assert.match(commitBody, /r\.subject_ref ->> 'sheetName'/i);
-  assert.match(commitBody, /r\.kind = 'cross_workbook_identity'[\s\S]*r\.decision = 'merge'/i);
-  assert.match(commitBody, /join jsonb_array_elements\(r\.source_refs\) decision_ref/i);
-  assert.match(commitBody, /jsonb_array_length\(r\.source_refs\)/i);
+  assert.doesNotMatch(commitBody, /teacher_import_hard_resolutions/i);
+  assert.doesNotMatch(commitBody, /teacher_import_hard_resolution_required/i);
+  assert.doesNotMatch(commitBody, /teacher_import_subject_hard_candidate_basis/i);
+  assert.match(commitBody, /assert_teacher_import_authoritative_plan/i);
 });
 
 test("teacher resolution lookup hotfix removes the timeout-shaped query plans", () => {
@@ -743,7 +741,6 @@ test("teacher resolution lookup hotfix removes the timeout-shaped query plans", 
     "internal.teacher_import_subject_hard_candidate_rows",
     "internal.teacher_import_hard_candidates",
     "internal.teacher_import_hard_candidate_by_key",
-    "public.commit_teacher_import_plan_atomic",
   ]) {
     assert.equal(
       sqlFunction(teacherSubjectResolutionSetFixSql, name),
@@ -751,6 +748,11 @@ test("teacher resolution lookup hotfix removes the timeout-shaped query plans", 
       `${name} latest forward repair must match the canonical contract`,
     );
   }
+  assert.notEqual(
+    sqlFunction(teacherSubjectResolutionSetFixSql, "public.commit_teacher_import_plan_atomic"),
+    sqlFunction(sql, "public.commit_teacher_import_plan_atomic"),
+    "the later authority migration intentionally replaces the resolution-gated commit",
+  );
 
   const v1Body = sqlFunction(teacherResolutionLookupFixSql, "public.put_teacher_import_identity_link");
   assert.match(v1Body, /with k12_unique as materialized/i);
@@ -814,6 +816,282 @@ test("teacher resolution lookup hotfix removes the timeout-shaped query plans", 
   assert.match(teacherSubjectResolutionSetFixSql, /revoke all on function internal\.teacher_import_subject_hard_candidate_rows/i);
   assert.match(teacherSubjectResolutionSetFixSql, /revoke all on function public\.commit_teacher_import_plan_atomic/i);
   assert.match(teacherSubjectResolutionSetFixSql, /grant execute on function public\.commit_teacher_import_plan_atomic/i);
+});
+
+test("teacher authority migration enforces the exact-name roster plus subject-tab union", () => {
+  for (const name of [
+    "internal.teacher_import_clean_text",
+    "internal.teacher_import_js_trim",
+    "internal.teacher_import_initials",
+    "internal.teacher_import_timezone_for_location",
+    "internal.teacher_import_name_key",
+    "internal.teacher_import_authoritative_id",
+    "internal.teacher_import_authoritative_ref_basis",
+    "internal.teacher_import_authoritative_row_basis",
+    "internal.teacher_import_authoritative_subject_basis",
+    "internal.teacher_import_authoritative_detail_basis",
+    "internal.teacher_import_expected_operational_fragments",
+    "internal.assert_teacher_import_authoritative_plan",
+    "internal.assert_teacher_import_plan_shape",
+    "public.commit_teacher_import_plan_atomic",
+  ]) {
+    assert.equal(
+      sqlFunction(teacherAuthoritySql, name),
+      sqlFunction(sql, name),
+      `${name} forward migration must match the canonical contract`,
+    );
+  }
+
+  const cleanTextBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_clean_text");
+  assert.match(cleanTextBody, /normalize\(coalesce\(p_value, ''\), NFKC\)/i);
+  assert.match(cleanTextBody, /U&'\\200B\\200C\\200D\\FEFF'/i);
+  assert.match(cleanTextBody, /\\0009-\\000D\\0020\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000/i);
+  assert.match(cleanTextBody, /select nullif\(pg_catalog\.btrim\(pg_catalog\.regexp_replace/i);
+  assert.doesNotMatch(cleanTextBody, /ABCDEFGHIJKLMNOPQRSTUVWXYZ|pg_catalog\.lower|\blower\s*\(/i);
+
+  const jsTrimBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_js_trim");
+  assert.match(jsTrimBody, /pg_catalog\.btrim\([\s\S]*\\FEFF/i);
+  assert.doesNotMatch(jsTrimBody, /normalize|regexp_replace|teacher_import_clean_text/i);
+
+  const initialsBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_initials");
+  assert.match(initialsBody, /normalize\(coalesce\(p_name, ''\), NFKC\)/i);
+  assert.match(initialsBody, /regexp_split_to_array\([\s\S]*\\00B7\\30FB_-/i);
+  assert.match(initialsBody, /cardinality\(tokens\) > 1/i);
+  assert.match(initialsBody, /substring\(tokens\[1\] from 1 for 1\)/i);
+  assert.match(initialsBody, /translate\(result, 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'\)/i);
+  assert.doesNotMatch(initialsBody, /teacher_import_clean_text|pg_catalog\.upper/i);
+
+  const timezoneBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_timezone_for_location");
+  for (const timezone of [
+    "Australia/Melbourne", "Australia/Sydney", "Australia/Brisbane",
+    "Australia/Adelaide", "Australia/Perth", "Australia/Hobart",
+    "Australia/Darwin", "Asia/Shanghai",
+  ]) assert.match(timezoneBody, new RegExp(timezone.replace("/", "\\/")));
+  assert.match(timezoneBody, /\(\^\|\[\^a-z0-9_\]\)\(melbourne\|vic\|victoria\)/i);
+  assert.match(timezoneBody, /'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[\s\S]*'abcdefghijklmnopqrstuvwxyz'/i);
+  assert.doesNotMatch(timezoneBody, /pg_catalog\.lower|auckland|argentina|bosnia/i);
+
+  const nameKeyBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_name_key");
+  assert.match(nameKeyBody, /normalize\(coalesce\(p_name, ''\), NFKC\)/i);
+  assert.match(nameKeyBody, /parser to pg_catalog\.normalize/i);
+  assert.match(nameKeyBody, /U&'\\200B\\200C\\200D\\FEFF'/i);
+  assert.match(nameKeyBody, /\\0009-\\000D\\0020\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000/i);
+  assert.match(nameKeyBody, /pg_catalog\.translate\([\s\S]*'ABCDEFGHIJKLMNOPQRSTUVWXYZ',[\s\S]*'abcdefghijklmnopqrstuvwxyz'/i);
+  assert.doesNotMatch(nameKeyBody, /pg_catalog\.lower|\blower\s*\(/i);
+  assert.match(teacherAuthoritySql, /teacher_name_contract_fixture_mismatch_fullwidth_punctuation/i);
+  assert.match(teacherAuthoritySql, /teacher_name_contract_fixture_mismatch_nfkc_ascii_case_runtime/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('老师，A：B'\)[\s\S]*teacher_import_name_key\('老师,A:B'\)/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('ASCII CASE'\) <> 'ascii case'/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('Oﬁ ＆ CO'\) <> 'ofi & co'/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('ÉLODIE'\) <> 'Élodie'/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('İSTANBUL'\) <> 'İstanbul'/i);
+  assert.match(teacherAuthoritySql, /teacher_import_name_key\('ΑΒΓ ABC'\) <> 'ΑΒΓ abc'/i);
+
+  const authorityIdBody = sqlFunction(teacherAuthoritySql, "internal.teacher_import_authoritative_id");
+  assert.match(authorityIdBody, /'TEA-TX-A-' \|\| encode\(extensions\.digest/i);
+  assert.match(authorityIdBody, /convert_to\(internal\.teacher_import_name_key\(p_name\), 'UTF8'\)/i);
+  assert.match(authorityIdBody, /'sha256'/i);
+  assert.doesNotMatch(authorityIdBody, /source_id|source_row|workbook/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_id_contract_fixture_mismatch/i);
+  assert.match(teacherAuthoritySql, /TEA-TX-A-ed62142be3bc6f1f3c19457d0d78fee6210f3e287cd6df153c4ea5b131f98b68/i);
+  assert.match(teacherAuthoritySql, /TEA-TX-A-831126c3f6b9995b27b548aa86b83cd9b5b64f871a01e75c655f2e213a35eb2a/i);
+
+  const refBasis = sqlFunction(teacherAuthoritySql, "internal.teacher_import_authoritative_ref_basis");
+  assert.match(refBasis, /source_id \|\| '#subjects'/i);
+  assert.match(refBasis, /'name:' \|\| encode\(extensions\.digest\([\s\S]*convert_to\(subject_name\.name_key, 'UTF8'\)/i);
+  assert.match(refBasis, /where not exists \([\s\S]*roster\.workbook = subject_name\.workbook[\s\S]*roster\.name_key = subject_name\.name_key/i);
+  assert.doesNotMatch(refBasis, /operational_name|nickname|hard_resolution|identity_link/i);
+
+  const rowBasis = sqlFunction(teacherAuthoritySql, "internal.teacher_import_authoritative_row_basis");
+  assert.match(rowBasis, /returns table \([\s\S]*availability_text text[\s\S]*capacity_text text[\s\S]*location text/i);
+  assert.match(rowBasis, /jsonb_typeof\(roster_row #> '\{attributes,location\}'\) = 'string'/i);
+  assert.match(rowBasis, /jsonb_typeof\(roster_row -> 'availabilityText'\) = 'string'/i);
+  assert.match(rowBasis, /source_id \|\| '#subjects'/i);
+  assert.match(rowBasis, /array_agg\([\s\S]*row_name order by raw_subject_names\.subject_ordinality/i);
+  assert.doesNotMatch(rowBasis, /hard_resolution|identity_link/i);
+
+  const subjectBasis = sqlFunction(teacherAuthoritySql, "internal.teacher_import_authoritative_subject_basis");
+  assert.match(subjectBasis, /sheet_position between 2 and 17/i);
+  assert.match(subjectBasis, /sheet_position between 2 and 8/i);
+  assert.match(subjectBasis, /group by subject_membership\.name_key, subject_membership\.sheet_name/i);
+
+  const detailBasis = sqlFunction(teacherAuthoritySql, "internal.teacher_import_authoritative_detail_basis");
+  assert.match(detailBasis, /teacher_import_clean_text\(subject_row ->> 'subjectDetail'\)/i);
+  assert.match(detailBasis, /jsonb_array_elements\(p_k12\.subject_rows\) with ordinality/i);
+  assert.match(detailBasis, /jsonb_array_elements\(p_university\.subject_rows\) with ordinality/i);
+  assert.match(detailBasis, /partition by[\s\S]*convert_to\(raw_details\.name_key, 'UTF8'\)[\s\S]*convert_to\(raw_details\.detail, 'UTF8'\)[\s\S]*order by raw_details\.workbook_order, raw_details\.detail_order/i);
+  assert.match(detailBasis, /where ranked_details\.occurrence_rank = 1/i);
+  assert.doesNotMatch(detailBasis, /sheet_position/i);
+
+  const operational = sqlFunction(
+    teacherAuthoritySql,
+    "internal.teacher_import_expected_operational_fragments",
+  );
+  assert.match(operational, /teacher_import_authoritative_row_basis\(p_k12, p_university\)/i);
+  assert.match(operational, /teacher_import_js_trim\(basis\.source_row #>> '\{\}'\)/i);
+  assert.match(operational, /convert_to\(basis\.workbook, 'UTF8'\)[\s\S]*decode\('00', 'hex'\)[\s\S]*convert_to\(basis\.source_id, 'UTF8'\)/i);
+  assert.match(operational, /row_count > 1 and existing\.existing_teacher is not null[\s\S]*existing\.existing_teacher ->> 'name'/i);
+  assert.match(operational, /row_number\(\) over \([\s\S]*source_text\.kind[\s\S]*convert_to\(source_text\.value, 'UTF8'\)[\s\S]*order by authority_rows\.reference_key/i);
+  assert.match(operational, /count\(distinct pg_catalog\.convert_to\(authority_rows\.location, 'UTF8'\)\)/i);
+  assert.match(operational, /teacher_import_js_trim\([\s\S]*existing_teacher ->> 'availability'[\s\S]*then active_base\.existing_teacher ->> 'availability'/i);
+  assert.match(operational, /teacher_import_timezone_for_location\(active_values\.expected_location\)/i);
+  assert.match(operational, /where not exists \([\s\S]*active_expected\.teacher_id = existing_teacher ->> 'id'/i);
+  assert.match(operational, /jsonb_typeof\(existing_teacher -> 'location'\) = 'string'[\s\S]*teacher_import_clean_text\(existing_teacher ->> 'location'\)/i);
+  assert.match(operational, /'availabilityStatus', '暂停接新'/i);
+  assert.match(operational, /'acceptsStudents', false/i);
+  assert.match(operational, /case when historical_values\.availability_source_text is not null[\s\S]*jsonb_build_object\([\s\S]*'availabilitySourceText'/i);
+  for (const field of [
+    "name", "initials", "availability", "availabilityStatus", "timezone",
+    "load", "capacity", "acceptsStudents", "note", "location",
+    "availabilitySourceText", "capacitySourceText",
+  ]) assert.match(operational, new RegExp(`'${field}'`, "i"));
+
+  const assertion = sqlFunction(teacherAuthoritySql, "internal.assert_teacher_import_authoritative_plan");
+  for (const invariant of [
+    "teacher_import_authoritative_reference_mismatch",
+    "teacher_import_authoritative_name_mismatch",
+    "teacher_import_existing_id_name_changed",
+    "teacher_import_existing_unmanaged_fields_changed",
+    "teacher_import_new_teacher_unmanaged_fields",
+    "teacher_import_existing_name_ambiguous",
+    "teacher_import_exact_name_existing_id_mismatch",
+    "teacher_import_authoritative_id_collision",
+    "teacher_import_authoritative_id_mismatch",
+    "teacher_import_authoritative_subject_mismatch",
+    "teacher_import_authoritative_metadata_mismatch",
+    "teacher_import_operational_projection_mismatch",
+    "teacher_import_existing_teacher_removed",
+    "teacher_import_unreferenced_teacher_added",
+    "teacher_import_historical_reference_mismatch",
+    "teacher_import_historical_authority_not_cleared",
+  ]) assert.match(assertion, new RegExp(invariant, "i"));
+  assert.match(assertion, /p_k12\.source_id \|\| '#subjects'/i);
+  assert.match(assertion, /teacher -> 'subjects' is distinct from expected\.expected_subjects/i);
+  assert.match(assertion, /teacher -> 'sourceCategories' is distinct from expected\.expected_subjects/i);
+  assert.match(assertion, /jsonb_agg\(to_jsonb\(department\.department\) order by department\.workbook_order\)/i);
+  assert.match(assertion, /when 'k12' then '中小学'[\s\S]*else '大学'/i);
+  assert.match(assertion, /string_agg\(detail_basis ->> 'detail', '；' order by/i);
+  assert.match(assertion, /teacher -> 'departments' is distinct from expected\.expected_departments/i);
+  assert.match(assertion, /expected\.expected_detail is null and teacher \? 'subjectDetail'/i);
+  assert.match(assertion, /convert_to\(teacher ->> 'subjectDetail', 'UTF8'\) is distinct from[\s\S]*convert_to\(expected\.expected_detail, 'UTF8'\)/i);
+  assert.match(assertion, /teacher \? 'subjectDetail'/i);
+  assert.match(assertion, /teacher -> 'departments' is distinct from '\[\]'::jsonb/i);
+  assert.match(assertion, /\(teacher ->> 'availabilityStatus'\) is distinct from '暂停接新'/i);
+  assert.match(assertion, /\(teacher ->> 'acceptsStudents'\) is distinct from 'false'/i);
+  assert.match(assertion, /teacher ->> 'id' = existing_teacher ->> 'id'[\s\S]*teacher_import_name_key\(teacher ->> 'name'\) <>[\s\S]*teacher_import_name_key\(existing_teacher ->> 'name'\)/i);
+  assert.match(assertion, /teacher ->> 'id' = internal\.teacher_import_authoritative_id\(authority\.name_key\)/i);
+  assert.match(assertion, /teacher_import_expected_operational_fragments\([\s\S]*p_k12, p_university, p_existing_teachers/i);
+  assert.match(assertion, /jsonb_object_agg\(field\.key, field\.value\)/i);
+  const operationalKeys = assertion.match(/where field\.key = any\(array\[([\s\S]*?)\]::text\[\]\)/i);
+  assert.ok(operationalKeys, "operational comparison must use an explicit key allowlist");
+  assert.deepEqual(
+    [...operationalKeys[1].matchAll(/'([^']+)'/g)].map((match) => match[1]),
+    [
+      "name", "initials", "availability", "availabilityStatus", "timezone",
+      "load", "capacity", "acceptsStudents", "note", "location",
+      "availabilitySourceText", "capacitySourceText",
+    ],
+  );
+  assert.doesNotMatch(assertion, /teacher_import_existing_reference_owner_changed/i);
+  assert.match(assertion, /teacher - array\[[\s\S]*\]::text\[\][\s\S]*is distinct from[\s\S]*existing_teacher - array\[/i);
+  const managedFields = [
+    "id", "name", "subjects", "subjectDetail", "departments", "sourceCategories",
+    "teacherSourceRefs", "availability", "availabilityStatus", "availabilitySourceText",
+    "capacitySourceText", "initials", "timezone", "load", "capacity", "acceptsStudents",
+    "note", "location",
+  ];
+  const allowlistBodies = [...assertion.matchAll(/(?:teacher|existing_teacher) - array\[([\s\S]*?)\]::text\[\]/gi)]
+    .map((match) => [...match[1].matchAll(/'([^']+)'/g)].map((field) => field[1]));
+  assert.equal(allowlistBodies.length, 3, "existing/new teacher guards must share three exact allowlists");
+  for (const allowlist of allowlistBodies) assert.deepEqual(allowlist, managedFields);
+  assert.doesNotMatch(assertion, /payrollHistory|availabilityWindows|capacityAssignments/);
+  assert.match(assertion, /not exists \([\s\S]*existing_teacher ->> 'id' = teacher ->> 'id'[\s\S]*teacher - array\[[\s\S]*is distinct from '\{\}'::jsonb/i);
+  assert.doesNotMatch(assertion, /teacher_import_(?:hard_resolutions|identity_links)/i);
+
+  const shapeBody = sqlFunction(teacherAuthoritySql, "internal.assert_teacher_import_plan_shape");
+  const mandatoryTypes = new Map([
+    ["id", "string"], ["name", "string"], ["initials", "string"],
+    ["subjects", "array"], ["departments", "array"], ["sourceCategories", "array"],
+    ["teacherSourceRefs", "array"], ["availability", "string"],
+    ["availabilityStatus", "string"], ["timezone", "string"], ["load", "number"],
+    ["capacity", "number"], ["acceptsStudents", "boolean"], ["note", "string"],
+  ]);
+  for (const [field, type] of mandatoryTypes) {
+    assert.match(
+      shapeBody,
+      new RegExp(`jsonb_typeof\\(teacher -> '${field}'\\) is distinct from '${type}'`, "i"),
+      `${field} must reject missing and JSON-null values`,
+    );
+  }
+  assert.match(shapeBody, /jsonb_typeof\(p_teachers\) is distinct from 'array'/i);
+  assert.match(shapeBody, /teacher ->> 'availabilityStatus' in \('可接新生', '暂停接新', '待确认'\)/i);
+  assert.match(shapeBody, /foreach optional_field in array array\[[\s\S]*'subjectDetail'[\s\S]*'location'[\s\S]*'availabilitySourceText'[\s\S]*'capacitySourceText'/i);
+  assert.match(shapeBody, /teacher \? optional_field[\s\S]*jsonb_typeof\(teacher -> optional_field\) is distinct from 'string'/i);
+  assert.match(shapeBody, /department #>> '\{\}' in \('中小学', '大学'\)/i);
+  assert.match(shapeBody, /jsonb_array_length\(teacher -> 'departments'\) <> \([\s\S]*count\(distinct department #>> '\{\}'\)/i);
+  assert.match(shapeBody, /\(teacher ->> 'load'\)::numeric < 0/i);
+  assert.match(shapeBody, /\(teacher ->> 'capacity'\)::numeric < 0/i);
+  assert.doesNotMatch(shapeBody, /jsonb_typeof\([^\n]*\)\s*<>/i);
+
+  const commitBody = sqlFunction(teacherAuthoritySql, "public.commit_teacher_import_plan_atomic");
+  const sourceLockAt = commitBody.indexOf("where source_row.workbook = 'k12'");
+  const authorityAt = commitBody.indexOf("assert_teacher_import_authoritative_plan");
+  const shapeAt = commitBody.indexOf("assert_teacher_import_plan_shape");
+  const hashAt = commitBody.indexOf("teachers_hash :=");
+  const replayAt = commitBody.indexOf("prior.committed_by,\n      false");
+  assert.ok(shapeAt >= 0 && shapeAt < hashAt, "wire shape must be proven before hashing");
+  assert.ok(sourceLockAt >= 0 && authorityAt > sourceLockAt, "authority assertion must run after source locks");
+  assert.ok(replayAt > authorityAt, "replay must revalidate authority before returning");
+  assert.doesNotMatch(commitBody, /teacher_import_(?:hard_resolutions|identity_links)/i);
+  assert.match(commitBody, /'identityPolicy', 'exact_normalized_name'/i);
+  assert.match(commitBody, /authorityReferenceCount/i);
+  assert.match(commitBody, /authoritySubjectMembershipCount/i);
+
+  assert.match(teacherAuthoritySql, /teacher_authority_basis_fixture_mismatch/i);
+  assert.match(teacherAuthoritySql, /teacher_authority_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_id_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_id_reuse_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_direct_row_reuse_fixture_mismatch/i);
+  assert.match(teacherAuthoritySql, /teacher_historical_departments_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_historical_status_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_departments_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_stale_detail_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_fabricated_detail_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_authoritative_missing_detail_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /K12 Focus；Uni Detail/i);
+  assert.match(teacherAuthoritySql, /Essay Detail；Local Detail；Research Skills/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_missing_field_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_null_field_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_optional_null_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_optional_blank_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_duplicate_department_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_shape_invalid_department_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_unmanaged_field_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_new_unmanaged_field_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /array\['payrollHistory','availabilityWindows','capacityAssignments'\]/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_primitive_fixture_mismatch/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_projection_fixture_mismatch/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_display_name_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_field_rejection_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_optional_removal_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /teacher_operational_optional_fabrication_fixture_did_not_fail/i);
+  assert.match(teacherAuthoritySql, /non_string_existing := jsonb_set\(existing_fixture, '\{1,location\}', '42'::jsonb\)/i);
+  assert.match(teacherAuthoritySql, /array\[0, 2, 3\]::integer\[\]/i);
+  assert.match(teacherAuthoritySql, /First AVA；Second AVA/i);
+  assert.match(teacherAuthoritySql, /Duplicate Capacity；University Capacity/i);
+  assert.match(teacherAuthoritySql, /name:831126c3f6b9995b27b548aa86b83cd9b5b64f871a01e75c655f2e213a35eb2a/i);
+  assert.doesNotMatch(teacherAuthoritySql, /student_import|operation_confirmation|availability_submission/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.assert_teacher_import_authoritative_plan/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.assert_teacher_import_plan_shape\(jsonb\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_clean_text\(text\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_js_trim\(text\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_initials\(text\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_timezone_for_location\(text\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_authoritative_row_basis/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_expected_operational_fragments/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_authoritative_detail_basis/i);
+  assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_authoritative_id\(text\)/i);
+  assert.match(teacherAuthoritySql, /revoke all on function public\.commit_teacher_import_plan_atomic[\s\S]*grant execute/i);
 });
 
 test("student import archive markers preserve only referenced excluded historical IDs", () => {

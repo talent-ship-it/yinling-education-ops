@@ -174,6 +174,7 @@ export type ImportedTeacherRecord = Readonly<Record<string, unknown> & {
 export type TeacherImportIssueCode =
   | "duplicate_roster_name"
   | "duplicate_source_reference"
+  | "derived_id_collision"
   | "existing_name_ambiguous"
   | "cross_workbook_name_ambiguous"
   | "identity_link_invalid"
@@ -248,7 +249,6 @@ type PreparedRoster = {
   sourceKey: string;
   name: string;
   normalizedName: string;
-  databaseNameKey: string;
   availabilityText?: string;
   capacityText?: string;
   attributes: Readonly<Record<string, unknown>>;
@@ -297,15 +297,16 @@ const managedFields = new Set([
 
 function teacherInitials(name: string): string {
   const tokens = name.normalize("NFKC").trim().split(/[\s·・_-]+/).filter(Boolean);
+  const uppercaseAscii = (value: string) => value.replace(/[a-z]/g, (character) => character.toUpperCase());
   if (tokens.length > 1) {
-    return tokens.slice(0, 2).map((token) => [...token][0] ?? "").join("").toLocaleUpperCase("en-AU");
+    return uppercaseAscii(tokens.slice(0, 2).map((token) => [...token][0] ?? "").join(""));
   }
-  return [...(tokens[0] ?? name)].slice(0, 2).join("").toLocaleUpperCase("en-AU");
+  return uppercaseAscii([...(tokens[0] ?? name)].slice(0, 2).join(""));
 }
 
 function timezoneForLocation(location: string | undefined): string | undefined {
   if (!location) return undefined;
-  const key = location.normalize("NFKC").toLocaleLowerCase("en-AU");
+  const key = location.normalize("NFKC").replace(/[A-Z]/g, (character) => character.toLowerCase());
   const mappings: readonly [RegExp, string][] = [
     [/\b(melbourne|vic|victoria)\b|墨尔本|维州/, "Australia/Melbourne"],
     [/\b(sydney|nsw|new south wales|canberra|act)\b|悉尼|新州|堪培拉/, "Australia/Sydney"],
@@ -325,45 +326,9 @@ function cleanText(value: string | null | undefined): string | undefined {
   return result || undefined;
 }
 
-/** Conservative identity key: width, whitespace and case only. */
+/** Conservative identity key: width, whitespace and ASCII case only. */
 export function normalizeTeacherImportName(value: string): string {
-  return cleanText(value)?.toLocaleLowerCase("en-AU") ?? "";
-}
-
-const OPERATIONAL_NAME_ANNOTATION = /(?:弱化|离职|先不安排)/u;
-
-function trailingNameAnnotation(value: string): Readonly<{ base: string; annotation: string }> | undefined {
-  const clean = cleanText(value);
-  if (!clean) return undefined;
-  const match = /^(.*?)\s*\(([^()]*)\)\s*$/u.exec(clean);
-  const base = cleanText(match?.[1]);
-  const annotation = cleanText(match?.[2]);
-  return base && annotation ? { base, annotation } : undefined;
-}
-
-/**
- * The workbooks append operational state to display names inconsistently.
- * Remove only those known annotations; arbitrary parentheses remain identity
- * significant unless a nickname is independently corroborated below.
- */
-function operationalTeacherNameKey(value: string): string {
-  let clean = cleanText(value) ?? "";
-  for (;;) {
-    const annotated = trailingNameAnnotation(clean);
-    if (!annotated || !OPERATIONAL_NAME_ANNOTATION.test(annotated.annotation)) break;
-    clean = annotated.base;
-  }
-  clean = clean.replace(/\s*(?:已弱化|弱化)\s*$/u, "");
-  return normalizeTeacherImportName(clean);
-}
-
-function sourceTextCorroboratesNickname(row: PreparedRoster, nickname: string): boolean {
-  const key = normalizeTeacherImportName(nickname);
-  if (!key || key.length > 80) return false;
-  return [row.availabilityText, row.capacityText].some((value) => {
-    const text = value ? value.normalize("NFKC").toLocaleLowerCase("en-AU") : "";
-    return text.includes(`${key}老师`);
-  });
+  return cleanText(value)?.replace(/[A-Z]/g, (character) => character.toLowerCase()) ?? "";
 }
 
 function sourceKey(value: TeacherImportSourceKey, label: string): string {
@@ -398,6 +363,18 @@ export function teacherIdForSource(reference: TeacherSourceReference): string {
   return `TEA-TX-${fnv1a(identity, 0x811c9dc5)}${fnv1a([...identity].reverse().join(""), 0x9e3779b9)}`;
 }
 
+/**
+ * Exact normalized names are the authoritative identity contract. New IDs are
+ * therefore stable when a teacher moves between roster rows, workbooks or the
+ * synthetic subject-only namespace, while a different exact name can never
+ * inherit the same deterministic ID merely by reusing a source row.
+ */
+export function teacherIdForAuthorityName(name: string): string {
+  const nameKey = normalizeTeacherImportName(requiredText(name, "teacher name"));
+  const digest = createHash("sha256").update(Buffer.from(nameKey, "utf8")).digest("hex");
+  return `TEA-TX-A-${digest}`;
+}
+
 function expectedSubjectSheets(workbook: TeacherWorkbookKind): readonly string[] {
   const sheets = TEACHER_WORKBOOK_SHEETS[workbook];
   return workbook === "k12" ? sheets.slice(1, -1) : sheets.slice(1);
@@ -409,6 +386,11 @@ function sheetKey(value: string, label: string): string {
 
 function compareText(left: string, right: string): number {
   return left.localeCompare(right, "en-AU");
+}
+
+/** PostgreSQL `COLLATE "C"` parity for source-owned ordering. */
+function compareUtf8(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
 function canonical(value: unknown): unknown {
@@ -441,6 +423,88 @@ function sourceReferenceKey(reference: TeacherSourceReference): string {
 
 function orderedIdentityReferences(references: readonly TeacherSourceReference[]): TeacherSourceReference[] {
   return [...references].sort((left, right) => compareText(sourceReferenceKey(left), sourceReferenceKey(right)));
+}
+
+type ActiveTeacherOperationalProjection = Readonly<{
+  fields: Readonly<{
+    name: string;
+    initials: string;
+    availability: string;
+    availabilityStatus: ImportedTeacherRecord["availabilityStatus"];
+    timezone: string;
+    load: number;
+    capacity: number;
+    acceptsStudents: boolean;
+    note: string;
+    location?: string;
+    availabilitySourceText?: string;
+    capacitySourceText?: string;
+  }>;
+  timezoneWasDefaulted: boolean;
+}>;
+
+/**
+ * Server-owned operational projection for an active authoritative name.
+ *
+ * SQL mirrors this field-for-field: current source text is clean/deduplicated
+ * in UTF-8 reference order; reviewed existing operational values survive only
+ * when they have the expected primitive/domain; source attributes can supply
+ * only a unique location and can never promote AVA/capacity/student status.
+ */
+function activeTeacherOperationalProjection(
+  existing: ExistingTeacherImportRecord | undefined,
+  rows: readonly ResolvedRoster[],
+): ActiveTeacherOperationalProjection {
+  const canonicalRow = rows[0];
+  if (!canonicalRow) throw new TeacherImportError("invalid_source", "An active teacher requires at least one authoritative source row.");
+  const displayName = rows.length > 1 && existing ? existing.name : canonicalRow.row.name;
+  const uniqueCleanTexts = (values: readonly (string | null | undefined)[]) =>
+    [...new Set(values.map(cleanText).filter((value): value is string => Boolean(value)))];
+  const joinedSourceText = (values: readonly (string | null | undefined)[]) => {
+    const unique = uniqueCleanTexts(values);
+    return unique.length ? unique.join("；") : undefined;
+  };
+  const availabilitySourceText = joinedSourceText(rows.map((item) => item.row.availabilityText));
+  const capacitySourceText = joinedSourceText(rows.map((item) => item.row.capacityText));
+  const sourceLocations = uniqueCleanTexts(rows.map((item) =>
+    typeof item.row.attributes.location === "string" ? item.row.attributes.location : undefined));
+  const existingLocation = typeof existing?.location === "string" ? cleanText(existing.location) : undefined;
+  const location = existingLocation ?? (sourceLocations.length === 1 ? sourceLocations[0] : undefined);
+  const existingTimezone = typeof existing?.timezone === "string" ? cleanText(existing.timezone) : undefined;
+  const mappedTimezone = timezoneForLocation(location);
+  const existingInitials = typeof existing?.initials === "string" ? cleanText(existing.initials) : undefined;
+  const existingNote = typeof existing?.note === "string" ? cleanText(existing.note) : undefined;
+  // Deliberately preserve the reviewed availability string byte-for-byte once
+  // it is non-blank. It is operational state, not source text.
+  const existingAvailability = typeof existing?.availability === "string" && existing.availability.trim()
+    ? existing.availability
+    : undefined;
+  const existingAvailabilityStatus = existing?.availabilityStatus === "可接新生"
+    || existing?.availabilityStatus === "暂停接新"
+    || existing?.availabilityStatus === "待确认"
+    ? existing.availabilityStatus
+    : undefined;
+  return {
+    fields: {
+      name: displayName,
+      initials: existingInitials ?? teacherInitials(displayName),
+      availability: existingAvailability ?? "待老师按月提交",
+      availabilityStatus: existingAvailabilityStatus ?? "待确认",
+      timezone: existingTimezone ?? mappedTimezone ?? "Australia/Melbourne",
+      load: typeof existing?.load === "number" && Number.isFinite(existing.load) && existing.load >= 0
+        ? existing.load
+        : 0,
+      capacity: typeof existing?.capacity === "number" && Number.isFinite(existing.capacity) && existing.capacity >= 0
+        ? existing.capacity
+        : 0,
+      acceptsStudents: typeof existing?.acceptsStudents === "boolean" ? existing.acceptsStudents : false,
+      note: existingNote ?? "待教务审核教师资料与月度 AVA",
+      ...(location ? { location } : {}),
+      ...(availabilitySourceText ? { availabilitySourceText } : {}),
+      ...(capacitySourceText ? { capacitySourceText } : {}),
+    },
+    timezoneWasDefaulted: !existingTimezone && !mappedTimezone,
+  };
 }
 
 function subjectSourceReferenceKey(reference: TeacherSubjectSourceReference): string {
@@ -572,47 +636,45 @@ function teacherIdForIdentityLink(resolutionKey: string): string {
 }
 
 /** Mirrors the database's deliberately narrow identity-link name check. */
-function identityLinkNameKey(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-AU");
-}
-
 function changedFields(existing: ExistingTeacherImportRecord, next: ImportedTeacherRecord): string[] {
   return [...managedFields].filter((field) => !same(existing[field], next[field])).sort(compareText);
 }
 
-function preservedExistingTeacher(existing: ExistingTeacherImportRecord): ImportedTeacherRecord {
-  const subjects = Array.isArray(existing.subjects)
-    ? existing.subjects.filter((value): value is string => typeof value === "string" && Boolean(cleanText(value)))
-    : [];
-  const departments = Array.isArray(existing.departments)
-    ? existing.departments.filter((value): value is "中小学" | "大学" => value === "中小学" || value === "大学")
-    : [];
-  const sourceCategories = Array.isArray(existing.sourceCategories)
-    ? existing.sourceCategories.filter((value): value is string => typeof value === "string" && Boolean(cleanText(value)))
-    : subjects;
+function subjectOnlySourceRow(nameKey: string): string {
+  const digest = createHash("sha256").update(Buffer.from(nameKey, "utf8")).digest("hex");
+  return `name:${digest}`;
+}
+
+function preservedExistingTeacher(
+  existing: ExistingTeacherImportRecord,
+  currentSourceNamespaces: ReadonlySet<string>,
+): ImportedTeacherRecord {
   const location = typeof existing.location === "string" ? cleanText(existing.location) : undefined;
+  const availabilitySourceText = typeof existing.availabilitySourceText === "string"
+    ? cleanText(existing.availabilitySourceText)
+    : undefined;
+  const capacitySourceText = typeof existing.capacitySourceText === "string"
+    ? cleanText(existing.capacitySourceText)
+    : undefined;
   const timezone = typeof existing.timezone === "string" && cleanText(existing.timezone)
     ? cleanText(existing.timezone)!
     : timezoneForLocation(location) ?? "Australia/Melbourne";
   return {
-    ...existing,
+    ...Object.fromEntries(Object.entries(existing).filter(([field]) => !managedFields.has(field))),
     id: requiredText(existing.id, "existing teacher id"),
     name: requiredText(existing.name, "existing teacher name"),
     initials: typeof existing.initials === "string" && cleanText(existing.initials)
       ? cleanText(existing.initials)!
       : teacherInitials(existing.name),
-    subjects,
-    departments,
-    sourceCategories,
-    teacherSourceRefs: existing.teacherSourceRefs ?? [],
+    subjects: [],
+    departments: [],
+    sourceCategories: [],
+    teacherSourceRefs: (existing.teacherSourceRefs ?? [])
+      .filter((reference) => !currentSourceNamespaces.has(reference.sourceId)),
     availability: typeof existing.availability === "string" && cleanText(existing.availability)
       ? cleanText(existing.availability)!
       : "待老师按月提交",
-    availabilityStatus: existing.availabilityStatus === "可接新生"
-      || existing.availabilityStatus === "暂停接新"
-      || existing.availabilityStatus === "待确认"
-      ? existing.availabilityStatus
-      : "待确认",
+    availabilityStatus: "暂停接新",
     timezone,
     load: typeof existing.load === "number" && Number.isFinite(existing.load) && existing.load >= 0
       ? existing.load
@@ -620,19 +682,25 @@ function preservedExistingTeacher(existing: ExistingTeacherImportRecord): Import
     capacity: typeof existing.capacity === "number" && Number.isFinite(existing.capacity) && existing.capacity >= 0
       ? existing.capacity
       : 0,
-    acceptsStudents: typeof existing.acceptsStudents === "boolean" ? existing.acceptsStudents : false,
+    acceptsStudents: false,
     note: typeof existing.note === "string" && cleanText(existing.note)
       ? cleanText(existing.note)!
       : "待教务审核教师资料与月度 AVA",
     ...(location ? { location } : {}),
+    ...(availabilitySourceText ? { availabilitySourceText } : {}),
+    ...(capacitySourceText ? { capacitySourceText } : {}),
   };
 }
 
 export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): TeacherImportPlan {
   const existingTeachers = input.existingTeachers ?? [];
-  const identityLinks = input.identityLinks ?? [];
-  const hardResolutions = input.hardResolutions ?? [];
+  // The current Tencent workbooks are authoritative. Historical choices stay
+  // persisted for audit/CAS purposes, but no merge/separate/assign/ignore
+  // decision may alter this exact-name projection.
+  const identityLinks: readonly TeacherIdentityLink[] = [];
+  const hardResolutions: readonly TeacherHardResolutionDecision[] = [];
   const workbookKinds = new Set<TeacherWorkbookKind>();
+  const currentSourceNamespaces = new Set<string>();
   const issues: TeacherImportIssue[] = [];
   const roster: PreparedRoster[] = [];
   const pendingSubjectResolutions: PendingSubjectResolution[] = [];
@@ -644,6 +712,8 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
     }
     workbookKinds.add(snapshot.workbook);
     const sourceId = requiredText(snapshot.sourceId, `${snapshot.workbook} sourceId`);
+    currentSourceNamespaces.add(sourceId);
+    currentSourceNamespaces.add(`${sourceId}#subjects`);
     requiredText(snapshot.revision, `${snapshot.workbook} revision`);
     const expected = [...TEACHER_WORKBOOK_SHEETS[snapshot.workbook]];
     const expectedByKey = new Map(expected.map((sheet) => [sheetKey(sheet, "expected sheet"), sheet]));
@@ -675,7 +745,6 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
         sourceKey: sourceKey(row.sourceRow, "teacher sourceRow"),
         name,
         normalizedName: normalizeTeacherImportName(name),
-        databaseNameKey: identityLinkNameKey(row.name),
         ...(availabilityText ? { availabilityText } : {}),
         ...(capacityText ? { capacityText } : {}),
         attributes: row.attributes ?? {},
@@ -684,7 +753,6 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
       };
     });
     const byName = groupBy(rows, (row) => row.normalizedName);
-    const byOperationalName = groupBy(rows, (row) => operationalTeacherNameKey(row.name));
 
     const subjectSheetByKey = new Map(expectedSubjectSheets(snapshot.workbook)
       .filter((sheet) => actualSet.has(sheetKey(sheet, "expected subject sheet")))
@@ -699,53 +767,31 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
         issues.push({ code: "unknown_subject_sheet", workbook: snapshot.workbook, name, sheetName: sourceSheetName, sourceRows: [subjectRow.sourceRow], detail: "This row is on a non-subject or unknown sheet and was ignored." });
         continue;
       }
-      const matches = byName.get(normalizeTeacherImportName(name)) ?? [];
-      let safeMatches = matches;
-      if (!safeMatches.length) {
-        const operationalMatches = byOperationalName.get(operationalTeacherNameKey(name)) ?? [];
-        if (operationalMatches.length > 0
-          && operationalMatches.some((match) => operationalTeacherNameKey(match.name) !== match.normalizedName
-            || operationalTeacherNameKey(name) !== normalizeTeacherImportName(name))) {
-          safeMatches = operationalMatches;
-        }
-      }
-      if (!safeMatches.length) {
-        const nickname = trailingNameAnnotation(name);
-        const nicknameMatches = nickname
-          ? rows.filter((row) => row.normalizedName === normalizeTeacherImportName(nickname.base)
-            && sourceTextCorroboratesNickname(row, nickname.annotation))
-          : [];
-        if (nicknameMatches.length === 1) {
-          safeMatches = nicknameMatches;
-        }
-      }
-      if (!safeMatches.length) {
-        pendingSubjectResolutions.push({
-          snapshot,
-          subjectRef: { workbook: snapshot.workbook, sourceId, sheetName, sourceRow: subjectRow.sourceRow },
+      const nameKey = normalizeTeacherImportName(name);
+      let exactMatches = byName.get(nameKey) ?? [];
+      if (!exactMatches.length) {
+        const syntheticSourceId = `${sourceId}#subjects`;
+        const syntheticRow = subjectOnlySourceRow(nameKey);
+        const synthetic: PreparedRoster = {
+          workbook: snapshot.workbook,
+          sourceId: syntheticSourceId,
+          sourceRow: syntheticRow,
+          sourceKey: syntheticRow,
           name,
-          sheetName,
-          ...(cleanText(subjectRow.subjectDetail) ? { detail: cleanText(subjectRow.subjectDetail) } : {}),
-          candidateRows: rows,
-          issueCode: "subject_teacher_not_in_roster",
-        });
-        continue;
+          normalizedName: nameKey,
+          attributes: {},
+          subjects: [],
+          subjectDetails: [],
+        };
+        rows.push(synthetic);
+        byName.set(nameKey, [synthetic]);
+        exactMatches = [synthetic];
       }
-      if (safeMatches.length > 1) {
-        pendingSubjectResolutions.push({
-          snapshot,
-          subjectRef: { workbook: snapshot.workbook, sourceId, sheetName, sourceRow: subjectRow.sourceRow },
-          name,
-          sheetName,
-          ...(cleanText(subjectRow.subjectDetail) ? { detail: cleanText(subjectRow.subjectDetail) } : {}),
-          candidateRows: safeMatches,
-          issueCode: "subject_name_ambiguous",
-        });
-        continue;
-      }
-      if (!safeMatches[0].subjects.includes(sheetName)) safeMatches[0].subjects.push(sheetName);
       const detail = cleanText(subjectRow.subjectDetail);
-      if (detail && !safeMatches[0].subjectDetails.includes(detail)) safeMatches[0].subjectDetails.push(detail);
+      for (const exactMatch of exactMatches) {
+        if (!exactMatch.subjects.includes(sheetName)) exactMatch.subjects.push(sheetName);
+        if (detail && !exactMatch.subjectDetails.includes(detail)) exactMatch.subjectDetails.push(detail);
+      }
     }
     const order = new Map(expectedSubjectSheets(snapshot.workbook).map((sheet, index) => [sheet, index]));
     for (const row of rows) row.subjects.sort((left, right) => (order.get(left) ?? 999) - (order.get(right) ?? 999));
@@ -826,7 +872,7 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
       && refs.every((reference) => (rosterByReference.get(sourceReferenceKey(reference)) ?? []).length === 1);
     const sameLinkName = uniqueRosterRows
       && rows[0].normalizedName === rows[1].normalizedName
-      && rows[0].databaseNameKey === rows[1].databaseNameKey;
+      && rows[0].normalizedName === rows[1].normalizedName;
     const noSameWorkbookDuplicate = sameLinkName
       && rows.every((row) => (rosterByName.get(row.normalizedName) ?? [])
         .filter((candidate) => candidate.workbook === row.workbook).length === 1);
@@ -861,7 +907,10 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
   }
   const identityResolutions: TeacherIdentityResolution[] = [];
   const subjectResolutions: TeacherSubjectResolution[] = [];
-  for (const sameName of rosterByName.values()) {
+  // Exact normalized names are authoritative and merge automatically. The
+  // persisted resolution contracts below are intentionally bypassed; their
+  // rows remain server-owned audit history only.
+  for (const sameName of [] as PreparedRoster[][]) {
     const workbooks = new Set(sameName.map((row) => row.workbook));
     const stableMatches = sameName.map((row) => existingBySource.get(sourceReferenceKey({
       workbook: row.workbook,
@@ -912,7 +961,7 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
         detail: "The same name appears in both workbooks; sources are not merged without an explicit stable identity link.",
       });
       if (!sameWorkbookDuplicate && sameName.length === 2
-        && sameName[0].databaseNameKey === sameName[1].databaseNameKey && sourceRevisions) {
+        && sameName[0].normalizedName === sameName[1].normalizedName && sourceRevisions) {
         identityResolutions.push({
           kind: "cross_workbook_identity",
           resolutionKey: teacherIdentityResolutionKey({
@@ -1081,6 +1130,13 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
 
   const actions: TeacherImportAction[] = [];
   const resolved: ResolvedRoster[] = [];
+  const canonicalIdByName = new Map([...rosterByName.keys()]
+    .map((nameKey) => [nameKey, teacherIdForAuthorityName(nameKey)] as const));
+  const existingById = groupBy(existingTeachers, (teacher) => teacher.id);
+  const derivedNamesById = groupBy([...canonicalIdByName.entries()], ([, id]) => id);
+  const derivedOutputCollisionIds = new Set([...derivedNamesById.entries()]
+    .filter(([, entries]) => new Set(entries.map(([nameKey]) => nameKey)).size > 1)
+    .map(([id]) => id));
   for (const row of roster) {
     if (blocked.has(row)) {
       actions.push({ kind: "blocked", name: row.name, matchMethod: "ambiguous", changedFields: [] });
@@ -1222,24 +1278,43 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
       continue;
     }
     const sourceMatches = existingBySource.get(sourceReferenceKey(reference)) ?? [];
-    if (sourceMatches.length > 1) {
-      issues.push({ code: "duplicate_source_reference", workbook: row.workbook, name: row.name, sourceRows: [row.sourceRow], existingTeacherIds: sourceMatches.map((teacher) => teacher.id), detail: "More than one existing teacher owns this stable source reference." });
-      actions.push({ kind: "blocked", name: row.name, matchMethod: "ambiguous", changedFields: [] });
-      continue;
-    }
+    // Source rows are locations, not identities. A differently named owner is
+    // historical when the authoritative sheet reuses that row; its current
+    // namespace ref is stripped by the preserved-existing pass below.
+    const exactSourceMatches = sourceMatches.filter((teacher) =>
+      normalizeTeacherImportName(teacher.name) === row.normalizedName);
     const nameMatches = existingByName.get(row.normalizedName) ?? [];
-    if (!sourceMatches.length && nameMatches.length > 1) {
-      issues.push({ code: "existing_name_ambiguous", workbook: row.workbook, name: row.name, sourceRows: [row.sourceRow], existingTeacherIds: nameMatches.map((teacher) => teacher.id), detail: "Name fallback is unsafe because more than one existing teacher has this name." });
+    const exactExisting = [...new Map([...exactSourceMatches, ...nameMatches]
+      .map((teacher) => [teacher.id, teacher])).values()];
+    if (exactExisting.length > 1) {
+      issues.push({ code: "existing_name_ambiguous", workbook: row.workbook, name: row.name, sourceRows: [row.sourceRow], existingTeacherIds: exactExisting.map((teacher) => teacher.id), detail: "More than one existing teacher has this exact normalized name, so the canonical ID cannot be chosen safely." });
       actions.push({ kind: "blocked", name: row.name, matchMethod: "ambiguous", changedFields: [] });
       continue;
     }
-    const existing = sourceMatches[0] ?? nameMatches[0];
+    const existing = exactExisting[0];
+    const canonicalId = existing?.id ?? canonicalIdByName.get(row.normalizedName)!;
+    if (!existing) {
+      const occupiedByDifferentName = (existingById.get(canonicalId) ?? [])
+        .filter((teacher) => normalizeTeacherImportName(teacher.name) !== row.normalizedName);
+      if (occupiedByDifferentName.length || derivedOutputCollisionIds.has(canonicalId)) {
+        issues.push({
+          code: "derived_id_collision",
+          workbook: row.workbook,
+          name: row.name,
+          sourceRows: [row.sourceRow],
+          existingTeacherIds: occupiedByDifferentName.map((teacher) => teacher.id),
+          detail: "The deterministic authoritative-name ID is already owned by a different exact name and cannot be reassigned.",
+        });
+        actions.push({ kind: "blocked", name: row.name, matchMethod: "ambiguous", changedFields: [] });
+        continue;
+      }
+    }
     resolved.push({
       row,
       reference,
       ...(existing ? { existing } : {}),
-      canonicalId: existing?.id ?? teacherIdForSource(reference),
-      matchMethod: sourceMatches.length ? "source_reference" : existing ? "unique_name" : "new",
+      canonicalId,
+      matchMethod: exactSourceMatches.length ? "source_reference" : existing ? "unique_name" : "new",
     });
   }
 
@@ -1249,81 +1324,40 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
     if (group.some((item) => item.existing && item.existing.id !== id)) {
       throw new TeacherImportError("duplicate_output_id", `Teacher output id ${id} resolves to conflicting existing teachers.`);
     }
-    const rows = [...group].sort((left, right) => compareText(sourceReferenceKey(left.reference), sourceReferenceKey(right.reference)));
+    const rows = [...group].sort((left, right) => compareUtf8(sourceReferenceKey(left.reference), sourceReferenceKey(right.reference)));
     const uniqueTexts = (values: readonly (string | null | undefined)[]) => [...new Set(values.map(cleanText).filter((value): value is string => Boolean(value)))];
     const joinedText = (values: readonly (string | null | undefined)[]) => {
       const unique = uniqueTexts(values);
       return unique.length ? unique.join("；") : undefined;
     };
-    const refs = [...new Map([...(existing?.teacherSourceRefs ?? []), ...rows.map((item) => item.reference)]
+    const historicalRefs = (existing?.teacherSourceRefs ?? [])
+      .filter((reference) => !currentSourceNamespaces.has(reference.sourceId));
+    const refs = [...new Map([...historicalRefs, ...rows.map((item) => item.reference)]
       .map((reference) => [sourceReferenceKey(reference), reference])).values()]
-      .sort((left, right) => compareText(sourceReferenceKey(left), sourceReferenceKey(right)));
+      .sort((left, right) => compareUtf8(sourceReferenceKey(left), sourceReferenceKey(right)));
     const subjects = [...new Set(rows.flatMap((item) => item.row.subjects))];
     const departments = [...new Set(rows.map((item): "中小学" | "大学" => item.row.workbook === "k12" ? "中小学" : "大学"))]
       .sort((left, right) => left === right ? 0 : left === "中小学" ? -1 : 1);
     // These are snapshots of the current Tencent sources, not append-only
     // histories. Re-importing a newer revision must replace stale source text
     // and subject detail instead of accumulating every prior revision forever.
-    const availabilitySourceText = joinedText(rows.map((item) => item.row.availabilityText));
-    const capacitySourceText = joinedText(rows.map((item) => item.row.capacityText));
     const subjectDetail = joinedText(rows.flatMap((item) => item.row.subjectDetails));
-    const sourceLocations = [...new Set(rows
-      .map((item) => typeof item.row.attributes.location === "string"
-        ? cleanText(item.row.attributes.location)
-        : undefined)
-      .filter((value): value is string => Boolean(value)))];
-    const location = typeof existing?.location === "string" && cleanText(existing.location)
-      ? cleanText(existing.location)
-      : sourceLocations.length === 1 ? sourceLocations[0] : undefined;
-    const existingTimezone = typeof existing?.timezone === "string" && cleanText(existing.timezone)
-      ? cleanText(existing.timezone)
-      : undefined;
-    const mappedTimezone = timezoneForLocation(location);
-    const timezone = existingTimezone ?? mappedTimezone ?? "Australia/Melbourne";
-    const existingAvailability = typeof existing?.availability === "string" && existing.availability.trim()
-      ? existing.availability
-      : undefined;
-    const existingAvailabilityStatus = existing?.availabilityStatus === "可接新生"
-      || existing?.availabilityStatus === "暂停接新"
-      || existing?.availabilityStatus === "待确认"
-      ? existing.availabilityStatus
-      : undefined;
+    const operational = activeTeacherOperationalProjection(existing, rows);
     const next: ImportedTeacherRecord = {
       ...Object.fromEntries(Object.entries(existing ?? {}).filter(([field]) => !managedFields.has(field))),
       id,
-      name: group.length > 1 && existing ? existing.name : rows[0].row.name,
-      initials: typeof existing?.initials === "string" && cleanText(existing.initials)
-        ? cleanText(existing.initials)!
-        : teacherInitials(group.length > 1 && existing ? existing.name : rows[0].row.name),
       subjects,
       ...(subjectDetail ? { subjectDetail } : {}),
       departments,
       sourceCategories: subjects,
       teacherSourceRefs: refs,
-      // Free-form source AVA is retained for review only. Scheduling consumes
-      // reviewed monthly availabilityWindows, never this source sentence.
-      availability: existingAvailability ?? "待老师按月提交",
-      availabilityStatus: existingAvailabilityStatus ?? "待确认",
-      timezone,
-      load: typeof existing?.load === "number" && Number.isFinite(existing.load) && existing.load >= 0
-        ? existing.load
-        : 0,
-      capacity: typeof existing?.capacity === "number" && Number.isFinite(existing.capacity) && existing.capacity >= 0
-        ? existing.capacity
-        : 0,
-      acceptsStudents: typeof existing?.acceptsStudents === "boolean" ? existing.acceptsStudents : false,
-      note: typeof existing?.note === "string" && cleanText(existing.note)
-        ? cleanText(existing.note)!
-        : "待教务审核教师资料与月度 AVA",
-      ...(location ? { location } : {}),
-      ...(availabilitySourceText ? { availabilitySourceText } : {}),
-      ...(capacitySourceText ? { capacitySourceText } : {}),
+      ...operational.fields,
     };
     for (const item of rows) {
       if (item.row.availabilityText) issues.push({ code: "unstructured_availability", workbook: item.row.workbook, name: item.row.name, sourceRows: [item.row.sourceRow], detail: "AVA source text was preserved but not converted to monthly windows." });
       if (item.row.capacityText) issues.push({ code: "unstructured_capacity", workbook: item.row.workbook, name: item.row.name, sourceRows: [item.row.sourceRow], detail: "Capacity source text was preserved but not converted to a numeric new-student capacity." });
     }
-    if (!existingTimezone && !mappedTimezone) {
+    if (operational.timezoneWasDefaulted) {
       issues.push({
         code: "timezone_defaulted",
         name: next.name,
@@ -1347,7 +1381,7 @@ export function buildTeacherImportPlan(input: BuildTeacherImportPlanInput): Teac
   const importedIds = new Set(teachers.map((teacher) => teacher.id));
   for (const existing of existingTeachers) {
     if (importedIds.has(existing.id)) continue;
-    const preserved = preservedExistingTeacher(existing);
+    const preserved = preservedExistingTeacher(existing, currentSourceNamespaces);
     const changes = changedFields(existing, preserved);
     teachers.push(preserved);
     actions.push({

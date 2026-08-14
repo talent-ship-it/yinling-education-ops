@@ -17,7 +17,7 @@ import {
 import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER } from "@/lib/demo-users";
 import type { OpsStateRow } from "@/lib/ops-store";
 
-const FINGERPRINT_CONTRACT = "teacher-import-plan-v1";
+const FINGERPRINT_CONTRACT = "teacher-import-plan-v7-historical-projection";
 const ATOMIC_COMMIT_CONTRACT = "teacher-import-atomic-v1";
 const FINGERPRINT_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const TOP_LEVEL_FIELDS = new Set(["k12", "university", "identityLinks", "hardResolutions"]);

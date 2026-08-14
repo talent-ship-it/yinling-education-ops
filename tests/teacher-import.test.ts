@@ -10,7 +10,7 @@ import {
   teacherSameWorkbookResolutionKey,
   teacherSameWorkbookDecisionKey,
   teacherSubjectResolutionKey,
-  teacherIdForSource,
+  teacherIdForAuthorityName,
   type TeacherWorkbookSnapshot,
 } from "../lib/teacher-import.ts";
 
@@ -64,7 +64,31 @@ test("matches subject tabs conservatively and keeps their source order", () => {
   assert.equal("newStudentCapacity" in plan.teachers[0], false);
 });
 
-test("uniquely matches subject rows whose roster display only adds an operational state annotation", () => {
+test("name normalization folds ASCII case only after deterministic NFKC cleanup", () => {
+  assert.equal(normalizeTeacherImportName("ASCII Teacher"), "ascii teacher");
+  assert.equal(normalizeTeacherImportName("ascii teacher"), "ascii teacher");
+  assert.equal(normalizeTeacherImportName("OﬃCE ＆ MATH"), "office & math");
+  assert.equal(normalizeTeacherImportName("office & math"), "office & math");
+  assert.equal(normalizeTeacherImportName("ÉLODIE"), "Élodie");
+  assert.equal(normalizeTeacherImportName("İSTANBUL"), "İstanbul");
+  assert.equal(normalizeTeacherImportName("ΑΘΗΝΑ"), "ΑΘΗΝΑ");
+
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: [
+        { workbook: "k12", sourceRow: 1, name: "ASCII Teacher" },
+        { workbook: "k12", sourceRow: 2, name: "ascii teacher" },
+        { workbook: "k12", sourceRow: 3, name: "OﬃCE ＆ MATH" },
+        { workbook: "k12", sourceRow: 4, name: "office & math" },
+      ],
+    })],
+  });
+  assert.equal(plan.summary.blocked, 0);
+  assert.equal(plan.teachers.length, 2);
+  assert.ok(plan.teachers.every((teacher) => teacher.teacherSourceRefs.length === 2));
+});
+
+test("operational annotations remain distinct exact names and never fuzzy-merge", () => {
   const plan = buildTeacherImportPlan({
     workbooks: [workbook({
       rosterRows: [
@@ -81,14 +105,17 @@ test("uniquely matches subject rows whose roster display only adds an operationa
   });
 
   assert.deepEqual(plan.teachers.map((teacher) => [teacher.name, teacher.subjects]).sort(), [
-    ["Lauren Johnston(已弱化)", ["IB"]],
-    ["Janice Jiang", ["AEAS"]],
-    ["Jenny Liang (已弱化)", ["Maths&Science"]],
+    ["Lauren Johnston(已弱化)", []],
+    ["Lauren Johnston", ["IB"]],
+    ["Janice Jiang", []],
+    ["Janice Jiang已弱化", ["AEAS"]],
+    ["Jenny Liang (已弱化)", []],
+    ["Jenny Liang(弱化)", ["Maths&Science"]],
   ].sort());
   assert.equal(plan.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), false);
 });
 
-test("matches a parenthesized nickname only when the roster source text corroborates it", () => {
+test("parenthesized nicknames never fuzzy-merge even when source text mentions the nickname", () => {
   const confirmed = buildTeacherImportPlan({
     workbooks: [workbook({
       rosterRows: [{
@@ -100,7 +127,9 @@ test("matches a parenthesized nickname only when the roster source text corrobor
       subjectRows: [{ workbook: "k12", sheetName: "HSC", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
     })],
   });
-  assert.deepEqual(confirmed.teachers[0].subjects, ["HSC"]);
+  assert.equal(confirmed.teachers.length, 2);
+  assert.deepEqual(confirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang")?.subjects, []);
+  assert.deepEqual(confirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["HSC"]);
   assert.equal(confirmed.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), false);
 
   const unconfirmed = buildTeacherImportPlan({
@@ -109,11 +138,12 @@ test("matches a parenthesized nickname only when the roster source text corrobor
       subjectRows: [{ workbook: "k12", sheetName: "HSC", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
     })],
   });
-  assert.deepEqual(unconfirmed.teachers[0].subjects, []);
-  assert.equal(unconfirmed.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), true);
+  assert.equal(unconfirmed.teachers.length, 2);
+  assert.deepEqual(unconfirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["HSC"]);
+  assert.equal(unconfirmed.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), false);
 });
 
-test("operational aliases remain ambiguous when more than one roster row could own a subject", () => {
+test("different operationally similar names stay distinct while the exact subject name becomes authoritative", () => {
   const plan = buildTeacherImportPlan({
     workbooks: [workbook({
       rosterRows: [
@@ -124,8 +154,9 @@ test("operational aliases remain ambiguous when more than one roster row could o
     })],
   });
 
-  assert.equal(plan.issues.some((issue) => issue.code === "subject_name_ambiguous"), true);
-  assert.equal(plan.teachers.every((teacher) => teacher.subjects.length === 0), true);
+  assert.equal(plan.issues.some((issue) => issue.code === "subject_name_ambiguous"), false);
+  assert.equal(plan.teachers.length, 3);
+  assert.deepEqual(plan.teachers.find((teacher) => teacher.name === "Duplicate Teacher")?.subjects, ["IB"]);
 });
 
 test("explicit operational teacher fields survive source refresh", () => {
@@ -157,31 +188,370 @@ test("explicit operational teacher fields survive source refresh", () => {
   );
 });
 
-test("teachers absent from a source refresh remain valid and are never deleted", () => {
+test("active existing operational fields follow the SQL-mirror golden contract", () => {
+  const plan = buildTeacherImportPlan({
+    workbooks: [
+      workbook({
+        sourceId: "fixture-k12",
+        rosterRows: [{
+          workbook: "k12",
+          sourceRow: 4,
+          name: "Golden Teacher",
+          availabilityText: " First　AVA ",
+          capacityText: " One ",
+          attributes: { location: "NSW", acceptsStudents: false, capacity: 999 },
+        }],
+      }),
+      workbook({
+        workbook: "university",
+        sourceId: "fixture-university",
+        sheetNames: TEACHER_WORKBOOK_SHEETS.university,
+        rosterRows: [{
+          workbook: "university",
+          sourceRow: 5,
+          name: "golden teacher",
+          availabilityText: "First AVA",
+          capacityText: "Two",
+          attributes: { location: "VIC", availabilityStatus: "暂停接新", load: 999 },
+        }],
+      }),
+    ],
+    existingTeachers: [{
+      id: "TEA-GOLDEN",
+      name: "GOLDEN Teacher",
+      initials: " ｇｔ ",
+      availability: "  Reviewed；AVA  ",
+      availabilityStatus: "可接新生",
+      load: 2.5,
+      capacity: 7,
+      acceptsStudents: true,
+      note: " Reviewed　note ",
+      location: " WA ",
+      timezone: " Australia/Perth ",
+      availabilitySourceText: "stale AVA",
+      capacitySourceText: "stale capacity",
+      availabilityWindows: [{ id: "reviewed-window" }],
+      payrollHistory: { invoice: "INV-GOLDEN" },
+    }],
+  });
+  const teacher = plan.teachers.find((item) => item.id === "TEA-GOLDEN");
+  assert.ok(teacher);
+  assert.deepEqual(Object.fromEntries([
+    "name", "initials", "availability", "availabilityStatus", "load", "capacity",
+    "acceptsStudents", "note", "location", "timezone", "availabilitySourceText", "capacitySourceText",
+  ].map((field) => [field, teacher[field]])), {
+    name: "GOLDEN Teacher",
+    initials: "gt",
+    availability: "  Reviewed；AVA  ",
+    availabilityStatus: "可接新生",
+    load: 2.5,
+    capacity: 7,
+    acceptsStudents: true,
+    note: "Reviewed note",
+    location: "WA",
+    timezone: "Australia/Perth",
+    availabilitySourceText: "First AVA",
+    capacitySourceText: "One；Two",
+  });
+  assert.deepEqual(teacher.availabilityWindows, [{ id: "reviewed-window" }]);
+  assert.deepEqual(teacher.payrollHistory, { invoice: "INV-GOLDEN" });
+});
+
+test("active new operational fields ignore source tampering and omit absent optional keys", () => {
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: [{
+        workbook: "k12",
+        sourceRow: 6,
+        name: "New Teacher",
+        availabilityText: "　 ",
+        capacityText: "",
+        attributes: {
+          location: "VIC",
+          initials: "EVIL",
+          availability: "invented",
+          availabilityStatus: "可接新生",
+          load: 999,
+          capacity: 999,
+          acceptsStudents: true,
+          note: "invented",
+          timezone: "Pacific/Auckland",
+          availabilitySourceText: "invented",
+          capacitySourceText: "invented",
+        },
+      }],
+    })],
+  });
+  const teacher = plan.teachers[0];
+  assert.deepEqual(Object.fromEntries([
+    "name", "initials", "availability", "availabilityStatus", "load", "capacity",
+    "acceptsStudents", "note", "location", "timezone",
+  ].map((field) => [field, teacher[field]])), {
+    name: "New Teacher",
+    initials: "NT",
+    availability: "待老师按月提交",
+    availabilityStatus: "待确认",
+    load: 0,
+    capacity: 0,
+    acceptsStudents: false,
+    note: "待教务审核教师资料与月度 AVA",
+    location: "VIC",
+    timezone: "Australia/Melbourne",
+  });
+  assert.equal("availabilitySourceText" in teacher, false);
+  assert.equal("capacitySourceText" in teacher, false);
+
+  const stale = buildTeacherImportPlan({
+    workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 7, name: "Stale Source Text" }] })],
+    existingTeachers: [{
+      id: "TEA-STALE-SOURCE",
+      name: "Stale Source Text",
+      availabilitySourceText: "old AVA",
+      capacitySourceText: "old capacity",
+      location: "   ",
+    }],
+  }).teachers[0];
+  assert.equal("availabilitySourceText" in stale, false);
+  assert.equal("capacitySourceText" in stale, false);
+  assert.equal("location" in stale, false);
+});
+
+test("active source ordering uses UTF-8 byte order rather than host locale", () => {
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: [
+        { workbook: "k12", sourceRow: "ä", name: "ORDER TEACHER", availabilityText: "umlaut row" },
+        { workbook: "k12", sourceRow: "z", name: "Order Teacher", availabilityText: "ascii row" },
+      ],
+    })],
+  });
+  assert.equal(plan.teachers.length, 1);
+  assert.equal(plan.teachers[0].name, "Order Teacher");
+  assert.equal(plan.teachers[0].availabilitySourceText, "ascii row；umlaut row");
+  assert.deepEqual(plan.teachers[0].teacherSourceRefs, [
+    { workbook: "k12", sourceId: "fixture-k12", sourceRow: "z" },
+    { workbook: "k12", sourceId: "fixture-k12", sourceRow: "ä" },
+  ]);
+});
+
+test("teachers absent from the authority keep their ID and history but lose stale teaching claims", () => {
   const plan = buildTeacherImportPlan({
     workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 4, name: "Imported Teacher" }] })],
-    existingTeachers: [{ id: "TEA-MANUAL", name: "Manual Teacher" }],
+    existingTeachers: [{
+      id: "TEA-MANUAL",
+      name: "Manual Teacher",
+      subjects: ["IB"],
+      departments: ["中小学", "大学"],
+      sourceCategories: ["IB"],
+      subjectDetail: "stale physics",
+      availabilityStatus: "可接新生",
+      acceptsStudents: true,
+      availabilityWindows: [{ id: "historical-window", start: "2026-01-01T00:00:00Z" }],
+      teacherSourceRefs: [
+        { workbook: "k12", sourceId: "fixture-k12", sourceRow: 99 },
+        { workbook: "k12", sourceId: "fixture-k12#subjects", sourceRow: "name:old" },
+        { workbook: "k12", sourceId: "historical-k12", sourceRow: 8 },
+      ],
+    }],
   });
   const preserved = plan.teachers.find((teacher) => teacher.id === "TEA-MANUAL");
   assert.ok(preserved);
   assert.equal(preserved.timezone, "Australia/Melbourne");
   assert.equal(preserved.acceptsStudents, false);
+  assert.equal(preserved.availabilityStatus, "暂停接新");
+  assert.deepEqual(preserved.subjects, []);
+  assert.deepEqual(preserved.departments, []);
+  assert.deepEqual(preserved.sourceCategories, []);
+  assert.equal("subjectDetail" in preserved, false);
+  assert.deepEqual(preserved.availabilityWindows, [{ id: "historical-window", start: "2026-01-01T00:00:00Z" }]);
+  assert.deepEqual(preserved.teacherSourceRefs, [
+    { workbook: "k12", sourceId: "historical-k12", sourceRow: 8 },
+  ]);
   assert.equal(plan.actions.find((action) => action.teacherId === "TEA-MANUAL")?.matchMethod, "preserved_existing");
 });
 
-test("source references create stable ids and win over a later display-name change", () => {
-  const reference = { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 9 };
-  const id = teacherIdForSource(reference);
-  assert.equal(id, teacherIdForSource(reference));
+test("historical projection cleans reviewed optional source fields and removes blank or null keys", () => {
   const plan = buildTeacherImportPlan({
-    workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 9, name: "Updated Name" }] })],
-    existingTeachers: [{ id, name: "Old Name", teacherSourceRefs: [reference], subjects: [] }],
+    workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Current Teacher" }] })],
+    existingTeachers: [
+      {
+        id: "TEA-HISTORICAL-REVIEWED",
+        name: "Historical Reviewed",
+        location: " VIC ",
+        availabilitySourceText: " Reviewed　AVA ",
+        capacitySourceText: " Reviewed　capacity ",
+        availabilityWindows: [{ id: "reviewed-history" }],
+        payrollHistory: { invoice: "INV-REVIEWED" },
+      },
+      {
+        id: "TEA-HISTORICAL-BLANK",
+        name: "Historical Blank",
+        location: "\u200B",
+        availabilitySourceText: "　",
+        capacitySourceText: null,
+        subjectDetail: "stale detail",
+      },
+    ],
+  });
+  const reviewed = plan.teachers.find((teacher) => teacher.id === "TEA-HISTORICAL-REVIEWED");
+  assert.ok(reviewed);
+  assert.equal(reviewed.location, "VIC");
+  assert.equal(reviewed.availabilitySourceText, "Reviewed AVA");
+  assert.equal(reviewed.capacitySourceText, "Reviewed capacity");
+  assert.deepEqual(reviewed.availabilityWindows, [{ id: "reviewed-history" }]);
+  assert.deepEqual(reviewed.payrollHistory, { invoice: "INV-REVIEWED" });
+
+  const blank = plan.teachers.find((teacher) => teacher.id === "TEA-HISTORICAL-BLANK");
+  assert.ok(blank);
+  assert.equal("location" in blank, false);
+  assert.equal("availabilitySourceText" in blank, false);
+  assert.equal("capacitySourceText" in blank, false);
+  assert.equal("subjectDetail" in blank, false);
+});
+
+test("a different name can reuse a source row directly while the prior teacher history is preserved", () => {
+  const revision1Source = workbook({
+    revision: "direct-r1",
+    rosterRows: [{ workbook: "k12", sourceRow: 7, name: "Direct Alice" }],
+    subjectRows: [{ workbook: "k12", sheetName: "IB", sourceRow: 70, name: "Direct Alice", subjectDetail: "Physics" }],
+  });
+  const revision1 = buildTeacherImportPlan({ workbooks: [revision1Source] });
+  const aliceId = teacherIdForAuthorityName("Direct Alice");
+  const committedAlice = {
+    ...revision1.teachers[0],
+    acceptsStudents: true,
+    payrollHistory: { retainedInvoice: "INV-DIRECT-A" },
+  };
+
+  const revision2Source = workbook({
+    revision: "direct-r2",
+    rosterRows: [{ workbook: "k12", sourceRow: 7, name: "Direct Bob" }],
+  });
+  const revision2 = buildTeacherImportPlan({
+    workbooks: [revision2Source],
+    existingTeachers: [committedAlice],
+  });
+  const bobId = teacherIdForAuthorityName("Direct Bob");
+  assert.equal(revision2.summary.blocked, 0);
+  assert.notEqual(aliceId, bobId);
+  const alice = revision2.teachers.find((teacher) => teacher.id === aliceId);
+  const bob = revision2.teachers.find((teacher) => teacher.id === bobId);
+  assert.equal(alice?.name, "Direct Alice");
+  assert.equal(alice?.acceptsStudents, false);
+  assert.deepEqual(alice?.subjects, []);
+  assert.deepEqual(alice?.sourceCategories, []);
+  assert.deepEqual(alice?.teacherSourceRefs, []);
+  assert.equal(alice && "subjectDetail" in alice, false);
+  assert.deepEqual(alice?.payrollHistory, { retainedInvoice: "INV-DIRECT-A" });
+  assert.equal(bob?.name, "Direct Bob");
+  assert.deepEqual(bob?.teacherSourceRefs, [{ workbook: "k12", sourceId: "fixture-k12", sourceRow: 7 }]);
+
+  const replay = buildTeacherImportPlan({
+    workbooks: [revision2Source],
+    existingTeachers: revision2.teachers,
+  });
+  assert.equal(replay.summary.blocked, 0);
+  assert.equal(replay.summary.unchanged, 2);
+  assert.deepEqual(replay.teachers, revision2.teachers);
+});
+
+test("authoritative name IDs use exact normalized UTF-8 bytes and ignore source placement", () => {
+  const expectedId = "TEA-TX-A-ed62142be3bc6f1f3c19457d0d78fee6210f3e287cd6df153c4ea5b131f98b68";
+  assert.equal(normalizeTeacherImportName(" Ｎi，：老师 "), "ni,:老师");
+  assert.equal(teacherIdForAuthorityName(" Ｎi，：老师 "), expectedId);
+  assert.equal(teacherIdForAuthorityName("ni,:老师"), expectedId);
+
+  const rosterPlan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      sourceId: "来源-一",
+      rosterRows: [{ workbook: "k12", sourceRow: 7, name: " Ｎi，：老师 " }],
+    })],
+  });
+  const movedPlan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      sourceId: "来源-二",
+      rosterRows: [{ workbook: "k12", sourceRow: 900, name: "ni,:老师" }],
+    })],
+  });
+  assert.equal(rosterPlan.teachers[0].id, expectedId);
+  assert.equal(movedPlan.teachers[0].id, expectedId);
+});
+
+test("three revisions preserve an absent teacher when a different name later reuses the source row", () => {
+  const revision1 = buildTeacherImportPlan({
+    workbooks: [workbook({
+      revision: "r1",
+      rosterRows: [{ workbook: "k12", sourceRow: 7, name: "Lifecycle Teacher A" }],
+    })],
+  });
+  const teacherAId = teacherIdForAuthorityName("Lifecycle Teacher A");
+  assert.equal(revision1.teachers[0].id, teacherAId);
+  const committedTeacherA = {
+    ...revision1.teachers[0],
+    acceptsStudents: true,
+    payrollHistory: { retainedInvoice: "INV-A" },
+  };
+
+  const revision2 = buildTeacherImportPlan({
+    workbooks: [workbook({ revision: "r2", rosterRows: [] })],
+    existingTeachers: [committedTeacherA],
+  });
+  const absentTeacherA = revision2.teachers.find((teacher) => teacher.id === teacherAId);
+  assert.ok(absentTeacherA);
+  assert.equal(absentTeacherA.name, "Lifecycle Teacher A");
+  assert.equal(absentTeacherA.acceptsStudents, false);
+  assert.deepEqual(absentTeacherA.teacherSourceRefs, []);
+  assert.deepEqual(absentTeacherA.payrollHistory, { retainedInvoice: "INV-A" });
+
+  const revision3Source = workbook({
+    revision: "r3",
+    rosterRows: [{ workbook: "k12", sourceRow: 7, name: "Lifecycle Teacher B" }],
+  });
+  const revision3 = buildTeacherImportPlan({
+    workbooks: [revision3Source],
+    existingTeachers: revision2.teachers,
+  });
+  const teacherBId = teacherIdForAuthorityName("Lifecycle Teacher B");
+  assert.equal(revision3.summary.blocked, 0);
+  assert.notEqual(teacherAId, teacherBId);
+  assert.deepEqual(revision3.teachers.map((teacher) => [teacher.name, teacher.id]), [
+    ["Lifecycle Teacher A", teacherAId],
+    ["Lifecycle Teacher B", teacherBId],
+  ]);
+  const retainedTeacherA = revision3.teachers.find((teacher) => teacher.id === teacherAId);
+  assert.equal(retainedTeacherA?.acceptsStudents, false);
+  assert.deepEqual(retainedTeacherA?.teacherSourceRefs, []);
+  assert.deepEqual(retainedTeacherA?.payrollHistory, { retainedInvoice: "INV-A" });
+
+  const replay = buildTeacherImportPlan({
+    workbooks: [revision3Source],
+    existingTeachers: revision3.teachers,
+  });
+  assert.equal(replay.summary.blocked, 0);
+  assert.deepEqual(replay.teachers.map((teacher) => [teacher.name, teacher.id]), [
+    ["Lifecycle Teacher A", teacherAId],
+    ["Lifecycle Teacher B", teacherBId],
+  ]);
+});
+
+test("an authoritative derived ID occupied by a different exact name fails closed", () => {
+  const derivedId = teacherIdForAuthorityName("Collision Target");
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: [{ workbook: "k12", sourceRow: 31, name: "Collision Target" }],
+    })],
+    existingTeachers: [{
+      id: derivedId,
+      name: "Different Historical Teacher",
+      payrollHistory: { retainedInvoice: "INV-HISTORICAL" },
+    }],
   });
 
-  assert.equal(plan.actions[0].matchMethod, "source_reference");
-  assert.equal(plan.actions[0].kind, "update");
-  assert.equal(plan.teachers[0].id, id);
-  assert.equal(plan.teachers[0].name, "Updated Name");
+  assert.equal(plan.summary.blocked, 1);
+  assert.equal(plan.issues.some((issue) => issue.code === "derived_id_collision"), true);
+  assert.equal(plan.teachers.length, 1);
+  assert.equal(plan.teachers[0].name, "Different Historical Teacher");
+  assert.deepEqual(plan.teachers[0].payrollHistory, { retainedInvoice: "INV-HISTORICAL" });
 });
 
 test("a unique legacy name may be linked once and persists the stable source reference", () => {
@@ -217,7 +587,7 @@ test("free-text AVA and capacity remain raw and require review even when capacit
   assert.equal(plan.summary.unstructuredCapacity, 1);
 });
 
-test("duplicate names never receive subject data and are blocked in dry-run", () => {
+test("same-workbook exact duplicate names automatically form one canonical teacher", () => {
   const plan = buildTeacherImportPlan({
     workbooks: [workbook({
       rosterRows: [
@@ -228,12 +598,15 @@ test("duplicate names never receive subject data and are blocked in dry-run", ()
     })],
   });
 
-  assert.equal(plan.teachers.length, 0);
-  assert.equal(plan.summary.blocked, 2);
-  assert.deepEqual(plan.issues.map((issue) => issue.code), ["duplicate_roster_name", "subject_name_ambiguous"]);
+  assert.equal(plan.teachers.length, 1);
+  assert.equal(plan.summary.blocked, 0);
+  assert.deepEqual(plan.teachers[0].subjects, ["IB"]);
+  assert.equal(plan.teachers[0].teacherSourceRefs.length, 2);
+  assert.deepEqual(plan.identityResolutions, []);
+  assert.deepEqual(plan.subjectResolutions, []);
 });
 
-test("same name in K12 and university is not guessed to be one person", () => {
+test("the same exact normalized name across workbooks is one canonical teacher", () => {
   const plan = buildTeacherImportPlan({
     workbooks: [
       workbook({ rosterRows: [{ workbook: "k12", sourceRow: 3, name: "Cross Roster" }] }),
@@ -246,12 +619,14 @@ test("same name in K12 and university is not guessed to be one person", () => {
     ],
   });
 
-  assert.equal(plan.teachers.length, 0);
-  assert.equal(plan.summary.blocked, 2);
-  assert.equal(plan.issues.some((issue) => issue.code === "cross_workbook_name_ambiguous"), true);
+  assert.equal(plan.teachers.length, 1);
+  assert.equal(plan.summary.blocked, 0);
+  assert.deepEqual(plan.teachers[0].departments, ["中小学", "大学"]);
+  assert.equal(plan.teachers[0].teacherSourceRefs.length, 2);
+  assert.equal(plan.issues.some((issue) => issue.code === "cross_workbook_name_ambiguous"), false);
 });
 
-test("explicit stable refs merge one teacher across both workbooks", () => {
+test("an exact-name existing teacher reuses its ID across both workbooks", () => {
   const refs = [
     { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 3 },
     { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 6 },
@@ -270,14 +645,14 @@ test("explicit stable refs merge one teacher across both workbooks", () => {
         subjectRows: [{ workbook: "university", sheetName: "Engineering", sourceRow: 16, name: "Cross Roster", subjectDetail: "Mechanics" }],
       }),
     ],
-    existingTeachers: [{ id: "TEA-CROSS", name: "Canonical Teacher", teacherSourceRefs: refs }],
+    existingTeachers: [{ id: "TEA-CROSS", name: "Cross Roster", teacherSourceRefs: refs }],
   });
 
   assert.equal(plan.teachers.length, 1);
   assert.equal(plan.actions.length, 1);
   assert.equal(plan.actions[0].matchMethod, "source_reference");
   assert.equal(plan.teachers[0].id, "TEA-CROSS");
-  assert.equal(plan.teachers[0].name, "Canonical Teacher");
+  assert.equal(plan.teachers[0].name, "Cross Roster");
   assert.deepEqual(plan.teachers[0].subjects, ["IB", "Engineering"]);
   assert.deepEqual(plan.teachers[0].departments, ["中小学", "大学"]);
   assert.deepEqual(plan.teachers[0].sourceCategories, ["IB", "Engineering"]);
@@ -288,7 +663,7 @@ test("explicit stable refs merge one teacher across both workbooks", () => {
   assert.equal(plan.issues.some((issue) => issue.code === "cross_workbook_name_ambiguous"), false);
 });
 
-test("stable refs also merge when the two workbooks use different display names", () => {
+test("different exact names stay distinct even when a legacy record claimed both source refs", () => {
   const refs = [
     { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 8 },
     { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 9 },
@@ -306,9 +681,13 @@ test("stable refs also merge when the two workbooks use different display names"
     existingTeachers: [{ id: "TEA-CROSS", name: "Canonical Teacher", teacherSourceRefs: refs }],
   });
 
-  assert.equal(plan.teachers.length, 1);
-  assert.equal(plan.actions.length, 1);
   assert.equal(plan.summary.blocked, 0);
+  assert.equal(plan.teachers.length, 3);
+  const historical = plan.teachers.find((teacher) => teacher.id === "TEA-CROSS");
+  assert.equal(historical?.acceptsStudents, false);
+  assert.deepEqual(historical?.teacherSourceRefs, []);
+  assert.ok(plan.teachers.some((teacher) => teacher.name === "Roster Name A"));
+  assert.ok(plan.teachers.some((teacher) => teacher.name === "Roster Name B"));
 });
 
 test("university full-width parenthesis sheet uses one canonical identity", () => {
@@ -326,7 +705,7 @@ test("university full-width parenthesis sheet uses one canonical identity", () =
   assert.equal(plan.issues.some((issue) => issue.code === "missing_expected_sheet" || issue.code === "unknown_subject_sheet"), false);
 });
 
-test("sheet drift and orphan subject rows are visible without importing invented categories", () => {
+test("sheet drift blocks invented categories while exact subject-only names remain authoritative", () => {
   const sheetNames = [...TEACHER_WORKBOOK_SHEETS.k12];
   [sheetNames[1], sheetNames[2]] = [sheetNames[2], sheetNames[1]];
   sheetNames.splice(sheetNames.indexOf("IB"), 1);
@@ -347,8 +726,9 @@ test("sheet drift and orphan subject rows are visible without importing invented
   assert.equal(codes.has("missing_expected_sheet"), true);
   assert.equal(codes.has("unknown_subject_sheet"), true);
   assert.equal(codes.has("sheet_order_mismatch"), true);
-  assert.equal(codes.has("subject_teacher_not_in_roster"), true);
+  assert.equal(codes.has("subject_teacher_not_in_roster"), false);
   assert.deepEqual(plan.teachers[0].subjects, []);
+  assert.deepEqual(plan.teachers.find((teacher) => teacher.name === "Unknown Teacher")?.subjects, ["HSC"]);
 });
 
 test("source attributes cannot invent capacity or AVA windows, while existing confirmations survive", () => {
@@ -405,7 +785,7 @@ test("a newer source revision replaces stale source text without promoting it to
   assert.equal(plan.teachers[0].availabilityStatus, "待确认");
 });
 
-test("multiple existing name matches and duplicate stable refs are blocked", () => {
+test("multiple exact-name existing IDs fail closed while differently named historical refs are retired", () => {
   const ref = { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 2 };
   const ambiguousName = buildTeacherImportPlan({
     workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Ambiguous Existing" }] })],
@@ -424,11 +804,14 @@ test("multiple existing name matches and duplicate stable refs are blocked", () 
       { id: "TEA-B", name: "Two", teacherSourceRefs: [ref] },
     ],
   });
-  assert.equal(duplicateRef.summary.blocked, 1);
-  assert.equal(duplicateRef.issues[0].code, "duplicate_source_reference");
+  assert.equal(duplicateRef.summary.blocked, 0);
+  assert.equal(duplicateRef.teachers.length, 3);
+  assert.deepEqual(duplicateRef.teachers.find((teacher) => teacher.id === "TEA-A")?.teacherSourceRefs, []);
+  assert.deepEqual(duplicateRef.teachers.find((teacher) => teacher.id === "TEA-B")?.teacherSourceRefs, []);
+  assert.deepEqual(duplicateRef.teachers.find((teacher) => teacher.name === "Reference Collision")?.teacherSourceRefs, [ref]);
 });
 
-test("a revision-bound explicit identity link merges exactly one row from each workbook", () => {
+test("same-name rows merge without an identity link and historical links cannot change the result", () => {
   const k12 = workbook({
     sourceId: "fixture-k12",
     revision: "k12-r1",
@@ -446,15 +829,15 @@ test("a revision-bound explicit identity link merges exactly one row from each w
     { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 4 },
   ];
   const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
-  const blocked = buildTeacherImportPlan({ workbooks: [k12, university] });
-  assert.equal(blocked.identityResolutions.length, 1);
-  assert.equal(blocked.identityResolutions[0].resolutionKey, teacherIdentityResolutionKey({ sourceRefs, sourceRevisions }));
+  const baseline = buildTeacherImportPlan({ workbooks: [k12, university] });
+  assert.equal(baseline.identityResolutions.length, 0);
+  assert.equal(baseline.teachers.length, 1);
 
   const linked = buildTeacherImportPlan({
     workbooks: [k12, university],
     identityLinks: [{
-      resolutionKey: blocked.identityResolutions[0].resolutionKey,
-      decision: "merge",
+      resolutionKey: teacherIdentityResolutionKey({ sourceRefs, sourceRevisions }),
+      decision: "separate",
       sourceRefs,
       sourceRevisions,
     }],
@@ -462,11 +845,11 @@ test("a revision-bound explicit identity link merges exactly one row from each w
   assert.equal(linked.summary.blocked, 0);
   assert.equal(linked.teachers.length, 1);
   assert.equal(linked.teachers[0].teacherSourceRefs.length, 2);
-  assert.equal(linked.actions[0].matchMethod, "identity_link");
+  assert.deepEqual(linked.teachers, baseline.teachers);
   assert.equal(linked.issues.some((issue) => issue.code === "cross_workbook_name_ambiguous"), false);
 });
 
-test("identity links cannot bypass same-workbook duplicates or survive a revision change", () => {
+test("identity links are inert across duplicate rows and source revision changes", () => {
   const k12 = workbook({
     revision: "k12-r1",
     rosterRows: [
@@ -488,16 +871,18 @@ test("identity links cannot bypass same-workbook duplicates or survive a revisio
   const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
   const link = { resolutionKey: teacherIdentityResolutionKey({ sourceRefs, sourceRevisions }), decision: "merge" as const, sourceRefs, sourceRevisions };
   const duplicate = buildTeacherImportPlan({ workbooks: [k12, university], identityLinks: [link] });
-  assert.equal(duplicate.issues.some((issue) => issue.code === "identity_link_invalid"), true);
-  assert.equal(duplicate.issues.some((issue) => issue.code === "duplicate_roster_name"), true);
+  assert.equal(duplicate.summary.blocked, 0);
+  assert.equal(duplicate.teachers.length, 1);
+  assert.deepEqual(duplicate.identityResolutions, []);
 
   const changedRevision = buildTeacherImportPlan({
     workbooks: [{ ...k12, revision: "k12-r2", rosterRows: [k12.rosterRows[0]] }, university],
     identityLinks: [link],
   });
   assert.equal(changedRevision.issues.some((issue) => issue.code === "identity_link_invalid"), false);
-  assert.equal(changedRevision.identityResolutions.length, 1);
-  assert.ok(changedRevision.summary.blocked > 0);
+  assert.equal(changedRevision.identityResolutions.length, 0);
+  assert.equal(changedRevision.summary.blocked, 0);
+  assert.equal(changedRevision.teachers.length, 1);
 });
 
 test("historical identity links are ignored and a current revision can be confirmed independently", () => {
@@ -522,7 +907,8 @@ test("historical identity links are ignored and a current revision can be confir
   });
   const pending = buildTeacherImportPlan({ workbooks: [k12, university], identityLinks: [historical] });
   assert.equal(pending.issues.some((issue) => issue.code === "identity_link_invalid"), false);
-  assert.equal(pending.identityResolutions.length, 1);
+  assert.equal(pending.identityResolutions.length, 0);
+  assert.equal(pending.teachers.length, 1);
 
   const currentRevisions = { k12: "k12-r2", university: "university-r2" };
   const current = {
@@ -536,7 +922,7 @@ test("historical identity links are ignored and a current revision can be confir
   assert.equal(resolved.teachers.length, 1);
 });
 
-test("an explicit separate decision creates two stable records and preserves distinct existing source owners", () => {
+test("an explicit separate decision is inert and duplicate exact-name existing IDs still fail closed", () => {
   const k12 = workbook({ revision: "k12-r1", rosterRows: [{ workbook: "k12", sourceRow: 2, name: "Shared Teacher" }] });
   const university = workbook({
     workbook: "university",
@@ -558,8 +944,8 @@ test("an explicit separate decision creates two stable records and preserves dis
   };
   const inserted = buildTeacherImportPlan({ workbooks: [k12, university], identityLinks: [link] });
   assert.equal(inserted.summary.blocked, 0);
-  assert.equal(inserted.teachers.length, 2);
-  assert.ok(inserted.actions.every((action) => action.matchMethod === "identity_separate"));
+  assert.equal(inserted.teachers.length, 1);
+  assert.deepEqual(inserted.identityResolutions, []);
 
   const existing = buildTeacherImportPlan({
     workbooks: [k12, university],
@@ -569,7 +955,7 @@ test("an explicit separate decision creates two stable records and preserves dis
       { id: "TEA-UNI", name: "Shared Teacher", teacherSourceRefs: [sourceRefs[1]] },
     ],
   });
-  assert.equal(existing.summary.blocked, 0);
+  assert.equal(existing.summary.blocked, 2);
   assert.deepEqual(existing.teachers.map((teacher) => teacher.id).sort(), ["TEA-K12", "TEA-UNI"]);
 
   const unresolvedLegacy = buildTeacherImportPlan({
@@ -577,19 +963,21 @@ test("an explicit separate decision creates two stable records and preserves dis
     identityLinks: [link],
     existingTeachers: [{ id: "TEA-LEGACY", name: "Shared Teacher" }],
   });
-  assert.ok(unresolvedLegacy.summary.blocked > 0);
-  assert.equal(unresolvedLegacy.issues.some((issue) => issue.code === "identity_link_existing_conflict"), true);
+  assert.equal(unresolvedLegacy.summary.blocked, 0);
+  assert.equal(unresolvedLegacy.teachers.length, 1);
+  assert.equal(unresolvedLegacy.teachers[0].id, "TEA-LEGACY");
 
   const alreadyMerged = buildTeacherImportPlan({
     workbooks: [k12, university],
     identityLinks: [link],
     existingTeachers: [{ id: "TEA-MERGED", name: "Shared Teacher", teacherSourceRefs: sourceRefs }],
   });
-  assert.ok(alreadyMerged.summary.blocked > 0);
-  assert.equal(alreadyMerged.issues.some((issue) => issue.code === "identity_link_existing_conflict"), true);
+  assert.equal(alreadyMerged.summary.blocked, 0);
+  assert.equal(alreadyMerged.teachers.length, 1);
+  assert.equal(alreadyMerged.teachers[0].id, "TEA-MERGED");
 });
 
-test("same-workbook duplicate rows expose revision-bound merge/separate choices", () => {
+test("same-workbook duplicate rows auto-merge and hard merge/separate choices are inert", () => {
   const k12 = workbook({
     revision: "k12-r1",
     rosterRows: [
@@ -608,14 +996,13 @@ test("same-workbook duplicate rows expose revision-bound merge/separate choices"
     { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 3 },
   ];
   const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
-  const blocked = buildTeacherImportPlan({ workbooks: [k12, university] });
-  const candidate = blocked.identityResolutions.find((resolution) => resolution.kind === "same_workbook_identity");
-  assert.ok(candidate);
-  assert.equal(candidate.resolutionKey, teacherSameWorkbookResolutionKey({ sourceRefs, sourceRevisions }));
+  const baseline = buildTeacherImportPlan({ workbooks: [k12, university] });
+  assert.equal(baseline.teachers.length, 1);
+  assert.deepEqual(baseline.identityResolutions, []);
+  assert.match(teacherSameWorkbookResolutionKey({ sourceRefs, sourceRevisions }), /^sha256:/);
   const mergeKey = teacherSameWorkbookDecisionKey({ sourceRefs, sourceRevisions, decision: "merge" });
   const separateKey = teacherSameWorkbookDecisionKey({ sourceRefs, sourceRevisions, decision: "separate" });
   assert.equal(mergeKey, "sha256:1d3a46fd4b218aa83738a732628cfd57fdba8dc5045c8537cf2b92d7103b1c67");
-  assert.deepEqual(candidate.options.map((option) => option.resolutionKey), [separateKey, mergeKey]);
 
   const merged = buildTeacherImportPlan({
     workbooks: [k12, university],
@@ -623,16 +1010,18 @@ test("same-workbook duplicate rows expose revision-bound merge/separate choices"
   });
   assert.equal(merged.summary.blocked, 0);
   assert.equal(merged.teachers.length, 1);
+  assert.deepEqual(merged.teachers, baseline.teachers);
 
   const separate = buildTeacherImportPlan({
     workbooks: [k12, university],
     hardResolutions: [{ kind: "same_workbook_identity", resolutionKey: separateKey, decision: "separate", sourceRefs, sourceRevisions }],
   });
   assert.equal(separate.summary.blocked, 0);
-  assert.equal(separate.teachers.length, 2);
+  assert.equal(separate.teachers.length, 1);
+  assert.deepEqual(separate.teachers, baseline.teachers);
 });
 
-test("mixed 1+N duplicate groups expose one V2 cross-workbook partition choice", () => {
+test("mixed 1+N exact-name groups auto-merge and V2 partition choices are inert", () => {
   const k12 = workbook({
     revision: "k12-r1",
     rosterRows: [{ workbook: "k12", sourceRow: 2, name: "Complex Teacher" }],
@@ -653,15 +1042,12 @@ test("mixed 1+N duplicate groups expose one V2 cross-workbook partition choice",
     { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 71 },
   ];
   const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
-  const blocked = buildTeacherImportPlan({ workbooks: [k12, university] });
-  const candidates = blocked.identityResolutions.filter((resolution) => resolution.name === "Complex Teacher");
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].kind, "cross_workbook_identity");
-  assert.equal(candidates[0].persistenceContract, "teacher_hard_resolution_v2");
+  const baseline = buildTeacherImportPlan({ workbooks: [k12, university] });
+  assert.equal(baseline.teachers.length, 1);
+  assert.deepEqual(baseline.identityResolutions, []);
   const mergeKey = teacherCrossWorkbookDecisionKey({ sourceRefs, sourceRevisions, decision: "merge" });
   const separateKey = teacherCrossWorkbookDecisionKey({ sourceRefs, sourceRevisions, decision: "separate" });
   assert.equal(separateKey, "sha256:cbe8d81ca7a47e98f14a30cb5e799f042371d72d6db5e0462f46c92364a8e328");
-  assert.equal(candidates[0].options.find((option) => option.decision === "merge")?.resolutionKey, mergeKey);
 
   const merged = buildTeacherImportPlan({
     workbooks: [k12, university],
@@ -675,9 +1061,10 @@ test("mixed 1+N duplicate groups expose one V2 cross-workbook partition choice",
   });
   assert.equal(merged.summary.blocked, 0);
   assert.equal(merged.teachers.length, 1);
+  assert.deepEqual(merged.teachers, baseline.teachers);
 });
 
-test("NFKC-only and zero-width cross-workbook pairs stay on the opaque V2 contract", () => {
+test("NFKC-only and zero-width cross-workbook pairs auto-merge without opaque choices", () => {
   const k12 = workbook({
     revision: "k12-r1",
     rosterRows: [
@@ -695,56 +1082,14 @@ test("NFKC-only and zero-width cross-workbook pairs stay on the opaque V2 contra
       { workbook: "university", sourceRow: 202, name: "ZeroWidth Teacher" },
     ],
   });
-  const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
   const plan = buildTeacherImportPlan({ workbooks: [k12, university] });
-  const candidates = plan.identityResolutions
-    .filter((resolution) => resolution.kind === "cross_workbook_identity")
-    .sort((left, right) => Number(left.sourceRefs[0]?.sourceRow) - Number(right.sourceRefs[0]?.sourceRow));
-  assert.equal(candidates.length, 2);
-  assert.ok(candidates.every((candidate) => candidate.persistenceContract === "teacher_hard_resolution_v2"));
-
-  const expected = [
-    {
-      refs: [
-        { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 101 },
-        { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 201 },
-      ],
-      separate: "sha256:bfbc3e5b70c4e35ee6a87cab1a5530722d36bc519c0df1497ddca92badcb303d",
-      merge: "sha256:c2b46c06370631eaa84f87085cc1407e6a7384cadbdb2bdf4bdf6faf95245ec6",
-    },
-    {
-      refs: [
-        { workbook: "k12" as const, sourceId: "fixture-k12", sourceRow: 102 },
-        { workbook: "university" as const, sourceId: "fixture-university", sourceRow: 202 },
-      ],
-      separate: "sha256:1390b9b37ec5e3c3bba8ec4b59915c92ecb2ae5c104c2f1f77bd47a1b381ad4a",
-      merge: "sha256:5a8bdd161a397c3f996bb2c57749a230fb4671e3e374dd607e03269ea10a1912",
-    },
-  ];
-  for (const [index, fixture] of expected.entries()) {
-    const candidate = candidates[index];
-    assert.deepEqual(candidate.sourceRefs, fixture.refs);
-    assert.equal(
-      teacherCrossWorkbookDecisionKey({
-        sourceRefs: fixture.refs,
-        sourceRevisions,
-        decision: "separate",
-      }),
-      fixture.separate,
-    );
-    assert.equal(
-      teacherCrossWorkbookDecisionKey({
-        sourceRefs: fixture.refs,
-        sourceRevisions,
-        decision: "merge",
-      }),
-      fixture.merge,
-    );
-    assert.deepEqual(candidate.options.map((option) => option.resolutionKey), [fixture.separate, fixture.merge]);
-  }
+  assert.equal(plan.teachers.length, 2);
+  assert.ok(plan.teachers.every((teacher) => teacher.teacherSourceRefs.length === 2));
+  assert.deepEqual(plan.identityResolutions, []);
+  assert.equal(normalizeTeacherImportName("Punctuation，："), "punctuation,:");
 });
 
-test("subject rows offer only current roster assignments or explicit ignore", () => {
+test("a subject-only exact name is authoritative and assign/ignore choices are inert", () => {
   const k12 = workbook({
     revision: "k12-r1",
     rosterRows: [
@@ -760,42 +1105,127 @@ test("subject rows offer only current roster assignments or explicit ignore", ()
     sheetNames: TEACHER_WORKBOOK_SHEETS.university,
   });
   const sourceRevisions = { k12: "k12-r1", university: "university-r1" };
-  const pending = buildTeacherImportPlan({ workbooks: [k12, university] });
-  const candidate = pending.subjectResolutions[0];
-  assert.ok(candidate);
-  assert.equal(candidate.options.length, 3);
-  assert.deepEqual(new Set(candidate.options.map((option) => option.decision)), new Set(["assign", "ignore"]));
+  const baseline = buildTeacherImportPlan({ workbooks: [k12, university] });
+  assert.deepEqual(baseline.subjectResolutions, []);
+  assert.equal(baseline.teachers.length, 3);
+  const authoritative = baseline.teachers.find((teacher) => teacher.name === "Legacy Alias");
+  assert.deepEqual(authoritative?.subjects, ["IB"]);
+  assert.equal(authoritative?.subjectDetail, "Physics");
 
-  const assignment = candidate.options.find((option) => option.decision === "assign" && option.rosterRef?.sourceRow === 3);
-  assert.ok(assignment?.rosterRef);
-  assert.equal(assignment.resolutionKey, teacherSubjectResolutionKey({
-    subjectRef: candidate.subjectRef,
-    rosterRef: assignment.rosterRef,
-    decision: "assign",
-    sourceRevisions,
-  }));
-  assert.equal(assignment.resolutionKey, "sha256:3b62fca49e69afceb26cef4779c94679433c0a4c91760f9bf03cc282f30be214");
-  const assigned = buildTeacherImportPlan({
+  const ignored = buildTeacherImportPlan({
     workbooks: [k12, university],
     hardResolutions: [{
       kind: "subject_assignment",
-      resolutionKey: assignment.resolutionKey,
-      decision: "assign",
+      resolutionKey: teacherSubjectResolutionKey({
+        subjectRef: { workbook: "k12", sourceId: "fixture-k12", sheetName: "IB", sourceRow: 20 },
+        decision: "ignore",
+        sourceRevisions,
+      }),
+      decision: "ignore",
       sourceRevisions,
-      subjectRef: candidate.subjectRef,
-      rosterRef: assignment.rosterRef,
+      subjectRef: { workbook: "k12", sourceId: "fixture-k12", sheetName: "IB", sourceRow: 20 },
     }],
   });
-  assert.equal(assigned.subjectResolutions.length, 0);
-  assert.deepEqual(assigned.teachers.find((teacher) => teacher.teacherSourceRefs[0]?.sourceRow === 3)?.subjects, ["IB"]);
+  assert.deepEqual(ignored, baseline);
+});
 
-  const ignore = candidate.options.find((option) => option.decision === "ignore");
-  assert.ok(ignore);
-  assert.equal(ignore.resolutionKey, "sha256:cd624be68238fec52227362399eed001d2d0b6e463bdff0f966de6ca177d2eac");
-  const ignored = buildTeacherImportPlan({
-    workbooks: [k12, university],
-    hardResolutions: [{ kind: "subject_assignment", resolutionKey: ignore.resolutionKey, decision: "ignore", sourceRevisions, subjectRef: candidate.subjectRef }],
+test("fifteen authoritative subject categories replace any legacy category set exactly", () => {
+  const sheets = TEACHER_WORKBOOK_SHEETS.k12.slice(1, 16);
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Fifteen Category Teacher" }],
+      subjectRows: sheets.map((sheetName, index) => ({
+        workbook: "k12" as const,
+        sheetName,
+        sourceRow: index + 10,
+        name: "Fifteen Category Teacher",
+      })),
+    })],
+    existingTeachers: [{
+      id: "TEA-FIFTEEN",
+      name: "Fifteen Category Teacher",
+      subjects: ["IB"],
+      sourceCategories: ["IB"],
+      subjectDetail: "stale detail",
+    }],
   });
-  assert.equal(ignored.subjectResolutions.length, 0);
-  assert.equal(ignored.issues.some((issue) => issue.code === "subject_row_ignored"), true);
+  assert.deepEqual(plan.teachers[0].subjects, sheets);
+  assert.deepEqual(plan.teachers[0].sourceCategories, sheets);
+  assert.equal("subjectDetail" in plan.teachers[0], false);
+});
+
+test("a subject-only teacher uses the SQL-compatible UTF-8 name hash and replays stably", () => {
+  const source = workbook({
+    revision: "k12-r1",
+    subjectRows: [{ workbook: "k12", sheetName: "IB", sourceRow: 20, name: "Subject Only" }],
+  });
+  const first = buildTeacherImportPlan({ workbooks: [source] });
+  assert.deepEqual(first.teachers[0].teacherSourceRefs, [{
+    workbook: "k12",
+    sourceId: "fixture-k12#subjects",
+    sourceRow: "name:831126c3f6b9995b27b548aa86b83cd9b5b64f871a01e75c655f2e213a35eb2a",
+  }]);
+  const replay = buildTeacherImportPlan({
+    workbooks: [{ ...source, revision: "k12-r2" }],
+    existingTeachers: first.teachers,
+  });
+  assert.equal(replay.teachers[0].id, first.teachers[0].id);
+  assert.deepEqual(replay.teachers[0].teacherSourceRefs, first.teachers[0].teacherSourceRefs);
+});
+
+test("refresh replaces refs in both current namespaces and preserves unrelated history", () => {
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({ rosterRows: [{ workbook: "k12", sourceRow: 4, name: "Refresh Teacher" }] })],
+    existingTeachers: [{
+      id: "TEA-REFRESH",
+      name: "Refresh Teacher",
+      teacherSourceRefs: [
+        { workbook: "k12", sourceId: "fixture-k12", sourceRow: 99 },
+        { workbook: "k12", sourceId: "fixture-k12#subjects", sourceRow: "name:old" },
+        { workbook: "k12", sourceId: "historical-k12", sourceRow: 8 },
+      ],
+    }],
+  });
+  assert.deepEqual(plan.teachers[0].teacherSourceRefs, [
+    { workbook: "k12", sourceId: "fixture-k12", sourceRow: 4 },
+    { workbook: "k12", sourceId: "historical-k12", sourceRow: 8 },
+  ]);
+});
+
+test("production projection counts are 227 authority, 190 reuse, 37 new, 27 legacy and 254 final", () => {
+  const authorityNames = Array.from({ length: 227 }, (_, index) =>
+    `Authority Teacher ${String(index + 1).padStart(3, "0")}`);
+  const existingTeachers = [
+    ...authorityNames.slice(0, 190).map((name, index) => ({
+      id: `TEA-REUSE-${index + 1}`,
+      name,
+      subjects: ["IB"],
+      sourceCategories: ["IB"],
+    })),
+    ...Array.from({ length: 27 }, (_, index) => ({
+      id: `TEA-LEGACY-${index + 1}`,
+      name: `Legacy Teacher ${index + 1}`,
+      subjects: ["IB"],
+      sourceCategories: ["IB"],
+      subjectDetail: "stale",
+      acceptsStudents: true,
+    })),
+  ];
+  const plan = buildTeacherImportPlan({
+    workbooks: [workbook({
+      rosterRows: authorityNames.map((name, index) => ({ workbook: "k12", sourceRow: index + 1, name })),
+    })],
+    existingTeachers,
+  });
+  assert.equal(plan.summary.blocked, 0);
+  assert.equal(plan.summary.insert, 37);
+  assert.equal(plan.summary.update, 217);
+  assert.equal(plan.teachers.filter((teacher) => teacher.name.startsWith("Authority Teacher")).length, 227);
+  assert.equal(plan.teachers.filter((teacher) => teacher.name.startsWith("Legacy Teacher")).length, 27);
+  assert.equal(plan.teachers.length, 254);
+  assert.ok(plan.teachers.filter((teacher) => teacher.name.startsWith("Legacy Teacher"))
+    .every((teacher) => teacher.subjects.length === 0
+      && teacher.sourceCategories.length === 0
+      && teacher.acceptsStudents === false
+      && !("subjectDetail" in teacher)));
 });
