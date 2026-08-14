@@ -4477,10 +4477,10 @@ begin
   where token <> '';
 
   if pg_catalog.cardinality(tokens) > 1 then
-    result := pg_catalog.substring(tokens[1] from 1 for 1)
-      || pg_catalog.substring(tokens[2] from 1 for 1);
+    result := pg_catalog.substr(tokens[1], 1, 1)
+      || pg_catalog.substr(tokens[2], 1, 1);
   else
-    result := pg_catalog.substring(coalesce(tokens[1], p_name, '') from 1 for 2);
+    result := pg_catalog.substr(coalesce(tokens[1], p_name, ''), 1, 2);
   end if;
   return pg_catalog.translate(result, 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
 end;

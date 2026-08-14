@@ -857,7 +857,8 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.match(initialsBody, /normalize\(coalesce\(p_name, ''\), NFKC\)/i);
   assert.match(initialsBody, /regexp_split_to_array\([\s\S]*\\00B7\\30FB_-/i);
   assert.match(initialsBody, /cardinality\(tokens\) > 1/i);
-  assert.match(initialsBody, /substring\(tokens\[1\] from 1 for 1\)/i);
+  assert.match(initialsBody, /pg_catalog\.substr\(tokens\[1\], 1, 1\)/i);
+  assert.doesNotMatch(initialsBody, /pg_catalog\.substring/i);
   assert.match(initialsBody, /translate\(result, 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'\)/i);
   assert.doesNotMatch(initialsBody, /teacher_import_clean_text|pg_catalog\.upper/i);
 
