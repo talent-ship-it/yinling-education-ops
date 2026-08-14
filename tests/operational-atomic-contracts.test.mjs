@@ -21,6 +21,13 @@ const teacherResolutionLookupFixSql = await readFile(
   ),
   "utf8",
 );
+const teacherSubjectResolutionSetFixSql = await readFile(
+  new URL(
+    "../supabase/migrations/20260814170000_optimize_teacher_subject_resolution_set.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 function sqlFunction(source, qualifiedName) {
   const marker = `create or replace function ${qualifiedName}(`;
@@ -708,7 +715,11 @@ test("teacher V2 hard resolutions are closed, revision-bound and enforced again 
   );
   assert.match(commitBody, /teacher_import_hard_resolution_required/i);
   assert.match(commitBody, /teacher_import_hard_resolutions_changed/i);
-  assert.match(commitBody, /hard_candidates := internal\.teacher_import_hard_candidates\(k12, university\)/i);
+  assert.match(commitBody, /teacher_import_subject_hard_candidate_basis\(k12, university\)/i);
+  assert.doesNotMatch(commitBody, /hard_candidates := internal\.teacher_import_hard_candidates/i);
+  assert.match(commitBody, /subjectRefKey/i);
+  assert.match(commitBody, /rosterRefKey/i);
+  assert.match(commitBody, /select distinct basis ->> 'resolutionGroupKey'/i);
   assert.match(commitBody, /r\.decision = 'assign'/i);
   assert.match(commitBody, /r\.subject_ref ->> 'sheetName'/i);
   assert.match(commitBody, /r\.kind = 'cross_workbook_identity'[\s\S]*r\.decision = 'merge'/i);
@@ -718,15 +729,26 @@ test("teacher V2 hard resolutions are closed, revision-bound and enforced again 
 
 test("teacher resolution lookup hotfix removes the timeout-shaped query plans", () => {
   for (const name of [
-    "internal.teacher_import_hard_candidates",
-    "internal.teacher_import_hard_candidate_by_key",
     "public.put_teacher_import_identity_link",
     "public.put_teacher_import_hard_resolution",
   ]) {
     assert.equal(
       sqlFunction(teacherResolutionLookupFixSql, name),
       sqlFunction(sql, name),
-      `${name} forward repair must match the canonical contract`,
+      `${name} first forward repair must match the canonical contract`,
+    );
+  }
+  for (const name of [
+    "internal.teacher_import_subject_hard_candidate_basis",
+    "internal.teacher_import_subject_hard_candidate_rows",
+    "internal.teacher_import_hard_candidates",
+    "internal.teacher_import_hard_candidate_by_key",
+    "public.commit_teacher_import_plan_atomic",
+  ]) {
+    assert.equal(
+      sqlFunction(teacherSubjectResolutionSetFixSql, name),
+      sqlFunction(sql, name),
+      `${name} latest forward repair must match the canonical contract`,
     );
   }
 
@@ -737,39 +759,59 @@ test("teacher resolution lookup hotfix removes the timeout-shaped query plans", 
   assert.match(v1Body, /join university_unique ur using \(name_key\)/i);
   assert.doesNotMatch(v1Body, /cross join jsonb_array_elements\(university\.roster_rows\)/i);
   assert.doesNotMatch(v1Body, /select count\(\*\) from jsonb_array_elements\((?:k12|university)\.roster_rows\)/i);
-  assert.match(v1Body, /teacher-import-identity-link-v1/i);
-  assert.match(v1Body, /expected_key <> p_resolution_key/i);
 
-  const candidateBody = sqlFunction(teacherResolutionLookupFixSql, "internal.teacher_import_hard_candidates");
-  assert.match(candidateBody, /jsonb_agg\(option order by roster_ordinality\)/i);
-  assert.match(candidateBody, /with ordinality/i);
-  assert.doesNotMatch(candidateBody, /for roster_row in select value from jsonb_array_elements\(candidate_rows\)/i);
+  const basisBody = sqlFunction(teacherSubjectResolutionSetFixSql, "internal.teacher_import_subject_hard_candidate_basis");
+  for (const cte of ["roster_raw", "roster", "subject_raw", "subjects", "match_counts", "blocking_subjects", "blocking_options", "candidate_assignments"]) {
+    assert.match(basisBody, new RegExp(`${cte} as materialized`, "i"));
+  }
+  assert.match(basisBody, /teacher_import_name_key\(roster_raw\.roster_row ->> 'name'\) as name_key/i);
+  assert.match(basisBody, /teacher_import_name_key\(subject_raw\.subject_row ->> 'name'\) as name_key/i);
+  assert.match(basisBody, /m\.exact_count > 1/i);
+  assert.match(basisBody, /m\.operational_count > 1/i);
+  assert.match(basisBody, /m\.nickname_count <> 1/i);
+  assert.match(basisBody, /b\.exact_count = 0[\s\S]*b\.operational_count = 0[\s\S]*b\.nickname_count <> 1/i);
+  assert.doesNotMatch(basisBody, /for subject_record|for roster_row/i);
 
-  const oneKeyBody = sqlFunction(teacherResolutionLookupFixSql, "internal.teacher_import_hard_candidate_by_key");
-  const identityBranch = oneKeyBody.indexOf("if p_decision in ('merge', 'separate')");
-  const subjectScan = oneKeyBody.indexOf("for subject_record in");
-  assert.ok(identityBranch >= 0 && subjectScan > identityBranch);
-  assert.match(oneKeyBody.slice(identityBranch, subjectScan), /return null;/i);
-  assert.match(oneKeyBody, /if p_decision = 'ignore'/i);
-  assert.match(oneKeyBody, /continue;[\s\S]*return jsonb_build_object/i);
-  assert.match(sql, /teacher_hard_candidate_by_key_fixture_option_count/i);
-  assert.match(sql, /teacher_hard_candidate_by_key_fixture_mismatch/i);
-  assert.match(sql, /teacher_hard_candidate_by_key_fixture_unknown_key/i);
-  assert.match(teacherResolutionLookupFixSql, /teacher_hard_candidate_by_key_fixture_option_count/i);
-  assert.match(teacherResolutionLookupFixSql, /teacher_hard_candidate_by_key_fixture_mismatch/i);
-  assert.match(teacherResolutionLookupFixSql, /teacher_hard_candidate_by_key_fixture_unknown_key/i);
+  const rowsBody = sqlFunction(teacherSubjectResolutionSetFixSql, "internal.teacher_import_subject_hard_candidate_rows");
+  assert.match(rowsBody, /p_resolution_key text/i);
+  assert.match(rowsBody, /assignment_keys as materialized/i);
+  assert.match(rowsBody, /p_resolution_key is null or a\.resolution_key = p_resolution_key/i);
+  assert.match(rowsBody, /jsonb_build_array\(b\.subject_ref_key, b\.roster_ref_key\), 'assign'/i);
+
+  const candidateBody = sqlFunction(teacherSubjectResolutionSetFixSql, "internal.teacher_import_hard_candidates");
+  assert.match(candidateBody, /teacher_import_subject_hard_candidate_rows\([\s\S]*null, null/i);
+  assert.doesNotMatch(candidateBody, /for subject_record|for roster_row/i);
+
+  const oneKeyBody = sqlFunction(teacherSubjectResolutionSetFixSql, "internal.teacher_import_hard_candidate_by_key");
+  assert.match(oneKeyBody, /teacher_import_subject_hard_candidate_rows\([\s\S]*p_decision, p_resolution_key/i);
+  assert.doesNotMatch(oneKeyBody, /for subject_record|jsonb_array_elements\(p_k12\.subject_rows\)/i);
+
+  const commitBody = sqlFunction(teacherSubjectResolutionSetFixSql, "public.commit_teacher_import_plan_atomic");
+  assert.match(commitBody, /teacher_import_subject_hard_candidate_basis\(k12, university\)/i);
+  assert.equal((commitBody.match(/teacher_import_subject_hard_candidate_basis\(k12, university\)/gi) ?? []).length, 1);
+  assert.match(commitBody, /subjectRefKey/i);
+  assert.match(commitBody, /rosterRefKey/i);
+  assert.match(commitBody, /select distinct basis ->> 'resolutionGroupKey'/i);
+  assert.doesNotMatch(commitBody, /internal\.teacher_import_hard_candidates\(k12, university\)/i);
+  assert.match(commitBody, /teacher_import_hard_resolution_required/i);
+  assert.match(commitBody, /teacher_import_hard_resolutions_changed/i);
+
+  for (const source of [sql, teacherSubjectResolutionSetFixSql]) {
+    assert.match(source, /teacher_hard_candidate_by_key_fixture_option_count/i);
+    assert.match(source, /teacher_hard_candidate_by_key_fixture_mismatch/i);
+    assert.match(source, /teacher_hard_candidate_by_key_fixture_unknown_key/i);
+  }
 
   const hardPutBody = sqlFunction(teacherResolutionLookupFixSql, "public.put_teacher_import_hard_resolution");
   assert.match(hardPutBody, /candidate := internal\.teacher_import_hard_candidate_by_key/i);
-  assert.doesNotMatch(hardPutBody, /jsonb_array_elements\(internal\.teacher_import_hard_candidates/i);
   assert.match(hardPutBody, /teacher_import\.hard_resolution_confirmed/i);
   assert.match(hardPutBody, /pg_catalog\.pg_advisory_xact_lock/i);
 
-  assert.match(teacherResolutionLookupFixSql, /revoke all on function internal\.teacher_import_hard_candidate_by_key/i);
-  assert.match(teacherResolutionLookupFixSql, /revoke all on function public\.put_teacher_import_identity_link/i);
-  assert.match(teacherResolutionLookupFixSql, /grant execute on function public\.put_teacher_import_identity_link/i);
-  assert.match(teacherResolutionLookupFixSql, /revoke all on function public\.put_teacher_import_hard_resolution/i);
-  assert.match(teacherResolutionLookupFixSql, /grant execute on function public\.put_teacher_import_hard_resolution/i);
+  assert.match(teacherSubjectResolutionSetFixSql, /drop function if exists internal\.teacher_import_subject_hard_candidate_rows/i);
+  assert.match(teacherSubjectResolutionSetFixSql, /revoke all on function internal\.teacher_import_subject_hard_candidate_basis/i);
+  assert.match(teacherSubjectResolutionSetFixSql, /revoke all on function internal\.teacher_import_subject_hard_candidate_rows/i);
+  assert.match(teacherSubjectResolutionSetFixSql, /revoke all on function public\.commit_teacher_import_plan_atomic/i);
+  assert.match(teacherSubjectResolutionSetFixSql, /grant execute on function public\.commit_teacher_import_plan_atomic/i);
 });
 
 test("student import archive markers preserve only referenced excluded historical IDs", () => {

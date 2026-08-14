@@ -4571,6 +4571,321 @@ begin
 end;
 $$;
 
+-- Expand and normalise each current roster/subject row exactly once, derive
+-- the blocking subject groups set-wise, then generate their closed options.
+-- The basis contains blocker groups and allowed roster references without
+-- constructing any decision hashes or administrator-visible option objects.
+create or replace function internal.teacher_import_subject_hard_candidate_basis(
+  p_k12 internal.teacher_import_sources,
+  p_university internal.teacher_import_sources
+)
+returns table (
+  workbook_order integer,
+  subject_ordinality bigint,
+  subject_ref jsonb,
+  subject_ref_key jsonb,
+  resolution_group_key text,
+  roster_ref jsonb,
+  roster_ref_key jsonb,
+  candidate_source_row text,
+  roster_ordinality bigint
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with roster_raw as materialized (
+    select
+      'k12'::text as workbook,
+      p_k12.source_id as source_id,
+      roster_entry.roster_ordinality,
+      roster_entry.roster_row
+    from jsonb_array_elements(p_k12.roster_rows) with ordinality
+      roster_entry(roster_row, roster_ordinality)
+    union all
+    select
+      'university',
+      p_university.source_id,
+      roster_entry.roster_ordinality,
+      roster_entry.roster_row
+    from jsonb_array_elements(p_university.roster_rows) with ordinality
+      roster_entry(roster_row, roster_ordinality)
+  ), roster as materialized (
+    select
+      roster_raw.workbook,
+      roster_raw.source_id,
+      roster_raw.roster_ordinality,
+      roster_raw.roster_row,
+      internal.teacher_import_name_key(roster_raw.roster_row ->> 'name') as name_key,
+      internal.teacher_import_operational_name_key(roster_raw.roster_row ->> 'name') as operational_name_key,
+      internal.teacher_import_name_key(
+        coalesce(roster_raw.roster_row ->> 'availabilityText', '') || ' '
+          || coalesce(roster_raw.roster_row ->> 'capacityText', '')
+      ) as source_text_key
+    from roster_raw
+  ), subject_raw as materialized (
+    select
+      0 as workbook_order,
+      'k12'::text as workbook,
+      p_k12.source_id as source_id,
+      subject_entry.subject_ordinality,
+      subject_entry.subject_row
+    from jsonb_array_elements(p_k12.subject_rows) with ordinality
+      subject_entry(subject_row, subject_ordinality)
+    where subject_row ->> 'sheetName' = any(array[
+      'Local English','ABC华裔English','Maths&Science','VCE数学科学','VCE其他',
+      '奖学金','AEAS','青少英语','QCE','HSC','WACE','SACE','AMC数学竞赛',
+      '科学竞赛','雅思PTE','IB'
+    ])
+    union all
+    select
+      1,
+      'university',
+      p_university.source_id,
+      subject_entry.subject_ordinality,
+      subject_entry.subject_row
+    from jsonb_array_elements(p_university.subject_rows) with ordinality
+      subject_entry(subject_row, subject_ordinality)
+    where subject_row ->> 'sheetName' = any(array[
+      'Engineering','商科','IT','理科','文科（含论文辅导）','教育学','其他科目'
+    ])
+  ), subjects as materialized (
+    select
+      subject_raw.workbook_order,
+      subject_raw.workbook,
+      subject_raw.source_id,
+      subject_raw.subject_ordinality,
+      subject_raw.subject_row,
+      internal.teacher_import_name_key(subject_raw.subject_row ->> 'name') as name_key,
+      internal.teacher_import_operational_name_key(subject_raw.subject_row ->> 'name') as operational_name_key,
+      internal.teacher_import_name_key(regexp_replace(
+        subject_raw.subject_row ->> 'name', '\s*\([^()]*\)\s*$', ''
+      )) as nickname_base,
+      internal.teacher_import_name_key(substring(
+        subject_raw.subject_row ->> 'name' from '\(([^()]*)\)\s*$'
+      )) as nickname_annotation
+    from subject_raw
+  ), match_counts as materialized (
+    select
+      s.workbook_order,
+      s.workbook,
+      s.source_id,
+      s.subject_ordinality,
+      s.subject_row,
+      s.name_key,
+      s.operational_name_key,
+      s.nickname_base,
+      s.nickname_annotation,
+      count(*) filter (
+        where r.roster_row is not null and r.name_key = s.name_key
+      ) as exact_count,
+      count(*) filter (
+        where r.roster_row is not null
+          and r.operational_name_key = s.operational_name_key
+      ) as operational_count,
+      count(*) filter (
+        where r.roster_row is not null
+          and s.nickname_annotation <> ''
+          and r.name_key = s.nickname_base
+          and r.source_text_key like '%' || s.nickname_annotation || '老师%'
+      ) as nickname_count
+    from subjects s
+    left join roster r on r.workbook = s.workbook
+    group by
+      s.workbook_order,
+      s.workbook,
+      s.source_id,
+      s.subject_ordinality,
+      s.subject_row,
+      s.name_key,
+      s.operational_name_key,
+      s.nickname_base,
+      s.nickname_annotation
+  ), blocking_subjects as materialized (
+    select
+      m.*,
+      jsonb_build_object(
+        'workbook', m.workbook,
+        'sourceId', m.source_id,
+        'sheetName', m.subject_row ->> 'sheetName',
+        'sourceRow', m.subject_row -> 'sourceRow'
+      ) as subject_ref,
+      jsonb_build_object(
+        'type', 'subject',
+        'workbook', m.workbook,
+        'sourceId', m.source_id,
+        'sheetName', m.subject_row ->> 'sheetName',
+        'sourceRow', m.subject_row -> 'sourceRow'
+      ) as subject_ref_key
+    from match_counts m
+    where m.exact_count > 1
+      or (
+        m.exact_count = 0
+        and (
+          m.operational_count > 1
+          or (m.operational_count = 0 and m.nickname_count <> 1)
+        )
+      )
+  ), blocking_options as materialized (
+    select
+      b.*,
+      internal.teacher_import_hard_key(
+        'subject_assignment', p_k12.revision, p_university.revision,
+        jsonb_build_array(b.subject_ref_key)
+      ) as resolution_group_key
+    from blocking_subjects b
+  ), candidate_assignments as materialized (
+    select
+      b.*,
+      r.roster_row,
+      r.roster_ordinality as candidate_roster_ordinality,
+      case
+        when b.exact_count > 1 or b.operational_count > 1
+          then trim(r.roster_row ->> 'sourceRow')
+        else null
+      end as ordered_source_row
+    from blocking_options b
+    join roster r on r.workbook = b.workbook
+    where
+      (b.exact_count > 1 and r.name_key = b.name_key)
+      or (
+        b.exact_count = 0
+        and b.operational_count > 1
+        and r.operational_name_key = b.operational_name_key
+      )
+      or (
+        b.exact_count = 0
+        and b.operational_count = 0
+        and b.nickname_count <> 1
+      )
+
+  )
+  select
+    a.workbook_order,
+    a.subject_ordinality,
+    a.subject_ref,
+    a.subject_ref_key,
+    a.resolution_group_key,
+    jsonb_build_object(
+      'workbook', a.workbook,
+      'sourceId', a.source_id,
+      'sourceRow', a.roster_row -> 'sourceRow'
+    ) as roster_ref,
+    jsonb_build_object(
+      'type', 'roster',
+      'workbook', a.workbook,
+      'sourceId', a.source_id,
+      'sourceRow', a.roster_row -> 'sourceRow'
+    ) as roster_ref_key,
+    a.ordered_source_row as candidate_source_row,
+    a.candidate_roster_ordinality as roster_ordinality
+  from candidate_assignments a
+  order by
+    a.workbook_order,
+    a.subject_ordinality,
+    a.ordered_source_row collate "C" nulls last,
+    a.candidate_roster_ordinality;
+$$;
+
+create or replace function internal.teacher_import_subject_hard_candidate_rows(
+  p_k12 internal.teacher_import_sources,
+  p_university internal.teacher_import_sources,
+  p_decision text,
+  p_resolution_key text
+)
+returns table (
+  candidate jsonb,
+  workbook_order integer,
+  subject_ordinality bigint,
+  decision_order integer,
+  candidate_source_row text,
+  roster_ordinality bigint
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with basis as materialized (
+    select *
+    from internal.teacher_import_subject_hard_candidate_basis(p_k12, p_university)
+  ), first_in_group as materialized (
+    select distinct on (b.resolution_group_key)
+      b.*
+    from basis b
+    order by
+      b.resolution_group_key collate "C",
+      b.candidate_source_row collate "C" nulls last,
+      b.roster_ordinality
+  ), ignore_keys as materialized (
+    select
+      internal.teacher_import_hard_key(
+        'subject_assignment', p_k12.revision, p_university.revision,
+        jsonb_build_array(b.subject_ref_key), 'ignore'
+      ) as resolution_key,
+      b.*
+    from first_in_group b
+    where p_decision is null or p_decision = 'ignore'
+  ), assignment_keys as materialized (
+    select
+      internal.teacher_import_hard_key(
+        'subject_assignment', p_k12.revision, p_university.revision,
+        jsonb_build_array(b.subject_ref_key, b.roster_ref_key), 'assign'
+      ) as resolution_key,
+      b.*
+    from basis b
+    where p_decision is null or p_decision = 'assign'
+  ), options as (
+    select
+      jsonb_build_object(
+        'resolutionKey', i.resolution_key,
+        'resolutionGroupKey', i.resolution_group_key,
+        'kind', 'subject_assignment',
+        'decision', 'ignore',
+        'subjectRef', i.subject_ref
+      ) as candidate,
+      i.workbook_order,
+      i.subject_ordinality,
+      0 as decision_order,
+      null::text as candidate_source_row,
+      null::bigint as roster_ordinality
+    from ignore_keys i
+    where p_resolution_key is null or i.resolution_key = p_resolution_key
+
+    union all
+
+    select
+      jsonb_build_object(
+        'resolutionKey', a.resolution_key,
+        'resolutionGroupKey', a.resolution_group_key,
+        'kind', 'subject_assignment',
+        'decision', 'assign',
+        'subjectRef', a.subject_ref,
+        'rosterRef', a.roster_ref
+      ),
+      a.workbook_order,
+      a.subject_ordinality,
+      1,
+      a.candidate_source_row,
+      a.roster_ordinality
+    from assignment_keys a
+    where p_resolution_key is null or a.resolution_key = p_resolution_key
+  )
+  select
+    options.candidate,
+    options.workbook_order,
+    options.subject_ordinality,
+    options.decision_order,
+    options.candidate_source_row,
+    options.roster_ordinality
+  from options
+  order by
+    options.workbook_order,
+    options.subject_ordinality,
+    options.decision_order,
+    options.candidate_source_row collate "C" nulls last,
+    options.roster_ordinality;
+$$;
+
 create or replace function internal.teacher_import_hard_candidates(
   p_k12 internal.teacher_import_sources,
   p_university internal.teacher_import_sources
@@ -4588,16 +4903,7 @@ declare
   identity_ref_keys jsonb;
   identity_group_key text;
   identity_decision text;
-  subject_record record;
-  roster_rows jsonb;
-  candidate_rows jsonb;
-  subject_ref jsonb;
-  roster_ref jsonb;
-  subject_group_key text;
   subject_candidates jsonb;
-  nickname_base text;
-  nickname_annotation text;
-  roster_row jsonb;
 begin
   -- Every conservative-name duplicate is one non-overlapping closed group.
   -- Mixed groups use a single cross-workbook decision, including 1+N cases.
@@ -4656,141 +4962,22 @@ begin
     end loop;
   end loop;
 
-  -- Subject aliases expose only current roster rows from the same workbook.
-  -- Exact/known-operational unique matches remain automatic and therefore do
-  -- not become administrator choices.
-  for subject_record in
-    select 'k12'::text as workbook, p_k12.source_id as source_id,
-      p_k12.subject_rows as all_subject_rows, subject_row
-    from jsonb_array_elements(p_k12.subject_rows) subject_row
-    where subject_row ->> 'sheetName' = any(array[
-      'Local English','ABC华裔English','Maths&Science','VCE数学科学','VCE其他',
-      '奖学金','AEAS','青少英语','QCE','HSC','WACE','SACE','AMC数学竞赛',
-      '科学竞赛','雅思PTE','IB'
-    ])
-    union all
-    select 'university', p_university.source_id,
-      p_university.subject_rows, subject_row
-    from jsonb_array_elements(p_university.subject_rows) subject_row
-    where subject_row ->> 'sheetName' = any(array[
-      'Engineering','商科','IT','理科','文科（含论文辅导）','教育学','其他科目'
-    ])
-  loop
-    roster_rows := case when subject_record.workbook = 'k12'
-      then p_k12.roster_rows else p_university.roster_rows end;
-    select coalesce(jsonb_agg(row_value order by trim(row_value ->> 'sourceRow') collate "C"), '[]'::jsonb)
-    into candidate_rows
-    from jsonb_array_elements(roster_rows) row_value
-    where internal.teacher_import_name_key(row_value ->> 'name') =
-      internal.teacher_import_name_key(subject_record.subject_row ->> 'name');
-    if jsonb_array_length(candidate_rows) = 1 then
-      continue;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      select coalesce(jsonb_agg(row_value order by trim(row_value ->> 'sourceRow') collate "C"), '[]'::jsonb)
-      into candidate_rows
-      from jsonb_array_elements(roster_rows) row_value
-      where internal.teacher_import_operational_name_key(row_value ->> 'name') =
-        internal.teacher_import_operational_name_key(subject_record.subject_row ->> 'name');
-      if jsonb_array_length(candidate_rows) = 1 then
-        continue;
-      end if;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      nickname_base := internal.teacher_import_name_key(regexp_replace(
-        subject_record.subject_row ->> 'name', '\s*\([^()]*\)\s*$', ''
-      ));
-      nickname_annotation := internal.teacher_import_name_key(substring(
-        subject_record.subject_row ->> 'name' from '\(([^()]*)\)\s*$'
-      ));
-      if nickname_annotation <> '' then
-        select coalesce(jsonb_agg(row_value), '[]'::jsonb)
-        into candidate_rows
-        from jsonb_array_elements(roster_rows) row_value
-        where internal.teacher_import_name_key(row_value ->> 'name') = nickname_base
-          and internal.teacher_import_name_key(
-            coalesce(row_value ->> 'availabilityText', '') || ' ' || coalesce(row_value ->> 'capacityText', '')
-          ) like '%' || nickname_annotation || '老师%';
-        if jsonb_array_length(candidate_rows) = 1 then
-          continue;
-        end if;
-        if jsonb_array_length(candidate_rows) > 1 then
-          candidate_rows := '[]'::jsonb;
-        end if;
-      end if;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      candidate_rows := roster_rows;
-    end if;
+  -- Commit validation still receives the complete closed option set, but all
+  -- roster/subject keys and blocker counts are now computed once set-wise.
+  select coalesce(jsonb_agg(
+    subject_candidate.candidate order by
+      subject_candidate.workbook_order,
+      subject_candidate.subject_ordinality,
+      subject_candidate.decision_order,
+      subject_candidate.candidate_source_row collate "C" nulls last,
+      subject_candidate.roster_ordinality
+  ), '[]'::jsonb)
+  into subject_candidates
+  from internal.teacher_import_subject_hard_candidate_rows(
+    p_k12, p_university, null, null
+  ) subject_candidate;
 
-    subject_ref := jsonb_build_object(
-      'workbook', subject_record.workbook,
-      'sourceId', subject_record.source_id,
-      'sheetName', subject_record.subject_row ->> 'sheetName',
-      'sourceRow', subject_record.subject_row -> 'sourceRow'
-    );
-    subject_group_key := internal.teacher_import_hard_key(
-      'subject_assignment', p_k12.revision, p_university.revision,
-      jsonb_build_array(jsonb_build_object(
-        'type', 'subject', 'workbook', subject_record.workbook,
-        'sourceId', subject_record.source_id,
-        'sheetName', subject_record.subject_row ->> 'sheetName',
-        'sourceRow', subject_record.subject_row -> 'sourceRow'
-      ))
-    );
-    -- Build each subject group's assignment options once.  Appending one JSON
-    -- object at a time copied the entire growing candidates array for every
-    -- roster row, making the fallback-to-all-roster closed set quadratic.
-    select coalesce(jsonb_agg(option order by roster_ordinality), '[]'::jsonb)
-    into subject_candidates
-    from (
-      select roster_ordinality, jsonb_build_object(
-        'resolutionKey', internal.teacher_import_hard_key(
-          'subject_assignment', p_k12.revision, p_university.revision,
-          jsonb_build_array(
-            jsonb_build_object(
-              'type', 'subject', 'workbook', subject_record.workbook,
-              'sourceId', subject_record.source_id,
-              'sheetName', subject_record.subject_row ->> 'sheetName',
-              'sourceRow', subject_record.subject_row -> 'sourceRow'
-            ),
-            jsonb_build_object(
-              'type', 'roster', 'workbook', subject_record.workbook,
-              'sourceId', subject_record.source_id,
-              'sourceRow', candidate_roster_row -> 'sourceRow'
-            )
-          ), 'assign'
-        ),
-        'resolutionGroupKey', subject_group_key,
-        'kind', 'subject_assignment',
-        'decision', 'assign',
-        'subjectRef', subject_ref,
-        'rosterRef', jsonb_build_object(
-          'workbook', subject_record.workbook,
-          'sourceId', subject_record.source_id,
-          'sourceRow', candidate_roster_row -> 'sourceRow'
-        )
-      ) as option
-      from jsonb_array_elements(candidate_rows) with ordinality
-        candidate_row(candidate_roster_row, roster_ordinality)
-    ) assignment_options;
-    candidates := candidates || jsonb_build_array(jsonb_build_object(
-      'resolutionKey', internal.teacher_import_hard_key(
-        'subject_assignment', p_k12.revision, p_university.revision,
-        jsonb_build_array(jsonb_build_object(
-          'type', 'subject', 'workbook', subject_record.workbook,
-          'sourceId', subject_record.source_id,
-          'sheetName', subject_record.subject_row ->> 'sheetName',
-          'sourceRow', subject_record.subject_row -> 'sourceRow'
-        )), 'ignore'
-      ),
-      'resolutionGroupKey', subject_group_key,
-      'kind', 'subject_assignment',
-      'decision', 'ignore',
-      'subjectRef', subject_ref
-    )) || subject_candidates;
-  end loop;
-  return candidates;
+  return candidates || subject_candidates;
 end;
 $$;
 
@@ -4815,16 +5002,7 @@ declare
   identity_refs jsonb;
   identity_ref_keys jsonb;
   identity_group_key text;
-  subject_record record;
-  roster_rows jsonb;
-  candidate_rows jsonb;
-  subject_ref jsonb;
-  roster_ref jsonb;
-  subject_ref_key jsonb;
-  subject_group_key text;
-  nickname_base text;
-  nickname_annotation text;
-  roster_row jsonb;
+  resolved_candidate jsonb;
 begin
   if p_decision in ('merge', 'separate') then
     for identity_group in
@@ -4886,133 +5064,14 @@ begin
     return null;
   end if;
 
-  for subject_record in
-    select 'k12'::text as workbook, p_k12.source_id as source_id,
-      subject_row
-    from jsonb_array_elements(p_k12.subject_rows) subject_row
-    where subject_row ->> 'sheetName' = any(array[
-      'Local English','ABC华裔English','Maths&Science','VCE数学科学','VCE其他',
-      '奖学金','AEAS','青少英语','QCE','HSC','WACE','SACE','AMC数学竞赛',
-      '科学竞赛','雅思PTE','IB'
-    ])
-    union all
-    select 'university', p_university.source_id,
-      subject_row
-    from jsonb_array_elements(p_university.subject_rows) subject_row
-    where subject_row ->> 'sheetName' = any(array[
-      'Engineering','商科','IT','理科','文科（含论文辅导）','教育学','其他科目'
-    ])
-  loop
-    roster_rows := case when subject_record.workbook = 'k12'
-      then p_k12.roster_rows else p_university.roster_rows end;
-    select coalesce(jsonb_agg(row_value order by trim(row_value ->> 'sourceRow') collate "C"), '[]'::jsonb)
-    into candidate_rows
-    from jsonb_array_elements(roster_rows) row_value
-    where internal.teacher_import_name_key(row_value ->> 'name') =
-      internal.teacher_import_name_key(subject_record.subject_row ->> 'name');
-    if jsonb_array_length(candidate_rows) = 1 then
-      continue;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      select coalesce(jsonb_agg(row_value order by trim(row_value ->> 'sourceRow') collate "C"), '[]'::jsonb)
-      into candidate_rows
-      from jsonb_array_elements(roster_rows) row_value
-      where internal.teacher_import_operational_name_key(row_value ->> 'name') =
-        internal.teacher_import_operational_name_key(subject_record.subject_row ->> 'name');
-      if jsonb_array_length(candidate_rows) = 1 then
-        continue;
-      end if;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      nickname_base := internal.teacher_import_name_key(regexp_replace(
-        subject_record.subject_row ->> 'name', '\s*\([^()]*\)\s*$', ''
-      ));
-      nickname_annotation := internal.teacher_import_name_key(substring(
-        subject_record.subject_row ->> 'name' from '\(([^()]*)\)\s*$'
-      ));
-      if nickname_annotation <> '' then
-        select coalesce(jsonb_agg(row_value), '[]'::jsonb)
-        into candidate_rows
-        from jsonb_array_elements(roster_rows) row_value
-        where internal.teacher_import_name_key(row_value ->> 'name') = nickname_base
-          and internal.teacher_import_name_key(
-            coalesce(row_value ->> 'availabilityText', '') || ' ' || coalesce(row_value ->> 'capacityText', '')
-          ) like '%' || nickname_annotation || '老师%';
-        if jsonb_array_length(candidate_rows) = 1 then
-          continue;
-        end if;
-        if jsonb_array_length(candidate_rows) > 1 then
-          candidate_rows := '[]'::jsonb;
-        end if;
-      end if;
-    end if;
-    if jsonb_array_length(candidate_rows) = 0 then
-      candidate_rows := roster_rows;
-    end if;
+  select subject_candidate.candidate
+  into resolved_candidate
+  from internal.teacher_import_subject_hard_candidate_rows(
+    p_k12, p_university, p_decision, p_resolution_key
+  ) subject_candidate
+  limit 1;
 
-    subject_ref := jsonb_build_object(
-      'workbook', subject_record.workbook,
-      'sourceId', subject_record.source_id,
-      'sheetName', subject_record.subject_row ->> 'sheetName',
-      'sourceRow', subject_record.subject_row -> 'sourceRow'
-    );
-    subject_ref_key := jsonb_build_object(
-      'type', 'subject', 'workbook', subject_record.workbook,
-      'sourceId', subject_record.source_id,
-      'sheetName', subject_record.subject_row ->> 'sheetName',
-      'sourceRow', subject_record.subject_row -> 'sourceRow'
-    );
-    subject_group_key := internal.teacher_import_hard_key(
-      'subject_assignment', p_k12.revision, p_university.revision,
-      jsonb_build_array(subject_ref_key)
-    );
-    if p_decision = 'ignore' then
-      if internal.teacher_import_hard_key(
-        'subject_assignment', p_k12.revision, p_university.revision,
-        jsonb_build_array(subject_ref_key), 'ignore'
-      ) = p_resolution_key then
-        return jsonb_build_object(
-          'resolutionKey', p_resolution_key,
-          'resolutionGroupKey', subject_group_key,
-          'kind', 'subject_assignment',
-          'decision', 'ignore',
-          'subjectRef', subject_ref
-        );
-      end if;
-      continue;
-    end if;
-
-    for roster_row in select value from jsonb_array_elements(candidate_rows)
-    loop
-      if internal.teacher_import_hard_key(
-        'subject_assignment', p_k12.revision, p_university.revision,
-        jsonb_build_array(
-          subject_ref_key,
-          jsonb_build_object(
-            'type', 'roster', 'workbook', subject_record.workbook,
-            'sourceId', subject_record.source_id,
-            'sourceRow', roster_row -> 'sourceRow'
-          )
-        ), 'assign'
-      ) <> p_resolution_key then
-        continue;
-      end if;
-      roster_ref := jsonb_build_object(
-        'workbook', subject_record.workbook,
-        'sourceId', subject_record.source_id,
-        'sourceRow', roster_row -> 'sourceRow'
-      );
-      return jsonb_build_object(
-        'resolutionKey', p_resolution_key,
-        'resolutionGroupKey', subject_group_key,
-        'kind', 'subject_assignment',
-        'decision', 'assign',
-        'subjectRef', subject_ref,
-        'rosterRef', roster_ref
-      );
-    end loop;
-  end loop;
-  return null;
+  return resolved_candidate;
 end;
 $$;
 
@@ -5118,6 +5177,12 @@ revoke all on function internal.teacher_import_operational_name_key(text)
   from public, anon, authenticated;
 revoke all on function internal.teacher_import_hard_key(text, text, text, jsonb, text)
   from public, anon, authenticated;
+revoke all on function internal.teacher_import_subject_hard_candidate_basis(
+  internal.teacher_import_sources, internal.teacher_import_sources
+) from public, anon, authenticated;
+revoke all on function internal.teacher_import_subject_hard_candidate_rows(
+  internal.teacher_import_sources, internal.teacher_import_sources, text, text
+) from public, anon, authenticated;
 revoke all on function internal.teacher_import_hard_candidates(
   internal.teacher_import_sources, internal.teacher_import_sources
 ) from public, anon, authenticated;
@@ -5666,7 +5731,7 @@ declare
   teachers_hash text;
   audit_entry_id uuid;
   removed_teacher_id text;
-  hard_candidates jsonb;
+  subject_hard_basis jsonb;
   replaying_prior boolean := false;
 begin
   if not internal.verify_ops_secret(p_secret) then
@@ -5786,11 +5851,27 @@ begin
     raise exception using errcode = '40001', message = 'version_conflict';
   end if;
 
-  hard_candidates := internal.teacher_import_hard_candidates(k12, university);
+  -- Materialise the set-based subject basis once under the source locks.  It
+  -- contains only blocker group keys and allowed roster references, not the
+  -- thousands of opaque option hashes formerly built for commit validation.
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'resolutionGroupKey', basis.resolution_group_key,
+    'subjectRef', basis.subject_ref,
+    'subjectRefKey', basis.subject_ref_key,
+    'rosterRef', basis.roster_ref,
+    'rosterRefKey', basis.roster_ref_key
+  ) order by
+    basis.workbook_order,
+    basis.subject_ordinality,
+    basis.candidate_source_row collate "C" nulls last,
+    basis.roster_ordinality
+  ), '[]'::jsonb)
+  into subject_hard_basis
+  from internal.teacher_import_subject_hard_candidate_basis(k12, university) basis;
 
-  -- Recompute every V2 option under the same locks used for the commit.  A
-  -- saved row must still be one exact closed option from the two current
-  -- snapshots, and every blocking group must have exactly one choice.
+  -- Revalidate the few selected keys only.  Identity choices use their cheap
+  -- grouped resolver; subject choices must belong to the once-computed basis
+  -- and their exact selected key is recomputed from the stored closed refs.
   if exists (
     select 1
     from internal.teacher_import_hard_resolutions r
@@ -5798,24 +5879,96 @@ begin
       and r.k12_revision = k12.revision
       and r.university_source_id = university.source_id
       and r.university_revision = university.revision
-      and not exists (
-        select 1 from jsonb_array_elements(hard_candidates) option
-        where option ->> 'resolutionKey' = r.resolution_key
-          and option ->> 'resolutionGroupKey' = r.resolution_group_key
-          and option ->> 'kind' = r.kind
-          and option ->> 'decision' = r.decision
-          and option -> 'sourceRefs' is not distinct from r.source_refs
-          and option -> 'subjectRef' is not distinct from r.subject_ref
-          and option -> 'rosterRef' is not distinct from r.roster_ref
+      and (
+        (
+          r.kind in ('same_workbook_identity', 'cross_workbook_identity')
+          and internal.teacher_import_hard_candidate_by_key(
+            k12, university, r.resolution_key, r.decision
+          ) is distinct from jsonb_build_object(
+            'resolutionKey', r.resolution_key,
+            'resolutionGroupKey', r.resolution_group_key,
+            'kind', r.kind,
+            'decision', r.decision,
+            'sourceRefs', r.source_refs
+          )
+        )
+        or (
+          r.kind = 'subject_assignment'
+          and not exists (
+            select 1
+            from jsonb_array_elements(subject_hard_basis) basis
+            where basis ->> 'resolutionGroupKey' = r.resolution_group_key
+              and basis -> 'subjectRef' is not distinct from r.subject_ref
+              and case r.decision
+                when 'ignore' then
+                  r.roster_ref is null
+                  and internal.teacher_import_hard_key(
+                    'subject_assignment', k12.revision, university.revision,
+                    jsonb_build_array(basis -> 'subjectRefKey'), 'ignore'
+                  ) = r.resolution_key
+                when 'assign' then
+                  basis -> 'rosterRef' is not distinct from r.roster_ref
+                  and internal.teacher_import_hard_key(
+                    'subject_assignment', k12.revision, university.revision,
+                    jsonb_build_array(
+                      basis -> 'subjectRefKey', basis -> 'rosterRefKey'
+                    ), 'assign'
+                  ) = r.resolution_key
+                else false
+              end
+          )
+        )
       )
   ) then
     raise exception using errcode = '40001', message = 'teacher_import_hard_resolutions_changed';
   end if;
+
+  -- Every current identity or subject blocker group still needs exactly one
+  -- revision-bound row.  The table's unique group key prevents double choice.
   if exists (
     select 1
     from (
-      select distinct option ->> 'resolutionGroupKey' as resolution_group_key
-      from jsonb_array_elements(hard_candidates) option
+      select internal.teacher_import_hard_key(
+        case when identity_group.workbook_count = 2
+          then 'cross_workbook_identity' else 'same_workbook_identity' end,
+        k12.revision,
+        university.revision,
+        identity_group.ref_keys
+      ) as resolution_group_key
+      from (
+        select
+          count(distinct workbook) as workbook_count,
+          jsonb_agg(jsonb_build_object(
+            'type', 'roster',
+            'workbook', workbook,
+            'sourceId', source_id,
+            'sourceRow', source_row -> 'sourceRow'
+          ) order by
+            workbook collate "C",
+            source_id collate "C",
+            trim(source_row ->> 'sourceRow') collate "C"
+          ) as ref_keys
+        from (
+          select 'k12'::text as workbook, k12.source_id as source_id, source_row
+          from jsonb_array_elements(k12.roster_rows) source_row
+          union all
+          select 'university', university.source_id, source_row
+          from jsonb_array_elements(university.roster_rows) source_row
+        ) roster
+        group by internal.teacher_import_name_key(source_row ->> 'name')
+        having count(*) > 1
+          and not (
+            count(*) = 2
+            and count(*) filter (where workbook = 'k12') = 1
+            and count(*) filter (where workbook = 'university') = 1
+            and count(distinct internal.teacher_import_database_name_key(source_row ->> 'name')) = 1
+          )
+      ) identity_group
+
+      union all
+
+      select distinct basis ->> 'resolutionGroupKey'
+      from jsonb_array_elements(subject_hard_basis) basis
     ) candidate_group
     where not exists (
       select 1
