@@ -31,7 +31,13 @@ function sharedRows(bookings: unknown[] = [], owner = "Abby") {
       name: "Student A",
       owner,
       course: "English",
-      lessonPackages: [{ id: "P-1", name: "English package", subjectIds: ["English"], purchaseRecords: [], consumedHours: 0 }],
+      lessonPackages: [{
+        id: "P-1",
+        name: "English package",
+        subjectIds: ["English"],
+        purchaseRecords: [{ id: "BUY-1", purchasedAt: "2026-08-01T00:00:00.000Z", hours: 20 }],
+        consumedHours: 0,
+      }],
     }]),
     row("teachers", [
       { id: "T-1", name: "Teacher A", acceptsStudents: true, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
@@ -166,6 +172,148 @@ test("non-trial package/subject is mandatory and checked on the server", () => {
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ packageId: undefined }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("package_required"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ subjectId: "Math" }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("subject_not_allowed"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ packageId: "P-X" }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("package_subject_mismatch"));
+});
+
+test("non-trial bookings cannot use an exhausted or overdrawn package", () => {
+  for (const consumedHours of [20, 21]) {
+    const rows = sharedRows().map((state) => state.entity === "students" ? row("students", [{
+      id: "S-1",
+      name: "Student A",
+      owner: "Abby",
+      course: "English",
+      lessonPackages: [{
+        id: "P-1",
+        name: "English package",
+        subjectIds: ["English"],
+        purchaseRecords: [{ id: "BUY-1", purchasedAt: "2026-08-01T00:00:00.000Z", hours: 20 }],
+        consumedHours,
+      }],
+    }]) : state);
+    assert.throws(() => prepareBookingCapacityMutation({
+      command: upsert(), rows, actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z"),
+    }), error("package_balance_insufficient"));
+  }
+});
+
+test("package balance reserves every active occurrence without double-counting an edited series", () => {
+  const lowBalanceRows = sharedRows().map((state) => state.entity === "students" ? row("students", [{
+    id: "S-1",
+    name: "Student A",
+    owner: "Abby",
+    course: "English",
+    lessonPackages: [{
+      id: "P-1",
+      name: "English package",
+      subjectIds: ["English"],
+      purchaseRecords: [{ id: "BUY-1", purchasedAt: "2026-08-01T00:00:00.000Z", hours: 20 }],
+      consumedHours: 17,
+    }],
+  }]) : state);
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ recurring: true, repeatCount: 4 }),
+    rows: lowBalanceRows,
+    actor: "Abby",
+    fullAdmin: false,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("package_balance_insufficient"));
+
+  const existing = {
+    id: "B-1", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 3,
+    packageId: "P-1", course: "English", requestedAt: "2026-08-01T00:00:00.000Z",
+  };
+  const edited = prepareBookingCapacityMutation({
+    command: upsert({ recurring: true, repeatCount: 3 }),
+    rows: lowBalanceRows.map((state) => state.entity === "bookings" ? row("bookings", [existing]) : state),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  });
+  assert.equal(edited.action, "update");
+});
+
+test("package reservations include other series and ignore cancelled or leave occurrences", () => {
+  const existing = {
+    id: "B-OTHER", studentId: "S-1", teacherId: "T-2", date: "2026-09-08", start: "12:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 20,
+    packageId: "P-1", course: "English",
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({}, "B-NEW"),
+    rows: sharedRows([existing]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("package_balance_insufficient"));
+
+  const cancelled = {
+    ...existing,
+    occurrenceOverrides: Array.from({ length: 20 }, (_, index) => {
+      const date = new Date("2026-09-08T00:00:00.000Z");
+      date.setUTCDate(date.getUTCDate() + index * 7);
+      return { occurrenceId: `B-OTHER:${date.toISOString().slice(0, 10)}`, status: index % 2 ? "leave" : "cancelled" };
+    }),
+  };
+  const prepared = prepareBookingCapacityMutation({
+    command: upsert({}, "B-NEW"),
+    rows: sharedRows([cancelled]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  });
+  assert.equal(prepared.action, "create");
+});
+
+test("historical unsettled occurrences do not consume the future scheduling balance", () => {
+  const historical = {
+    id: "B-HISTORY", studentId: "S-1", teacherId: "T-2", date: "2026-01-05", start: "12:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 20,
+    packageId: "P-1", course: "English",
+  };
+  const prepared = prepareBookingCapacityMutation({
+    command: upsert({}, "B-NEW"),
+    rows: sharedRows([historical]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  });
+  assert.equal(prepared.action, "create");
+});
+
+test("archived students reject booking creates, edits, and deletes for every operator role", () => {
+  const current = {
+    id: "B-1", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: false, repeatCount: 1,
+    packageId: "P-1", course: "English",
+  };
+  const archivedRows = sharedRows([current]).map((state) => state.entity === "students"
+    ? { ...state, payload: (state.payload as Record<string, unknown>[]).map((student) => ({ ...student, importArchived: true })) }
+    : state);
+
+  for (const input of [
+    { command: upsert({}, "B-NEW"), actor: "Abby", fullAdmin: false },
+    { command: upsert(), actor: "Nixon", fullAdmin: true },
+    { command: upsert(), actor: "Ops Admin", fullAdmin: false },
+  ]) {
+    assert.throws(() => prepareBookingCapacityMutation({
+      ...input,
+      rows: archivedRows,
+      now: new Date("2026-08-13T00:00:00Z"),
+    }), error("student_scope_forbidden"));
+  }
+
+  const command: BookingCapacityCommand = {
+    action: "delete",
+    bookingId: "B-1",
+    expectedVersions: { bookings: 3, students: 3, teachers: 3 },
+  };
+  for (const input of [
+    { actor: "Abby", fullAdmin: false },
+    { actor: "Nixon", fullAdmin: true },
+    { actor: "Ops Admin", fullAdmin: false },
+  ]) {
+    assert.throws(() => prepareBookingCapacityMutation({ command, rows: archivedRows, ...input }), error("student_scope_forbidden"));
+  }
 });
 
 test("staff is owner-scoped and teachers cannot mutate capacity or assignments", () => {

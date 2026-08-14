@@ -66,13 +66,17 @@ function serviceError(error: StudentImportServiceError) {
 }
 
 async function currentPlan() {
+  const stateEntities = [
+    "students", "bookings", "files", "lpItems", "messages", "operations", "payroll", "renewals", "tasks",
+  ];
   const [sourceSnapshot, rows] = await Promise.all([
     getLatestStudentImportSourceRows(),
-    getOpsState(["students"]),
+    getOpsState(stateEntities),
   ]);
   return prepareStudentImport({
     sourceSnapshot,
     studentsRow: rows.find((row) => row.entity === "students"),
+    referenceRows: rows.filter((row) => row.entity !== "students"),
   });
 }
 

@@ -70,25 +70,26 @@ test("makes university major and year conditional rather than adding unconfirmed
   assert.equal(year?.requirement, "university-only");
 });
 
-test("adds the minimal system handover fields without claiming a group-template copy", () => {
+test("aligns every dedicated workflow with the confirmed Tencent templates", () => {
   const trialKeys = fieldKeys("试听 LP");
-  for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson"]) {
+  for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson", "timeMentioned", "preferredTime", "studentNameKnown", "trialPaymentMethod"]) {
     assert.ok(trialKeys.includes(key as never));
   }
 
   const directSchema = getLpWorkflowSchema("学生直报（无试听）");
   const directKeys = fieldKeys("学生直报（无试听）");
+  assert.equal(directKeys.includes("assignedTeacher"), false);
   assert.ok(directKeys.includes("purchasedHours"));
   assert.ok(directKeys.includes("bonusHours"));
   assert.equal(directSchema.fields.find((field) => field.key === "purchasedHours")?.min, 0);
   assert.equal(directSchema.fields.find((field) => field.key === "bonusHours")?.min, 0);
 
   const expected = {
-    "老师新 LP": ["teacher", "subject", "documentUrl", "modificationRequirements"],
+    "老师新 LP": ["teacher", "subject", "documentUrl", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"],
     "老师 LP 修改": ["teacher", "subject", "documentUrl", "modificationRequirements"],
-    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation"],
-    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "handoverNotes"],
-    "学生报名交接": ["planner", "coursePackage", "subject", "enrollmentHandoverNotes"],
+    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"],
+    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "comments", "lastHomework", "lastLessonRecordingUrl"],
+    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes"],
   } as const;
   for (const [type, keys] of Object.entries(expected)) {
     const schema = getLpWorkflowSchema(type as keyof typeof expected);
@@ -131,6 +132,30 @@ test("validates the minimum dedicated handover fields, URLs and coverage dates",
   assert.equal(validateLpDocumentUrl("https://docs.example/lp"), "https://docs.example/lp");
   assert.equal(validateLpDate("2028-02-29"), "2028-02-29");
   assert.throws(() => validateLpDate("2027-02-29"), /valid calendar date/);
+});
+
+test("strictly validates confirmed template fields while accepting legacy stored records", () => {
+  assert.doesNotThrow(() => validateLpWorkflowFields("试听 LP", {
+    ...commonFields(), assignedTeacher: "A", subject: "English", oneSentenceDescription: "Year 8 English", locationTimezone: "Melbourne", contactPerson: "家长", timeMentioned: false, studentNameKnown: true, trialPaymentMethod: "付费试听（已付费）",
+  }));
+  assert.throws(() => validateLpWorkflowFields("试听 LP", {
+    ...commonFields(), assignedTeacher: "A", subject: "English", oneSentenceDescription: "Year 8 English", locationTimezone: "Melbourne", contactPerson: "其他", timeMentioned: false, studentNameKnown: true, trialPaymentMethod: "付费试听（已付费）",
+  }), /allowed options/);
+  assert.throws(() => validateLpWorkflowFields("试听 LP", {
+    ...commonFields(), assignedTeacher: "A", subject: "English", oneSentenceDescription: "Year 8 English", locationTimezone: "Melbourne", contactPerson: "家长", timeMentioned: true, studentNameKnown: true, trialPaymentMethod: "付费试听（已付费）",
+  }), /preferredTime is required/);
+  assert.doesNotThrow(() => validateLpWorkflowFields("老师新 LP", {
+    ...commonFields(), teacher: "A", subject: "Math", additionalNotes: "Encourage", basicInfo: "Year 8", studentFoundation: "Developing", learningGoal: "School results", recommendedResources: "ClassIn folder", teachingLanguage: "English", firstLessonContent: "Algebra", lessonSchedule: "Weekly",
+  }));
+  assert.throws(() => validateLpWorkflowFields("老师新 LP", {
+    ...commonFields(), teacher: "A", subject: "Math", additionalNotes: "Encourage", basicInfo: "Year 8", studentFoundation: "Developing", learningGoal: "School results", recommendedResources: "ClassIn folder", teachingLanguage: "English", firstLessonContent: "", lessonSchedule: "Weekly",
+  }), /firstLessonContent is required/);
+  assert.doesNotThrow(() => validateLpWorkflowFields("代课 LP", {
+    ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", handoverNotes: "Legacy record",
+  }));
+  assert.throws(() => validateLpWorkflowFields("代课 LP", {
+    ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", additionalNotes: "Started new template",
+  }), /basicInfo is required/);
 });
 
 test("keeps business result independent from stage and restricts it by workflow type", () => {

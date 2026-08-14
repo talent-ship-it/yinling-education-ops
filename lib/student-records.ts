@@ -531,10 +531,6 @@ function validateLessonPackage(lessonPackage: StudentLessonPackage) {
   if (!Number.isFinite(lessonPackage.consumedHours) || lessonPackage.consumedHours < 0) {
     throw new RangeError("consumedHours must be a non-negative number");
   }
-  const total = lessonPackage.purchaseRecords.reduce((sum, purchase) => sum + purchase.hours, 0);
-  if (roundHours(lessonPackage.consumedHours) > roundHours(total)) {
-    throw new RangeError("consumedHours cannot exceed purchased hours");
-  }
 }
 
 export function createStudentLessonPackage(input: {
@@ -574,8 +570,8 @@ export function bindSubjectToLessonPackage(
   const existingBinding = packages.find(
     (lessonPackage) => lessonPackage.id !== packageId && lessonPackage.subjectIds.includes(subjectId),
   );
-  if (existingBinding && getLessonPackageBalance(existingBinding).remainingHours > 0) {
-    throw new Error(`subject ${subjectId} still has remaining hours in lesson package ${existingBinding.id}`);
+  if (existingBinding && getLessonPackageBalance(existingBinding).remainingHours !== 0) {
+    throw new Error(`subject ${subjectId} still has a non-zero balance in lesson package ${existingBinding.id}`);
   }
   return packages.map((lessonPackage) => {
     validateLessonPackage(lessonPackage);

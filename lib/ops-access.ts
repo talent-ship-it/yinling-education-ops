@@ -16,6 +16,7 @@ export type OpsAccessContext = {
   staff: boolean;
   teacher: boolean;
   studentIds: Set<string>;
+  activeStudentIds: Set<string>;
   teacherIds: Set<string>;
 };
 
@@ -123,10 +124,6 @@ export function buildOpsAccessContext(
         ? "teacher"
         : "staff";
 
-  if (fullAdmin || limitedAdmin) {
-    return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds: new Set(), teacherIds: new Set() };
-  }
-
   const teachers = payloadRecords(rows, "teachers");
   const teacherIds = new Set(teachers.filter((item) => samePerson(item.name, actor)).map(rowId).filter(Boolean));
   const bookings = payloadRecords(rows, "bookings");
@@ -134,6 +131,7 @@ export function buildOpsAccessContext(
   const studentIds = new Set(
     students
       .filter((student) => {
+        if (fullAdmin || limitedAdmin) return true;
         if (staff) return samePerson(student.owner, actor);
         if (!teacher) return false;
         return samePerson(student.teacher, actor)
@@ -142,8 +140,14 @@ export function buildOpsAccessContext(
       .map(rowId)
       .filter(Boolean),
   );
+  const activeStudentIds = new Set(
+    students
+      .filter((student) => student.importArchived !== true && studentIds.has(rowId(student)))
+      .map(rowId)
+      .filter(Boolean),
+  );
 
-  return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds, teacherIds };
+  return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds, activeStudentIds, teacherIds };
 }
 
 /**
@@ -181,6 +185,10 @@ export function canAccessStudent(context: OpsAccessContext, studentId: string) {
   return context.fullAdmin || context.limitedAdmin || context.studentIds.has(studentId);
 }
 
+export function canOperateStudent(context: OpsAccessContext, studentId: string) {
+  return canAccessStudent(context, studentId) && context.activeStudentIds.has(studentId);
+}
+
 function canReadRecord(context: OpsAccessContext, entity: string, value: RecordValue) {
   if (context.fullAdmin || context.limitedAdmin) return entity !== "payroll" || context.fullAdmin;
   if (entity === "courses") return true;
@@ -214,20 +222,25 @@ export function filterOpsVersions(rows: OpsVersionRow[], context: OpsAccessConte
 }
 
 function canModifyRecord(context: OpsAccessContext, entity: string, value: RecordValue) {
+  if (entity === "students" && !canOperateStudent(context, rowId(value))) return false;
   if (context.fullAdmin || context.limitedAdmin) return entity !== "payroll" || context.fullAdmin;
-  if (entity === "students") return context.staff && samePerson(value.owner, context.actor) && Boolean(rowId(value));
+  if (entity === "students") {
+    return context.staff
+      && samePerson(value.owner, context.actor)
+      && canOperateStudent(context, rowId(value));
+  }
   if (entity === "bookings") {
     return context.teacher
-      ? context.teacherIds.has(String(value.teacherId ?? "")) && canAccessStudent(context, rowStudentId(value))
-      : context.staff && canAccessStudent(context, rowStudentId(value));
+      ? context.teacherIds.has(String(value.teacherId ?? "")) && canOperateStudent(context, rowStudentId(value))
+      : context.staff && canOperateStudent(context, rowStudentId(value));
   }
   if (entity === "tasks") {
     return context.staff
-      && canAccessStudent(context, rowStudentId(value))
+      && canOperateStudent(context, rowStudentId(value))
       && samePerson(value.owner, context.actor);
   }
-  if (["lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
-  if (["operations", "messages", "files"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
+  if (["lpItems", "renewals"].includes(entity)) return canOperateStudent(context, rowStudentId(value));
+  if (["operations", "messages", "files"].includes(entity)) return canOperateStudent(context, rowStudentId(value));
   return false;
 }
 
@@ -263,6 +276,8 @@ export function mergeScopedPayload(input: {
     if (unchanged) return existing;
     const managedExamAssigneeUpdate = entity === "tasks"
       && context.staff
+      && canOperateStudent(context, rowStudentId(existing))
+      && canOperateStudent(context, rowStudentId(replacement))
       && !samePerson(existing.owner, context.actor)
       && managedExamAssigneeChangeAllowed(existing, replacement, context.actor);
     if ((!canModifyRecord(context, entity, existing) || !canModifyRecord(context, entity, replacement)) && !managedExamAssigneeUpdate) {

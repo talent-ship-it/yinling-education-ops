@@ -10,7 +10,7 @@ import {
 } from "@/lib/operation-occurrence-service";
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { buildOpsAccessContext, canAccessStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   confirmOperationOccurrencesAtomic,
   getOperationConfirmationCommandResult,
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     const visibleOperation = Array.isArray(visibleOperations?.payload)
       ? visibleOperations.payload.find((value) => value && typeof value === "object" && !Array.isArray(value) && (value as { id?: unknown }).id === command.operationId) as { studentId?: unknown; confirmationAction?: unknown } | undefined
       : undefined;
-    if (!visibleOperation || typeof visibleOperation.studentId !== "string" || !canAccessStudent(access, visibleOperation.studentId)) {
+    if (!visibleOperation || typeof visibleOperation.studentId !== "string" || !canOperateStudent(access, visibleOperation.studentId)) {
       return noStore({ error: "当前账号不能确认这条异常。", code: "operation_scope_forbidden" }, 403);
     }
     const resolvedChosenTeacherId = command.chosenTeacherId

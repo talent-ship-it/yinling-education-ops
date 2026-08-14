@@ -174,6 +174,14 @@ test("shows package balances and every purchase newest first", () => {
   ]);
 });
 
+test("retains package coverage so the UI can distinguish complete, partial and missing ledgers", () => {
+  const partial = buildStudentRecordsPanelData({ ...student, packageCoverage: "partial" }, files);
+  const missing = buildStudentRecordsPanelData({ id: "missing", name: "Missing", packageCoverage: "none" }, []);
+  assert.equal(partial.packageCoverage, "partial");
+  assert.equal(missing.packageCoverage, "none");
+  assert.equal(buildStudentRecordsPanelData(student, files).packageCoverage, "complete");
+});
+
 test("sorts month-only exams before dated exams and estimates result dates", () => {
   const data = buildStudentRecordsPanelData(student, files);
 

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   LP_WORKFLOW_FORM_NAMES,
   LpWorkflowFields,
+  LpWorkflowDetails,
   LpWorkflowFormDataError,
   lpRevisionDocumentUrl,
   parseLpWorkflowFormData,
@@ -32,6 +33,79 @@ test("returns a link only for http and https revision documents", () => {
   assert.equal(lpRevisionDocumentUrl(revision({ url: "https://example.com" })), null);
 });
 
+test("renders only non-empty schema fields and makes only http or https URL fields clickable", () => {
+  const html = renderToStaticMarkup(<LpWorkflowDetails
+    type="试听 LP"
+    fields={{
+      responsibleOperations: "Abby",
+      specifiedContentStatus: "已指定",
+      specialNotes: "   ",
+      preparationFollowUp: "否",
+      isUniversityStudent: false,
+      universityMajor: "stale hidden value",
+      assignedTeacher: "Teacher A",
+      subject: "English",
+      oneSentenceDescription: "Year 8 writing",
+      locationTimezone: "Australia/Melbourne",
+      contactPerson: "家长",
+      timeMentioned: false,
+      preferredTime: "stale preferred time",
+      studentNameKnown: false,
+      trialPaymentMethod: "免费试听",
+      documentUrl: "https://hidden.example/internal",
+      internalExplanation: { debug: "must not render" },
+    }}
+  />);
+
+  assert.match(html, /当前完整字段/);
+  assert.match(html, /所属教务/);
+  assert.match(html, /Abby/);
+  assert.match(html, /是否知道学生姓名/);
+  assert.match(html, />否</);
+  assert.doesNotMatch(html, /specialNotes|stale hidden value|stale preferred time|hidden\.example|internalExplanation|must not render/);
+
+  const urlHtml = renderToStaticMarkup(<LpWorkflowDetails
+    type="老师 LP 修改"
+    fields={{
+      responsibleOperations: "Abby",
+      specifiedContentStatus: "无需指定",
+      preparationFollowUp: "否",
+      isUniversityStudent: false,
+      teacher: "Teacher A",
+      subject: "English",
+      documentUrl: "https://docs.qq.com/doc/example",
+      modificationRequirements: "Update unit 2",
+    }}
+  />);
+  assert.match(urlHtml, /href="https:\/\/docs\.qq\.com\/doc\/example"/);
+  assert.match(urlHtml, /target="_blank" rel="noreferrer"/);
+
+  const unsafeUrlHtml = renderToStaticMarkup(<LpWorkflowDetails
+    type="老师 LP 修改"
+    fields={{ documentUrl: "javascript:alert(1)" }}
+  />);
+  assert.match(unsafeUrlHtml, /javascript:alert\(1\)/);
+  assert.doesNotMatch(unsafeUrlHtml, /href=/);
+});
+
+test("renders the distinguishing saved fields for all seven LP workflow types", () => {
+  const cases = [
+    ["试听 LP", { assignedTeacher: "Trial Teacher" }, "安排老师", "Trial Teacher"],
+    ["老师新 LP", { recommendedResources: "ClassIn folder" }, "建议资料库", "ClassIn folder"],
+    ["老师 LP 修改", { modificationRequirements: "Replace unit 2" }, "修改要求", "Replace unit 2"],
+    ["换老师试听", { recommendedNextContent: "Continue algebra" }, "建议后续内容与资料", "Continue algebra"],
+    ["代课 LP", { coverageStartDate: "2026-09-01" }, "覆盖开始日期", "2026-09-01"],
+    ["学生直报（无试听）", { purchasedHours: 0 }, "购买课时", "0"],
+    ["学生报名交接", { coursePackage: "English 20h" }, "课程 / 课包", "English 20h"],
+  ] as const;
+
+  for (const [type, fields, label, value] of cases) {
+    const html = renderToStaticMarkup(<LpWorkflowDetails type={type} fields={fields} />);
+    assert.match(html, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(html, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 function formData(
   workflowType: string,
   values: Record<string, string> = {},
@@ -52,6 +126,14 @@ test("parses every dedicated LP handover form instead of returning common fields
     teacher: "Teacher A",
     subject: "English",
     documentUrl: "https://docs.example/lp",
+    additionalNotes: "Encourage the student",
+    basicInfo: "Year 8",
+    studentFoundation: "Developing",
+    learningGoal: "Improve school results",
+    recommendedResources: "ClassIn English folder",
+    teachingLanguage: "English",
+    firstLessonContent: "Persuasive writing",
+    lessonSchedule: "Weekly, one hour",
   }));
   assert.equal(teacherLp.workflowType, "老师新 LP");
   assert.equal("teacher" in teacherLp.fields && teacherLp.fields.teacher, "Teacher A");
@@ -73,6 +155,12 @@ test("parses every dedicated LP handover form instead of returning common fields
     subject: "Math",
     changeReason: "Availability",
     trialInformation: "Saturday 10:00",
+    handoverFromTeacher: "Teacher A",
+    materialsAndContentTaught: "Reading workbook unit 4",
+    recommendedNextContent: "Continue inference questions",
+    studentStrengthsAndLearningProfile: "Quiet and responds to encouragement",
+    lastHomework: "Workbook pages 20-25",
+    lastLessonRecordingUrl: "https://recording.example/lesson",
   }));
   assert.equal("newTeacher" in teacherChange.fields && teacherChange.fields.newTeacher, "Teacher B");
 
@@ -82,7 +170,14 @@ test("parses every dedicated LP handover form instead of returning common fields
     subject: "Math",
     coverageStartDate: "2026-09-01",
     coverageEndDate: "2026-09-30",
-    handoverNotes: "Continue unit 4",
+    additionalNotes: "Keep the same lesson rhythm",
+    basicInfo: "Year 8",
+    studentFoundation: "Developing",
+    learningGoal: "School English",
+    allocatedLessonContentAndResources: "Lesson 1: workbook pages 20-25",
+    teachingLanguage: "English",
+    lastHomework: "Workbook pages 18-19",
+    lastLessonRecordingUrl: "https://recording.example/lesson",
   }));
   assert.equal(
     "coverageEndDate" in substitute.fields && substitute.fields.coverageEndDate,
@@ -94,6 +189,11 @@ test("parses every dedicated LP handover form instead of returning common fields
     coursePackage: "20 hours",
     subject: "English",
     enrollmentHandoverNotes: "Start next week",
+    purchasedHours: "20",
+    bonusHours: "2",
+    lessonFrequency: "Weekly",
+    preferredTime: "Saturday 10:00",
+    coursesAndTeachers: "Year 8 English / Teacher A",
   }));
   assert.equal("planner" in enrollment.fields && enrollment.fields.planner, "Tara");
 });
@@ -104,6 +204,7 @@ test("uses final domain validation for URLs and date ranges", () => {
       teacher: "Teacher A",
       subject: "English",
       documentUrl: "javascript:alert(1)",
+      modificationRequirements: "Update school report",
     })),
     /http or https/,
   );
@@ -114,7 +215,14 @@ test("uses final domain validation for URLs and date ranges", () => {
       subject: "English",
       coverageStartDate: "2026-09-30",
       coverageEndDate: "2026-09-01",
-      handoverNotes: "Continue current plan",
+      additionalNotes: "Continue current plan",
+      basicInfo: "Year 8",
+      studentFoundation: "Developing",
+      learningGoal: "School English",
+      allocatedLessonContentAndResources: "Workbook unit 4",
+      teachingLanguage: "English",
+      lastHomework: "Unit 3",
+      lastLessonRecordingUrl: "https://recording.example/lesson",
     })),
     /must not be before/,
   );
@@ -127,6 +235,9 @@ test("direct enrollment rejects a zero purchased-plus-bonus total", () => {
     oneSentenceDescription: "Year 8 writing",
     locationTimezone: "Australia/Melbourne",
     contactPerson: "家长",
+    timeMentioned: "否",
+    lessonFrequency: "Weekly",
+    coursesAndTeachers: "Year 8 English / Teacher A",
   };
   assert.throws(
     () => parseLpWorkflowFormData(formData("学生直报（无试听）", {
@@ -150,6 +261,26 @@ test("direct enrollment rejects a zero purchased-plus-bonus total", () => {
   );
 });
 
+test("enrollment handover also rejects a zero purchased-plus-bonus total", () => {
+  assert.throws(
+    () => parseLpWorkflowFormData(formData("学生报名交接", {
+      planner: "Tara",
+      coursePackage: "Year 8 English",
+      subject: "English",
+      purchasedHours: "0",
+      bonusHours: "0",
+      lessonFrequency: "Weekly",
+      preferredTime: "Saturday 10:00",
+      coursesAndTeachers: "Year 8 English / Teacher A",
+    })),
+    (error: unknown) => {
+      assert.ok(error instanceof LpWorkflowFormDataError);
+      assert.equal(error.fieldName, LP_WORKFLOW_FORM_NAMES.purchasedHours);
+      return true;
+    },
+  );
+});
+
 test("stable form names include every dedicated handover field", () => {
   assert.deepEqual(
     Object.keys(LP_WORKFLOW_FORM_NAMES),
@@ -167,19 +298,41 @@ test("stable form names include every dedicated handover field", () => {
       "oneSentenceDescription",
       "locationTimezone",
       "contactPerson",
+      "timeMentioned",
+      "preferredTime",
+      "studentNameKnown",
+      "trialPaymentMethod",
       "purchasedHours",
       "bonusHours",
+      "lessonFrequency",
+      "coursesAndTeachers",
       "teacher",
       "documentUrl",
       "modificationRequirements",
+      "additionalNotes",
+      "basicInfo",
+      "studentFoundation",
+      "learningGoal",
+      "recommendedResources",
+      "teachingLanguage",
+      "firstLessonContent",
+      "lessonSchedule",
+      "comments",
       "originalTeacher",
       "newTeacher",
       "changeReason",
       "trialInformation",
+      "handoverFromTeacher",
+      "materialsAndContentTaught",
+      "recommendedNextContent",
+      "studentStrengthsAndLearningProfile",
+      "lastHomework",
+      "lastLessonRecordingUrl",
       "substituteTeacher",
       "coverageStartDate",
       "coverageEndDate",
       "handoverNotes",
+      "allocatedLessonContentAndResources",
       "planner",
       "coursePackage",
       "enrollmentHandoverNotes",
@@ -196,18 +349,25 @@ test("renders each dedicated workflow with hard options and strict URL/date cont
     coursePackageOptions: [{ value: "package-20", label: "20 hours" }],
   } as const;
   const expectedNames = {
-    "老师新 LP": ["teacher", "subject", "documentUrl", "modificationRequirements"],
+    "老师新 LP": ["teacher", "subject", "documentUrl", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"],
     "老师 LP 修改": ["teacher", "subject", "documentUrl", "modificationRequirements"],
-    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation"],
+    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"],
     "代课 LP": [
       "originalTeacher",
       "substituteTeacher",
       "subject",
       "coverageStartDate",
       "coverageEndDate",
-      "handoverNotes",
+      "additionalNotes",
+      "basicInfo",
+      "studentFoundation",
+      "learningGoal",
+      "allocatedLessonContentAndResources",
+      "teachingLanguage",
+      "lastHomework",
+      "lastLessonRecordingUrl",
     ],
-    "学生报名交接": ["planner", "coursePackage", "subject", "enrollmentHandoverNotes"],
+    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes"],
   } as const;
 
   for (const [initialType, names] of Object.entries(expectedNames)) {

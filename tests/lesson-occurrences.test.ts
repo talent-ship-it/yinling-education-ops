@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   LESSON_OCCURRENCE_STATUSES,
   completeLessonOccurrence,
+  earliestLessonOccurrenceTargetDate,
   evaluateLessonAttendance,
   expandLessonOccurrences,
   lessonOccurrenceId,
+  lessonOccurrenceSourceRangeForTargetRange,
   reverseLessonOccurrenceCompletion,
   type LessonAttendanceEvidence,
   type LessonOccurrence,
@@ -124,6 +126,36 @@ test("expands a legacy recurring series into independent occurrences and ignores
   });
   assert.equal(occurrences[0].teacherId, "TEACHER-A");
   assert.equal(occurrences[2].teacherId, "TEACHER-A");
+});
+
+test("finds occurrences moved before the series start or into an earlier target range", () => {
+  const overrides = [{
+    occurrenceId: lessonOccurrenceId("LEGACY-SERIES", "2026-08-10"),
+    date: "2026-08-03",
+    status: "completed" as const,
+  }];
+
+  assert.equal(earliestLessonOccurrenceTargetDate("2026-08-10", overrides), "2026-08-03");
+  assert.deepEqual(
+    lessonOccurrenceSourceRangeForTargetRange("2026-08-03", "2026-08-03", overrides),
+    { rangeStart: "2026-08-03", rangeEnd: "2026-08-10" },
+  );
+
+  const occurrences = expandLessonOccurrences({
+    id: "LEGACY-SERIES",
+    date: "2026-08-10",
+    start: "16:00",
+    duration: 60,
+    recurring: true,
+    repeatCount: 2,
+  }, {
+    ...lessonOccurrenceSourceRangeForTargetRange("2026-08-03", "2026-08-03", overrides),
+    overrides,
+  }).filter((occurrence) => occurrence.date === "2026-08-03");
+
+  assert.equal(occurrences.length, 1);
+  assert.equal(occurrences[0].sourceDate, "2026-08-10");
+  assert.equal(occurrences[0].status, "completed");
 });
 
 test("accumulates overlapping join/leave spans once and applies the attendance tolerance", () => {

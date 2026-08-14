@@ -11,7 +11,7 @@ import {
   meetingStatus,
 } from "@/lib/bigbluebutton";
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
 import { expandLessonOccurrences, type LegacyLessonSeries, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
@@ -111,7 +111,16 @@ async function authorizedBooking(bookingId: string, occurrenceId: string) {
 
   const student = rows(visible.students).find((item) => item.id === studentId);
   const teacher = rows(visible.teachers).find((item) => item.id === teacherId);
-  return { actor, sessionRole: session.role, teacherIds: access.teacherIds, booking: occurrence, student, teacher, forbidden: false as const };
+  return {
+    actor,
+    sessionRole: session.role,
+    teacherIds: access.teacherIds,
+    booking: occurrence,
+    student,
+    teacher,
+    operable: canOperateStudent(access, studentId),
+    forbidden: false as const,
+  };
 }
 
 function bookingIdFrom(value: unknown) {
@@ -189,6 +198,7 @@ export async function POST(request: NextRequest) {
     const context = await authorizedBooking(bookingId, occurrenceId);
     if (!context) return noStore({ error: "请先输入访问密码。" }, 401);
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
+    if (!context.operable) return noStore({ error: "已归档学生的历史课堂只能查看，不能执行新操作。" }, 403);
 
     const meetingId = meetingIdForOccurrence(occurrenceId);
     const studentName = cleanName(context.student?.name, "Student");

@@ -314,7 +314,7 @@ test("requires an old package to have no remaining hours before rebinding its su
     subjectIds: ["physics"],
     initialPurchase: { id: "physics-purchase", purchasedAt: "2026-08-01", hours: 10 },
   });
-  assert.throws(() => bindSubjectToLessonPackage([shared, physics], physics.id, "math"), /remaining hours/);
+  assert.throws(() => bindSubjectToLessonPackage([shared, physics], physics.id, "math"), /non-zero balance/);
   const depletedShared = { ...shared, consumedHours: 24 };
   const rebound = bindSubjectToLessonPackage([depletedShared, physics], physics.id, "math");
 
@@ -322,6 +322,20 @@ test("requires an old package to have no remaining hours before rebinding its su
   assert.deepEqual(rebound[1].subjectIds, ["physics", "math"]);
   assert.equal(getLessonPackageForSubject(rebound, "math")?.id, physics.id);
   assert.deepEqual(depletedShared.subjectIds, ["math", "english"]);
+});
+
+test("does not move a subject away from an overdrawn package debt", () => {
+  const overdrawn = { ...packageFixture(), consumedHours: 25 };
+  const destination = createStudentLessonPackage({
+    id: "destination-package",
+    name: "Destination",
+    subjectIds: ["physics"],
+    initialPurchase: { id: "destination-purchase", purchasedAt: "2026-08-01", hours: 10 },
+  });
+  assert.throws(
+    () => bindSubjectToLessonPackage([overdrawn, destination], destination.id, "math"),
+    /non-zero balance/,
+  );
 });
 
 test("deducts a completed lesson once and reverses it once through an audit ledger", () => {
@@ -384,6 +398,23 @@ test("deducts a completed lesson once and reverses it once through an audit ledg
   assert.equal(reversedAgain.applied, false);
   assert.equal(reversedAgain.ledger.length, 2);
   assert.equal(getLessonPackageBalance(reversedAgain.packages[0]).remainingHours, 24);
+});
+
+test("represents an authoritative overdrawn package without allowing another deduction", () => {
+  const overdrawn = { ...packageFixture(), consumedHours: 26 };
+  assert.deepEqual(getLessonPackageBalance(overdrawn), {
+    totalHours: 24,
+    consumedHours: 26,
+    remainingHours: -2,
+  });
+  assert.throws(() => deductCompletedLesson([overdrawn], [], {
+    entryId: "overdrawn-ledger",
+    lessonId: "overdrawn-lesson",
+    packageId: overdrawn.id,
+    subjectId: "math",
+    hours: 0.5,
+    completedAt: "2026-08-13T10:00:00+10:00",
+  }), /insufficient/);
 });
 
 test("rejects deductions from the wrong subject or without enough hours", () => {

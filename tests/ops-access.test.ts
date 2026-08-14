@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildOpsAccessContext,
   canAccessStudent,
+  canOperateStudent,
   filterOpsStateRows,
   filterOpsVersions,
   getAccessScopeVersions,
@@ -115,6 +116,59 @@ test("teachers receive only their own assigned and booked students", () => {
     currentPayload: row("files").payload,
     submittedPayload: [{ id: "FILE-NEW", studentId: "STU-ABBY", title: "Teacher upload" }],
     context: access,
+  }), OpsAccessError);
+});
+
+test("archived students and their historical bookings remain readable but are never operable", () => {
+  const archivedRows = rows.map((item) => {
+    if (item.entity === "students") return {
+      ...item,
+      payload: [
+        ...(item.payload as object[]),
+        { id: "STU-ARCHIVED", name: "Archived student", owner: "Abby", teacher: "Helen Ceperkovic", importArchived: true },
+      ],
+    };
+    if (item.entity === "bookings") return {
+      ...item,
+      payload: [
+        ...(item.payload as object[]),
+        { id: "BOOK-ARCHIVED", studentId: "STU-ARCHIVED", teacherId: "TEA-HELEN" },
+      ],
+    };
+    return item;
+  });
+
+  for (const access of [
+    buildOpsAccessContext(archivedRows, "Abby", false, "staff"),
+    buildOpsAccessContext(archivedRows, "Helen Ceperkovic", false, "teacher"),
+    buildOpsAccessContext(archivedRows, "Ops Admin", false, "limited-admin"),
+    buildOpsAccessContext(archivedRows, "Nixon", true, "admin"),
+  ]) {
+    const visible = filterOpsStateRows(archivedRows, access);
+    assert.equal(canAccessStudent(access, "STU-ARCHIVED"), true);
+    assert.equal(canOperateStudent(access, "STU-ARCHIVED"), false);
+    assert.equal(
+      (visible.find((item) => item.entity === "students")?.payload as Array<{ id: string }>).some((item) => item.id === "STU-ARCHIVED"),
+      true,
+    );
+    assert.equal(
+      (visible.find((item) => item.entity === "bookings")?.payload as Array<{ id: string }>).some((item) => item.id === "BOOK-ARCHIVED"),
+      true,
+    );
+  }
+
+  const staff = buildOpsAccessContext(archivedRows, "Abby", false, "staff");
+  assert.throws(() => mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: [],
+    submittedPayload: [{ id: "TASK-ARCHIVED", studentId: "STU-ARCHIVED", owner: "Abby" }],
+    context: staff,
+  }), OpsAccessError);
+  assert.throws(() => mergeScopedPayload({
+    entity: "students",
+    currentPayload: archivedRows.find((item) => item.entity === "students")?.payload,
+    submittedPayload: [{ id: "STU-ARCHIVED", name: "Changed", owner: "Abby", importArchived: true }],
+    context: staff,
   }), OpsAccessError);
 });
 

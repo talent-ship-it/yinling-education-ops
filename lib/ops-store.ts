@@ -3,8 +3,16 @@ import "server-only";
 import type {
   ImportedStudentRecord,
   JwbStudentImportRow,
+  MasterStudentDuplicateResolution,
   MasterStudentImportRow,
 } from "@/lib/student-import";
+import type {
+  ImportedTeacherRecord,
+  TeacherHardResolutionDecision,
+  TeacherIdentityLink,
+  TeacherWorkbookKind,
+  TeacherWorkbookSnapshot,
+} from "@/lib/teacher-import";
 import type {
   LessonAttendanceEvidence,
   LessonOccurrenceSettlementResult,
@@ -43,6 +51,20 @@ export type FuAttachmentRow = {
   uploaded_at: string;
   content_base64?: string;
 };
+
+export type StudentFuAttachmentAtomicCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  attachment: FuAttachmentRow;
+  files_row: OpsStateRow;
+  students_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type StudentFuAttachmentReferenceSnapshot = Readonly<{
+  studentIds: readonly string[];
+  fingerprint: string;
+}>;
 
 export type TeacherAvailabilitySubmissionRow = Readonly<{
   id: number;
@@ -85,6 +107,15 @@ export type StudentImportSourceRowsSnapshot = Readonly<{
     revision: string;
     rows: readonly JwbStudentImportRow[];
   }>;
+  identityLinks: readonly Readonly<{
+    masterSourceRow: string | number;
+    jwbSourceRow?: string | number;
+    studentId: string;
+  }>[];
+  identityLinkFingerprint: string;
+  masterDuplicateResolutions: readonly MasterStudentDuplicateResolution[];
+  masterDuplicateResolutionFingerprint: string;
+  fuAttachmentReferences: StudentFuAttachmentReferenceSnapshot;
 }>;
 
 export type StudentImportCommitResult = Readonly<{
@@ -102,9 +133,60 @@ export type StudentImportSourceIngestResult = Readonly<{
   unchanged: boolean;
 }>;
 
+export type StudentImportIdentityLinkSaveResult = Readonly<{
+  fingerprint: string;
+  count: number;
+  unchanged: boolean;
+}>;
+
+export type StudentImportMasterDuplicateResolutionSaveResult = Readonly<{
+  resolutionKey: string;
+  decision: "select" | "ignore";
+  fingerprint: string;
+  unchanged: boolean;
+}>;
+
+export type TeacherImportSourceSnapshot = Readonly<Record<
+  TeacherWorkbookKind,
+  TeacherWorkbookSnapshot
+>> & Readonly<{
+  identityLinks: readonly TeacherIdentityLink[];
+  hardResolutions: readonly TeacherHardResolutionDecision[];
+}>;
+
+export type TeacherImportSourceIngestResult = Readonly<{
+  workbook: TeacherWorkbookKind;
+  sourceId: string;
+  revision: string;
+  rosterRowCount: number;
+  subjectRowCount: number;
+  unchanged: boolean;
+}>;
+
+export type TeacherImportCommitResult = Readonly<{
+  entity: "teachers";
+  version: number;
+  updated_at: string;
+  updated_by: string;
+  applied: boolean;
+}>;
+
+export type TeacherIdentityLinkSaveResult = Readonly<{
+  resolutionKey: string;
+  decision: "merge" | "separate" | "assign" | "ignore";
+  unchanged: boolean;
+}>;
+
 export const STUDENT_IMPORT_SOURCE_ROWS_RPC = "get_latest_student_import_source_rows";
 export const STUDENT_IMPORT_SOURCE_INGEST_RPC = "put_student_import_source_rows";
 export const STUDENT_IMPORT_ATOMIC_COMMIT_RPC = "commit_student_import_plan_atomic";
+export const STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC = "put_student_import_identity_links";
+export const STUDENT_IMPORT_MASTER_DUPLICATE_RESOLUTION_PUT_RPC = "put_student_import_master_duplicate_resolution";
+export const TEACHER_IMPORT_SOURCE_RPC = "get_latest_teacher_import_sources";
+export const TEACHER_IMPORT_SOURCE_INGEST_RPC = "put_teacher_import_source";
+export const TEACHER_IMPORT_ATOMIC_COMMIT_RPC = "commit_teacher_import_plan_atomic";
+export const TEACHER_IDENTITY_LINK_PUT_RPC = "put_teacher_import_identity_link";
+export const TEACHER_HARD_RESOLUTION_PUT_RPC = "put_teacher_import_hard_resolution";
 export const LESSON_ATTENDANCE_EVIDENCE_PUT_RPC = "put_lesson_attendance_evidence";
 export const LESSON_ATTENDANCE_EVIDENCE_RPC = "get_lesson_attendance_evidence";
 export const LESSON_OCCURRENCE_ATOMIC_COMPLETE_RPC = "complete_lesson_occurrence_atomic";
@@ -114,6 +196,7 @@ export const BOOKING_CAPACITY_ATOMIC_MUTATION_RPC = "mutate_booking_capacity_ato
 export const OPERATION_CONFIRM_ATOMIC_RPC = "confirm_operation_occurrences_atomic";
 export const BOOKING_CAPACITY_COMMAND_RESULT_RPC = "get_booking_capacity_command_result";
 export const OPERATION_CONFIRM_COMMAND_RESULT_RPC = "get_operation_confirmation_command_result";
+export const STUDENT_FU_ATTACHMENT_ATOMIC_PUT_RPC = "put_student_fu_attachment_atomic";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -241,6 +324,49 @@ export function putStudentImportSourceRows(input: {
   });
 }
 
+/** Replaces the revision-bound, server-validated student source identity map. */
+export function putStudentImportIdentityLinks(input: {
+  sourceRevisions: Readonly<{ master: string; jwb: string }>;
+  links: readonly Readonly<{
+    masterSourceRow: string | number;
+    jwbSourceRow?: string | number;
+    studentId: string;
+  }>[];
+  actor: string;
+}) {
+  if (input.links.length !== 0) {
+    throw new OpsStoreError(
+      "当前只允许清除旧身份链接；非空链接必须由服务端证据审核流程生成。",
+      "22023",
+    );
+  }
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityLinkSaveResult>(STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC, {
+    p_secret: secret,
+    p_source_revisions: input.sourceRevisions,
+    p_links: input.links,
+    p_actor: input.actor,
+  });
+}
+
+/** Saves one opaque hard option after the database recomputes its exact current duplicate group. */
+export function putStudentImportMasterDuplicateResolution(input: {
+  resolutionKey: string;
+  decision: "select" | "ignore";
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportMasterDuplicateResolutionSaveResult>(
+    STUDENT_IMPORT_MASTER_DUPLICATE_RESOLUTION_PUT_RPC,
+    {
+      p_secret: secret,
+      p_resolution_key: input.resolutionKey,
+      p_decision: input.decision,
+      p_actor: input.actor,
+    },
+  );
+}
+
 /**
  * Commits the server-computed replacement in one database transaction. Never
  * replace this with repeated putOpsState calls: the expected version and both
@@ -249,7 +375,14 @@ export function putStudentImportSourceRows(input: {
 export function commitStudentImportPlanAtomic(input: {
   planFingerprint: string;
   expectedStudentVersion: number;
-  sourceRevisions: Readonly<{ master: string; jwb: string }>;
+  sourceRevisions: Readonly<{
+    master: string;
+    jwb: string;
+    identityLinks: string;
+    masterDuplicateResolutions: string;
+    fuAttachments: string;
+    bookingsVersion: number;
+  }>;
   students: readonly ImportedStudentRecord[];
   actor: string;
 }) {
@@ -260,6 +393,78 @@ export function commitStudentImportPlanAtomic(input: {
     p_expected_student_version: input.expectedStudentVersion,
     p_source_revisions: input.sourceRevisions,
     p_students: input.students,
+    p_actor: input.actor,
+  });
+}
+
+/** Reads both teacher workbooks from one server-owned database snapshot. */
+export function getLatestTeacherImportSources() {
+  const { secret } = configuration();
+  return rpc<TeacherImportSourceSnapshot>(TEACHER_IMPORT_SOURCE_RPC, {
+    p_secret: secret,
+  });
+}
+
+/** Saves only a server-computed resolution key; source refs never come from the browser. */
+export function putTeacherImportIdentityLink(input: { resolutionKey: string; decision: "merge" | "separate"; actor: string }) {
+  const { secret } = configuration();
+  return rpc<TeacherIdentityLinkSaveResult>(TEACHER_IDENTITY_LINK_PUT_RPC, {
+    p_secret: secret,
+    p_resolution_key: input.resolutionKey,
+    p_decision: input.decision,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Saves one opaque choice after the database resolves it against both current
+ * workbook revisions. Names, rows and assignment targets never cross the
+ * browser/server trust boundary as client-selected fields.
+ */
+export function putTeacherImportHardResolution(input: {
+  resolutionKey: string;
+  decision: "merge" | "separate" | "assign" | "ignore";
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherIdentityLinkSaveResult>(TEACHER_HARD_RESOLUTION_PUT_RPC, {
+    p_secret: secret,
+    p_resolution_key: input.resolutionKey,
+    p_decision: input.decision,
+    p_actor: input.actor,
+  });
+}
+
+/** Stores exactly one explicitly identified teacher workbook snapshot. */
+export function putTeacherImportSource(input: TeacherWorkbookSnapshot & { actor: string }) {
+  const { secret } = configuration();
+  return rpc<TeacherImportSourceIngestResult>(TEACHER_IMPORT_SOURCE_INGEST_RPC, {
+    p_secret: secret,
+    p_workbook: input.workbook,
+    p_source_id: input.sourceId,
+    p_revision: input.revision,
+    p_sheet_names: input.sheetNames,
+    p_roster_rows: input.rosterRows,
+    p_subject_rows: input.subjectRows,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically replaces teachers after locking both source revisions and state. */
+export function commitTeacherImportPlanAtomic(input: {
+  planFingerprint: string;
+  expectedTeacherVersion: number;
+  sourceRevisions: Readonly<Record<TeacherWorkbookKind, string>>;
+  teachers: readonly ImportedTeacherRecord[];
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherImportCommitResult[]>(TEACHER_IMPORT_ATOMIC_COMMIT_RPC, {
+    p_secret: secret,
+    p_plan_fingerprint: input.planFingerprint,
+    p_expected_teacher_version: input.expectedTeacherVersion,
+    p_source_revisions: input.sourceRevisions,
+    p_teachers: input.teachers,
     p_actor: input.actor,
   });
 }
@@ -480,20 +685,31 @@ export function putOpsState(input: {
   });
 }
 
-export function putStudentFuAttachment(input: {
+/** Atomically stores attachment bytes and updates the canonical file/student indexes. */
+export function putStudentFuAttachmentAtomic(input: {
+  commandKey: string;
   studentId: string;
   fileName: string;
   contentType: string;
   contentBase64: string;
+  fileTitle: string;
+  fileType: "Report 资料" | "FU" | "续课 FU";
+  fuCategory?: string;
+  expectedVersions: Readonly<{ files: number; students: number }>;
   actor: string;
 }) {
   const { secret } = configuration();
-  return rpc<FuAttachmentRow>("put_student_fu_attachment", {
+  return rpc<StudentFuAttachmentAtomicCommitResult[]>(STUDENT_FU_ATTACHMENT_ATOMIC_PUT_RPC, {
     p_secret: secret,
+    p_command_key: input.commandKey,
     p_student_id: input.studentId,
     p_file_name: input.fileName,
     p_content_type: input.contentType,
     p_content_base64: input.contentBase64,
+    p_file_title: input.fileTitle,
+    p_file_type: input.fileType,
+    p_fu_category: input.fuCategory ?? null,
+    p_expected_versions: input.expectedVersions,
     p_actor: input.actor,
   });
 }

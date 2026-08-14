@@ -7,6 +7,8 @@ import {
   LP_WORKFLOW_TYPES,
   PREPARATION_FOLLOW_UP_OPTIONS,
   SPECIFIED_CONTENT_STATUSES,
+  TRIAL_PAYMENT_METHODS,
+  getLpWorkflowSchema,
   type DirectEnrollmentLpFields,
   type EnrollmentHandoverLpFields,
   type LpCommonFields,
@@ -18,6 +20,7 @@ import {
   type SubstituteTeacherLpFields,
   type TeacherChangeTrialFields,
   type TeacherLpFields,
+  type TeacherLpModificationFields,
   type TrialLpFields,
   validateLpWorkflowFields,
 } from "../lib/lp-workflows";
@@ -36,19 +39,41 @@ export const LP_WORKFLOW_FORM_NAMES = Object.freeze({
   oneSentenceDescription: "oneSentenceDescription",
   locationTimezone: "locationTimezone",
   contactPerson: "contactPerson",
+  timeMentioned: "timeMentioned",
+  preferredTime: "preferredTime",
+  studentNameKnown: "studentNameKnown",
+  trialPaymentMethod: "trialPaymentMethod",
   purchasedHours: "purchasedHours",
   bonusHours: "bonusHours",
+  lessonFrequency: "lessonFrequency",
+  coursesAndTeachers: "coursesAndTeachers",
   teacher: "teacher",
   documentUrl: "documentUrl",
   modificationRequirements: "modificationRequirements",
+  additionalNotes: "additionalNotes",
+  basicInfo: "basicInfo",
+  studentFoundation: "studentFoundation",
+  learningGoal: "learningGoal",
+  recommendedResources: "recommendedResources",
+  teachingLanguage: "teachingLanguage",
+  firstLessonContent: "firstLessonContent",
+  lessonSchedule: "lessonSchedule",
+  comments: "comments",
   originalTeacher: "originalTeacher",
   newTeacher: "newTeacher",
   changeReason: "changeReason",
   trialInformation: "trialInformation",
+  handoverFromTeacher: "handoverFromTeacher",
+  materialsAndContentTaught: "materialsAndContentTaught",
+  recommendedNextContent: "recommendedNextContent",
+  studentStrengthsAndLearningProfile: "studentStrengthsAndLearningProfile",
+  lastHomework: "lastHomework",
+  lastLessonRecordingUrl: "lastLessonRecordingUrl",
   substituteTeacher: "substituteTeacher",
   coverageStartDate: "coverageStartDate",
   coverageEndDate: "coverageEndDate",
   handoverNotes: "handoverNotes",
+  allocatedLessonContentAndResources: "allocatedLessonContentAndResources",
   planner: "planner",
   coursePackage: "coursePackage",
   enrollmentHandoverNotes: "enrollmentHandoverNotes",
@@ -111,6 +136,10 @@ function checked(formData: FormData, fieldName: LpWorkflowFormName) {
   return value === "true" || value === "1" || value === "on" || value === "yes";
 }
 
+function yesNoValue(formData: FormData, fieldName: LpWorkflowFormName) {
+  return enumValue(formData, fieldName, ["是", "否"] as const) === "是";
+}
+
 function parseCommonFields(formData: FormData): LpCommonFields {
   const isUniversityStudent = checked(formData, LP_WORKFLOW_FORM_NAMES.isUniversityStudent);
   const specialNotes = stringValue(formData, LP_WORKFLOW_FORM_NAMES.specialNotes);
@@ -139,6 +168,7 @@ function parseCommonFields(formData: FormData): LpCommonFields {
 }
 
 function parseTrialFields(formData: FormData, common: LpCommonFields): TrialLpFields {
+  const timeMentioned = yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.timeMentioned);
   return {
     ...common,
     assignedTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.assignedTeacher),
@@ -146,6 +176,31 @@ function parseTrialFields(formData: FormData, common: LpCommonFields): TrialLpFi
     oneSentenceDescription: requiredString(formData, LP_WORKFLOW_FORM_NAMES.oneSentenceDescription),
     locationTimezone: requiredString(formData, LP_WORKFLOW_FORM_NAMES.locationTimezone),
     contactPerson: enumValue(formData, LP_WORKFLOW_FORM_NAMES.contactPerson, LP_CONTACT_OPTIONS),
+    timeMentioned,
+    ...(timeMentioned
+      ? { preferredTime: requiredString(formData, LP_WORKFLOW_FORM_NAMES.preferredTime) }
+      : {}),
+    studentNameKnown: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.studentNameKnown),
+    trialPaymentMethod: enumValue(
+      formData,
+      LP_WORKFLOW_FORM_NAMES.trialPaymentMethod,
+      TRIAL_PAYMENT_METHODS,
+    ),
+  };
+}
+
+function parseDirectEnrollmentBase(formData: FormData, common: LpCommonFields) {
+  const timeMentioned = yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.timeMentioned);
+  return {
+    ...common,
+    subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
+    oneSentenceDescription: requiredString(formData, LP_WORKFLOW_FORM_NAMES.oneSentenceDescription),
+    locationTimezone: requiredString(formData, LP_WORKFLOW_FORM_NAMES.locationTimezone),
+    contactPerson: enumValue(formData, LP_WORKFLOW_FORM_NAMES.contactPerson, LP_CONTACT_OPTIONS),
+    timeMentioned,
+    ...(timeMentioned
+      ? { preferredTime: requiredString(formData, LP_WORKFLOW_FORM_NAMES.preferredTime) }
+      : {}),
   };
 }
 
@@ -156,16 +211,38 @@ function optionalString(formData: FormData, fieldName: LpWorkflowFormName) {
 
 function parseTeacherLpFields(formData: FormData, common: LpCommonFields): TeacherLpFields {
   const documentUrl = optionalString(formData, LP_WORKFLOW_FORM_NAMES.documentUrl);
-  const modificationRequirements = optionalString(
-    formData,
-    LP_WORKFLOW_FORM_NAMES.modificationRequirements,
-  );
+  const comments = optionalString(formData, LP_WORKFLOW_FORM_NAMES.comments);
   return {
     ...common,
     teacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teacher),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
     ...(documentUrl ? { documentUrl } : {}),
-    ...(modificationRequirements ? { modificationRequirements } : {}),
+    additionalNotes: requiredString(formData, LP_WORKFLOW_FORM_NAMES.additionalNotes),
+    basicInfo: requiredString(formData, LP_WORKFLOW_FORM_NAMES.basicInfo),
+    studentFoundation: requiredString(formData, LP_WORKFLOW_FORM_NAMES.studentFoundation),
+    learningGoal: requiredString(formData, LP_WORKFLOW_FORM_NAMES.learningGoal),
+    recommendedResources: requiredString(formData, LP_WORKFLOW_FORM_NAMES.recommendedResources),
+    teachingLanguage: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teachingLanguage),
+    firstLessonContent: requiredString(formData, LP_WORKFLOW_FORM_NAMES.firstLessonContent),
+    lessonSchedule: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lessonSchedule),
+    ...(comments ? { comments } : {}),
+  };
+}
+
+function parseTeacherLpModificationFields(
+  formData: FormData,
+  common: LpCommonFields,
+): TeacherLpModificationFields {
+  const documentUrl = optionalString(formData, LP_WORKFLOW_FORM_NAMES.documentUrl);
+  return {
+    ...common,
+    teacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teacher),
+    subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
+    ...(documentUrl ? { documentUrl } : {}),
+    modificationRequirements: requiredString(
+      formData,
+      LP_WORKFLOW_FORM_NAMES.modificationRequirements,
+    ),
   };
 }
 
@@ -180,6 +257,15 @@ function parseTeacherChangeTrialFields(
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
     changeReason: requiredString(formData, LP_WORKFLOW_FORM_NAMES.changeReason),
     trialInformation: requiredString(formData, LP_WORKFLOW_FORM_NAMES.trialInformation),
+    handoverFromTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.handoverFromTeacher),
+    materialsAndContentTaught: requiredString(formData, LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught),
+    recommendedNextContent: requiredString(formData, LP_WORKFLOW_FORM_NAMES.recommendedNextContent),
+    studentStrengthsAndLearningProfile: requiredString(
+      formData,
+      LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile,
+    ),
+    lastHomework: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastHomework),
+    lastLessonRecordingUrl: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl),
   };
 }
 
@@ -187,6 +273,7 @@ function parseSubstituteTeacherFields(
   formData: FormData,
   common: LpCommonFields,
 ): SubstituteTeacherLpFields {
+  const comments = optionalString(formData, LP_WORKFLOW_FORM_NAMES.comments);
   return {
     ...common,
     originalTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.originalTeacher),
@@ -194,7 +281,18 @@ function parseSubstituteTeacherFields(
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
     coverageStartDate: requiredString(formData, LP_WORKFLOW_FORM_NAMES.coverageStartDate),
     coverageEndDate: requiredString(formData, LP_WORKFLOW_FORM_NAMES.coverageEndDate),
-    handoverNotes: requiredString(formData, LP_WORKFLOW_FORM_NAMES.handoverNotes),
+    additionalNotes: requiredString(formData, LP_WORKFLOW_FORM_NAMES.additionalNotes),
+    basicInfo: requiredString(formData, LP_WORKFLOW_FORM_NAMES.basicInfo),
+    studentFoundation: requiredString(formData, LP_WORKFLOW_FORM_NAMES.studentFoundation),
+    learningGoal: requiredString(formData, LP_WORKFLOW_FORM_NAMES.learningGoal),
+    allocatedLessonContentAndResources: requiredString(
+      formData,
+      LP_WORKFLOW_FORM_NAMES.allocatedLessonContentAndResources,
+    ),
+    teachingLanguage: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teachingLanguage),
+    ...(comments ? { comments } : {}),
+    lastHomework: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastHomework),
+    lastLessonRecordingUrl: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl),
   };
 }
 
@@ -202,16 +300,29 @@ function parseEnrollmentHandoverFields(
   formData: FormData,
   common: LpCommonFields,
 ): EnrollmentHandoverLpFields {
-  return {
+  const enrollmentHandoverNotes = optionalString(
+    formData,
+    LP_WORKFLOW_FORM_NAMES.enrollmentHandoverNotes,
+  );
+  const fields: EnrollmentHandoverLpFields = {
     ...common,
     planner: requiredString(formData, LP_WORKFLOW_FORM_NAMES.planner),
     coursePackage: requiredString(formData, LP_WORKFLOW_FORM_NAMES.coursePackage),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
-    enrollmentHandoverNotes: requiredString(
-      formData,
-      LP_WORKFLOW_FORM_NAMES.enrollmentHandoverNotes,
-    ),
+    purchasedHours: nonNegativeNumber(formData, LP_WORKFLOW_FORM_NAMES.purchasedHours),
+    bonusHours: nonNegativeNumber(formData, LP_WORKFLOW_FORM_NAMES.bonusHours),
+    lessonFrequency: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lessonFrequency),
+    preferredTime: requiredString(formData, LP_WORKFLOW_FORM_NAMES.preferredTime),
+    coursesAndTeachers: requiredString(formData, LP_WORKFLOW_FORM_NAMES.coursesAndTeachers),
+    ...(enrollmentHandoverNotes ? { enrollmentHandoverNotes } : {}),
   };
+  if (fields.purchasedHours + fields.bonusHours <= 0) {
+    throw new LpWorkflowFormDataError(
+      LP_WORKFLOW_FORM_NAMES.purchasedHours,
+      "购买课时与赠送课时合计必须大于 0",
+    );
+  }
+  return fields;
 }
 
 function validateParsedFields<Type extends LpWorkflowType>(
@@ -234,9 +345,11 @@ export function parseLpWorkflowFormData(formData: FormData): ParsedLpWorkflowFor
 
   if (workflowType === "学生直报（无试听）") {
     const fields: DirectEnrollmentLpFields = {
-      ...parseTrialFields(formData, common),
+      ...parseDirectEnrollmentBase(formData, common),
       purchasedHours: nonNegativeNumber(formData, LP_WORKFLOW_FORM_NAMES.purchasedHours),
       bonusHours: nonNegativeNumber(formData, LP_WORKFLOW_FORM_NAMES.bonusHours),
+      lessonFrequency: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lessonFrequency),
+      coursesAndTeachers: requiredString(formData, LP_WORKFLOW_FORM_NAMES.coursesAndTeachers),
     };
     if (fields.purchasedHours + fields.bonusHours <= 0) {
       throw new LpWorkflowFormDataError(
@@ -255,7 +368,7 @@ export function parseLpWorkflowFormData(formData: FormData): ParsedLpWorkflowFor
       return { workflowType, fields };
     }
     case "老师 LP 修改": {
-      const fields = parseTeacherLpFields(formData, common);
+      const fields = parseTeacherLpModificationFields(formData, common);
       validateParsedFields(workflowType, fields);
       return { workflowType, fields };
     }
@@ -281,9 +394,10 @@ export type LpFormOption = Readonly<{ value: string; label?: string }>;
 
 export type LpWorkflowFieldsProps = Readonly<{
   initialType?: LpWorkflowType;
-  initialValues?: Partial<
+  initialValues?: Partial<TrialLpFields> & Partial<
     DirectEnrollmentLpFields &
     TeacherLpFields &
+    TeacherLpModificationFields &
     TeacherChangeTrialFields &
     SubstituteTeacherLpFields &
     EnrollmentHandoverLpFields
@@ -364,6 +478,7 @@ export function LpWorkflowFields({
 }: LpWorkflowFieldsProps) {
   const [workflowType, setWorkflowType] = useState<LpWorkflowType>(initialType);
   const [isUniversityStudent, setIsUniversityStudent] = useState(Boolean(initialValues.isUniversityStudent));
+  const [timeMentioned, setTimeMentioned] = useState(Boolean(initialValues.timeMentioned));
   const showsTrialFields = workflowType === "试听 LP" || workflowType === "学生直报（无试听）";
   const showsHours = workflowType === "学生直报（无试听）";
   const showsTeacherLp = workflowType === "老师新 LP" || workflowType === "老师 LP 修改";
@@ -392,12 +507,12 @@ export function LpWorkflowFields({
     </label>
 
     {showsTrialFields ? <>
-      <TeacherField
-        label="安排老师"
-        name={LP_WORKFLOW_FORM_NAMES.assignedTeacher}
-        defaultValue={initialValues.assignedTeacher}
-        teacherOptions={teacherOptions}
-      />
+      {workflowType === "试听 LP" ? <TeacherField
+          label="安排老师"
+          name={LP_WORKFLOW_FORM_NAMES.assignedTeacher}
+          defaultValue={initialValues.assignedTeacher}
+          teacherOptions={teacherOptions}
+        /> : null}
       <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
       <label className="span-2">一句话描述
         <textarea
@@ -419,6 +534,30 @@ export function LpWorkflowFields({
           {LP_CONTACT_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
         </select>
       </label>
+      <label>是否提到时间
+        <select
+          name={LP_WORKFLOW_FORM_NAMES.timeMentioned}
+          value={timeMentioned ? "是" : "否"}
+          onChange={(event) => setTimeMentioned(event.target.value === "是")}
+        >
+          <option value="否">否</option><option value="是">是</option>
+        </select>
+      </label>
+      {timeMentioned ? <label>偏好时间
+        <input name={LP_WORKFLOW_FORM_NAMES.preferredTime} defaultValue={initialValues.preferredTime} required />
+      </label> : null}
+      {workflowType === "试听 LP" ? <>
+        <label>是否知道学生姓名
+          <select name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} defaultValue={initialValues.studentNameKnown ? "是" : "否"}>
+            <option value="否">否</option><option value="是">是</option>
+          </select>
+        </label>
+        <label>试听付费方式
+          <select name={LP_WORKFLOW_FORM_NAMES.trialPaymentMethod} defaultValue={initialValues.trialPaymentMethod ?? TRIAL_PAYMENT_METHODS[0]}>
+            {TRIAL_PAYMENT_METHODS.map((option) => <option value={option} key={option}>{option}</option>)}
+          </select>
+        </label>
+      </> : null}
     </> : null}
 
     {showsTeacherLp ? <>
@@ -436,13 +575,19 @@ export function LpWorkflowFields({
           defaultValue={initialValues.documentUrl}
         />
       </label>
-      <label className="span-2">修改要求
-        <textarea
-          name={LP_WORKFLOW_FORM_NAMES.modificationRequirements}
-          defaultValue={initialValues.modificationRequirements}
-          rows={3}
-        />
-      </label>
+      {workflowType === "老师 LP 修改" ? <label className="span-2">修改要求
+        <textarea name={LP_WORKFLOW_FORM_NAMES.modificationRequirements} defaultValue={initialValues.modificationRequirements} rows={4} required />
+      </label> : <>
+        <label className="span-2">补充注意事项<textarea name={LP_WORKFLOW_FORM_NAMES.additionalNotes} defaultValue={initialValues.additionalNotes} rows={3} required /></label>
+        <label className="span-2">基本信息<textarea name={LP_WORKFLOW_FORM_NAMES.basicInfo} defaultValue={initialValues.basicInfo} rows={3} required /></label>
+        <label className="span-2">学生基础<textarea name={LP_WORKFLOW_FORM_NAMES.studentFoundation} defaultValue={initialValues.studentFoundation} rows={3} required /></label>
+        <label className="span-2">学习目的<textarea name={LP_WORKFLOW_FORM_NAMES.learningGoal} defaultValue={initialValues.learningGoal} rows={3} required /></label>
+        <label className="span-2">建议资料库<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedResources} defaultValue={initialValues.recommendedResources} rows={3} required /></label>
+        <label>授课语言<input name={LP_WORKFLOW_FORM_NAMES.teachingLanguage} defaultValue={initialValues.teachingLanguage} required /></label>
+        <label>课时计划<input name={LP_WORKFLOW_FORM_NAMES.lessonSchedule} defaultValue={initialValues.lessonSchedule} required /></label>
+        <label className="span-2">试听课 / 首次课内容<textarea name={LP_WORKFLOW_FORM_NAMES.firstLessonContent} defaultValue={initialValues.firstLessonContent} rows={4} required /></label>
+        <label className="span-2">备注<textarea name={LP_WORKFLOW_FORM_NAMES.comments} defaultValue={initialValues.comments} rows={2} /></label>
+      </>}
     </> : null}
 
     {showsTeacherChange ? <>
@@ -475,6 +620,12 @@ export function LpWorkflowFields({
           required
         />
       </label>
+      <TeacherField label="交接老师" name={LP_WORKFLOW_FORM_NAMES.handoverFromTeacher} defaultValue={initialValues.handoverFromTeacher} teacherOptions={teacherOptions} />
+      <label className="span-2">已使用资料、已教内容<textarea name={LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught} defaultValue={initialValues.materialsAndContentTaught} rows={4} required /></label>
+      <label className="span-2">建议后续内容与资料<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedNextContent} defaultValue={initialValues.recommendedNextContent} rows={4} required /></label>
+      <label className="span-2">学生强项、进步方向与学习特点<textarea name={LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile} defaultValue={initialValues.studentStrengthsAndLearningProfile} rows={4} required /></label>
+      <label className="span-2">上节课作业<textarea name={LP_WORKFLOW_FORM_NAMES.lastHomework} defaultValue={initialValues.lastHomework} rows={3} required /></label>
+      <label className="span-2">上次课录像 URL<input type="url" name={LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl} defaultValue={initialValues.lastLessonRecordingUrl} required /></label>
     </> : null}
 
     {showsSubstitute ? <>
@@ -507,14 +658,15 @@ export function LpWorkflowFields({
           required
         />
       </label>
-      <label className="span-2">交接说明
-        <textarea
-          name={LP_WORKFLOW_FORM_NAMES.handoverNotes}
-          defaultValue={initialValues.handoverNotes}
-          rows={3}
-          required
-        />
-      </label>
+      <label className="span-2">补充注意事项<textarea name={LP_WORKFLOW_FORM_NAMES.additionalNotes} defaultValue={initialValues.additionalNotes} rows={3} required /></label>
+      <label className="span-2">基本信息<textarea name={LP_WORKFLOW_FORM_NAMES.basicInfo} defaultValue={initialValues.basicInfo} rows={3} required /></label>
+      <label className="span-2">学生基础<textarea name={LP_WORKFLOW_FORM_NAMES.studentFoundation} defaultValue={initialValues.studentFoundation} rows={3} required /></label>
+      <label className="span-2">学习目的<textarea name={LP_WORKFLOW_FORM_NAMES.learningGoal} defaultValue={initialValues.learningGoal} rows={3} required /></label>
+      <label className="span-2">指定代课内容与资料<textarea name={LP_WORKFLOW_FORM_NAMES.allocatedLessonContentAndResources} defaultValue={initialValues.allocatedLessonContentAndResources} rows={5} required /></label>
+      <label>授课语言<input name={LP_WORKFLOW_FORM_NAMES.teachingLanguage} defaultValue={initialValues.teachingLanguage} required /></label>
+      <label className="span-2">备注<textarea name={LP_WORKFLOW_FORM_NAMES.comments} defaultValue={initialValues.comments} rows={2} /></label>
+      <label className="span-2">上节课作业<textarea name={LP_WORKFLOW_FORM_NAMES.lastHomework} defaultValue={initialValues.lastHomework} rows={3} required /></label>
+      <label className="span-2">上次课录像 URL<input type="url" name={LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl} defaultValue={initialValues.lastLessonRecordingUrl} required /></label>
     </> : null}
 
     {showsEnrollmentHandover ? <>
@@ -533,12 +685,16 @@ export function LpWorkflowFields({
         />
       </label>
       <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
-      <label className="span-2">报名交接说明
+      <label>购买课时<input name={LP_WORKFLOW_FORM_NAMES.purchasedHours} type="number" min="0" step="any" defaultValue={initialValues.purchasedHours ?? ""} required /></label>
+      <label>赠送课时<input name={LP_WORKFLOW_FORM_NAMES.bonusHours} type="number" min="0" step="any" defaultValue={initialValues.bonusHours ?? 0} required /></label>
+      <label>排课频率<input name={LP_WORKFLOW_FORM_NAMES.lessonFrequency} defaultValue={initialValues.lessonFrequency} required /></label>
+      <label>已提到的时间<input name={LP_WORKFLOW_FORM_NAMES.preferredTime} defaultValue={initialValues.preferredTime} required /></label>
+      <label className="span-2">课程与教师<textarea name={LP_WORKFLOW_FORM_NAMES.coursesAndTeachers} defaultValue={initialValues.coursesAndTeachers} rows={3} required /></label>
+      <label className="span-2">试听后补充交接（选填）
         <textarea
           name={LP_WORKFLOW_FORM_NAMES.enrollmentHandoverNotes}
           defaultValue={initialValues.enrollmentHandoverNotes}
           rows={3}
-          required
         />
       </label>
     </> : null}
@@ -554,6 +710,8 @@ export function LpWorkflowFields({
           required
         />
       </label>
+      <label>排课频率<input name={LP_WORKFLOW_FORM_NAMES.lessonFrequency} defaultValue={initialValues.lessonFrequency} required /></label>
+      <label className="span-2">课程与教师<textarea name={LP_WORKFLOW_FORM_NAMES.coursesAndTeachers} defaultValue={initialValues.coursesAndTeachers} rows={3} required /></label>
       <label>赠送课时
         <input
           name={LP_WORKFLOW_FORM_NAMES.bonusHours}
@@ -612,6 +770,53 @@ export type LpRevisionHistoryProps = Readonly<{
   timeZone?: string;
 }>;
 
+export type LpWorkflowDetailsProps = Readonly<{
+  type: LpWorkflowType;
+  fields: LpFieldValues;
+}>;
+
+function httpUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function displayLpFieldValue(value: LpFieldValues[string]) {
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  if (typeof value !== "string") return null;
+  return value.trim() || null;
+}
+
+/** Read-only, schema-scoped view of the fields saved for one of the seven LP workflows. */
+export function LpWorkflowDetails({ type, fields }: LpWorkflowDetailsProps) {
+  const entries = getLpWorkflowSchema(type).fields.flatMap((field) => {
+    if (field.visibleWhen && fields[field.visibleWhen.field] !== field.visibleWhen.equals) return [];
+    if (field.key === "preferredTime" && type !== "学生报名交接" && fields.timeMentioned !== true) return [];
+    const value = displayLpFieldValue(fields[field.key]);
+    return value === null ? [] : [{ field, value }];
+  });
+
+  return <section aria-label={`${type} 当前完整字段`}>
+    <div className="timeline-title"><strong>当前完整字段</strong><small>{entries.length} 项</small></div>
+    {entries.length ? <div className="detail-section split">
+      {entries.map(({ field, value }) => {
+        const url = field.control === "url" ? httpUrl(value) : null;
+        return <div key={field.key}>
+          <span>{field.label}</span>
+          <strong>{url
+            ? <a className="inline-link" href={url} target="_blank" rel="noreferrer">打开链接</a>
+            : value}</strong>
+        </div>;
+      })}
+    </div> : <div className="empty-inline">暂无已保存字段</div>}
+  </section>;
+}
+
 function historyTime(value: string, timeZone: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -627,14 +832,7 @@ function historyTime(value: string, timeZone: string) {
 }
 
 export function lpRevisionDocumentUrl(revision: LpRevision) {
-  const value = revision.after.documentUrl;
-  if (typeof value !== "string") return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
-  } catch {
-    return null;
-  }
+  return httpUrl(revision.after.documentUrl);
 }
 
 /** Compact, read-only revision and stage audit timeline. */

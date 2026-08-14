@@ -67,6 +67,23 @@ test("stale state and out-of-scope staff confirmation are rejected", () => {
   }), (error: unknown) => error instanceof OperationConfirmationError && error.code === "operation_scope_forbidden");
 });
 
+test("archived student operations cannot be confirmed by staff or admins", () => {
+  const archivedRows = rows.map((row) => row.entity === "students"
+    ? { ...row, payload: [{ ...students[0], importArchived: true }] }
+    : row);
+  for (const input of [
+    { actor: "Abby", fullAdmin: false },
+    { actor: "Nixon", fullAdmin: true },
+    { actor: "Ops Admin", fullAdmin: false },
+  ]) {
+    assert.throws(() => prepareOperationConfirmation({
+      command: { operationId: "OPS-1", expectedVersions: { bookings: 3, operations: 4, teachers: 5 } },
+      rows: archivedRows,
+      ...input,
+    }), (error: unknown) => error instanceof OperationConfirmationError && error.code === "operation_scope_forbidden");
+  }
+});
+
 test("substitution must use a server-validated recommended teacher", () => {
   const substituteRows = rows.map((row) => row.entity === "operations" ? {
     ...row, payload: [{ ...operation, type: "代课", recommendedTeacherIds: ["T-2"] }],

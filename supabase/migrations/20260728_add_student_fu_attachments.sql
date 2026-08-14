@@ -32,7 +32,9 @@ declare
   decoded bytea;
   saved internal.student_fu_attachments;
 begin
-  perform internal.verify_ops_secret(p_secret);
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
 
   if p_content_type not in ('image/jpeg', 'image/png', 'image/webp') then
     raise exception 'unsupported_image_type';
@@ -84,7 +86,9 @@ as $$
 declare
   saved internal.student_fu_attachments;
 begin
-  perform internal.verify_ops_secret(p_secret);
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
 
   select * into saved
   from internal.student_fu_attachments

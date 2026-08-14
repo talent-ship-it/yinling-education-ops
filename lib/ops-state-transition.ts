@@ -60,6 +60,18 @@ const OPERATION_TYPES = new Set([
   "换老师",
   "老师离职",
 ]);
+const ARCHIVED_STUDENT_REFERENCE_ENTITIES = new Set([
+  "tasks",
+  "lpItems",
+  "operations",
+  "renewals",
+  "messages",
+  "files",
+  "bookings",
+  "payroll",
+]);
+const ATOMIC_ATTACHMENT_FILE_ID = /^(?:FU|REPORT)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ATOMIC_ATTACHMENT_SOURCE = /^\/api\/fu-attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class OpsStateTransitionError extends Error {
   constructor(
@@ -125,6 +137,58 @@ function omit(value: RecordValue, fields: ReadonlySet<string>) {
 function changedFields(left: RecordValue | undefined, right: RecordValue | undefined) {
   const keys = new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})]);
   return [...keys].filter((key) => !same(left?.[key], right?.[key]));
+}
+
+function studentId(value: RecordValue | undefined) {
+  return typeof value?.studentId === "string" ? value.studentId.trim() : "";
+}
+
+function archivedStudentIds(rows: readonly OpsStateRow[]) {
+  return new Set(rowsFor(rows, "students")
+    .filter((student) => student.importArchived === true)
+    .map((student) => requiredText(student.id, "student.id")));
+}
+
+function assertArchivedStudentReferencesReadOnly(input: {
+  entity: string;
+  currentPayload: unknown;
+  nextPayload: unknown;
+  rows: readonly OpsStateRow[];
+}) {
+  if (!ARCHIVED_STUDENT_REFERENCE_ENTITIES.has(input.entity)) return;
+  const archivedIds = archivedStudentIds(input.rows);
+  if (!archivedIds.size) return;
+  const current = byId(records(input.currentPayload, input.entity));
+  const next = byId(records(input.nextPayload, input.entity));
+  const ids = new Set([...current.keys(), ...next.keys()]);
+  for (const id of ids) {
+    const before = current.get(id);
+    const after = next.get(id);
+    if (same(before, after)) continue;
+    if (archivedIds.has(studentId(before)) || archivedIds.has(studentId(after))) {
+      forbidden("已归档学生的历史业务资料只能查看，不能新增、修改或删除。");
+    }
+  }
+}
+
+function isAtomicAttachmentFile(value: RecordValue | undefined) {
+  return Boolean(value && (
+    (typeof value.id === "string" && ATOMIC_ATTACHMENT_FILE_ID.test(value.id))
+    || (typeof value.source === "string" && ATOMIC_ATTACHMENT_SOURCE.test(value.source))
+  ));
+}
+
+function assertAtomicAttachmentFilesReadOnly(currentPayload: unknown, nextPayload: unknown) {
+  const current = byId(records(currentPayload, "files"));
+  const next = byId(records(nextPayload, "files"));
+  for (const id of new Set([...current.keys(), ...next.keys()])) {
+    const before = current.get(id);
+    const after = next.get(id);
+    if (same(before, after)) continue;
+    if (isAtomicAttachmentFile(before) || isAtomicAttachmentFile(after)) {
+      forbidden("FU 与 Report 附件索引只能由原子上传流程更新。");
+    }
+  }
 }
 
 function addDays(value: string, days: number) {
@@ -552,6 +616,18 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
   }
   for (const student of next) {
     const existing = currentById.get(requiredText(student.id, "student.id"));
+    if (existing?.importArchived === true && !same(existing, student)) {
+      forbidden("已归档学生档案只能查看，不能通过通用保存修改。");
+    }
+    if (
+      (!existing && (Object.hasOwn(student, "importArchived") || Object.hasOwn(student, "importArchivedReason")))
+      || (existing && (
+        !same(existing.importArchived, student.importArchived)
+        || !same(existing.importArchivedReason, student.importArchivedReason)
+      ))
+    ) {
+      forbidden("学生导入归档标记只能由正式导入流程修改。");
+    }
     if (existing && !same(ledger(existing), ledger(student))) {
       forbidden("学生扣课时流水只能由专用课次结算流程更新。");
     }
@@ -644,6 +720,7 @@ export function assertOpsStateTransition(input: {
   rows: readonly OpsStateRow[];
   context: OpsAccessContext;
 }) {
+  assertArchivedStudentReferencesReadOnly(input);
   switch (input.entity) {
     case "bookings":
       assertBookingsTransition(input);
@@ -662,6 +739,9 @@ export function assertOpsStateTransition(input: {
       return;
     case "payroll":
       assertPayrollTransition(input.currentPayload, input.nextPayload);
+      return;
+    case "files":
+      assertAtomicAttachmentFilesReadOnly(input.currentPayload, input.nextPayload);
       return;
     default:
       return;

@@ -10,7 +10,7 @@ import {
 } from "@/lib/booking-capacity-service";
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { buildOpsAccessContext, canAccessStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   BOOKING_CAPACITY_ATOMIC_MUTATION_RPC,
   getBookingCapacityCommandResult,
@@ -42,7 +42,7 @@ function serviceError(error: BookingCapacityServiceError) {
   if (error.code === "stale_expected_version") {
     return noStore({ error: error.message, code: error.code }, 409);
   }
-  if (["schedule_conflict", "teacher_capacity_unconfigured", "teacher_capacity_exhausted", "teacher_unavailable", "teacher_not_accepting", "past_booking"].includes(error.code)) {
+  if (["schedule_conflict", "package_balance_insufficient", "teacher_capacity_unconfigured", "teacher_capacity_exhausted", "teacher_unavailable", "teacher_not_accepting", "past_booking"].includes(error.code)) {
     return noStore({ error: error.message, code: error.code }, 409);
   }
   if (error.code === "invalid_shared_state") {
@@ -65,6 +65,17 @@ export async function POST(request: Request) {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
     const visibleRows = filterOpsStateRows(rows, access);
+    const visibleBookings = visibleRows.find((row) => row.entity === "bookings");
+    const existing = Array.isArray(visibleBookings?.payload)
+      ? visibleBookings.payload.find((value) => value && typeof value === "object" && !Array.isArray(value) && (value as { id?: unknown }).id === command.bookingId) as { studentId?: unknown } | undefined
+      : undefined;
+    const existingStudentId = typeof existing?.studentId === "string" ? existing.studentId : "";
+    const studentId = command.booking?.studentId ?? existingStudentId;
+    const studentAllowed = Boolean(studentId && canOperateStudent(access, studentId)
+      && (!existingStudentId || canOperateStudent(access, existingStudentId)));
+    if (!studentAllowed || (session.role === "teacher" && command.action === "delete")) {
+      return noStore({ error: "当前账号不能修改这条排课。", code: "student_scope_forbidden" }, 403);
+    }
     const commandKey = bookingCapacityCommandKey(command);
     const commandIntent = bookingCapacityCommandIntent(command);
     const replay = await getBookingCapacityCommandResult({ commandKey, commandIntent, actor });
@@ -82,14 +93,6 @@ export async function POST(request: Request) {
         teacherRow: currentTeacherRow,
         auditEntryId: replay[0].audit_entry_id,
       });
-    }
-    const visibleBookings = visibleRows.find((row) => row.entity === "bookings");
-    const existing = Array.isArray(visibleBookings?.payload)
-      ? visibleBookings.payload.find((value) => value && typeof value === "object" && !Array.isArray(value) && (value as { id?: unknown }).id === command.bookingId) as { studentId?: unknown } | undefined
-      : undefined;
-    const studentId = command.booking?.studentId ?? (typeof existing?.studentId === "string" ? existing.studentId : "");
-    if (!studentId || !canAccessStudent(access, studentId) || (session.role === "teacher" && command.action === "delete")) {
-      return noStore({ error: "当前账号不能修改这条排课。", code: "student_scope_forbidden" }, 403);
     }
     const prepared = prepareBookingCapacityMutation({ command, rows, actor, role: session.role, fullAdmin });
     const saved = await mutateBookingCapacityAtomic({ ...prepared, actor });

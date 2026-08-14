@@ -35,6 +35,7 @@ export type StudentRecordsPanelStudent = Readonly<{
   followUp?: string;
   followUpHistory?: readonly StudentFollowUp[];
   lessonPackages?: readonly StudentLessonPackage[];
+  packageCoverage?: "complete" | "partial" | "none";
   examSubject?: string;
   examDate?: string;
   exams?: readonly StudentExamRecord[];
@@ -79,6 +80,7 @@ export type StudentRecordsPanelProps = Readonly<{
 }>;
 
 export type StudentRecordsPanelData = Readonly<{
+  packageCoverage: "complete" | "partial" | "none";
   files: Readonly<Record<StudentRecordFileSection, readonly StudentRecordsPanelFile[]>>;
   followUps: readonly StudentFollowUp[];
   latestFollowUp: StudentFollowUp | null;
@@ -172,6 +174,7 @@ export function buildStudentRecordsPanelData(
   const structuredExams = student.exams ?? [];
   const fallbackExam = structuredExams.length ? null : legacyExam(student);
   return {
+    packageCoverage: student.packageCoverage ?? (student.lessonPackages?.length ? "complete" : "none"),
     files: {
       lp: sortFileHistory(groupedFiles.lp),
       report: sortFileHistory(groupedFiles.report),
@@ -269,9 +272,14 @@ function FollowUpHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) 
 }
 
 function LessonPackageHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) {
-  if (!data.lessonPackages.length) return <EmptyRecords />;
+  if (!data.lessonPackages.length) return <>
+    {data.packageCoverage === "none" ? <div className="form-notice">教务宝当前余额已保留，但缺少可核对的逐课程购买历史，尚未建立课包。</div> : null}
+    <EmptyRecords />
+  </>;
   return (
-    <div className="record-list">
+    <>
+      {data.packageCoverage === "partial" ? <div className="form-notice">当前仅显示有购买历史可核对的课包；其余课程余额仍保留在教务宝汇总中，需人工补齐购买记录。</div> : null}
+      <div className="record-list">
       {data.lessonPackages.map(({ lessonPackage, balance }) => (
         <article className="detail-section" key={lessonPackage.id}>
           <strong>{lessonPackage.name}</strong>
@@ -291,7 +299,8 @@ function LessonPackageHistory({ data }: Readonly<{ data: StudentRecordsPanelData
           </div>
         </article>
       ))}
-    </div>
+      </div>
+    </>
   );
 }
 

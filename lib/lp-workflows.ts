@@ -19,6 +19,15 @@ export type PreparationFollowUp = (typeof PREPARATION_FOLLOW_UP_OPTIONS)[number]
 export const LP_CONTACT_OPTIONS = ["家长", "学生本人"] as const;
 export type LpContact = (typeof LP_CONTACT_OPTIONS)[number];
 
+export const TRIAL_PAYMENT_METHODS = [
+  "后置付费试听",
+  "付费试听（已付费）",
+  "付费试听（未付费）",
+  "免费试听",
+  "在读学生付费试听",
+] as const;
+export type TrialPaymentMethod = (typeof TRIAL_PAYMENT_METHODS)[number];
+
 export type LpCommonFields = {
   responsibleOperations: string;
   specifiedContentStatus: SpecifiedContentStatus;
@@ -35,19 +44,40 @@ export type TrialLpFields = LpCommonFields & {
   oneSentenceDescription: string;
   locationTimezone: string;
   contactPerson: LpContact;
+  timeMentioned: boolean;
+  preferredTime?: string;
+  studentNameKnown: boolean;
+  trialPaymentMethod: TrialPaymentMethod;
 };
 
-export type DirectEnrollmentLpFields = TrialLpFields & {
+export type DirectEnrollmentLpFields = Omit<TrialLpFields, "assignedTeacher" | "studentNameKnown" | "trialPaymentMethod"> & {
   purchasedHours: number;
   bonusHours: number;
+  lessonFrequency: string;
+  coursesAndTeachers: string;
 };
 
-/** Minimum system handover fields; these do not claim to reproduce any group template. */
+/** Sections shared by the maintained Tencent LP templates. */
 export type TeacherLpFields = LpCommonFields & {
   teacher: string;
   subject: string;
   documentUrl?: string;
-  modificationRequirements?: string;
+  additionalNotes: string;
+  basicInfo: string;
+  studentFoundation: string;
+  learningGoal: string;
+  recommendedResources: string;
+  teachingLanguage: string;
+  firstLessonContent: string;
+  lessonSchedule: string;
+  comments?: string;
+};
+
+export type TeacherLpModificationFields = LpCommonFields & {
+  teacher: string;
+  subject: string;
+  documentUrl?: string;
+  modificationRequirements: string;
 };
 
 export type TeacherChangeTrialFields = LpCommonFields & {
@@ -56,6 +86,12 @@ export type TeacherChangeTrialFields = LpCommonFields & {
   subject: string;
   changeReason: string;
   trialInformation: string;
+  handoverFromTeacher: string;
+  materialsAndContentTaught: string;
+  recommendedNextContent: string;
+  studentStrengthsAndLearningProfile: string;
+  lastHomework: string;
+  lastLessonRecordingUrl: string;
 };
 
 export type SubstituteTeacherLpFields = LpCommonFields & {
@@ -64,20 +100,35 @@ export type SubstituteTeacherLpFields = LpCommonFields & {
   subject: string;
   coverageStartDate: string;
   coverageEndDate: string;
-  handoverNotes: string;
+  additionalNotes: string;
+  basicInfo: string;
+  studentFoundation: string;
+  learningGoal: string;
+  allocatedLessonContentAndResources: string;
+  teachingLanguage: string;
+  comments?: string;
+  lastHomework: string;
+  lastLessonRecordingUrl: string;
+  /** Legacy single-note field retained for already-stored workflows. */
+  handoverNotes?: string;
 };
 
 export type EnrollmentHandoverLpFields = LpCommonFields & {
   planner: string;
   coursePackage: string;
   subject: string;
-  enrollmentHandoverNotes: string;
+  purchasedHours: number;
+  bonusHours: number;
+  lessonFrequency: string;
+  preferredTime: string;
+  coursesAndTeachers: string;
+  enrollmentHandoverNotes?: string;
 };
 
 export type LpWorkflowFieldsByType = {
   "试听 LP": TrialLpFields;
   "老师新 LP": LpCommonFields | TeacherLpFields;
-  "老师 LP 修改": LpCommonFields | TeacherLpFields;
+  "老师 LP 修改": LpCommonFields | TeacherLpModificationFields;
   "换老师试听": LpCommonFields | TeacherChangeTrialFields;
   "代课 LP": LpCommonFields | SubstituteTeacherLpFields;
   "学生直报（无试听）": DirectEnrollmentLpFields;
@@ -87,10 +138,11 @@ export type LpWorkflowFieldsByType = {
 type LpWorkflowFieldKey = keyof (
   DirectEnrollmentLpFields
   & TeacherLpFields
+  & TeacherLpModificationFields
   & TeacherChangeTrialFields
   & SubstituteTeacherLpFields
   & EnrollmentHandoverLpFields
-);
+) | "assignedTeacher" | "studentNameKnown" | "trialPaymentMethod";
 
 export type LpFieldControl = "text" | "textarea" | "select" | "number" | "boolean" | "url" | "date";
 export type LpFieldRequirement = "required" | "optional" | "university-only";
@@ -160,18 +212,49 @@ const trialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
     requirement: "required",
     options: LP_CONTACT_OPTIONS,
   }),
+  Object.freeze({ key: "timeMentioned", label: "是否提到时间", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "preferredTime", label: "偏好时间", control: "text", requirement: "optional" }),
+  Object.freeze({ key: "studentNameKnown", label: "是否知道学生姓名", control: "boolean", requirement: "required" }),
+  Object.freeze({
+    key: "trialPaymentMethod",
+    label: "试听付费方式",
+    control: "select",
+    requirement: "required",
+    options: TRIAL_PAYMENT_METHODS,
+  }),
 ]);
 
 const directEnrollmentHoursSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "purchasedHours", label: "购买课时", control: "number", requirement: "required", min: 0 }),
   Object.freeze({ key: "bonusHours", label: "赠送课时", control: "number", requirement: "required", min: 0 }),
+  Object.freeze({ key: "lessonFrequency", label: "排课频率", control: "text", requirement: "required" }),
+  Object.freeze({ key: "coursesAndTeachers", label: "课程与教师", control: "textarea", requirement: "required" }),
 ]);
+
+const directEnrollmentTrialSchema = Object.freeze(
+  trialFieldSchema.filter((field) => !["assignedTeacher", "studentNameKnown", "trialPaymentMethod"].includes(field.key)),
+);
 
 const teacherLpFieldSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "teacher", label: "老师", control: "text", requirement: "required" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "documentUrl", label: "文档 URL", control: "url", requirement: "optional" }),
-  Object.freeze({ key: "modificationRequirements", label: "修改要求", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "additionalNotes", label: "补充注意事项", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "basicInfo", label: "基本信息", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "studentFoundation", label: "学生基础", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "learningGoal", label: "学习目的", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "recommendedResources", label: "建议资料库", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "teachingLanguage", label: "授课语言", control: "text", requirement: "required" }),
+  Object.freeze({ key: "firstLessonContent", label: "试听课 / 首次课内容", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "lessonSchedule", label: "课时计划", control: "text", requirement: "required" }),
+  Object.freeze({ key: "comments", label: "备注", control: "textarea", requirement: "optional" }),
+]);
+
+const teacherLpModificationFieldSchema: readonly LpFieldSchema[] = Object.freeze([
+  Object.freeze({ key: "teacher", label: "老师", control: "text", requirement: "required" }),
+  Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
+  Object.freeze({ key: "documentUrl", label: "文档 URL", control: "url", requirement: "optional" }),
+  Object.freeze({ key: "modificationRequirements", label: "修改要求", control: "textarea", requirement: "required" }),
 ]);
 
 const teacherChangeTrialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
@@ -180,6 +263,12 @@ const teacherChangeTrialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "changeReason", label: "更换原因", control: "textarea", requirement: "required" }),
   Object.freeze({ key: "trialInformation", label: "试听信息", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "handoverFromTeacher", label: "交接老师", control: "text", requirement: "required" }),
+  Object.freeze({ key: "materialsAndContentTaught", label: "已使用资料、已教内容", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "recommendedNextContent", label: "建议后续内容与资料", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "studentStrengthsAndLearningProfile", label: "学生强项、进步方向与学习特点", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "lastHomework", label: "上节课作业", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "lastLessonRecordingUrl", label: "上次课录像 URL", control: "url", requirement: "required" }),
 ]);
 
 const substituteTeacherFieldSchema: readonly LpFieldSchema[] = Object.freeze([
@@ -188,14 +277,27 @@ const substituteTeacherFieldSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "coverageStartDate", label: "覆盖开始日期", control: "date", requirement: "required" }),
   Object.freeze({ key: "coverageEndDate", label: "覆盖结束日期", control: "date", requirement: "required" }),
-  Object.freeze({ key: "handoverNotes", label: "交接说明", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "additionalNotes", label: "补充注意事项", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "basicInfo", label: "基本信息", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "studentFoundation", label: "学生基础", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "learningGoal", label: "学习目的", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "allocatedLessonContentAndResources", label: "指定代课内容与资料", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "teachingLanguage", label: "授课语言", control: "text", requirement: "required" }),
+  Object.freeze({ key: "comments", label: "备注", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "lastHomework", label: "上节课作业", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "lastLessonRecordingUrl", label: "上次课录像 URL", control: "url", requirement: "required" }),
 ]);
 
 const enrollmentHandoverFieldSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "planner", label: "规划老师", control: "text", requirement: "required" }),
   Object.freeze({ key: "coursePackage", label: "课程 / 课包", control: "text", requirement: "required" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
-  Object.freeze({ key: "enrollmentHandoverNotes", label: "报名交接说明", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "purchasedHours", label: "购买课时", control: "number", requirement: "required", min: 0 }),
+  Object.freeze({ key: "bonusHours", label: "赠送课时", control: "number", requirement: "required", min: 0 }),
+  Object.freeze({ key: "lessonFrequency", label: "排课频率", control: "text", requirement: "required" }),
+  Object.freeze({ key: "preferredTime", label: "已提到的时间", control: "text", requirement: "required" }),
+  Object.freeze({ key: "coursesAndTeachers", label: "课程与教师", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "enrollmentHandoverNotes", label: "试听后补充交接", control: "textarea", requirement: "optional" }),
 ]);
 
 function schema(
@@ -213,13 +315,13 @@ function schema(
 export const LP_WORKFLOW_SCHEMAS: Readonly<Record<LpWorkflowType, LpWorkflowSchema>> = Object.freeze({
   "试听 LP": schema("试听 LP", true, trialFieldSchema),
   "老师新 LP": schema("老师新 LP", true, teacherLpFieldSchema),
-  "老师 LP 修改": schema("老师 LP 修改", true, teacherLpFieldSchema),
+  "老师 LP 修改": schema("老师 LP 修改", true, teacherLpModificationFieldSchema),
   "换老师试听": schema("换老师试听", true, teacherChangeTrialFieldSchema),
   "代课 LP": schema("代课 LP", true, substituteTeacherFieldSchema),
   "学生直报（无试听）": schema(
     "学生直报（无试听）",
     true,
-    Object.freeze([...trialFieldSchema, ...directEnrollmentHoursSchema]),
+    Object.freeze([...directEnrollmentTrialSchema, ...directEnrollmentHoursSchema]),
   ),
   "学生报名交接": schema("学生报名交接", true, enrollmentHandoverFieldSchema),
 });
@@ -344,6 +446,34 @@ function optionalText(fields: LpFieldValues, key: string) {
   if (value !== undefined && (typeof value !== "string" || !value.trim())) throw new Error(`${key} must be a non-empty string`);
 }
 
+function requireBoolean(fields: LpFieldValues, key: string) {
+  if (fields[key] !== true && fields[key] !== false) throw new Error(`${key} must be a boolean`);
+}
+
+function requireOneOf(fields: LpFieldValues, key: string, allowed: readonly string[]) {
+  requireText(fields, key);
+  if (!allowed.includes(String(fields[key]))) throw new Error(`${key} must be one of the allowed options`);
+}
+
+function requireNonNegativeHours(fields: LpFieldValues) {
+  for (const key of ["purchasedHours", "bonusHours"]) {
+    const value = fields[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${key} must be a non-negative number`);
+  }
+  if (Number(fields.purchasedHours) + Number(fields.bonusHours) <= 0) {
+    throw new Error("purchasedHours and bonusHours total must be greater than zero");
+  }
+}
+
+function validateOptionalHttpUrl(fields: LpFieldValues, key: string) {
+  optionalText(fields, key);
+  if (typeof fields[key] === "string") validateLpDocumentUrl(fields[key]);
+}
+
+function hasAnyField(fields: LpFieldValues, keys: readonly string[]) {
+  return keys.some((key) => fields[key] !== undefined);
+}
+
 export function validateLpDocumentUrl(value: string) {
   let parsed: URL;
   try {
@@ -368,42 +498,74 @@ export function validateLpDate(value: string, field = "date") {
 
 /** Validates the minimum system handover fields for a workflow type. */
 export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldValues) {
-  for (const key of ["responsibleOperations", "specifiedContentStatus", "preparationFollowUp"]) requireText(fields, key);
-  if (fields.isUniversityStudent !== true && fields.isUniversityStudent !== false) {
-    throw new Error("isUniversityStudent must be a boolean");
-  }
+  requireText(fields, "responsibleOperations");
+  requireOneOf(fields, "specifiedContentStatus", SPECIFIED_CONTENT_STATUSES);
+  requireOneOf(fields, "preparationFollowUp", PREPARATION_FOLLOW_UP_OPTIONS);
+  requireBoolean(fields, "isUniversityStudent");
   if (fields.isUniversityStudent) {
     requireText(fields, "universityMajor");
     requireText(fields, "universityYear");
   }
 
   if (type === "试听 LP" || type === "学生直报（无试听）") {
-    for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson"]) requireText(fields, key);
+    for (const key of ["subject", "oneSentenceDescription", "locationTimezone", "contactPerson"]) requireText(fields, key);
+    requireOneOf(fields, "contactPerson", LP_CONTACT_OPTIONS);
+    requireBoolean(fields, "timeMentioned");
+    if (fields.timeMentioned) requireText(fields, "preferredTime");
+    else optionalText(fields, "preferredTime");
+  }
+  if (type === "试听 LP") {
+    requireText(fields, "assignedTeacher");
+    requireBoolean(fields, "studentNameKnown");
+    requireOneOf(fields, "trialPaymentMethod", TRIAL_PAYMENT_METHODS);
   }
   if (type === "学生直报（无试听）") {
-    for (const key of ["purchasedHours", "bonusHours"]) {
-      const value = fields[key];
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`${key} must be a non-negative number`);
-    }
+    requireNonNegativeHours(fields);
+    for (const key of ["lessonFrequency", "coursesAndTeachers"]) requireText(fields, key);
   }
   if (type === "老师新 LP" || type === "老师 LP 修改") {
     requireText(fields, "teacher");
     requireText(fields, "subject");
-    optionalText(fields, "documentUrl");
-    optionalText(fields, "modificationRequirements");
-    if (typeof fields.documentUrl === "string") validateLpDocumentUrl(fields.documentUrl);
+    validateOptionalHttpUrl(fields, "documentUrl");
+    const templateKeys = ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule"] as const;
+    if (type === "老师新 LP" && hasAnyField(fields, templateKeys)) {
+      for (const key of templateKeys) requireText(fields, key);
+      optionalText(fields, "comments");
+    }
+    if (type === "老师 LP 修改") optionalText(fields, "modificationRequirements");
   }
   if (type === "换老师试听") {
     for (const key of ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation"]) requireText(fields, key);
+    const handoverKeys = ["handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"] as const;
+    if (hasAnyField(fields, handoverKeys)) {
+      for (const key of handoverKeys) requireText(fields, key);
+      validateOptionalHttpUrl(fields, "lastLessonRecordingUrl");
+    }
   }
   if (type === "代课 LP") {
-    for (const key of ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "handoverNotes"]) requireText(fields, key);
+    for (const key of ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate"]) requireText(fields, key);
     const start = validateLpDate(String(fields.coverageStartDate), "coverageStartDate");
     const end = validateLpDate(String(fields.coverageEndDate), "coverageEndDate");
     if (end < start) throw new Error("coverageEndDate must not be before coverageStartDate");
+    const templateKeys = ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "lastHomework", "lastLessonRecordingUrl"] as const;
+    if (hasAnyField(fields, templateKeys)) {
+      for (const key of templateKeys) requireText(fields, key);
+      optionalText(fields, "comments");
+      validateOptionalHttpUrl(fields, "lastLessonRecordingUrl");
+    } else {
+      requireText(fields, "handoverNotes");
+    }
   }
   if (type === "学生报名交接") {
-    for (const key of ["planner", "coursePackage", "subject", "enrollmentHandoverNotes"]) requireText(fields, key);
+    for (const key of ["planner", "coursePackage", "subject"]) requireText(fields, key);
+    const templateKeys = ["purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers"] as const;
+    if (hasAnyField(fields, templateKeys)) {
+      requireNonNegativeHours(fields);
+      for (const key of ["lessonFrequency", "preferredTime", "coursesAndTeachers"]) requireText(fields, key);
+      optionalText(fields, "enrollmentHandoverNotes");
+    } else {
+      requireText(fields, "enrollmentHandoverNotes");
+    }
   }
   return immutableFields(fields);
 }

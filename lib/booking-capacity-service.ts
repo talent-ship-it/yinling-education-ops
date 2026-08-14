@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import { expandLessonOccurrences, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
+import { getLessonPackageBalance, type StudentLessonPackage } from "@/lib/student-records";
 import {
   expandTeacherAvailability,
   type TeacherAvailabilityWindow,
@@ -66,6 +67,7 @@ export type BookingCapacityServiceErrorCode =
   | "assignment_change_forbidden"
   | "package_required"
   | "package_subject_mismatch"
+  | "package_balance_insufficient"
   | "subject_not_allowed"
   | "teacher_not_accepting"
   | "teacher_capacity_unconfigured"
@@ -414,6 +416,17 @@ function studentSubjects(student: RecordValue) {
   return { subjects, packages };
 }
 
+function packageBalance(lessonPackage: RecordValue) {
+  try {
+    return getLessonPackageBalance(lessonPackage as StudentLessonPackage).remainingHours;
+  } catch (error) {
+    fail(
+      "invalid_shared_state",
+      error instanceof Error ? `The selected lesson package is invalid: ${error.message}` : "The selected lesson package is invalid.",
+    );
+  }
+}
+
 function assertPackageAndSubject(student: RecordValue, booking: BookingCapacityCommand["booking"]) {
   if (!booking) return;
   const { subjects, packages } = studentSubjects(student);
@@ -431,6 +444,80 @@ function assertPackageAndSubject(student: RecordValue, booking: BookingCapacityC
   const lessonPackage = packages.find((item) => item.id === booking.packageId);
   if (!lessonPackage || !Array.isArray(lessonPackage.subjectIds) || !lessonPackage.subjectIds.includes(booking.subjectId)) {
     fail("package_subject_mismatch", "The selected lesson package is not linked to this subject.");
+  }
+  if (packageBalance(lessonPackage) <= 0) {
+    fail("package_balance_insufficient", "The selected lesson package has no available hours.");
+  }
+}
+
+function bookingSourceEnd(booking: RecordValue) {
+  const date = stateText(booking, "date", "booking");
+  if (booking.recurring !== true) return date;
+  if (!Number.isSafeInteger(booking.repeatCount) || (booking.repeatCount as number) < 1) {
+    fail("invalid_shared_state", "A billable recurring booking must have a finite repeatCount.");
+  }
+  return addDays(date, ((booking.repeatCount as number) - 1) * 7);
+}
+
+function reservedPackageHours(input: {
+  bookings: readonly RecordValue[];
+  studentId: string;
+  packageId: string;
+  now: Date;
+}) {
+  let reserved = 0;
+  for (const booking of input.bookings) {
+    if (booking.kind === "试听") continue;
+    const overrides = Array.isArray(booking.occurrenceOverrides)
+      ? booking.occurrenceOverrides.filter(isRecord)
+      : [];
+    const mightUsePackage = booking.studentId === input.studentId && booking.packageId === input.packageId;
+    const overrideUsesPackage = overrides.some((override) =>
+      (optionalText(override.studentId) ?? optionalText(booking.studentId)) === input.studentId
+      && (optionalText(override.packageId) ?? optionalText(booking.packageId)) === input.packageId);
+    if (!mightUsePackage && !overrideUsesPackage) continue;
+    const occurrences = bookingOccurrences(
+      booking,
+      stateText(booking, "date", "booking"),
+      bookingSourceEnd(booking),
+    );
+    for (const occurrence of occurrences) {
+      if (occurrence.studentId !== input.studentId || occurrence.packageId !== input.packageId) continue;
+      if (["completed", "cancelled", "leave", "abnormal"].includes(occurrence.status)) continue;
+      const timezone = stateText(booking, "timezone", "booking");
+      const occurrenceEnd = bookingInstant(occurrence.date, occurrence.start, timezone).getTime()
+        + occurrence.scheduledDurationMinutes * 60_000;
+      if (occurrenceEnd <= input.now.getTime()) continue;
+      reserved += occurrence.scheduledDurationMinutes / 60;
+    }
+  }
+  return Math.round(reserved * 1_000_000) / 1_000_000;
+}
+
+function assertPackageReservation(input: {
+  student: RecordValue;
+  bookings: readonly RecordValue[];
+  booking: NonNullable<BookingCapacityCommand["booking"]>;
+  now: Date;
+}) {
+  if (input.booking.kind === "试听" || !input.booking.packageId) return;
+  const packages = Array.isArray(input.student.lessonPackages)
+    ? input.student.lessonPackages.filter(isRecord)
+    : [];
+  const lessonPackage = packages.find((item) => item.id === input.booking.packageId);
+  if (!lessonPackage) fail("package_subject_mismatch", "The selected lesson package no longer exists.");
+  const available = packageBalance(lessonPackage);
+  const reserved = reservedPackageHours({
+    bookings: input.bookings,
+    studentId: stateId(input.student, "student"),
+    packageId: input.booking.packageId,
+    now: input.now,
+  });
+  if (reserved > available + 0.000001) {
+    fail(
+      "package_balance_insufficient",
+      `The selected lesson package has ${available} hours available but ${reserved} hours are already scheduled.`,
+    );
   }
 }
 
@@ -506,8 +593,8 @@ export function prepareBookingCapacityMutation(input: {
   if (!targetTeacher) fail("teacher_not_found", "Booking teacher was not found.");
 
   if (!admin && (!access.staff && !access.teacher)) fail("student_scope_forbidden", "Current account cannot mutate bookings.");
-  if (!admin && !canAccessStudent(access, targetStudentId)) fail("student_scope_forbidden", "Current account cannot mutate this student's bookings.");
-  if (!admin && existing && !canAccessStudent(access, oldStudentId)) fail("student_scope_forbidden", "Current account cannot mutate the original student's booking.");
+  if (!canOperateStudent(access, targetStudentId)) fail("student_scope_forbidden", "Archived students' bookings cannot be created, changed, or deleted.");
+  if (existing && !canOperateStudent(access, oldStudentId)) fail("student_scope_forbidden", "Archived students' bookings cannot be changed or deleted.");
   if (access.teacher) {
     if (input.command.action === "delete") fail("teacher_forbidden", "Teacher accounts cannot delete a booking series.");
     if (!access.teacherIds.has(targetTeacherId) || (existing && oldTeacherId !== targetTeacherId)) {
@@ -571,6 +658,7 @@ export function prepareBookingCapacityMutation(input: {
     nextBookings = existing
       ? bookingRow.payload.map((candidate) => candidate.id === input.command.bookingId ? nextBooking : candidate)
       : [...bookingRow.payload, nextBooking];
+    assertPackageReservation({ student: targetStudent, bookings: nextBookings, booking, now });
     action = existing ? "update" : "create";
   }
 

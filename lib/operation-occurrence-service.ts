@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import { updateBookingOccurrence } from "@/lib/booking-occurrence-updates";
@@ -293,7 +293,7 @@ export function prepareOperationConfirmation(input: {
   if (access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
     fail("teacher_forbidden", "老师账号不能最终确认教务异常。");
   }
-  if (!canAccessStudent(access, stateText(operation, "studentId", "operation"))) {
+  if (!canOperateStudent(access, stateText(operation, "studentId", "operation"))) {
     fail("operation_scope_forbidden", "当前账号不能确认这名学生的异常记录。");
   }
 

@@ -11,6 +11,7 @@ test("booking route uses one atomic RPC and never falls back to independent stat
   assert.match(route, /prepareBookingCapacityMutation/);
   assert.match(route, /getBookingCapacityCommandResult/);
   assert.ok(route.indexOf("getBookingCapacityCommandResult") < route.indexOf("prepareBookingCapacityMutation({"));
+  assert.ok(route.indexOf("canOperateStudent") < route.indexOf("getBookingCapacityCommandResult({"));
   assert.match(route, /mutateBookingCapacityAtomic\(\{ \.\.\.prepared, actor \}\)/);
   assert.doesNotMatch(route, /putOpsState/);
   assert.match(route, /booking_capacity_contract_unavailable/);
@@ -28,11 +29,20 @@ test("database contract locks versions and writes bookings plus teachers transac
   assert.match(body, /where s\.entity = 'bookings' for update/);
   assert.match(body, /where s\.entity = 'students' for update/);
   assert.match(body, /where s\.entity = 'teachers' for update/);
-  assert.match(body, /booking_state\.version <> expected_booking_version/);
-  assert.match(body, /student_state\.version <> expected_student_version/);
-  assert.match(body, /teacher_state\.version <> expected_teacher_version/);
+  assert.match(body, /p_expected_versions - 'bookings' - 'students' - 'teachers' <> '\{\}'::jsonb/);
+  assert.match(body, /expected_booking_version is null or expected_booking_version < 1/);
+  assert.match(body, /expected_student_version is null or expected_student_version < 1/);
+  assert.match(body, /expected_teacher_version is null or expected_teacher_version < 1/);
+  assert.match(body, /booking_state\.version is distinct from expected_booking_version/);
+  assert.match(body, /student_state\.version is distinct from expected_student_version/);
+  assert.match(body, /teacher_state\.version is distinct from expected_teacher_version/);
   assert.match(body, /unrelated_booking_changed/);
   assert.match(body, /unrelated_teacher_changed/);
+  assert.match(body, /target_student :=[\s\S]*student_state\.payload/);
+  assert.match(body, /current_student :=[\s\S]*current_booking ->> 'studentId'/);
+  assert.match(body, /archived_student_booking_read_only/);
+  assert.ok(body.indexOf("for update") < body.indexOf("archived_student_booking_read_only"));
+  assert.ok(body.indexOf("archived_student_booking_read_only") < body.indexOf("if prior.command_key is not null then"));
   assert.match(body, /update public\.ops_state s set[\s\S]*where s\.entity = 'bookings'/);
   assert.match(body, /update public\.ops_state s set[\s\S]*where s\.entity = 'teachers'/);
   assert.match(body, /append_operational_contract_audit/);
@@ -40,7 +50,7 @@ test("database contract locks versions and writes bookings plus teachers transac
   assert.match(body, /prior\.command_intent is distinct from p_command_intent/);
   assert.match(body, /p_command_intent ->> 'action' = 'upsert' and p_action in \('create', 'update'\)/);
   assert.match(body, /p_command_intent ->> 'action' = 'delete' and p_action = 'delete'/);
-  assert.doesNotMatch(body.slice(body.indexOf("if prior.command_key is not null then"), body.indexOf("if booking_state.version <> expected_booking_version")), /prior\.booking_version/);
+  assert.doesNotMatch(body.slice(body.indexOf("if prior.command_key is not null then"), body.indexOf("if booking_state.version is distinct from expected_booking_version")), /prior\.booking_version/);
 });
 
 test("database exposes a secret-only stable-intent replay lookup", async () => {

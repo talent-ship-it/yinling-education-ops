@@ -250,6 +250,48 @@ export function lessonOccurrenceId(seriesId: string, sourceDate: string) {
   return `${seriesId}:${sourceDate}`;
 }
 
+/**
+ * Expands a target-date query far enough to include occurrences whose stable
+ * source date sits outside that target range. This is required when a single
+ * occurrence has been moved into the requested day or week.
+ */
+export function lessonOccurrenceSourceRangeForTargetRange(
+  rangeStart: string,
+  rangeEnd: string,
+  overrides: readonly LessonOccurrenceOverride[] = [],
+) {
+  requireDate(rangeStart, "rangeStart");
+  requireDate(rangeEnd, "rangeEnd");
+  if (rangeEnd < rangeStart) throw new RangeError("rangeEnd must not be before rangeStart");
+
+  const sourceDates = overrides.flatMap((override) => {
+    if (!override.date) return [];
+    requireDate(override.date, "occurrence date");
+    if (override.date < rangeStart || override.date > rangeEnd) return [];
+    const sourceDate = override.occurrenceId.slice(-10);
+    return DATE_PATTERN.test(sourceDate) ? [sourceDate] : [];
+  });
+
+  return {
+    rangeStart: [rangeStart, ...sourceDates].sort()[0],
+    rangeEnd: [rangeEnd, ...sourceDates].sort().at(-1)!,
+  };
+}
+
+/** Earliest visible date for a series, including occurrences moved earlier. */
+export function earliestLessonOccurrenceTargetDate(
+  seriesDate: string,
+  overrides: readonly LessonOccurrenceOverride[] = [],
+) {
+  requireDate(seriesDate, "series.date");
+  const targetDates = overrides.flatMap((override) => {
+    if (!override.date) return [];
+    requireDate(override.date, "occurrence date");
+    return [override.date];
+  });
+  return [seriesDate, ...targetDates].sort()[0];
+}
+
 /** Expands weekly legacy series into independently mutable occurrence records. */
 export function expandLessonOccurrences(
   series: LegacyLessonSeries,

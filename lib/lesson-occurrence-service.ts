@@ -296,6 +296,10 @@ export function prepareLessonOccurrenceSettlement(input: {
     throw new LessonOccurrenceServiceError("invalid_request", "Provider callbacks cannot override attendance.");
   }
 
+  if (student.importArchived === true) {
+    throw new LessonOccurrenceServiceError("student_scope_forbidden", "Archived students' lessons cannot be settled.");
+  }
+
   const packages = parsePackages(student.lessonPackages);
   if (!packages.some((lessonPackage) => lessonPackage.id === occurrence.packageId)) {
     throw new LessonOccurrenceServiceError("package_not_found", "Occurrence lesson package was not found on the student.");

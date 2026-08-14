@@ -310,6 +310,9 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(client, /contractEffectiveDate\?: string/);
   assert.match(client, /jwbSyncStatus\?: string/);
   assert.match(client, /教务宝同步/);
+  assert.match(client, /教务宝剩余 \/ 当前总课时/);
+  assert.match(client, /disabled=\{bookingFormKind !== "试听" && balance <= 0\}/);
+  assert.match(client, /disabled=\{balance <= 0\}/);
   assert.doesNotMatch(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
   assert.match(client, /useState<"month" \| "week" \| "agenda">\("month"\)/);
   assert.match(client, /const scheduleDensity = displayPreferences\.density/);
@@ -419,9 +422,9 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(client, /appendStudentFollowUp\(item\.followUpHistory \?\? \[\], followUp\)/);
   assert.match(client, /addAudit\(\s*"记录续课跟进"/);
   assert.match(client, /fetch\("\/api\/fu-attachments"/);
-  assert.match(client, /type: "续课 FU"/);
+  assert.match(client, /upload\.set\("fileType", "续课 FU"\)/);
   assert.match(client, /聊天记录截图（可选）/);
-  assert.match(store, /putStudentFuAttachment/);
+  assert.match(store, /putStudentFuAttachmentAtomic/);
   assert.match(store, /getStudentFuAttachment/);
   assert.match(uploadRoute, /getCurrentDemoSession/);
   assert.match(uploadRoute, /MAX_STUDENT_ATTACHMENT_BYTES/);
@@ -432,11 +435,13 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(downloadRoute, /canAccessStudent/);
   assert.match(downloadRoute, /Cache-Control": "private, no-store"/);
   assert.match(migration, /student_fu_attachments enable row level security/);
-  assert.match(migration, /perform internal\.verify_ops_secret\(p_secret\)/);
+  assert.match(migration, /if not internal\.verify_ops_secret\(p_secret\) then/);
+  assert.doesNotMatch(migration, /perform internal\.verify_ops_secret\(p_secret\)/);
   assert.match(migration, /revoke all on table internal\.student_fu_attachments from anon, authenticated/);
   assert.match(pdfMigration, /application\/pdf/);
   assert.match(pdfMigration, /octet_length\(decoded\) > 4194304/);
-  assert.match(pdfMigration, /perform internal\.verify_ops_secret\(p_secret\)/);
+  assert.match(pdfMigration, /if not internal\.verify_ops_secret\(p_secret\) then/);
+  assert.doesNotMatch(pdfMigration, /perform internal\.verify_ops_secret\(p_secret\)/);
   assert.match(css, /\.renewal-status-cell/);
   assert.match(css, /\.upload-field/);
 });
@@ -486,8 +491,11 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(lpWorkflows, /export function changeLpStage/);
   assert.match(lpFields, /export function parseLpWorkflowFormData/);
   assert.match(lpFields, /export function LpWorkflowFields/);
+  assert.match(lpFields, /export function LpWorkflowDetails/);
   assert.match(lpFields, /export function LpRevisionHistory/);
   assert.match(client, /<LpWorkflowFields/);
+  assert.match(client, /<LpWorkflowDetails/);
+  assert.match(client, /<details className="span-2" open>/);
   assert.match(client, /parsedLp\.fields as unknown as LpFieldValues/);
   assert.match(client, /const revised = reviseLpWorkflow/);
   assert.match(client, /const changed = changeLpStage/);
@@ -495,8 +503,16 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /<LpRevisionHistory/);
   assert.match(client, /name="guardianWechat"/);
   assert.doesNotMatch(client, /name="guardian"/);
-  assert.match(client, /canAdd=\{!isTeacherView\}/);
-  assert.match(client, /if \(isTeacherView\) \{ notify\("老师账号只能查看学生资料"\); return; \}/);
+  assert.match(client, /canAdd=\{!isTeacherView && selectedStudent\.importArchived !== true\}/);
+  assert.match(client, /isTeacherView \|\| selectedStudent\?\.importArchived/);
+  assert.match(client, /id: "archived", label: .*"历史归档"/);
+  assert.match(client, /历史归档只读/);
+  assert.match(client, /历史业务记录/);
+  assert.match(client, /readableScopedOperations/);
+  assert.match(client, /readableScopedRenewals/);
+  assert.match(client, /bookingOccurrencesWithinRange\([\s\S]*true/);
+  assert.match(client, /readOnly=\{visibleSelectedStudent\.importArchived === true\}/);
+  assert.match(client, /student\.importArchived \? "历史归档" : "学生"/);
   assert.match(client, /openStudentRecord\(visibleSelectedStudent\.id, section\)/);
   assert.match(client, /直报录入课时/);
   assert.match(client, /暂未有学生姓名，先按科目创建临时档案/);
@@ -530,4 +546,45 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /type="submit" disabled=\{confirmBusy\}>\{confirmBusy/);
   assert.match(client, /actionLabel: undo \? translateInterfaceText\("撤销", displayPreferences\.language\)/);
   assert.match(client, /current\?\.id === toastId/);
+});
+
+test("wires controlled raw JWB and two-workbook teacher imports into the sync workspace", async () => {
+  const [client, studentSourceRoute, teacherRoute, teacherSourceRoute, teacherIdentityRoute, studentService, teacherService] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/api/student-import/source-rows/route.ts"),
+    read("../app/api/teacher-import/route.ts"),
+    read("../app/api/teacher-import/source/route.ts"),
+    read("../app/api/teacher-import/identity-links/route.ts"),
+    read("../lib/student-import-service.ts"),
+    read("../lib/teacher-import-service.ts"),
+  ]);
+
+  assert.doesNotMatch(client, /studentJwbSourceFormat/);
+  assert.match(client, /jiaowubao-api-v2/);
+  assert.doesNotMatch(client, /系统标准 rows/);
+  assert.match(client, /逐课程余额/);
+  assert.match(client, /studentJwbNegativePolicy/);
+  assert.match(client, /仅保留净余额，不创建该生课包/);
+  assert.match(client, /fetch\("\/api\/student-import\/source-rows"/);
+  assert.match(client, /fetch\("\/api\/student-import\/identity-links"/);
+  assert.match(client, /JSON\.stringify\(\{ links:/);
+  assert.match(client, /fetch\("\/api\/teacher-import\/source"/);
+  assert.match(client, /fetch\("\/api\/teacher-import"/);
+  assert.match(client, /同表重名都必须逐项选择合并或分开/);
+  assert.match(client, /科目行归属待确认/);
+  assert.match(client, /请选择 roster 归属或明确忽略/);
+  assert.doesNotMatch(client, /name="(?:teacherSubjectResolution|subjectOwner)"[^>]*<input/);
+  assert.match(client, /预检两份教师来源/);
+  assert.match(client, /option.label/);
+  assert.match(client, /JSON\.stringify\(\{ resolutionKey, decision \}\)/);
+  assert.match(client, /保留原文，不生成月度时段/);
+  assert.match(client, /保留原文，不猜可接人数/);
+  assert.match(studentSourceRoute, /putStudentImportSourceRows/);
+  assert.match(studentService, /adaptJiaowubaoImportRows/);
+  assert.match(studentService, /negativeAdjustmentPolicy/);
+  assert.match(teacherSourceRoute, /putTeacherImportSource/);
+  assert.match(teacherRoute, /commitTeacherImportPlanAtomic/);
+  assert.match(teacherIdentityRoute, /resolveTeacherIdentityCandidate/);
+  assert.match(teacherIdentityRoute, /putTeacherImportIdentityLink/);
+  assert.match(teacherService, /prepareTeacherImport/);
 });

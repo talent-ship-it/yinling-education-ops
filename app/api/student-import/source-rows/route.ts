@@ -87,7 +87,11 @@ export async function POST(request: Request) {
       }, 501);
     }
     if (error instanceof StudentImportServiceError) {
-      return noStore({ error: error.message, code: error.code }, 422);
+      return noStore({
+        error: error.message,
+        code: error.code,
+        ...(error.sourceErrorCode ? { sourceCode: error.sourceErrorCode } : {}),
+      }, 422);
     }
     if (error instanceof OpsStoreError
       && (error.code === "23505" || error.message === "student_import_revision_conflict")) {

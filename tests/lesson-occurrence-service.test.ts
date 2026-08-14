@@ -226,6 +226,33 @@ test("stale booking versions and cross-owner staff fail closed", () => {
   }), serviceError("teacher_forbidden"));
 });
 
+test("archived students cannot be settled by staff, admins or trusted BBB callbacks", () => {
+  const request = parseCompleteLessonOccurrenceRequest({
+    occurrenceId,
+    expectedVersion: 4,
+    attendanceEvidenceReference: "evidence-1",
+  });
+  const archivedRows = sharedRows().map((item) => item.entity === "students"
+    ? {
+        ...item,
+        payload: (item.payload as Record<string, unknown>[]).map((student) => ({ ...student, importArchived: true })),
+      }
+    : item);
+  for (const input of [
+    { actor: "Abby", fullAdmin: false },
+    { actor: "Nixon", fullAdmin: true },
+    { actor: "BigBlueButton", fullAdmin: false, trustedProvider: "bbb" as const },
+  ]) {
+    assert.throws(() => prepareLessonOccurrenceSettlement({
+      request,
+      rows: archivedRows,
+      attendance: attendance(),
+      completedAt,
+      ...input,
+    }), serviceError("student_scope_forbidden"));
+  }
+});
+
 test("cancelled occurrences and insufficient balances never reach the atomic commit", () => {
   const request = parseCompleteLessonOccurrenceRequest({ occurrenceId, expectedVersion: 4, attendanceEvidenceReference: "evidence-1" });
   const cancelledRows = sharedRows().map((item) => item.entity === "bookings"

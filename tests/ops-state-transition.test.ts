@@ -373,9 +373,89 @@ test("student follow-up and LP revision/audit histories are append-only", () => 
   assert.throws(() => transition("lpItems", [lp], [{ ...lp, revisionNumber: 0 }], lpRows), rejected);
 });
 
+test("generic saves cannot change import archive markers or mutate any archived-student business record", () => {
+  const archivedStudent = {
+    ...student,
+    importArchived: true,
+    importArchivedReason: "referenced_history",
+  };
+  const archivedBooking = { ...booking, studentId: archivedStudent.id };
+  const archivedTask = { id: "TASK-ARCHIVED", studentId: archivedStudent.id, owner: "Abby", title: "Historical task" };
+  const archivedLp = { id: "LP-ARCHIVED", studentId: archivedStudent.id, revisions: [], stageAudit: [], resultAudit: [], revisionNumber: 0 };
+  const archivedOperation = { ...operation, id: "OPS-ARCHIVED", studentId: archivedStudent.id };
+  const archivedRenewal = { id: "REN-ARCHIVED", studentId: archivedStudent.id, status: "已联系" };
+  const archivedMessage = { id: "MSG-ARCHIVED", studentId: archivedStudent.id, body: "Historical message" };
+  const archivedFile = { id: "FILE-ARCHIVED", studentId: archivedStudent.id, title: "Historical file" };
+  const archivedPayroll = { ...payrollSummary, id: "PAY-ARCHIVED", studentId: archivedStudent.id };
+  const rows = [
+    row("students", [archivedStudent]),
+    row("teachers", teachers),
+    row("bookings", [archivedBooking]),
+    row("tasks", [archivedTask]),
+    row("lpItems", [archivedLp]),
+    row("operations", [archivedOperation]),
+    row("renewals", [archivedRenewal]),
+    row("messages", [archivedMessage]),
+    row("files", [archivedFile]),
+    row("payroll", [payrollSummary, payrollLedger, archivedPayroll]),
+  ];
+
+  for (const limited of [false, true]) {
+    assert.throws(() => transition("students", [archivedStudent], [{ ...archivedStudent, name: "Rewritten history" }], rows, limited), rejected);
+    assert.throws(() => transition("students", [archivedStudent], [{ ...archivedStudent, status: "在读" }], rows, limited), rejected);
+    assert.throws(() => transition("students", [archivedStudent], [{ ...archivedStudent, injected: true }], rows, limited), rejected);
+    assert.throws(() => transition("students", [archivedStudent], [{ ...archivedStudent, importArchived: false }], rows, limited), rejected);
+    assert.throws(() => transition("students", [archivedStudent], [{ ...archivedStudent, importArchivedReason: "tampered" }], rows, limited), rejected);
+    assert.throws(() => transition("students", [student], [{ ...student, importArchived: true }], fixtureRows(), limited), rejected);
+
+    for (const [entity, existing] of [
+      ["bookings", archivedBooking],
+      ["tasks", archivedTask],
+      ["lpItems", archivedLp],
+      ["operations", archivedOperation],
+      ["renewals", archivedRenewal],
+      ["messages", archivedMessage],
+      ["files", archivedFile],
+      ["payroll", archivedPayroll],
+    ] as const) {
+      assert.throws(() => transition(entity, [existing], [{ ...existing, archiveTamper: true }], rows, limited), rejected);
+      assert.throws(() => transition(entity, [existing], [], rows, limited), rejected);
+      assert.throws(() => transition(entity, [existing], [existing, { ...existing, id: `${existing.id}-NEW` }], rows, limited), rejected);
+      transition(entity, [existing], [existing], rows, limited);
+    }
+  }
+
+  transition("students", [archivedStudent], [archivedStudent], rows);
+  transition("students", [student], [{ ...student, name: "Active student edit", status: "在读" }], fixtureRows());
+});
+
 test("payroll summaries remain editable but teacher-hours and reversal ledger entries are immutable", () => {
   const current = [payrollSummary, payrollLedger];
   transition("payroll", current, [{ ...payrollSummary, amount: 35 }, payrollLedger]);
   assert.throws(() => transition("payroll", current, [payrollSummary]), rejected);
   assert.throws(() => transition("payroll", current, [payrollSummary, { ...payrollLedger, payableHours: 3 }]), rejected);
+});
+
+test("generic saves cannot add, change, or remove atomic FU and Report file indexes", () => {
+  const atomicFile = {
+    id: "FU-5e35b8d4-d345-4d44-a2fb-1431e5c07b5f",
+    studentId: "S-1",
+    title: "沟通截图",
+    type: "FU",
+    source: "/api/fu-attachments/5e35b8d4-d345-4d44-a2fb-1431e5c07b5f",
+    addedAt: "2026-08-13T00:00:00.000Z",
+  };
+  const ordinaryFile = {
+    id: "FILE-1",
+    studentId: "S-1",
+    title: "External link",
+    type: "资料链接",
+    source: "https://example.com/file",
+    addedAt: "2026-08-13T00:00:00.000Z",
+  };
+  const rows = [...fixtureRows(), row("files", [atomicFile, ordinaryFile])];
+  assert.throws(() => transition("files", [atomicFile, ordinaryFile], [ordinaryFile], rows), rejected);
+  assert.throws(() => transition("files", [atomicFile, ordinaryFile], [{ ...atomicFile, title: "Changed" }, ordinaryFile], rows), rejected);
+  assert.throws(() => transition("files", [ordinaryFile], [atomicFile, ordinaryFile], rows), rejected);
+  assert.doesNotThrow(() => transition("files", [ordinaryFile], [{ ...ordinaryFile, title: "Updated link" }], rows));
 });
