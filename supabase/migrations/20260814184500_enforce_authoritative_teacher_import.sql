@@ -640,6 +640,21 @@ as $$
       ))[1] as first_row_name
     from authority_rows
     group by authority_rows.name_key
+  ), existing_index as materialized (
+    -- Normalize every locked historical name once. The former lateral lookup
+    -- repeated the NFKC/regexp contract for every authority/existing pair.
+    select
+      existing_teacher,
+      internal.teacher_import_name_key(existing_teacher ->> 'name') as name_key
+    from jsonb_array_elements(p_existing_teachers) existing_teacher
+  ), existing_ranked as materialized (
+    select
+      existing_index.*,
+      row_number() over (
+        partition by pg_catalog.convert_to(existing_index.name_key, 'UTF8')
+        order by pg_catalog.convert_to(existing_index.existing_teacher ->> 'id', 'UTF8')
+      ) as existing_rank
+    from existing_index
   ), active_base as materialized (
     select
       authority.name_key,
@@ -656,13 +671,9 @@ as $$
         else authority.first_row_name
       end as display_name
     from authorities authority
-    left join lateral (
-      select existing_teacher
-      from jsonb_array_elements(p_existing_teachers) existing_teacher
-      where internal.teacher_import_name_key(existing_teacher ->> 'name') = authority.name_key
-      order by pg_catalog.convert_to(existing_teacher ->> 'id', 'UTF8')
-      limit 1
-    ) existing on true
+    left join existing_ranked existing
+      on existing.name_key = authority.name_key
+     and existing.existing_rank = 1
   ), ranked_source_text as materialized (
     select
       authority_rows.name_key,
@@ -791,26 +802,27 @@ as $$
     from active_values
   ), historical_values as materialized (
     select
-      existing_teacher,
-      case when jsonb_typeof(existing_teacher -> 'location') = 'string'
-        then internal.teacher_import_clean_text(existing_teacher ->> 'location') end
+      existing.existing_teacher,
+      existing.name_key,
+      case when jsonb_typeof(existing.existing_teacher -> 'location') = 'string'
+        then internal.teacher_import_clean_text(existing.existing_teacher ->> 'location') end
         as expected_location,
-      case when jsonb_typeof(existing_teacher -> 'availabilitySourceText') = 'string'
-        then internal.teacher_import_clean_text(existing_teacher ->> 'availabilitySourceText') end
+      case when jsonb_typeof(existing.existing_teacher -> 'availabilitySourceText') = 'string'
+        then internal.teacher_import_clean_text(existing.existing_teacher ->> 'availabilitySourceText') end
         as availability_source_text,
-      case when jsonb_typeof(existing_teacher -> 'capacitySourceText') = 'string'
-        then internal.teacher_import_clean_text(existing_teacher ->> 'capacitySourceText') end
+      case when jsonb_typeof(existing.existing_teacher -> 'capacitySourceText') = 'string'
+        then internal.teacher_import_clean_text(existing.existing_teacher ->> 'capacitySourceText') end
         as capacity_source_text
-    from jsonb_array_elements(p_existing_teachers) existing_teacher
+    from existing_index existing
     where not exists (
       select 1
       from active_expected
-      where active_expected.teacher_id = existing_teacher ->> 'id'
+      where active_expected.teacher_id = existing.existing_teacher ->> 'id'
     )
   ), historical_expected as materialized (
     select
       historical_values.existing_teacher ->> 'id' as teacher_id,
-      internal.teacher_import_name_key(historical_values.existing_teacher ->> 'name') as name_key,
+      historical_values.name_key,
       false as active,
       jsonb_build_object(
         'name', internal.teacher_import_clean_text(
@@ -1225,15 +1237,18 @@ begin
   -- projection from the locked current record and both locked source rows,
   -- then compare all twelve operational keys including optional key presence.
   if exists (
+    with teacher_by_id as materialized (
+      select teacher ->> 'id' as teacher_id, teacher
+      from jsonb_array_elements(p_teachers) teacher
+    )
     select 1
     from internal.teacher_import_expected_operational_fragments(
       p_k12, p_university, p_existing_teachers
     ) expected
-    left join lateral jsonb_array_elements(p_teachers) teacher
-      on teacher ->> 'id' = expected.teacher_id
+    left join teacher_by_id on teacher_by_id.teacher_id = expected.teacher_id
     where coalesce((
       select jsonb_object_agg(field.key, field.value)
-      from jsonb_each(teacher) field
+      from jsonb_each(teacher_by_id.teacher) field
       where field.key = any(array[
         'name','initials','availability','availabilityStatus','timezone',
         'load','capacity','acceptsStudents','note','location',
@@ -1248,8 +1263,15 @@ begin
   -- For each authoritative name, subjects and sourceCategories are exactly
   -- the de-duplicated tab memberships in workbook/sheet order.
   if exists (
-    select 1
-    from (
+    with teacher_by_name as materialized (
+      -- Reference ownership and display-name equality were proven above.
+      -- Index the submitted plan once instead of rejoining every name/teacher
+      -- pair through the complete authoritative reference array.
+      select
+        teacher,
+        internal.teacher_import_name_key(teacher ->> 'name') as name_key
+      from jsonb_array_elements(p_teachers) teacher
+    ), expected as materialized (
       select authority.name_key,
         coalesce((
           select jsonb_agg(to_jsonb(subject_basis ->> 'sheetName') order by
@@ -1264,18 +1286,12 @@ begin
         select distinct basis ->> 'nameKey' as name_key
         from jsonb_array_elements(authoritative_refs) basis
       ) authority
-    ) expected
-    join jsonb_array_elements(p_teachers) teacher on exists (
-      select 1
-      from jsonb_array_elements(teacher -> 'teacherSourceRefs') teacher_ref
-      join jsonb_array_elements(authoritative_refs) basis
-        on teacher_ref ->> 'workbook' = basis ->> 'workbook'
-       and teacher_ref ->> 'sourceId' = basis ->> 'sourceId'
-       and trim(teacher_ref ->> 'sourceRow') = trim(basis ->> 'sourceRow')
-      where basis ->> 'nameKey' = expected.name_key
     )
-    where teacher -> 'subjects' is distinct from expected.expected_subjects
-       or teacher -> 'sourceCategories' is distinct from expected.expected_subjects
+    select 1
+    from expected
+    join teacher_by_name on teacher_by_name.name_key = expected.name_key
+    where teacher_by_name.teacher -> 'subjects' is distinct from expected.expected_subjects
+       or teacher_by_name.teacher -> 'sourceCategories' is distinct from expected.expected_subjects
   ) then
     raise exception using errcode = '23503', message = 'teacher_import_authoritative_subject_mismatch';
   end if;
@@ -1284,8 +1300,12 @@ begin
   -- only teachers. Subject detail is the cleaned first-seen subject-row union;
   -- absence is represented by an absent key, never JSON null.
   if exists (
-    select 1
-    from (
+    with teacher_by_name as materialized (
+      select
+        teacher,
+        internal.teacher_import_name_key(teacher ->> 'name') as name_key
+      from jsonb_array_elements(p_teachers) teacher
+    ), expected as materialized (
       select
         authority.name_key,
         coalesce((
@@ -1316,20 +1336,14 @@ begin
         select distinct basis ->> 'nameKey' as name_key
         from jsonb_array_elements(authoritative_refs) basis
       ) authority
-    ) expected
-    join jsonb_array_elements(p_teachers) teacher on exists (
-      select 1
-      from jsonb_array_elements(teacher -> 'teacherSourceRefs') teacher_ref
-      join jsonb_array_elements(authoritative_refs) basis
-        on teacher_ref ->> 'workbook' = basis ->> 'workbook'
-       and teacher_ref ->> 'sourceId' = basis ->> 'sourceId'
-       and trim(teacher_ref ->> 'sourceRow') = trim(basis ->> 'sourceRow')
-      where basis ->> 'nameKey' = expected.name_key
     )
-    where teacher -> 'departments' is distinct from expected.expected_departments
-       or (expected.expected_detail is null and teacher ? 'subjectDetail')
+    select 1
+    from expected
+    join teacher_by_name on teacher_by_name.name_key = expected.name_key
+    where teacher_by_name.teacher -> 'departments' is distinct from expected.expected_departments
+       or (expected.expected_detail is null and teacher_by_name.teacher ? 'subjectDetail')
        or (expected.expected_detail is not null and
-           pg_catalog.convert_to(teacher ->> 'subjectDetail', 'UTF8') is distinct from
+           pg_catalog.convert_to(teacher_by_name.teacher ->> 'subjectDetail', 'UTF8') is distinct from
            pg_catalog.convert_to(expected.expected_detail, 'UTF8'))
   ) then
     raise exception using errcode = '23503', message = 'teacher_import_authoritative_metadata_mismatch';

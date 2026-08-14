@@ -35,6 +35,13 @@ const teacherAuthoritySql = await readFile(
   ),
   "utf8",
 );
+const teacherAuthorityPerformanceSql = await readFile(
+  new URL(
+    "../supabase/migrations/20260814223000_optimize_authoritative_teacher_validation.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 function sqlFunction(source, qualifiedName) {
   const marker = `create or replace function ${qualifiedName}(`;
@@ -624,6 +631,7 @@ test("import migrations contain no unparenthesized JSON extraction followed by t
   assert.doesNotMatch(sql, ambiguousJsonbSubtraction);
   assert.doesNotMatch(sourcePrecedenceFixSql, ambiguousJsonbSubtraction);
   assert.doesNotMatch(teacherAuthoritySql, ambiguousJsonbSubtraction);
+  assert.doesNotMatch(teacherAuthorityPerformanceSql, ambiguousJsonbSubtraction);
 });
 
 test("teacher identity links remain opaque, revision-bound audit history", () => {
@@ -938,8 +946,13 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.match(operational, /count\(distinct pg_catalog\.convert_to\(authority_rows\.location, 'UTF8'\)\)/i);
   assert.match(operational, /teacher_import_js_trim\([\s\S]*existing_teacher ->> 'availability'[\s\S]*then active_base\.existing_teacher ->> 'availability'/i);
   assert.match(operational, /teacher_import_timezone_for_location\(active_values\.expected_location\)/i);
-  assert.match(operational, /where not exists \([\s\S]*active_expected\.teacher_id = existing_teacher ->> 'id'/i);
-  assert.match(operational, /jsonb_typeof\(existing_teacher -> 'location'\) = 'string'[\s\S]*teacher_import_clean_text\(existing_teacher ->> 'location'\)/i);
+  assert.match(operational, /existing_index as materialized \([\s\S]*teacher_import_name_key\(existing_teacher ->> 'name'\) as name_key/i);
+  assert.match(operational, /existing_ranked as materialized \([\s\S]*partition by pg_catalog\.convert_to\(existing_index\.name_key, 'UTF8'\)/i);
+  assert.match(operational, /left join existing_ranked existing[\s\S]*existing\.existing_rank = 1/i);
+  assert.doesNotMatch(operational, /left join lateral \([\s\S]*jsonb_array_elements\(p_existing_teachers\)/i);
+  assert.match(operational, /where not exists \([\s\S]*active_expected\.teacher_id = existing\.existing_teacher ->> 'id'/i);
+  assert.match(operational, /from existing_index existing/i);
+  assert.match(operational, /jsonb_typeof\(existing\.existing_teacher -> 'location'\) = 'string'[\s\S]*teacher_import_clean_text\(existing\.existing_teacher ->> 'location'\)/i);
   assert.match(operational, /'availabilityStatus', '暂停接新'/i);
   assert.match(operational, /'acceptsStudents', false/i);
   assert.match(operational, /case when historical_values\.availability_source_text is not null[\s\S]*jsonb_build_object\([\s\S]*'availabilitySourceText'/i);
@@ -969,14 +982,14 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
     "teacher_import_historical_authority_not_cleared",
   ]) assert.match(assertion, new RegExp(invariant, "i"));
   assert.match(assertion, /p_k12\.source_id \|\| '#subjects'/i);
-  assert.match(assertion, /teacher -> 'subjects' is distinct from expected\.expected_subjects/i);
-  assert.match(assertion, /teacher -> 'sourceCategories' is distinct from expected\.expected_subjects/i);
+  assert.match(assertion, /teacher_by_name\.teacher -> 'subjects' is distinct from expected\.expected_subjects/i);
+  assert.match(assertion, /teacher_by_name\.teacher -> 'sourceCategories' is distinct from expected\.expected_subjects/i);
   assert.match(assertion, /jsonb_agg\(to_jsonb\(department\.department\) order by department\.workbook_order\)/i);
   assert.match(assertion, /when 'k12' then '中小学'[\s\S]*else '大学'/i);
   assert.match(assertion, /string_agg\(detail_basis ->> 'detail', '；' order by/i);
-  assert.match(assertion, /teacher -> 'departments' is distinct from expected\.expected_departments/i);
-  assert.match(assertion, /expected\.expected_detail is null and teacher \? 'subjectDetail'/i);
-  assert.match(assertion, /convert_to\(teacher ->> 'subjectDetail', 'UTF8'\) is distinct from[\s\S]*convert_to\(expected\.expected_detail, 'UTF8'\)/i);
+  assert.match(assertion, /teacher_by_name\.teacher -> 'departments' is distinct from expected\.expected_departments/i);
+  assert.match(assertion, /expected\.expected_detail is null and teacher_by_name\.teacher \? 'subjectDetail'/i);
+  assert.match(assertion, /convert_to\(teacher_by_name\.teacher ->> 'subjectDetail', 'UTF8'\) is distinct from[\s\S]*convert_to\(expected\.expected_detail, 'UTF8'\)/i);
   assert.match(assertion, /teacher \? 'subjectDetail'/i);
   assert.match(assertion, /teacher -> 'departments' is distinct from '\[\]'::jsonb/i);
   assert.match(assertion, /\(teacher ->> 'availabilityStatus'\) is distinct from '暂停接新'/i);
@@ -984,7 +997,9 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.match(assertion, /teacher ->> 'id' = existing_teacher ->> 'id'[\s\S]*teacher_import_name_key\(teacher ->> 'name'\) <>[\s\S]*teacher_import_name_key\(existing_teacher ->> 'name'\)/i);
   assert.match(assertion, /teacher ->> 'id' = internal\.teacher_import_authoritative_id\(authority\.name_key\)/i);
   assert.match(assertion, /teacher_import_expected_operational_fragments\([\s\S]*p_k12, p_university, p_existing_teachers/i);
+  assert.match(assertion, /teacher_by_id as materialized \([\s\S]*teacher ->> 'id' as teacher_id/i);
   assert.match(assertion, /jsonb_object_agg\(field\.key, field\.value\)/i);
+  assert.match(assertion, /jsonb_each\(teacher_by_id\.teacher\) field/i);
   const operationalKeys = assertion.match(/where field\.key = any\(array\[([\s\S]*?)\]::text\[\]\)/i);
   assert.ok(operationalKeys, "operational comparison must use an explicit key allowlist");
   assert.deepEqual(
@@ -1100,6 +1115,73 @@ test("teacher authority migration enforces the exact-name roster plus subject-ta
   assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_authoritative_detail_basis/i);
   assert.match(teacherAuthoritySql, /revoke all on function internal\.teacher_import_authoritative_id\(text\)/i);
   assert.match(teacherAuthoritySql, /revoke all on function public\.commit_teacher_import_plan_atomic[\s\S]*grant execute/i);
+});
+
+test("teacher authority validation hotfix removes production-shaped repeated JSON scans", () => {
+  for (const name of [
+    "internal.teacher_import_expected_operational_fragments",
+    "internal.assert_teacher_import_authoritative_plan",
+  ]) {
+    assert.equal(
+      sqlFunction(teacherAuthorityPerformanceSql, name),
+      sqlFunction(teacherAuthoritySql, name),
+      `${name} performance hotfix must match the authority migration`,
+    );
+    assert.equal(
+      sqlFunction(teacherAuthorityPerformanceSql, name),
+      sqlFunction(sql, name),
+      `${name} performance hotfix must match the canonical contract`,
+    );
+  }
+
+  const operational = sqlFunction(
+    teacherAuthorityPerformanceSql,
+    "internal.teacher_import_expected_operational_fragments",
+  );
+  assert.match(operational, /existing_index as materialized/i);
+  assert.match(operational, /existing_ranked as materialized/i);
+  assert.match(operational, /left join existing_ranked existing/i);
+  assert.equal(
+    [...operational.matchAll(/teacher_import_name_key\(existing_teacher ->> 'name'\)/gi)].length,
+    1,
+    "240 locked existing names must be normalized once, not once per authoritative name",
+  );
+  assert.doesNotMatch(
+    operational,
+    /left join lateral \([\s\S]*jsonb_array_elements\(p_existing_teachers\)/i,
+  );
+
+  const assertion = sqlFunction(
+    teacherAuthorityPerformanceSql,
+    "internal.assert_teacher_import_authoritative_plan",
+  );
+  assert.match(assertion, /teacher_by_id as materialized/i);
+  assert.equal(
+    [...assertion.matchAll(/teacher_by_name as materialized/gi)].length,
+    2,
+    "subject and metadata validation must each index the 254-row plan once",
+  );
+  assert.equal(
+    [...assertion.matchAll(/join teacher_by_name on teacher_by_name\.name_key = expected\.name_key/gi)].length,
+    2,
+  );
+  assert.doesNotMatch(
+    assertion,
+    /join jsonb_array_elements\(p_teachers\) teacher on exists \([\s\S]*?basis ->> 'nameKey' = expected\.name_key/i,
+  );
+  assert.doesNotMatch(
+    assertion,
+    /left join lateral jsonb_array_elements\(p_teachers\) teacher/i,
+  );
+
+  // At the observed production cardinalities, the removed owner lookup had
+  // two 227 x 254 x 266 nested probes (over 30 million comparisons).
+  const oldOwnerProbeComparisons = 2 * 227 * 254 * 266;
+  assert.ok(oldOwnerProbeComparisons > 30_000_000);
+  assert.match(teacherAuthorityPerformanceSql, /revoke all on function internal\.teacher_import_expected_operational_fragments/i);
+  assert.match(teacherAuthorityPerformanceSql, /revoke all on function internal\.assert_teacher_import_authoritative_plan/i);
+  assert.doesNotMatch(teacherAuthorityPerformanceSql, /create or replace function public\./i);
+  assert.doesNotMatch(teacherAuthorityPerformanceSql, /grant execute|\bupdate\b|\binsert\b|\bdelete\b/i);
 });
 
 test("student import archive markers preserve only referenced excluded historical IDs", () => {
