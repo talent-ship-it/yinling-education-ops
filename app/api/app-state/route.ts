@@ -44,6 +44,15 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
+function bookingScopeVersions(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const scope = value as Record<string, unknown>;
+  if (Object.keys(scope).length !== 2
+    || !Number.isSafeInteger(scope.students) || (scope.students as number) < 1
+    || !Number.isSafeInteger(scope.teachers) || (scope.teachers as number) < 1) return null;
+  return { students: scope.students as number, teachers: scope.teachers as number };
+}
+
 export async function GET(request: NextRequest) {
   const session = await sessionContext();
   if (!("session" in session)) return noStore({ error: session.error }, session.status);
@@ -86,8 +95,16 @@ export async function PUT(request: NextRequest) {
   const context = session.session;
 
   const body = await request.json().catch(() => null);
-  if (!body || typeof body.entity !== "string" || typeof body.expectedVersion !== "number" || !("payload" in body)) {
+  if (!body || typeof body.entity !== "string"
+    || !Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 1
+    || !("payload" in body)) {
     return noStore({ error: "共享数据写入参数不完整。" }, 400);
+  }
+  const submittedBookingScopeVersions = body.entity === "bookings"
+    ? bookingScopeVersions(body.scopeVersions)
+    : null;
+  if (body.entity === "bookings" && !submittedBookingScopeVersions) {
+    return noStore({ error: "排课保存必须携带学生和老师资料版本，请刷新后重试。" }, 400);
   }
 
   try {
@@ -98,6 +115,20 @@ export async function PUT(request: NextRequest) {
     const currentRow = allRows.find((row) => row.entity === body.entity);
     if (!currentRow || !canReadOpsEntity(access, body.entity)) {
       return noStore({ error: "当前账号没有读取这部分资料的权限。" }, 403);
+    }
+    // Invariants below must be evaluated against the exact versions the
+    // browser intends to replace. The database locks and checks these same
+    // versions again after validation, closing both sides of the race.
+    if (currentRow.version !== body.expectedVersion) {
+      throw new OpsStoreError("version_conflict", "40001");
+    }
+    if (submittedBookingScopeVersions) {
+      const currentStudentsVersion = allRows.find((row) => row.entity === "students")?.version;
+      const currentTeachersVersion = allRows.find((row) => row.entity === "teachers")?.version;
+      if (submittedBookingScopeVersions.students !== currentStudentsVersion
+        || submittedBookingScopeVersions.teachers !== currentTeachersVersion) {
+        throw new OpsStoreError("access_scope_changed", "40001");
+      }
     }
     const submittedPayload = body.entity === "rules" ? parseRulesWrite(body.payload) : body.payload;
     const payload = mergeScopedPayload({
@@ -113,7 +144,7 @@ export async function PUT(request: NextRequest) {
       rows: allRows,
       context: access,
     });
-    const scopeVersions = getAccessScopeVersions(allRows, access);
+    const scopeVersions = submittedBookingScopeVersions ?? getAccessScopeVersions(allRows, access);
     const saved = await putOpsState({
       entity: body.entity,
       payload,

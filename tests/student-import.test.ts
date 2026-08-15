@@ -12,6 +12,8 @@ import {
   masterSourceKeyForSource,
   normalizeStudentImportName,
   parseMasterStudentStatus,
+  studentImportCjkNameKey,
+  studentImportReviewCjkKey,
   studentIdForMasterSource,
   type ExistingStudentImportRecord,
   type JwbStudentImportRow,
@@ -192,6 +194,55 @@ test("normalises names conservatively, merges JWB balances and preserves manual 
     ...manualTrial,
     importSource: "manual_trial",
   });
+});
+
+test("uses a Chinese-only punctuation fallback and rejects mixed or short keys", () => {
+  assert.equal(studentImportCjkNameKey(" 张 · 三 "), "张三");
+  assert.equal(studentImportCjkNameKey("张（三）"), "张三");
+  assert.equal(studentImportCjkNameKey("Alice 张三"), "");
+  assert.equal(studentImportCjkNameKey("张三 2"), "");
+  assert.equal(studentImportCjkNameKey("张"), "");
+  assert.equal(studentImportCjkNameKey("𠀀·𠀁"), "𠀀𠀁");
+  assert.equal(normalizeStudentImportName("张·三"), normalizeStudentImportName("张（三）"));
+  assert.notEqual(normalizeStudentImportName("Alice 张三"), normalizeStudentImportName("张三 Alice"));
+});
+
+test("review evidence requires exactly one qualifying contiguous Han run", () => {
+  assert.equal(studentImportReviewCjkKey("Alice 张三"), "张三");
+  assert.equal(studentImportReviewCjkKey("Alice 张三 王"), "张三");
+  assert.equal(studentImportReviewCjkKey("张三 / 李四"), "");
+  assert.equal(studentImportReviewCjkKey("Alice 张"), "");
+  assert.equal(studentImportReviewCjkKey("Alice Smith"), "");
+});
+
+test("matches only a unique Chinese fallback key and fails closed on duplicates", () => {
+  const matched = buildStudentImportPlan({
+    masterRows: [master(201, "张·三", "活跃 + 有课时")],
+    jwbRows: [jwb(301, "张（三）", 5, 10)],
+  });
+  assert.equal(matched.students[0].jwbMatchStatus, "matched");
+  assert.equal(matched.students[0].jwbSourceRow, 301);
+  assert.equal(matched.students[0].remainingHours, 5);
+
+  const duplicateJwb = buildStudentImportPlan({
+    masterRows: [master(202, "张三", "活跃 + 有课时")],
+    jwbRows: [
+      jwb(302, "张·三", 5, 10),
+      jwb(303, "张（三）", 7, 12),
+    ],
+  });
+  assert.equal(duplicateJwb.summary.ambiguous, 1);
+  assert.equal(duplicateJwb.students[0].jwbMatchStatus, "ambiguous");
+  assert.equal(duplicateJwb.students[0].jwbSourceRow, undefined);
+  assert.equal(duplicateJwb.students[0].remainingHours, undefined);
+
+  const mixedAliases = buildStudentImportPlan({
+    masterRows: [master(203, "Alice 张三", "在读")],
+    jwbRows: [jwb(304, "张三 Alice", 5, 10)],
+  });
+  assert.equal(mixedAliases.students[0].jwbMatchStatus, "unmatched");
+  assert.equal(mixedAliases.summary.ambiguous, 0);
+  assert.equal(mixedAliases.students[0].jwbSourceRow, undefined);
 });
 
 test("student initials never split Unicode characters and use cross-runtime ASCII case folding", () => {
@@ -954,6 +1005,40 @@ test("server identity links map differently named master, existing and JWB recor
   assert.deepEqual(plan.unmatched, []);
   assert.deepEqual(plan.ambiguous, []);
   assert.equal(plan.summary.update, 1);
+});
+
+test("a reviewed create link may use only the exact namespaced derived identity", () => {
+  const namespace = "master-reviewed-create";
+  const sourceRow = "M-CREATE-1";
+  const derivedId = studentIdForMasterSource(sourceRow, namespace);
+  const input = {
+    masterRows: [{ sourceRow, name: "Alice 张三", status: "在读" }],
+    jwbRows: [{ sourceRow: "J-CREATE-1", name: "张三", remainingHours: 2, contractHours: 4 }],
+    existingStudents: [],
+    masterSourceNamespace: namespace,
+    allowLegacyIdentityFallback: false,
+  } as const;
+  const plan = buildStudentImportPlan({
+    ...input,
+    identityLinks: [{
+      masterSourceRow: sourceRow,
+      jwbSourceRow: "J-CREATE-1",
+      studentId: derivedId,
+    }],
+  });
+  assert.equal(plan.students[0].id, derivedId);
+  assert.equal(plan.students[0].jwbMatchStatus, "matched");
+  assert.equal(plan.actions[0].kind, "insert");
+
+  assert.throws(() => buildStudentImportPlan({
+    ...input,
+    identityLinks: [{
+      masterSourceRow: sourceRow,
+      jwbSourceRow: "J-CREATE-1",
+      studentId: "STU-CLIENT-CHOSEN",
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "invalid_identity_link");
 });
 
 test("linked rows are consumed before conservative name ambiguity and unmatched reporting", () => {

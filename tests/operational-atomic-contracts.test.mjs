@@ -70,8 +70,14 @@ const publicRpcSignatures = [
   "get_teacher_availability_submissions(text)",
   "get_booking_capacity_command_result(text, text, jsonb, text)",
   "get_operation_confirmation_command_result(text, text, jsonb, text)",
+  "get_permanent_teacher_replacement_command_result(text, text, jsonb, text)",
+  "get_teacher_departure_creation_command_result(text, text, jsonb, text)",
+  "get_exam_submission_command_result(text, text, jsonb, text)",
   "mutate_booking_capacity_atomic(text, text, jsonb, text, text, jsonb, jsonb, jsonb, jsonb, text, text, text)",
   "confirm_operation_occurrences_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, jsonb, text)",
+  "confirm_permanent_teacher_replacement_atomic(text, text, jsonb, text, text, text, text, text, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, text)",
+  "create_teacher_departure_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, jsonb, text, text)",
+  "submit_exam_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, text, text)",
 ];
 
 test("all operational RPCs verify the shared server secret", () => {
@@ -95,8 +101,14 @@ test("all operational RPCs verify the shared server secret", () => {
     "get_teacher_availability_submissions",
     "get_booking_capacity_command_result",
     "get_operation_confirmation_command_result",
+    "get_permanent_teacher_replacement_command_result",
+    "get_teacher_departure_creation_command_result",
+    "get_exam_submission_command_result",
     "mutate_booking_capacity_atomic",
     "confirm_operation_occurrences_atomic",
+    "confirm_permanent_teacher_replacement_atomic",
+    "create_teacher_departure_atomic",
+    "submit_exam_atomic",
   ]) {
     const body = functionBodies[names.indexOf(name)];
     assert.ok(body, `${name} is missing`);
@@ -136,6 +148,9 @@ test("all internal state tables are RLS-enabled and inaccessible directly", () =
     "teacher_import_hard_resolutions",
     "teacher_import_commits",
     "teacher_availability_reviews",
+    "permanent_teacher_replacement_commands",
+    "teacher_departure_creation_commands",
+    "exam_submission_commands",
   ]) {
     assert.match(sql, new RegExp(`alter table internal\\.${table} enable row level security`, "i"));
     assert.match(sql, new RegExp(`revoke all on table internal\\.${table} from public, anon, authenticated`, "i"));

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER } from "@/lib/demo-users";
 import {
@@ -19,6 +19,8 @@ import {
   isMasterStudentStatus,
   MASTER_STUDENT_STATUSES,
   StudentImportError,
+  studentIdForMasterSource,
+  studentImportReviewCjkKey,
   type ExistingStudentImportRecord,
   type JwbStudentImportRow,
   type MasterStudentImportRow,
@@ -30,11 +32,21 @@ import {
 } from "@/lib/student-import";
 import type { OpsStateRow, StudentImportSourceRowsSnapshot } from "@/lib/ops-store";
 
-const FINGERPRINT_CONTRACT = "student-import-plan-v5-bookings-version-bound";
+const FINGERPRINT_CONTRACT = "student-import-plan-v6-unique-cjk-name-match";
 const FORMAL_IDENTITY_STRATEGY = "current-revision-reviewed-link-or-namespaced-id-v1";
 const MASTER_DUPLICATE_RESOLUTION_CONTRACT = "student-import-master-duplicate-resolution-v1";
+const IDENTITY_REVIEW_CANDIDATE_CONTRACT = "student-import-identity-review-candidate-v1";
+const IDENTITY_REVIEW_RESOLUTION_CONTRACT = "student-import-identity-review-v1";
+const IDENTITY_REVIEW_CLEAR_CONTRACT = "student-import-identity-review-clear-v1";
+const IDENTITY_REVIEW_MANUAL_TOKEN_CONTRACT = "student-import-identity-review-manual-token-v2-hmac";
 const SELECTABLE_MASTER_DUPLICATE_STATUSES = MASTER_STUDENT_STATUSES.filter((status) =>
   status !== "不活跃 + 无课时");
+const JWB_REQUIRED_MASTER_STATUSES = new Set<MasterStudentStatus>([
+  "在读",
+  "活跃 + 有课时",
+  "不活跃 + 有课时",
+  "在读 + 加课待排",
+]);
 const FINGERPRINT_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const FORBIDDEN_CLIENT_PLAN_FIELDS = ["students", "masterRows", "jwbRows", "actions", "plan"] as const;
 const COMMIT_REQUEST_FIELDS = new Set(["planFingerprint", "expectedStudentVersion"]);
@@ -157,14 +169,82 @@ export type StudentImportDryRunResponse = Readonly<{
     jwb: Readonly<{ sourceId: string; revision: string; rowCount: number }>;
   }>;
   identityLinkCount: number;
+  identityCoverage: Readonly<{
+    requiredMasterRows: number;
+    matchedRequiredMasterRows: number;
+    missingRequiredMasterRows: number;
+    ready: boolean;
+  }>;
   masterDuplicateResolutions: readonly MasterDuplicateResolutionCandidate[];
   summary: StudentImportPlan["summary"];
   excluded: StudentImportPlan["excluded"];
   unmatched: StudentImportPlan["unmatched"];
-  ambiguous: StudentImportPlan["ambiguous"];
+  ambiguous: readonly Readonly<{
+    kind: StudentImportPlan["ambiguous"][number]["kind"];
+    masterSourceRows: readonly StudentImportSourceKey[];
+    jwbSourceRows: readonly StudentImportSourceKey[];
+    existingStudentCount: number;
+  }>[];
 }>;
 
 export type MasterDuplicateResolutionDecision = "select" | "ignore";
+
+export type StudentIdentityReviewDecision = "merge" | "create";
+
+export type StudentIdentityReviewOption = Readonly<{
+  resolutionKey: string;
+  decision: StudentIdentityReviewDecision;
+  label: string;
+}>;
+
+export type StudentIdentityReviewCandidate = Readonly<{
+  candidateKey: string;
+  master: Readonly<{ name: string; sourceRow: StudentImportSourceKey }>;
+  jwb: Readonly<{ name: string; sourceRow: StudentImportSourceKey }>;
+  existing?: Readonly<{ name: string; sourceRow?: StudentImportSourceKey }>;
+  existingMatchCount: number;
+  options: readonly StudentIdentityReviewOption[];
+  blockedReason?: "existing_identity_ambiguous" | "identity_already_used" | "derived_identity_conflict";
+  persistenceContract: "student_identity_review_v1";
+}>;
+
+export type StudentIdentityReviewRequest = Readonly<{
+  resolutionKey: string;
+  decision: StudentIdentityReviewDecision;
+}>;
+
+export type StudentIdentityReviewClearRequest = Readonly<{
+  resolutionKey: string;
+  decision: "clear";
+}>;
+
+export type StudentIdentityManualReview = Readonly<{
+  masters: readonly Readonly<{
+    token: string;
+    name: string;
+    sourceRow: StudentImportSourceKey;
+    status: MasterStudentStatus;
+  }>[];
+  jwb: readonly Readonly<{
+    token: string;
+    name: string;
+    sourceRow: StudentImportSourceKey;
+  }>[];
+  existing: readonly Readonly<{
+    token: string;
+    name: string;
+    sourceRow?: StudentImportSourceKey;
+    status?: string;
+    segment?: string;
+  }>[];
+}>;
+
+export type StudentIdentityManualReviewRequest = Readonly<{
+  masterToken: string;
+  jwbToken: string;
+  decision: StudentIdentityReviewDecision;
+  existingToken?: string;
+}>;
 
 export type MasterDuplicateResolutionOption = Readonly<{
   resolutionKey: string;
@@ -210,6 +290,25 @@ export type StudentImportCommitRequest = Readonly<{
 
 export type StudentImportSourceKind = "master" | "jwb";
 
+/**
+ * Decodes the deliberately narrow database DETAIL emitted when a formal
+ * import source is absent. Unknown detail stays unknown instead of guessing
+ * that both sources are missing.
+ */
+export function parseStudentImportSourceUnavailableDetail(
+  value: unknown,
+): readonly StudentImportSourceKind[] | null {
+  if (typeof value !== "string") return null;
+  const match = /^missing_sources=(master|jwb)(?:,(master|jwb))?$/.exec(value.trim());
+  if (!match) return null;
+  const sources = new Set<StudentImportSourceKind>(
+    match.slice(1).filter((source): source is StudentImportSourceKind =>
+      source === "master" || source === "jwb"),
+  );
+  if (sources.size !== match.slice(1).filter(Boolean).length) return null;
+  return (["master", "jwb"] as const).filter((source) => sources.has(source));
+}
+
 export type StudentImportSourceIngestRequest = Readonly<{
   sourceKind: StudentImportSourceKind;
   sourceId: string;
@@ -225,8 +324,11 @@ export type StudentImportServiceErrorCode =
   | "invalid_jiaowubao_source"
   | "invalid_master_duplicate_resolution_request"
   | "master_duplicate_resolution_unavailable"
+  | "invalid_identity_review_request"
+  | "identity_review_unavailable"
   | "client_plan_forbidden"
   | "ambiguous_plan"
+  | "insufficient_identity_coverage"
   | "empty_plan"
   | "stale_plan"
   | "stale_students_version";
@@ -742,6 +844,9 @@ export function parseStudentImportSourceSnapshot(value: unknown): StudentImportS
     || !FINGERPRINT_PATTERN.test(value.identityLinkFingerprint)) {
     throw new StudentImportServiceError("invalid_source_snapshot", "Student identity links are invalid.");
   }
+  if (!Number.isSafeInteger(value.identityReviewEpoch) || (value.identityReviewEpoch as number) < 0) {
+    throw new StudentImportServiceError("invalid_source_snapshot", "Student identity review epoch is invalid.");
+  }
   const masterDuplicateResolutions = masterDuplicateResolutionSnapshot(value.masterDuplicateResolutions ?? []);
   if (typeof value.masterDuplicateResolutionFingerprint !== "string"
     || !FINGERPRINT_PATTERN.test(value.masterDuplicateResolutionFingerprint)) {
@@ -772,6 +877,7 @@ export function parseStudentImportSourceSnapshot(value: unknown): StudentImportS
     jwb: { sourceId: jwb.sourceId, revision: jwb.revision, rows: jwbRows(value.jwb) },
     identityLinks,
     identityLinkFingerprint: value.identityLinkFingerprint,
+    identityReviewEpoch: value.identityReviewEpoch as number,
     masterDuplicateResolutions,
     masterDuplicateResolutionFingerprint: value.masterDuplicateResolutionFingerprint,
     fuAttachmentReferences: {
@@ -1117,6 +1223,503 @@ function masterDuplicateResolutionKey(input: {
   return `sha256:${createHash("sha256").update(material).digest("hex")}`;
 }
 
+function identityReviewOpaqueKey(input: {
+  contract: typeof IDENTITY_REVIEW_CANDIDATE_CONTRACT | typeof IDENTITY_REVIEW_RESOLUTION_CONTRACT;
+  master: Readonly<{ sourceId: string; revision: string; sourceRow: StudentImportSourceKey }>;
+  jwb: Readonly<{ sourceId: string; revision: string; sourceRow: StudentImportSourceKey }>;
+  studentsVersion: number;
+  reviewEpoch: number;
+  decision?: StudentIdentityReviewDecision;
+  studentId?: string;
+}) {
+  return `sha256:${createHash("sha256").update(stableValue(input)).digest("hex")}`;
+}
+
+function identityEvidenceName(value: string) {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+function identityReviewClearKey(input: {
+  master: Readonly<{ sourceId: string; revision: string }>;
+  jwb: Readonly<{ sourceId: string; revision: string }>;
+  studentsVersion: number;
+  reviewEpoch: number;
+  identityLinkFingerprint: string;
+}) {
+  return `sha256:${createHash("sha256").update(stableValue({
+    contract: IDENTITY_REVIEW_CLEAR_CONTRACT,
+    ...input,
+  })).digest("hex")}`;
+}
+
+function identityReviewManualToken(input: {
+  tokenSecret: string;
+  kind: "master" | "jwb" | "existing";
+  master: Readonly<{ sourceId: string; revision: string }>;
+  jwb: Readonly<{ sourceId: string; revision: string }>;
+  studentsVersion: number;
+  reviewEpoch: number;
+  sourceRow?: StudentImportSourceKey;
+  studentId?: string;
+}) {
+  const { tokenSecret, ...evidence } = input;
+  if (!tokenSecret) {
+    throw new StudentImportServiceError(
+      "invalid_source_snapshot",
+      "Student identity review token secret is unavailable.",
+    );
+  }
+  return `sha256:${createHmac("sha256", tokenSecret).update(stableValue({
+    contract: IDENTITY_REVIEW_MANUAL_TOKEN_CONTRACT,
+    ...evidence,
+  })).digest("hex")}`;
+}
+
+function eligibleDerivedIdentityOwners(
+  masterRows: readonly MasterStudentImportRow[],
+  masterSourceId: string,
+) {
+  const owners = new Map<string, string[]>();
+  for (const row of masterRows) {
+    const status = String(row.status ?? "").trim();
+    if (!isMasterStudentStatus(status) || status === "不活跃 + 无课时") continue;
+    const studentId = studentIdForMasterSource(row.sourceRow, masterSourceId);
+    owners.set(studentId, [...(owners.get(studentId) ?? []), String(row.sourceRow).trim()]);
+  }
+  return owners;
+}
+
+/**
+ * Builds review evidence only. A candidate is never selected or persisted by
+ * this function: the administrator must choose one opaque closed option and
+ * the database independently recomputes it from locked current state.
+ */
+export function buildStudentIdentityReviewCandidates(input: {
+  master: Readonly<{
+    sourceId: string;
+    revision: string;
+    rows: readonly MasterStudentImportRow[];
+  }>;
+  jwb: Readonly<{
+    sourceId: string;
+    revision: string;
+    rows: readonly JwbStudentImportRow[];
+  }>;
+  studentsVersion: number;
+  existingStudents: readonly ExistingStudentImportRecord[];
+  identityLinks?: readonly StudentImportIdentityLink[];
+  reviewEpoch?: number;
+}): readonly StudentIdentityReviewCandidate[] {
+  if (!Number.isSafeInteger(input.studentsVersion) || input.studentsVersion < 0) {
+    throw new StudentImportServiceError("invalid_students_state", "Student version is unavailable for identity review.");
+  }
+  const reviewEpoch = input.reviewEpoch ?? 0;
+  if (!Number.isSafeInteger(reviewEpoch) || reviewEpoch < 0) {
+    throw new StudentImportServiceError("invalid_source_snapshot", "Student identity review epoch is invalid.");
+  }
+
+  const masterGroups = new Map<string, MasterStudentImportRow[]>();
+  for (const row of input.master.rows) {
+    const key = studentImportReviewCjkKey(row.name);
+    if (key) masterGroups.set(key, [...(masterGroups.get(key) ?? []), row]);
+  }
+  const jwbGroups = new Map<string, JwbStudentImportRow[]>();
+  for (const row of input.jwb.rows) {
+    // Manual review may bridge the common "English + Chinese" display-name
+    // difference between the two authoritative sources. Keep this distinct
+    // from the automatic Chinese-only fallback: exactly one contiguous Han
+    // run is evidence for a human decision, never an automatic link.
+    const key = studentImportReviewCjkKey(row.name);
+    if (key) jwbGroups.set(key, [...(jwbGroups.get(key) ?? []), row]);
+  }
+  const existingGroups = new Map<string, ExistingStudentImportRecord[]>();
+  const existingById = new Map<string, ExistingStudentImportRecord[]>();
+  for (const student of input.existingStudents) {
+    existingById.set(student.id, [...(existingById.get(student.id) ?? []), student]);
+    const key = studentImportReviewCjkKey(student.name);
+    if (key) existingGroups.set(key, [...(existingGroups.get(key) ?? []), student]);
+  }
+
+  const linkedMasterRows = new Set((input.identityLinks ?? []).map((link) => String(link.masterSourceRow).trim()));
+  const linkedJwbRows = new Set((input.identityLinks ?? [])
+    .flatMap((link) => link.jwbSourceRow === undefined ? [] : [String(link.jwbSourceRow).trim()]));
+  const linkedStudentIds = new Set((input.identityLinks ?? []).map((link) => link.studentId));
+  const derivedIdentityOwners = eligibleDerivedIdentityOwners(input.master.rows, input.master.sourceId);
+  const candidates: StudentIdentityReviewCandidate[] = [];
+
+  for (const [reviewKey, masters] of masterGroups) {
+    const jwbRowsForKey = jwbGroups.get(reviewKey) ?? [];
+    if (masters.length !== 1 || jwbRowsForKey.length !== 1) continue;
+    const master = masters[0];
+    const status = String(master.status ?? "").trim();
+    if (!isMasterStudentStatus(status) || status === "不活跃 + 无课时") continue;
+    const jwb = jwbRowsForKey[0];
+    if (linkedMasterRows.has(String(master.sourceRow).trim())
+      || linkedJwbRows.has(String(jwb.sourceRow).trim())) continue;
+
+    const keyBasis = {
+      master: {
+        sourceId: input.master.sourceId,
+        revision: input.master.revision,
+        sourceRow: master.sourceRow,
+      },
+      jwb: {
+        sourceId: input.jwb.sourceId,
+        revision: input.jwb.revision,
+        sourceRow: jwb.sourceRow,
+      },
+      studentsVersion: input.studentsVersion,
+      reviewEpoch,
+    } as const;
+    const existing = existingGroups.get(reviewKey) ?? [];
+    const options: StudentIdentityReviewOption[] = [];
+    let blockedReason: StudentIdentityReviewCandidate["blockedReason"];
+    const derivedId = studentIdForMasterSource(master.sourceRow, input.master.sourceId);
+    const masterSourceKey = String(master.sourceRow).trim();
+    const derivedOwners = derivedIdentityOwners.get(derivedId) ?? [];
+    const derivedIdentityAvailable = (existingById.get(derivedId) ?? []).length === 0
+      && !linkedStudentIds.has(derivedId)
+      && derivedOwners.length === 1
+      && derivedOwners[0] === masterSourceKey;
+
+    const mergeTargetOwners = existing[0]
+      ? derivedIdentityOwners.get(existing[0].id) ?? []
+      : [];
+    const mergeTargetAvailable = existing.length === 1
+      && !linkedStudentIds.has(existing[0].id)
+      && mergeTargetOwners.every((owner) => owner === masterSourceKey);
+
+    if (existing[0] && mergeTargetAvailable) {
+      options.push({
+        resolutionKey: identityReviewOpaqueKey({
+          contract: IDENTITY_REVIEW_RESOLUTION_CONTRACT,
+          ...keyBasis,
+          decision: "merge",
+          studentId: existing[0].id,
+        }),
+        decision: "merge",
+        label: "确认合并到现有学生",
+      });
+    }
+    // A same-name current record is evidence, not proof. When the deterministic
+    // formal ID is free, the reviewer must also be able to say these are two
+    // different people instead of being forced into a merge.
+    if (derivedIdentityAvailable) {
+      options.push({
+        resolutionKey: identityReviewOpaqueKey({
+          contract: IDENTITY_REVIEW_RESOLUTION_CONTRACT,
+          ...keyBasis,
+          decision: "create",
+          studentId: derivedId,
+        }),
+        decision: "create",
+        label: existing.length
+          ? "确认为不同学生并创建新身份"
+          : "确认创建正式学生身份",
+      });
+    }
+    if (!options.length) {
+      blockedReason = existing.length > 1
+        ? "existing_identity_ambiguous"
+        : existing.length === 1 && linkedStudentIds.has(existing[0].id)
+          ? "identity_already_used"
+          : "derived_identity_conflict";
+    }
+
+    candidates.push({
+      candidateKey: identityReviewOpaqueKey({
+        contract: IDENTITY_REVIEW_CANDIDATE_CONTRACT,
+        ...keyBasis,
+      }),
+      master: { name: identityEvidenceName(master.name), sourceRow: master.sourceRow },
+      jwb: { name: identityEvidenceName(jwb.name), sourceRow: jwb.sourceRow },
+      ...(existing[0] ? {
+        existing: {
+          name: identityEvidenceName(existing[0].name),
+          ...(canonicalSourceKey(existing[0].sourceRow) !== undefined
+            ? { sourceRow: canonicalSourceKey(existing[0].sourceRow)! }
+            : {}),
+        },
+      } : {}),
+      existingMatchCount: existing.length,
+      options,
+      ...(blockedReason ? { blockedReason } : {}),
+      persistenceContract: "student_identity_review_v1",
+    });
+  }
+
+  return candidates.sort((left, right) =>
+    String(left.master.sourceRow).localeCompare(String(right.master.sourceRow), "en"));
+}
+
+export function parseStudentIdentityReviewRequest(value: unknown): StudentIdentityReviewRequest {
+  if (!isRecord(value)
+    || Object.keys(value).length !== 2
+    || typeof value.resolutionKey !== "string"
+    || !FINGERPRINT_PATTERN.test(value.resolutionKey)
+    || (value.decision !== "merge" && value.decision !== "create")) {
+    throw new StudentImportServiceError(
+      "invalid_identity_review_request",
+      "请选择当前身份审核列表提供的处理方式。",
+    );
+  }
+  return { resolutionKey: value.resolutionKey, decision: value.decision };
+}
+
+export function parseStudentIdentityReviewClearRequest(value: unknown): StudentIdentityReviewClearRequest {
+  if (!isRecord(value)
+    || Object.keys(value).length !== 2
+    || typeof value.resolutionKey !== "string"
+    || !FINGERPRINT_PATTERN.test(value.resolutionKey)
+    || value.decision !== "clear") {
+    throw new StudentImportServiceError(
+      "invalid_identity_review_request",
+      "请使用当前身份审核列表提供的清空确认。",
+    );
+  }
+  return { resolutionKey: value.resolutionKey, decision: "clear" };
+}
+
+export function parseStudentIdentityManualReviewRequest(
+  value: unknown,
+): StudentIdentityManualReviewRequest {
+  if (!isRecord(value)
+    || typeof value.masterToken !== "string"
+    || !FINGERPRINT_PATTERN.test(value.masterToken)
+    || typeof value.jwbToken !== "string"
+    || !FINGERPRINT_PATTERN.test(value.jwbToken)
+    || (value.decision !== "merge" && value.decision !== "create")) {
+    throw new StudentImportServiceError(
+      "invalid_identity_review_request",
+      "请从当前人工配对列表选择学生总表与教务宝记录。",
+    );
+  }
+  if (value.decision === "create") {
+    if (Object.keys(value).length !== 3 || "existingToken" in value) {
+      throw new StudentImportServiceError(
+        "invalid_identity_review_request",
+        "创建新身份不能携带现有学生标识。",
+      );
+    }
+    return {
+      masterToken: value.masterToken,
+      jwbToken: value.jwbToken,
+      decision: "create",
+    };
+  }
+  if (Object.keys(value).length !== 4
+    || typeof value.existingToken !== "string"
+    || !FINGERPRINT_PATTERN.test(value.existingToken)) {
+    throw new StudentImportServiceError(
+      "invalid_identity_review_request",
+      "合并身份必须选择当前列表中的现有学生。",
+    );
+  }
+  return {
+    masterToken: value.masterToken,
+    jwbToken: value.jwbToken,
+    existingToken: value.existingToken,
+    decision: "merge",
+  };
+}
+
+function buildStudentIdentityManualReview(input: {
+  tokenSecret: string;
+  sources: StudentImportSourceRowsSnapshot;
+  resolvedMasterRows: readonly MasterStudentImportRow[];
+  studentsVersion: number;
+  existingStudents: readonly ExistingStudentImportRecord[];
+}): StudentIdentityManualReview {
+  const { sources } = input;
+  const linkedMasterRows = new Set(sources.identityLinks.map((link) =>
+    String(link.masterSourceRow).trim()));
+  const linkedJwbRows = new Set(sources.identityLinks.flatMap((link) =>
+    link.jwbSourceRow === undefined ? [] : [String(link.jwbSourceRow).trim()]));
+  const linkedStudentIds = new Set(sources.identityLinks.map((link) => link.studentId));
+  const tokenBasis = {
+    master: { sourceId: sources.master.sourceId, revision: sources.master.revision },
+    jwb: { sourceId: sources.jwb.sourceId, revision: sources.jwb.revision },
+    studentsVersion: input.studentsVersion,
+    reviewEpoch: sources.identityReviewEpoch,
+  } as const;
+  const bySourceRow = <T extends { sourceRow: StudentImportSourceKey }>(left: T, right: T) =>
+    String(left.sourceRow).localeCompare(String(right.sourceRow), "en");
+  const existingEvidence = input.existingStudents.map((student) => {
+    const sourceRow = canonicalSourceKey(student.masterSourceKey)
+      ?? canonicalSourceKey(student.sourceRow);
+    const status = typeof student.status === "string" && student.status.trim().length <= 80
+      ? student.status.trim()
+      : undefined;
+    const segment = typeof student.segment === "string" && student.segment.trim().length <= 80
+      ? student.segment.trim()
+      : undefined;
+    const evidence = {
+      name: identityEvidenceName(student.name),
+      ...(sourceRow !== undefined ? { sourceRow } : {}),
+      ...(status ? { status } : {}),
+      ...(segment ? { segment } : {}),
+    };
+    return { student, evidence, signature: stableValue(evidence) };
+  });
+  const evidenceCounts = new Map<string, number>();
+  for (const item of existingEvidence) {
+    evidenceCounts.set(item.signature, (evidenceCounts.get(item.signature) ?? 0) + 1);
+  }
+
+  return {
+    masters: input.resolvedMasterRows.flatMap((row) => {
+      const status = String(row.status ?? "").trim();
+      if (!isMasterStudentStatus(status)
+        || !JWB_REQUIRED_MASTER_STATUSES.has(status)
+        || linkedMasterRows.has(String(row.sourceRow).trim())) return [];
+      return [{
+        token: identityReviewManualToken({
+          kind: "master",
+          tokenSecret: input.tokenSecret,
+          ...tokenBasis,
+          sourceRow: row.sourceRow,
+        }),
+        name: identityEvidenceName(row.name),
+        sourceRow: row.sourceRow,
+        status,
+      }];
+    }).sort(bySourceRow),
+    jwb: sources.jwb.rows.flatMap((row) => {
+      if (linkedJwbRows.has(String(row.sourceRow).trim())) return [];
+      return [{
+        token: identityReviewManualToken({
+          tokenSecret: input.tokenSecret,
+          kind: "jwb",
+          ...tokenBasis,
+          sourceRow: row.sourceRow,
+        }),
+        name: identityEvidenceName(row.name),
+        sourceRow: row.sourceRow,
+      }];
+    }).sort(bySourceRow),
+    existing: existingEvidence.flatMap(({ student, evidence, signature }) => {
+      if (linkedStudentIds.has(student.id)) return [];
+      // Two records with identical visible evidence cannot be chosen safely by
+      // a human. Do not issue either token; create remains available.
+      if (evidenceCounts.get(signature) !== 1) return [];
+      return [{
+        token: identityReviewManualToken({
+          kind: "existing",
+          tokenSecret: input.tokenSecret,
+          ...tokenBasis,
+          studentId: student.id,
+        }),
+        ...evidence,
+      }];
+    }).sort((left, right) =>
+      left.name.localeCompare(right.name, "zh-Hans-CN")
+      || String(left.sourceRow ?? "").localeCompare(String(right.sourceRow ?? ""), "en")),
+  };
+}
+
+export function resolveStudentIdentityReviewCandidate(
+  request: StudentIdentityReviewRequest,
+  candidates: readonly StudentIdentityReviewCandidate[],
+) {
+  for (const candidate of candidates) {
+    const option = candidate.options.find((item) =>
+      item.resolutionKey === request.resolutionKey && item.decision === request.decision);
+    if (option) return { candidate, option } as const;
+  }
+  throw new StudentImportServiceError(
+    "identity_review_unavailable",
+    "该学生身份审核选项已失效，请重新读取最新候选。",
+  );
+}
+
+export function prepareStudentIdentityReview(input: {
+  sourceSnapshot: unknown;
+  studentsRow: OpsStateRow | undefined;
+  manualTokenSecret: string;
+}) {
+  const sources = parseStudentImportSourceSnapshot(input.sourceSnapshot);
+  const current = studentsState(input.studentsRow);
+  // Use the same authoritative duplicate-row decisions as the locked SQL RPC.
+  // No token is issued for a pending group: otherwise a link could be created
+  // for a row that a later select/ignore decision removes from the projection.
+  const duplicateCandidates = buildMasterDuplicateResolutionCandidates({
+    sourceId: sources.master.sourceId,
+    revision: sources.master.revision,
+    studentVersion: current.version,
+    rows: sources.master.rows,
+  });
+  const resolvedGroupKeys = new Set(sources.masterDuplicateResolutions.map((resolution) =>
+    resolutionGroupKey(resolution.sourceRows)));
+  const pendingDuplicateRows = new Set(duplicateCandidates.flatMap((candidate) =>
+    resolvedGroupKeys.has(resolutionGroupKey(candidate.sourceRows.map((row) => row.sourceRow)))
+      ? []
+      : candidate.sourceRows.map((row) => String(row.sourceRow).trim())));
+  const resolvedMasterRows = applyMasterStudentDuplicateResolutions(
+    sources.master.rows,
+    sources.masterDuplicateResolutions,
+  ).filter((row) => !pendingDuplicateRows.has(String(row.sourceRow).trim()));
+  const candidateInput = {
+    master: { ...sources.master, rows: resolvedMasterRows },
+    jwb: sources.jwb,
+    studentsVersion: current.version,
+    existingStudents: current.students,
+    reviewEpoch: sources.identityReviewEpoch,
+  } as const;
+  const candidates = buildStudentIdentityReviewCandidates({
+    ...candidateInput,
+    identityLinks: sources.identityLinks,
+  });
+  const visibleCandidateKeys = new Set(candidates.map((candidate) => candidate.candidateKey));
+  const decisionCandidates = buildStudentIdentityReviewCandidates(candidateInput).flatMap((candidate) => {
+    if (visibleCandidateKeys.has(candidate.candidateKey)) return [candidate];
+    const masterSourceKey = String(candidate.master.sourceRow).trim();
+    const jwbSourceKey = String(candidate.jwb.sourceRow).trim();
+    const link = sources.identityLinks.find((item) =>
+      String(item.masterSourceRow).trim() === masterSourceKey
+      && item.jwbSourceRow !== undefined
+      && String(item.jwbSourceRow).trim() === jwbSourceKey);
+    if (!link) return [];
+    const matchingOptions = candidate.options.filter((option) => {
+      if (option.decision === "create") {
+        return link.studentId === studentIdForMasterSource(
+        candidate.master.sourceRow,
+        sources.master.sourceId,
+      );
+      }
+      const master = resolvedMasterRows.find((row) =>
+        String(row.sourceRow).trim() === masterSourceKey);
+      if (!master) return false;
+      const reviewKey = studentImportReviewCjkKey(master.name);
+      return Boolean(reviewKey) && current.students.some((student) =>
+        student.id === link.studentId
+        && studentImportReviewCjkKey(student.name) === reviewKey);
+    });
+    return matchingOptions.length === 1 ? [{ ...candidate, options: matchingOptions }] : [];
+  });
+  return {
+    candidates,
+    // Kept server-side and used only to validate a submitted opaque option.
+    // It includes the visible options plus only an exact active-link replay;
+    // the locked database RPC performs the same check again before mutation.
+    decisionCandidates,
+    identityLinkCount: sources.identityLinks.length,
+    manualReview: buildStudentIdentityManualReview({
+      tokenSecret: input.manualTokenSecret,
+      sources,
+      resolvedMasterRows,
+      studentsVersion: current.version,
+      existingStudents: current.students,
+    }),
+    clearKey: identityReviewClearKey({
+      master: { sourceId: sources.master.sourceId, revision: sources.master.revision },
+      jwb: { sourceId: sources.jwb.sourceId, revision: sources.jwb.revision },
+      studentsVersion: current.version,
+      reviewEpoch: sources.identityReviewEpoch,
+      identityLinkFingerprint: sources.identityLinkFingerprint,
+    }),
+  } as const;
+}
+
 export function buildMasterDuplicateResolutionCandidates(input: {
   sourceId: string;
   revision: string;
@@ -1319,6 +1922,24 @@ export function prepareStudentImport(input: {
     assertCurrentLessonPackages(student as RecordValue);
     assertCurrentJwbAggregate(student as RecordValue);
   }
+  // These statuses describe a student who is already studying, has hours, or
+  // is waiting for an additional lesson allocation.  A formal replacement is
+  // unsafe unless that master identity is tied to exactly one JWB account.
+  // "活跃 + 无课时" is deliberately exempt: the authoritative source says
+  // there is no balance to import, so a missing JWB account is not evidence of
+  // an incomplete identity projection.
+  const requiredMasterStudents = plan.students.filter((student) =>
+    student.importSource === "master"
+    && isMasterStudentStatus(student.status)
+    && JWB_REQUIRED_MASTER_STATUSES.has(student.status));
+  const matchedRequiredMasterRows = requiredMasterStudents.filter((student) =>
+    student.jwbMatchStatus === "matched").length;
+  const identityCoverage = {
+    requiredMasterRows: requiredMasterStudents.length,
+    matchedRequiredMasterRows,
+    missingRequiredMasterRows: requiredMasterStudents.length - matchedRequiredMasterRows,
+    ready: requiredMasterStudents.length === matchedRequiredMasterRows,
+  } as const;
   const planFingerprint = studentImportPlanFingerprint({
     plan,
     studentVersion: current.version,
@@ -1340,17 +1961,26 @@ export function prepareStudentImport(input: {
       expectedStudentVersion: current.version,
       canCommit: plan.students.length > 0
         && plan.ambiguous.length === 0
-        && pendingMasterDuplicateResolutions.length === 0,
+        && pendingMasterDuplicateResolutions.length === 0
+        && identityCoverage.ready,
       sources: {
         master: { sourceId: sources.master.sourceId, revision: sources.master.revision, rowCount: sources.master.rows.length },
         jwb: { sourceId: sources.jwb.sourceId, revision: sources.jwb.revision, rowCount: sources.jwb.rows.length },
       },
       identityLinkCount: sources.identityLinks.length,
+      identityCoverage,
       masterDuplicateResolutions: pendingMasterDuplicateResolutions,
       summary: plan.summary,
       excluded: plan.excluded,
       unmatched: plan.unmatched,
-      ambiguous: plan.ambiguous,
+      // The browser needs only review counts and source-row evidence. Current
+      // student IDs and normalized join keys stay inside the server plan.
+      ambiguous: plan.ambiguous.map((ambiguity) => ({
+        kind: ambiguity.kind,
+        masterSourceRows: ambiguity.masterSourceRows,
+        jwbSourceRows: ambiguity.jwbSourceRows,
+        existingStudentCount: ambiguity.existingStudentIds.length,
+      })),
     },
   };
 }
@@ -1386,6 +2016,12 @@ export function assertStudentImportCommit(
   }
   if (prepared.plan.students.length === 0) {
     throw new StudentImportServiceError("empty_plan", "The reviewed import would produce an empty student list.");
+  }
+  if (!prepared.response.identityCoverage.ready) {
+    throw new StudentImportServiceError(
+      "insufficient_identity_coverage",
+      "Students who are studying or have hours must be matched to reviewed JWB identities before import.",
+    );
   }
   if (request.expectedStudentVersion !== prepared.response.expectedStudentVersion) {
     throw new StudentImportServiceError("stale_students_version", "The students list changed after this plan was reviewed.");

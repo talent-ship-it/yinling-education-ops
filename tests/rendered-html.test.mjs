@@ -188,6 +188,7 @@ test("retains core operations workflows and responsive UI", async () => {
   for (const contract of [
     "scheduleConflict",
     "createLpWorkflow",
+    "generateTrialEscalationTasks",
     "generateTrialRequestTasks",
     "linkTrialRequestTasksToBooking",
     "reconcileTrialBookingTasks",
@@ -225,6 +226,9 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(tasks, /export function upsertTaskByRule/);
   assert.match(tasks, /id: existing\.id/);
   assert.match(tasks, /export function linkTrialRequestTasksToBooking/);
+  assert.match(tasks, /TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT/);
+  assert.match(client, /parentProgressSyncCount: 1/);
+  assert.match(client, /trial\\\.parent-progress-sync/);
   assert.match(tasks, /id: canonicalRequest\.id/);
   assert.match(tasks, /export function closeTasksForBooking/);
   assert.match(tasks, /export function restoreTrialRequestTasksToWorkflow/);
@@ -242,6 +246,8 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /--brand:#75C9C2/);
   assert.match(client, /teacherTotalHours/);
   assert.match(client, /function availabilitySummary/);
+  assert.match(client, /teacher-source-evidence/);
+  assert.match(client, /腾讯表原始记录（仅供人工结构化）/);
   assert.match(client, /const teacherPageSize = 8/);
   assert.match(client, /本月未收集/);
   assert.match(client, /function formatMoney/);
@@ -502,6 +508,8 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /lpFilter === "revision" \? item\.stage === "需修改"/);
   assert.match(client, /<LpRevisionHistory/);
   assert.match(client, /name="guardianWechat"/);
+  assert.match(client, /name="provisionalGuardianWechat"/);
+  assert.doesNotMatch(client, /name="provisionalName"/);
   assert.doesNotMatch(client, /name="guardian"/);
   assert.match(client, /canAdd=\{!isTeacherView && selectedStudent\.importArchived !== true\}/);
   assert.match(client, /isTeacherView \|\| selectedStudent\?\.importArchived/);
@@ -566,8 +574,14 @@ test("wires controlled raw JWB and two-workbook teacher imports into the sync wo
   assert.match(client, /studentJwbNegativePolicy/);
   assert.match(client, /仅保留净余额，不创建该生课包/);
   assert.match(client, /fetch\("\/api\/student-import\/source-rows"/);
+  assert.match(client, /fetch\("\/api\/student-import\/source-rows", \{ cache: "no-store" \}\)/);
+  assert.match(client, /body\.ready !== true/);
+  assert.match(client, /setStudentImportSourceStatus\(nextStatus\)/);
   assert.match(client, /fetch\("\/api\/student-import\/identity-links"/);
-  assert.match(client, /JSON\.stringify\(\{ links:/);
+  assert.match(client, /JSON\.stringify\(\{ resolutionKey: clearKey, decision: "clear" \}\)/);
+  assert.match(client, /masterToken: studentIdentityManualMasterToken/);
+  assert.match(client, /jwbToken: studentIdentityManualJwbToken/);
+  assert.doesNotMatch(client, /JSON\.stringify\(\{ links:/);
   assert.match(client, /fetch\("\/api\/teacher-import\/source"/);
   assert.match(client, /fetch\("\/api\/teacher-import"/);
   assert.match(client, /同表重名都必须逐项选择合并或分开/);

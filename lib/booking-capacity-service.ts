@@ -29,6 +29,7 @@ const BOOKING_FIELDS = new Set([
   "repeatCount",
   "packageId",
   "subjectId",
+  "teacherSubjectId",
 ]);
 
 export type BookingCapacityCommand = Readonly<{
@@ -51,6 +52,7 @@ export type BookingCapacityCommand = Readonly<{
     repeatCount?: number;
     packageId?: string;
     subjectId: string;
+    teacherSubjectId: string;
   }>;
 }>;
 
@@ -69,6 +71,7 @@ export type BookingCapacityServiceErrorCode =
   | "package_subject_mismatch"
   | "package_balance_insufficient"
   | "subject_not_allowed"
+  | "teacher_subject_not_allowed"
   | "teacher_not_accepting"
   | "teacher_capacity_unconfigured"
   | "teacher_capacity_exhausted"
@@ -197,6 +200,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
       ...(repeatCount !== undefined ? { repeatCount: repeatCount as number } : {}),
       ...(optionalText(value.booking.packageId) ? { packageId: optionalText(value.booking.packageId) } : {}),
       subjectId: requiredText(value.booking.subjectId, "booking.subjectId"),
+      teacherSubjectId: requiredText(value.booking.teacherSubjectId, "booking.teacherSubjectId"),
     },
   };
 }
@@ -354,22 +358,30 @@ function capacityAssignments(teacher: RecordValue) {
   return [...new Set(value.map((item) => item.trim()))].sort();
 }
 
-function reconcileCapacity(input: {
-  beforeBookings: readonly RecordValue[];
-  afterBookings: readonly RecordValue[];
+export type TeacherStudentCapacityTransition = Readonly<{
+  teacherId: string;
+  studentId: string;
+  beforeActive: boolean;
+  afterActive: boolean;
+}>;
+
+/** Applies reviewed relationship transitions without inferring them from raw text. */
+export function reconcileTeacherStudentCapacity(input: {
   teachers: readonly RecordValue[];
-  pairs: ReadonlyArray<readonly [string, string]>;
+  transitions: readonly TeacherStudentCapacityTransition[];
 }) {
   const nextTeachers = input.teachers.map((teacher) => ({ ...teacher }));
   const changed = new Set<string>();
   const seenPairs = new Set<string>();
-  for (const [teacherId, studentId] of input.pairs) {
+  for (const transition of input.transitions) {
+    const teacherId = transition.teacherId.trim();
+    const studentId = transition.studentId.trim();
+    if (!teacherId || !studentId) fail("invalid_shared_state", "Capacity transition identities are missing.");
     const pairKey = `${teacherId}\u0000${studentId}`;
-    if (seenPairs.has(pairKey)) continue;
+    if (seenPairs.has(pairKey)) fail("invalid_shared_state", "Duplicate capacity transition.");
     seenPairs.add(pairKey);
-    const before = activeRelationship(input.beforeBookings, teacherId, studentId);
-    const after = activeRelationship(input.afterBookings, teacherId, studentId);
-    if (before === after) continue;
+    if (transition.beforeActive === transition.afterActive) continue;
+
     const index = nextTeachers.findIndex((teacher) => teacher.id === teacherId);
     if (index < 0) fail("teacher_not_found", "Booking teacher was not found.");
     const teacher = nextTeachers[index];
@@ -380,20 +392,21 @@ function reconcileCapacity(input: {
     if (teacher.newStudentCapacity !== undefined && !numericCapacity) {
       fail("invalid_shared_state", "teacher.newStudentCapacity is invalid.");
     }
-    if (!before && after) {
-      if (!assigned && !numericCapacity) {
+    if (!transition.beforeActive && transition.afterActive) {
+      if (assigned) continue;
+      if (!numericCapacity) {
         fail("teacher_capacity_unconfigured", `${stateText(teacher, "name", "teacher")} must have new-student capacity configured before the first assignment.`);
       }
-      if (!assigned && (teacher.newStudentCapacity as number) <= 0) {
+      if ((teacher.newStudentCapacity as number) <= 0) {
         fail("teacher_capacity_exhausted", `${stateText(teacher, "name", "teacher")} has no remaining new-student capacity.`);
       }
       nextTeachers[index] = {
         ...teacher,
-        capacityAssignments: assigned ? assignments : [...assignments, studentId].sort(),
-        ...(!assigned ? { newStudentCapacity: (teacher.newStudentCapacity as number) - 1 } : {}),
+        capacityAssignments: [...assignments, studentId].sort(),
+        newStudentCapacity: (teacher.newStudentCapacity as number) - 1,
       };
       changed.add(teacherId);
-    } else if (before && !after && assigned) {
+    } else if (transition.beforeActive && !transition.afterActive && assigned) {
       nextTeachers[index] = {
         ...teacher,
         capacityAssignments: assignments.filter((assignment) => assignment !== studentId),
@@ -403,6 +416,25 @@ function reconcileCapacity(input: {
     }
   }
   return { teachers: nextTeachers, changedTeacherIds: [...changed].sort() };
+}
+
+function reconcileCapacity(input: {
+  beforeBookings: readonly RecordValue[];
+  afterBookings: readonly RecordValue[];
+  teachers: readonly RecordValue[];
+  pairs: ReadonlyArray<readonly [string, string]>;
+}) {
+  const seenPairs = new Set<string>();
+  const transitions: TeacherStudentCapacityTransition[] = [];
+  for (const [teacherId, studentId] of input.pairs) {
+    const pairKey = `${teacherId}\u0000${studentId}`;
+    if (seenPairs.has(pairKey)) continue;
+    seenPairs.add(pairKey);
+    const before = activeRelationship(input.beforeBookings, teacherId, studentId);
+    const after = activeRelationship(input.afterBookings, teacherId, studentId);
+    transitions.push({ teacherId, studentId, beforeActive: before, afterActive: after });
+  }
+  return reconcileTeacherStudentCapacity({ teachers: input.teachers, transitions });
 }
 
 function studentSubjects(student: RecordValue) {
@@ -450,6 +482,20 @@ function assertPackageAndSubject(student: RecordValue, booking: BookingCapacityC
   }
 }
 
+function assertTeacherSubject(teacher: RecordValue, booking: NonNullable<BookingCapacityCommand["booking"]>) {
+  if (!Array.isArray(teacher.subjects)
+    || !teacher.subjects.every((subject) => typeof subject === "string" && subject.trim())) {
+    fail("invalid_shared_state", "teacher.subjects is invalid.");
+  }
+  const authoritativeSubjects = new Set(teacher.subjects.map((subject) => subject.trim()));
+  if (!authoritativeSubjects.has(booking.teacherSubjectId)) {
+    fail(
+      "teacher_subject_not_allowed",
+      `${stateText(teacher, "name", "teacher")} is not listed in the authoritative Tencent subject sheet ${booking.teacherSubjectId}.`,
+    );
+  }
+}
+
 function bookingSourceEnd(booking: RecordValue) {
   const date = stateText(booking, "date", "booking");
   if (booking.recurring !== true) return date;
@@ -459,12 +505,23 @@ function bookingSourceEnd(booking: RecordValue) {
   return addDays(date, ((booking.repeatCount as number) - 1) * 7);
 }
 
-function reservedPackageHours(input: {
+/**
+ * Projects every still-active future occurrence against one shared package.
+ * Subject is intentionally not part of the key: all subjects bound to the
+ * same package draw from the same balance.
+ */
+export function futureReservedPackageHours(input: {
   bookings: readonly RecordValue[];
   studentId: string;
   packageId: string;
   now: Date;
 }) {
+  if (!input.studentId.trim() || !input.packageId.trim()) {
+    fail("invalid_shared_state", "Package reservation identities are missing.");
+  }
+  if (!Number.isFinite(input.now.getTime())) {
+    fail("invalid_request", "Package reservation now is invalid.");
+  }
   let reserved = 0;
   for (const booking of input.bookings) {
     if (booking.kind === "试听") continue;
@@ -507,7 +564,7 @@ function assertPackageReservation(input: {
   const lessonPackage = packages.find((item) => item.id === input.booking.packageId);
   if (!lessonPackage) fail("package_subject_mismatch", "The selected lesson package no longer exists.");
   const available = packageBalance(lessonPackage);
-  const reserved = reservedPackageHours({
+  const reserved = futureReservedPackageHours({
     bookings: input.bookings,
     studentId: stateId(input.student, "student"),
     packageId: input.booking.packageId,
@@ -614,8 +671,11 @@ export function prepareBookingCapacityMutation(input: {
   } else {
     const booking = input.command.booking!;
     assertPackageAndSubject(targetStudent, booking);
-    if (booking.kind === "试听" && targetTeacher.acceptsStudents !== true) {
-      fail("teacher_not_accepting", `${stateText(targetTeacher, "name", "teacher")} is not accepting trial students.`);
+    assertTeacherSubject(targetTeacher, booking);
+    const createsTeacherStudentRelationship = booking.kind !== "代课"
+      && !activeRelationship(bookingRow.payload, targetTeacherId, targetStudentId);
+    if (createsTeacherStudentRelationship && targetTeacher.acceptsStudents !== true) {
+      fail("teacher_not_accepting", `${stateText(targetTeacher, "name", "teacher")} is not accepting new students.`);
     }
     const dates = proposedDates(booking, existing?.recurring === true && typeof existing.repeatCount === "number" ? existing.repeatCount : undefined);
     const now = input.now ?? new Date();
@@ -646,6 +706,7 @@ export function prepareBookingCapacityMutation(input: {
       repeatCount: booking.recurring ? booking.repeatCount : 1,
       packageId: booking.packageId,
       course: booking.subjectId,
+      teacherSubjectId: booking.teacherSubjectId,
       requestedAt: optionalText(existing?.requestedAt) ?? now.toISOString(),
     };
     if (!booking.recurring) nextBooking.repeatCount = 1;

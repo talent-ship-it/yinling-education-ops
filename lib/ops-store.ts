@@ -92,6 +92,16 @@ export type TeacherAvailabilityReviewCommitResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type TeacherAvailabilitySubmitCommitResult = Readonly<{
+  submission_key: string;
+  submission_id: number;
+  teacher_id: string;
+  status: "pending" | "approved" | "rejected";
+  applied: boolean;
+  submitted_at: string;
+  audit_entry_id: string;
+}>;
+
 /**
  * Contract for a future reviewed RPC over the server-owned source_rows table.
  * Revisions are opaque database values and are carried into the atomic commit.
@@ -113,6 +123,8 @@ export type StudentImportSourceRowsSnapshot = Readonly<{
     studentId: string;
   }>[];
   identityLinkFingerprint: string;
+  /** Monotonic revocation generation for opaque identity-review options. */
+  identityReviewEpoch: number;
   masterDuplicateResolutions: readonly MasterStudentDuplicateResolution[];
   masterDuplicateResolutionFingerprint: string;
   fuAttachmentReferences: StudentFuAttachmentReferenceSnapshot;
@@ -137,6 +149,15 @@ export type StudentImportIdentityLinkSaveResult = Readonly<{
   fingerprint: string;
   count: number;
   unchanged: boolean;
+}>;
+
+export type StudentImportIdentityReviewSaveResult = StudentImportIdentityLinkSaveResult & Readonly<{
+  resolutionKey: string;
+  decision: "merge" | "create";
+}>;
+
+export type StudentImportIdentityClearResult = StudentImportIdentityLinkSaveResult & Readonly<{
+  reviewEpoch: number;
 }>;
 
 export type StudentImportMasterDuplicateResolutionSaveResult = Readonly<{
@@ -180,7 +201,11 @@ export type TeacherIdentityLinkSaveResult = Readonly<{
 export const STUDENT_IMPORT_SOURCE_ROWS_RPC = "get_latest_student_import_source_rows";
 export const STUDENT_IMPORT_SOURCE_INGEST_RPC = "put_student_import_source_rows";
 export const STUDENT_IMPORT_ATOMIC_COMMIT_RPC = "commit_student_import_plan_atomic";
-export const STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC = "put_student_import_identity_links";
+export const STUDENT_IMPORT_COMMIT_REPLAY_RESULT_RPC = "get_student_import_commit_replay_result";
+export const STUDENT_IMPORT_IDENTITY_REVIEW_PUT_RPC = "put_student_import_identity_review_decision";
+export const STUDENT_IMPORT_IDENTITY_REVIEW_PAIR_RPC = "put_student_import_identity_review_pair";
+export const STUDENT_IMPORT_IDENTITY_CLEAR_RPC = "clear_student_import_identity_links";
+export const STUDENT_IMPORT_IDENTITY_REVIEW_CONTRACT_RPC = "get_student_import_identity_review_contract";
 export const STUDENT_IMPORT_MASTER_DUPLICATE_RESOLUTION_PUT_RPC = "put_student_import_master_duplicate_resolution";
 export const TEACHER_IMPORT_SOURCE_RPC = "get_latest_teacher_import_sources";
 export const TEACHER_IMPORT_SOURCE_INGEST_RPC = "put_teacher_import_source";
@@ -192,10 +217,20 @@ export const LESSON_ATTENDANCE_EVIDENCE_RPC = "get_lesson_attendance_evidence";
 export const LESSON_OCCURRENCE_ATOMIC_COMPLETE_RPC = "complete_lesson_occurrence_atomic";
 export const TEACHER_AVAILABILITY_SUBMISSIONS_RPC = "get_teacher_availability_submissions";
 export const TEACHER_AVAILABILITY_ATOMIC_REVIEW_RPC = "review_teacher_availability_submission_atomic";
+export const TEACHER_AVAILABILITY_ATOMIC_SUBMIT_RPC = "submit_teacher_availability_atomic";
 export const BOOKING_CAPACITY_ATOMIC_MUTATION_RPC = "mutate_booking_capacity_atomic";
 export const OPERATION_CONFIRM_ATOMIC_RPC = "confirm_operation_occurrences_atomic";
 export const BOOKING_CAPACITY_COMMAND_RESULT_RPC = "get_booking_capacity_command_result";
 export const OPERATION_CONFIRM_COMMAND_RESULT_RPC = "get_operation_confirmation_command_result";
+export const PERMANENT_TEACHER_REPLACEMENT_ATOMIC_RPC = "confirm_permanent_teacher_replacement_atomic";
+export const PERMANENT_TEACHER_REPLACEMENT_COMMAND_RESULT_RPC = "get_permanent_teacher_replacement_command_result";
+export const TEACHER_DEPARTURE_CREATION_ATOMIC_RPC = "create_teacher_departure_atomic";
+export const TEACHER_DEPARTURE_CREATION_COMMAND_RESULT_RPC = "get_teacher_departure_creation_command_result";
+export const EXAM_SUBMISSION_ATOMIC_RPC = "submit_exam_atomic";
+export const EXAM_SUBMISSION_COMMAND_RESULT_RPC = "get_exam_submission_command_result";
+export const EXAM_FOLLOW_UP_ATOMIC_RPC = "mutate_exam_follow_up_atomic";
+export const EXAM_FOLLOW_UP_COMMAND_RESULT_RPC = "get_exam_follow_up_command_result";
+export const EXAM_FOLLOW_UP_COMPLETION_CONTEXT_RPC = "get_exam_follow_up_completion_context";
 export const STUDENT_FU_ATTACHMENT_ATOMIC_PUT_RPC = "put_student_fu_attachment_atomic";
 
 export class OpsStoreError extends Error {
@@ -267,6 +302,32 @@ export function getTeacherAvailabilitySubmissions() {
   });
 }
 
+export function submitTeacherAvailabilityAtomic(input: {
+  submissionKey: string;
+  expectedTeacherVersion: number;
+  teacherId: string;
+  month: string;
+  timezone: string;
+  additionalStudents: number;
+  slots: readonly Readonly<{ day: number; start: string; end: string }>[];
+  notes?: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherAvailabilitySubmitCommitResult[]>(TEACHER_AVAILABILITY_ATOMIC_SUBMIT_RPC, {
+    p_secret: secret,
+    p_submission_key: input.submissionKey,
+    p_expected_teacher_version: input.expectedTeacherVersion,
+    p_teacher_id: input.teacherId,
+    p_month: input.month,
+    p_timezone: input.timezone,
+    p_additional_students: input.additionalStudents,
+    p_slots: input.slots,
+    p_notes: input.notes ?? null,
+    p_actor: input.actor,
+  });
+}
+
 /**
  * Applies one review transaction. `availabilityWindows` must be computed from
  * the server-read submission and teacher state, never accepted from a client.
@@ -305,6 +366,27 @@ export function getLatestStudentImportSourceRows() {
   });
 }
 
+/** Fails closed when the complete identity-review migration is not deployed. */
+export function getStudentImportIdentityReviewContract() {
+  const { secret } = configuration();
+  return rpc<Readonly<{ contractVersion: number }>>(
+    STUDENT_IMPORT_IDENTITY_REVIEW_CONTRACT_RPC,
+    { p_secret: secret },
+  );
+}
+
+/** Server-only HMAC key used to mint non-forgeable manual-review row tokens. */
+export function getStudentImportIdentityReviewTokenSecret() {
+  const secret = process.env.STUDENT_IMPORT_IDENTITY_REVIEW_TOKEN_SECRET;
+  if (!secret || !/^[a-f0-9]{64}$/.test(secret)) {
+    throw new OpsStoreError(
+      "学生身份人工审核 HMAC 密钥尚未配置为独立的 256-bit 十六进制值。",
+      "missing_configuration",
+    );
+  }
+  return secret;
+}
+
 /** Stores exactly one explicitly identified source snapshot for later dry-run. */
 export function putStudentImportSourceRows(input: {
   sourceKind: "master" | "jwb";
@@ -324,27 +406,77 @@ export function putStudentImportSourceRows(input: {
   });
 }
 
-/** Replaces the revision-bound, server-validated student source identity map. */
-export function putStudentImportIdentityLinks(input: {
-  sourceRevisions: Readonly<{ master: string; jwb: string }>;
-  links: readonly Readonly<{
-    masterSourceRow: string | number;
-    jwbSourceRow?: string | number;
-    studentId: string;
-  }>[];
+/**
+ * Persists one opaque reviewed option. Source references and target student
+ * IDs are deliberately absent: the database recomputes them while holding
+ * the source, students and identity-set locks.
+ */
+export function putStudentImportIdentityReviewDecision(input: {
+  resolutionKey: string;
+  decision: "merge" | "create";
   actor: string;
 }) {
-  if (input.links.length !== 0) {
-    throw new OpsStoreError(
-      "当前只允许清除旧身份链接；非空链接必须由服务端证据审核流程生成。",
-      "22023",
-    );
-  }
   const { secret } = configuration();
-  return rpc<StudentImportIdentityLinkSaveResult>(STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC, {
+  return rpc<StudentImportIdentityReviewSaveResult>(STUDENT_IMPORT_IDENTITY_REVIEW_PUT_RPC, {
     p_secret: secret,
-    p_source_revisions: input.sourceRevisions,
-    p_links: input.links,
+    p_resolution_key: input.resolutionKey,
+    p_decision: input.decision,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Persists one explicit manual pairing using only revision/epoch-bound opaque
+ * row tokens. The database resolves every source row and target identity
+ * again under locks and never accepts a browser-provided row reference or ID.
+ */
+export function putStudentImportIdentityReviewPair(input: {
+  masterToken: string;
+  jwbToken: string;
+  decision: "merge" | "create";
+  existingToken?: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityReviewSaveResult>(STUDENT_IMPORT_IDENTITY_REVIEW_PAIR_RPC, {
+    p_secret: secret,
+    p_token_secret: getStudentImportIdentityReviewTokenSecret(),
+    p_master_token: input.masterToken,
+    p_jwb_token: input.jwbToken,
+    p_decision: input.decision,
+    p_existing_token: input.existingToken ?? null,
+    p_actor: input.actor,
+  });
+}
+
+/** Revokes the exact currently displayed link set using a DB-recomputed opaque CAS key. */
+export function clearStudentImportIdentityLinks(input: {
+  resolutionKey: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityClearResult>(STUDENT_IMPORT_IDENTITY_CLEAR_RPC, {
+    p_secret: secret,
+    p_resolution_key: input.resolutionKey,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Recovers only a previously committed result after an HTTP response was
+ * lost. The database accepts no rows or source references and revalidates the
+ * locked current state against its immutable commit record.
+ */
+export function getStudentImportCommitReplayResult(input: {
+  planFingerprint: string;
+  expectedStudentVersion: number;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportCommitResult[]>(STUDENT_IMPORT_COMMIT_REPLAY_RESULT_RPC, {
+    p_secret: secret,
+    p_plan_fingerprint: input.planFingerprint,
+    p_expected_student_version: input.expectedStudentVersion,
     p_actor: input.actor,
   });
 }
@@ -521,6 +653,105 @@ export type OperationConfirmationCommandResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type PermanentTeacherReplacementCommitResult = Readonly<{
+  command_key: string;
+  operation_id: string;
+  applied: boolean;
+  affected_occurrence_ids: readonly string[];
+  changed_teacher_ids: readonly string[];
+  bookings_row: OpsStateRow;
+  operations_row: OpsStateRow;
+  teachers_row: OpsStateRow;
+  students_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type PermanentTeacherReplacementCommandResult = Readonly<{
+  command_key: string;
+  operation_id: string;
+  affected_occurrence_ids: readonly string[];
+  changed_teacher_ids: readonly string[];
+  audit_entry_id: string;
+}>;
+
+export type TeacherDepartureCreationCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  source_teacher_id: string;
+  effective_date: string;
+  operation_ids: readonly string[];
+  affected_student_ids: readonly string[];
+  operations_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TeacherDepartureCreationCommandResult = Readonly<{
+  command_key: string;
+  source_teacher_id: string;
+  effective_date: string;
+  operation_ids: readonly string[];
+  affected_student_ids: readonly string[];
+  audit_entry_id: string;
+}>;
+
+export type ExamSubmissionCommitResult = Readonly<{
+  command_key: string;
+  action: "create" | "update";
+  applied: boolean;
+  student_id: string;
+  exam_id: string;
+  students_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type ExamSubmissionCommandResult = Readonly<{
+  command_key: string;
+  action: "create" | "update";
+  student_id: string;
+  exam_id: string;
+  audit_entry_id: string;
+}>;
+
+export type ExamFollowUpCommitResult = Readonly<{
+  command_key: string;
+  action: "complete" | "undo";
+  applied: boolean;
+  task_id: string;
+  student_id: string;
+  exam_id: string;
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  completion_command_key: string;
+  students_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type ExamFollowUpCommandResult = Readonly<{
+  command_key: string;
+  action: "complete" | "undo";
+  task_id: string;
+  student_id: string;
+  exam_id: string;
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  completion_command_key: string;
+  audit_entry_id: string;
+}>;
+
+export type ExamFollowUpCompletionContextResult = Readonly<{
+  command_key: string;
+  task_id: string;
+  student_id: string;
+  exam_id: string;
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  prior_task: Record<string, unknown>;
+  prior_follow_up_state_exists: boolean;
+  prior_follow_up_state: Record<string, unknown> | null;
+  committed_task: Record<string, unknown>;
+  committed_follow_up_state: Record<string, unknown>;
+}>;
+
 export function getBookingCapacityCommandResult(input: {
   commandKey: string;
   commandIntent: Readonly<Record<string, unknown>>;
@@ -545,6 +776,74 @@ export function getOperationConfirmationCommandResult(input: {
     p_secret: secret,
     p_command_key: input.commandKey,
     p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+export function getPermanentTeacherReplacementCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<PermanentTeacherReplacementCommandResult[]>(PERMANENT_TEACHER_REPLACEMENT_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+export function getTeacherDepartureCreationCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherDepartureCreationCommandResult[]>(TEACHER_DEPARTURE_CREATION_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+export function getExamSubmissionCommandResult(input: {
+  commandKey: string;
+  commandIntent: unknown;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<ExamSubmissionCommandResult[]>(EXAM_SUBMISSION_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+export function getExamFollowUpCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<ExamFollowUpCommandResult[]>(EXAM_FOLLOW_UP_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+export function getExamFollowUpCompletionContext(input: {
+  completionCommandKey: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<ExamFollowUpCompletionContextResult[]>(EXAM_FOLLOW_UP_COMPLETION_CONTEXT_RPC, {
+    p_secret: secret,
+    p_completion_command_key: input.completionCommandKey,
     p_actor: input.actor,
   });
 }
@@ -663,6 +962,141 @@ export function confirmOperationOccurrencesAtomic(input: {
     p_bookings: input.bookings,
     p_operations: input.operations,
     p_affected_occurrence_ids: input.affectedOccurrenceIds,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically commits the four authoritative projections of one permanent handover. */
+export function confirmPermanentTeacherReplacementAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  operationId: string;
+  studentId: string;
+  sourceTeacherId: string;
+  replacementTeacherId: string;
+  effectiveDate: string;
+  expectedVersions: Readonly<{ bookings: number; operations: number; teachers: number; students: number }>;
+  bookings: readonly Record<string, unknown>[];
+  operations: readonly Record<string, unknown>[];
+  teachers: readonly Record<string, unknown>[];
+  students: readonly Record<string, unknown>[];
+  affectedOccurrenceIds: readonly string[];
+  changedTeacherIds: readonly string[];
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<PermanentTeacherReplacementCommitResult[]>(PERMANENT_TEACHER_REPLACEMENT_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_operation_id: input.operationId,
+    p_student_id: input.studentId,
+    p_source_teacher_id: input.sourceTeacherId,
+    p_replacement_teacher_id: input.replacementTeacherId,
+    p_effective_date: input.effectiveDate,
+    p_expected_versions: input.expectedVersions,
+    p_bookings: input.bookings,
+    p_operations: input.operations,
+    p_teachers: input.teachers,
+    p_students: input.students,
+    p_affected_occurrence_ids: input.affectedOccurrenceIds,
+    p_changed_teacher_ids: input.changedTeacherIds,
+    p_actor: input.actor,
+  });
+}
+
+/** Locks all five departure inputs and atomically inserts the derived operations/tasks. */
+export function createTeacherDepartureAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  sourceTeacherId: string;
+  effectiveDate: string;
+  detail: string;
+  expectedVersions: Readonly<{
+    bookings: number;
+    operations: number;
+    students: number;
+    tasks: number;
+    teachers: number;
+  }>;
+  operations: readonly Record<string, unknown>[];
+  tasks: readonly Record<string, unknown>[];
+  affectedGroups: readonly Readonly<{
+    studentId: string;
+    operationId: string;
+    affectedOccurrenceIds: readonly string[];
+    candidateTeacherIds: readonly string[];
+  }>[];
+  submittedAt: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherDepartureCreationCommitResult[]>(TEACHER_DEPARTURE_CREATION_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_source_teacher_id: input.sourceTeacherId,
+    p_effective_date: input.effectiveDate,
+    p_detail: input.detail,
+    p_expected_versions: input.expectedVersions,
+    p_operations: input.operations,
+    p_tasks: input.tasks,
+    p_affected_groups: input.affectedGroups,
+    p_submitted_at: input.submittedAt,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically stores one student exam and its complete managed reminder set. */
+export function submitExamAtomic(input: {
+  commandKey: string;
+  commandIntent: unknown;
+  studentId: string;
+  examId: string;
+  action: "create" | "update";
+  expectedVersions: Readonly<{ students: number; tasks: number }>;
+  students: readonly Record<string, unknown>[];
+  tasks: readonly Record<string, unknown>[];
+  preparedAt: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<ExamSubmissionCommitResult[]>(EXAM_SUBMISSION_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_student_id: input.studentId,
+    p_exam_id: input.examId,
+    p_action: input.action,
+    p_expected_versions: input.expectedVersions,
+    p_students: input.students,
+    p_tasks: input.tasks,
+    p_prepared_at: input.preparedAt,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically completes or restores one managed exam reminder and exam step. */
+export function mutateExamFollowUpAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  action: "complete" | "undo";
+  expectedVersions: Readonly<{ students: number; tasks: number }>;
+  students: readonly Record<string, unknown>[];
+  tasks: readonly Record<string, unknown>[];
+  preparedAt: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<ExamFollowUpCommitResult[]>(EXAM_FOLLOW_UP_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_action: input.action,
+    p_expected_versions: input.expectedVersions,
+    p_students: input.students,
+    p_tasks: input.tasks,
+    p_prepared_at: input.preparedAt,
     p_actor: input.actor,
   });
 }

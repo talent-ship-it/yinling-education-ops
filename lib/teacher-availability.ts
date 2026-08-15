@@ -79,6 +79,35 @@ export interface TeacherAvailabilityOccurrence {
   isOverride: boolean;
 }
 
+export type TeacherSchedulingReviewReason =
+  | "availability_missing"
+  | "availability_expired"
+  | "availability_invalid"
+  | "capacity_missing"
+  | "capacity_invalid"
+  | "accepting_status_missing";
+
+/**
+ * Human-review projection for imported scheduling data. Raw source text is
+ * preserved as evidence, but never interpreted as AVA or numeric capacity.
+ */
+export type TeacherSchedulingReadiness = Readonly<{
+  teacherId: string;
+  availability: Readonly<{
+    status: "ready" | "review_required";
+    confirmedWindowCount: number;
+    rawSourceText?: string;
+  }>;
+  capacity: Readonly<{
+    status: "ready" | "review_required";
+    remaining?: number;
+    rawSourceText?: string;
+  }>;
+  acceptingStatus: "accepting" | "not_accepting" | "review_required";
+  readyForNewStudentMatching: boolean;
+  reviewReasons: readonly TeacherSchedulingReviewReason[];
+}>;
+
 export type TeacherAvailabilityErrorCode =
   | "duplicate-id"
   | "duplicate-slot"
@@ -831,4 +860,78 @@ export function deleteAllTeacherAvailability(
     .map((window) => cloneWindowForRange(window, window.validFrom, window.validTo, window.id));
   assertValidTeacherAvailability(result);
   return sortWindows(result);
+}
+
+function preservedSourceText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+export function projectTeacherSchedulingReadiness(input: {
+  teacherId: string;
+  availabilityWindows?: unknown;
+  availabilitySourceText?: unknown;
+  newStudentCapacity?: unknown;
+  capacitySourceText?: unknown;
+  acceptsStudents?: unknown;
+  now?: Date;
+}): TeacherSchedulingReadiness {
+  const teacherId = input.teacherId.trim();
+  if (!teacherId) throw new TypeError("teacherId is required.");
+  const now = input.now ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new TypeError("now must be a valid Date.");
+
+  const reviewReasons: TeacherSchedulingReviewReason[] = [];
+  let availabilityReady = false;
+  let confirmedWindowCount = 0;
+  if (!Array.isArray(input.availabilityWindows) || input.availabilityWindows.length === 0) {
+    reviewReasons.push("availability_missing");
+  } else {
+    try {
+      const windows = input.availabilityWindows as TeacherAvailabilityWindow[];
+      assertValidTeacherAvailability(windows);
+      if (windows.some((window) => window.teacherId !== teacherId)) {
+        throw new TypeError("availabilityWindows belong to another teacher.");
+      }
+      const currentOrFutureWindows = windows.filter((window) =>
+        window.validTo >= displayParts(now, window.timezone).date);
+      confirmedWindowCount = currentOrFutureWindows.length;
+      availabilityReady = currentOrFutureWindows.length > 0;
+      if (!availabilityReady) reviewReasons.push("availability_expired");
+    } catch {
+      reviewReasons.push("availability_invalid");
+    }
+  }
+
+  const capacityReady = Number.isSafeInteger(input.newStudentCapacity)
+    && (input.newStudentCapacity as number) >= 0;
+  if (!capacityReady) {
+    reviewReasons.push(input.newStudentCapacity === undefined ? "capacity_missing" : "capacity_invalid");
+  }
+  if (typeof input.acceptsStudents !== "boolean") reviewReasons.push("accepting_status_missing");
+
+  const availabilitySourceText = preservedSourceText(input.availabilitySourceText);
+  const capacitySourceText = preservedSourceText(input.capacitySourceText);
+  return {
+    teacherId,
+    availability: {
+      status: availabilityReady ? "ready" : "review_required",
+      confirmedWindowCount,
+      ...(availabilitySourceText ? { rawSourceText: availabilitySourceText } : {}),
+    },
+    capacity: {
+      status: capacityReady ? "ready" : "review_required",
+      ...(capacityReady ? { remaining: input.newStudentCapacity as number } : {}),
+      ...(capacitySourceText ? { rawSourceText: capacitySourceText } : {}),
+    },
+    acceptingStatus: input.acceptsStudents === true
+      ? "accepting"
+      : input.acceptsStudents === false
+        ? "not_accepting"
+        : "review_required",
+    readyForNewStudentMatching: availabilityReady
+      && capacityReady
+      && (input.newStudentCapacity as number) > 0
+      && input.acceptsStudents === true,
+    reviewReasons,
+  };
 }

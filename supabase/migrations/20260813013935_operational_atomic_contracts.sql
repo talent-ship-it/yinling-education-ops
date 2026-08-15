@@ -9634,3 +9634,3332 @@ revoke all on function public.put_student_fu_attachment_atomic(text, text, text,
   from public, anon, authenticated;
 grant execute on function public.put_student_fu_attachment_atomic(text, text, text, text, text, text, text, text, text, jsonb, text)
   to anon, authenticated;
+
+-- A permanent teacher handover changes four authoritative projections.  The
+-- browser submits only an operation id, replacement teacher id and OCC
+-- versions; the server derives the proposed payloads, and this contract
+-- independently derives the complete occurrence/capacity closure again from
+-- the locked database rows before accepting those payloads.
+
+create table if not exists internal.permanent_teacher_replacement_commands (
+  command_key text primary key
+    check (command_key ~ '^permanent-teacher-replacement:[a-f0-9]{64}$'),
+  command_intent jsonb not null check (jsonb_typeof(command_intent) = 'object'),
+  command_hash text not null check (command_hash ~ '^[a-f0-9]{64}$'),
+  operation_id text not null check (length(operation_id) between 1 and 120),
+  student_id text not null check (length(student_id) between 1 and 120),
+  source_teacher_id text not null check (length(source_teacher_id) between 1 and 120),
+  replacement_teacher_id text not null check (length(replacement_teacher_id) between 1 and 120),
+  effective_date date not null,
+  affected_occurrence_ids jsonb not null check (jsonb_typeof(affected_occurrence_ids) = 'array'),
+  changed_teacher_ids jsonb not null check (jsonb_typeof(changed_teacher_ids) = 'array'),
+  booking_version bigint not null check (booking_version > 0),
+  operation_version bigint not null check (operation_version > 0),
+  student_version bigint not null check (student_version > 0),
+  teacher_version bigint not null check (teacher_version > 0),
+  actor text not null check (length(actor) between 1 and 120),
+  applied_at timestamptz not null default now(),
+  audit_id uuid not null references internal.operational_contract_audit(id)
+);
+
+alter table internal.permanent_teacher_replacement_commands enable row level security;
+revoke all on table internal.permanent_teacher_replacement_commands from public, anon, authenticated;
+revoke all on table internal.permanent_teacher_replacement_commands from service_role;
+
+-- Project the exact finite set of confirmed lessons belonging to one
+-- teacher/student relationship on or after the effective date.  An unbounded
+-- matching series is represented only when p_reject_unbounded is false; the
+-- source-teacher projection always rejects it so a permanent handover can
+-- never silently truncate future lessons.
+create or replace function internal.permanent_teacher_replacement_occurrence_projection(
+  p_bookings jsonb,
+  p_student_id text,
+  p_teacher_id text,
+  p_effective_date text,
+  p_reject_unbounded boolean
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  booking_record record;
+  booking jsonb;
+  override_item jsonb;
+  occurrence_override jsonb;
+  source_date date;
+  target_date_text text;
+  target_date date;
+  occurrence_id text;
+  resolved_teacher_id text;
+  resolved_student_id text;
+  occurrence_status text;
+  repeat_count integer;
+  occurrence_index integer;
+  can_contain boolean;
+  unbounded boolean := false;
+  occurrence_ids jsonb := '[]'::jsonb;
+begin
+  if jsonb_typeof(p_bookings) is distinct from 'array'
+     or nullif(trim(p_student_id), '') is null
+     or nullif(trim(p_teacher_id), '') is null
+     or coalesce(p_effective_date, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+     or p_reject_unbounded is null then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_projection';
+  end if;
+  begin
+    if pg_catalog.to_char(p_effective_date::date, 'YYYY-MM-DD') <> p_effective_date then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_effective_date';
+    end if;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_effective_date';
+  end;
+
+  for booking_record in
+    select item.value as value, item.ordinality as ordinality
+    from jsonb_array_elements(p_bookings) with ordinality as item(value, ordinality)
+    order by item.ordinality
+  loop
+    booking := booking_record.value;
+    if jsonb_typeof(booking) <> 'object' then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_booking';
+    end if;
+    if booking ->> 'kind' = '代课' then continue; end if;
+
+    can_contain := coalesce((jsonb_typeof(booking -> 'teacherId') = 'string'
+      and booking ->> 'teacherId' = p_teacher_id
+      and jsonb_typeof(booking -> 'studentId') = 'string'
+      and booking ->> 'studentId' = p_student_id), false);
+    if not can_contain then
+      if booking ? 'occurrenceOverrides'
+         and jsonb_typeof(booking -> 'occurrenceOverrides') not in ('array', 'null') then
+        raise exception using errcode = '22023', message = 'invalid_permanent_replacement_overrides';
+      end if;
+      if jsonb_typeof(booking -> 'occurrenceOverrides') = 'array' then
+        for override_item in
+          select value from jsonb_array_elements(booking -> 'occurrenceOverrides')
+        loop
+          if jsonb_typeof(override_item) <> 'object' then
+            raise exception using errcode = '22023', message = 'invalid_permanent_replacement_override';
+          end if;
+          resolved_teacher_id := case when override_item ? 'teacherId'
+            then case when jsonb_typeof(override_item -> 'teacherId') = 'string'
+              then override_item ->> 'teacherId' else null end
+            else case when jsonb_typeof(booking -> 'teacherId') = 'string'
+              then booking ->> 'teacherId' else null end end;
+          resolved_student_id := case when override_item ? 'studentId'
+            then case when jsonb_typeof(override_item -> 'studentId') = 'string'
+              then override_item ->> 'studentId' else null end
+            else case when jsonb_typeof(booking -> 'studentId') = 'string'
+              then booking ->> 'studentId' else null end end;
+          if resolved_teacher_id = p_teacher_id
+             and resolved_student_id = p_student_id then
+            can_contain := true;
+            exit;
+          end if;
+        end loop;
+      end if;
+    end if;
+    if not can_contain then continue; end if;
+
+    if coalesce(booking ->> 'id', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+       or coalesce(booking ->> 'date', '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+       or coalesce(booking ->> 'start', '') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+       or jsonb_typeof(booking -> 'duration') is distinct from 'number'
+       or (booking ->> 'duration')::numeric <= 0 then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_booking';
+    end if;
+    begin
+      source_date := (booking ->> 'date')::date;
+      if pg_catalog.to_char(source_date, 'YYYY-MM-DD') <> booking ->> 'date' then
+        raise exception using errcode = '22023', message = 'invalid_permanent_replacement_booking_date';
+      end if;
+    exception when others then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_booking_date';
+    end;
+
+    if booking ? 'occurrenceOverrides'
+       and jsonb_typeof(booking -> 'occurrenceOverrides') not in ('array', 'null') then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_overrides';
+    end if;
+    if exists (
+      select 1
+      from jsonb_array_elements(case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+        then booking -> 'occurrenceOverrides' else '[]'::jsonb end) item(value)
+      where jsonb_typeof(item.value) is distinct from 'object'
+         or nullif(trim(item.value ->> 'occurrenceId'), '') is null
+    ) or exists (
+      select 1
+      from jsonb_array_elements(case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+        then booking -> 'occurrenceOverrides' else '[]'::jsonb end) item(value)
+      group by item.value ->> 'occurrenceId'
+      having count(*) > 1
+    ) or exists (
+      select 1
+      from jsonb_array_elements(case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+        then booking -> 'occurrenceOverrides' else '[]'::jsonb end) item(value)
+      where (item.value ? 'teacherId'
+          and jsonb_typeof(item.value -> 'teacherId') not in ('string', 'null'))
+         or (item.value ? 'studentId'
+          and jsonb_typeof(item.value -> 'studentId') not in ('string', 'null'))
+    ) then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_override';
+    end if;
+
+    if booking -> 'recurring' = 'true'::jsonb then
+      if not (booking ? 'repeatCount') then
+        if p_reject_unbounded then
+          raise exception using errcode = '22023', message = 'unbounded_permanent_replacement_series';
+        end if;
+        unbounded := true;
+        continue;
+      end if;
+      if jsonb_typeof(booking -> 'repeatCount') is distinct from 'number'
+         or (booking ->> 'repeatCount')::numeric <> trunc((booking ->> 'repeatCount')::numeric)
+         or (booking ->> 'repeatCount')::numeric not between 1 and 104 then
+        raise exception using errcode = '22023', message = 'invalid_permanent_replacement_repeat_count';
+      end if;
+      repeat_count := (booking ->> 'repeatCount')::integer;
+    else
+      repeat_count := 1;
+    end if;
+
+    for occurrence_index in 0..repeat_count - 1
+    loop
+      source_date := (booking ->> 'date')::date + occurrence_index * 7;
+      occurrence_id := booking ->> 'id' || ':' || pg_catalog.to_char(source_date, 'YYYY-MM-DD');
+      select item.value into occurrence_override
+      from jsonb_array_elements(case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+        then booking -> 'occurrenceOverrides' else '[]'::jsonb end) item(value)
+      where item.value ->> 'occurrenceId' = occurrence_id
+      limit 1;
+
+      target_date_text := coalesce(occurrence_override ->> 'date', pg_catalog.to_char(source_date, 'YYYY-MM-DD'));
+      if target_date_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         or coalesce(occurrence_override ->> 'start', booking ->> 'start') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+         or (
+           occurrence_override ? 'durationMinutes'
+           and occurrence_override -> 'durationMinutes' <> 'null'::jsonb
+           and (
+             jsonb_typeof(occurrence_override -> 'durationMinutes') is distinct from 'number'
+             or (occurrence_override ->> 'durationMinutes')::numeric <= 0
+           )
+         ) then
+        raise exception using errcode = '22023', message = 'invalid_permanent_replacement_occurrence';
+      end if;
+      begin
+        target_date := target_date_text::date;
+        if pg_catalog.to_char(target_date, 'YYYY-MM-DD') <> target_date_text then
+          raise exception using errcode = '22023', message = 'invalid_permanent_replacement_occurrence_date';
+        end if;
+      exception when others then
+        raise exception using errcode = '22023', message = 'invalid_permanent_replacement_occurrence_date';
+      end;
+
+      resolved_teacher_id := case when occurrence_override ? 'teacherId'
+        then case when jsonb_typeof(occurrence_override -> 'teacherId') = 'string'
+          then nullif(trim(occurrence_override ->> 'teacherId'), '') else null end
+        else case when jsonb_typeof(booking -> 'teacherId') = 'string'
+          then nullif(trim(booking ->> 'teacherId'), '') else null end end;
+      resolved_student_id := case when occurrence_override ? 'studentId'
+        then case when jsonb_typeof(occurrence_override -> 'studentId') = 'string'
+          then nullif(trim(occurrence_override ->> 'studentId'), '') else null end
+        else case when jsonb_typeof(booking -> 'studentId') = 'string'
+          then nullif(trim(booking ->> 'studentId'), '') else null end end;
+      occurrence_status := coalesce(occurrence_override ->> 'status', 'confirmed');
+      if target_date >= p_effective_date::date
+         and occurrence_status = 'confirmed'
+         and resolved_teacher_id = trim(p_teacher_id)
+         and resolved_student_id = trim(p_student_id) then
+        occurrence_ids := occurrence_ids || jsonb_build_array(occurrence_id);
+      end if;
+      occurrence_override := null;
+    end loop;
+  end loop;
+
+  select coalesce(jsonb_agg(value order by value #>> '{}' collate "C"), '[]'::jsonb)
+  into occurrence_ids
+  from jsonb_array_elements(occurrence_ids) item(value);
+  return jsonb_build_object('occurrenceIds', occurrence_ids, 'unbounded', unbounded);
+end;
+$$;
+
+revoke all on function internal.permanent_teacher_replacement_occurrence_projection(jsonb, text, text, text, boolean)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.permanent_teacher_replacement_upsert_override(
+  p_overrides jsonb,
+  p_occurrence_id text,
+  p_patch jsonb
+)
+returns jsonb
+language sql
+immutable
+security invoker
+set search_path = ''
+as $$
+  select coalesce(jsonb_agg(value order by value ->> 'occurrenceId' collate "C"), '[]'::jsonb)
+  from (
+    select case when item.value ->> 'occurrenceId' = p_occurrence_id
+      then item.value || p_patch || jsonb_build_object('occurrenceId', p_occurrence_id)
+      else item.value end as value
+    from jsonb_array_elements(coalesce(p_overrides, '[]'::jsonb)) item(value)
+    union all
+    select jsonb_build_object('occurrenceId', p_occurrence_id) || p_patch
+    where not exists (
+      select 1 from jsonb_array_elements(coalesce(p_overrides, '[]'::jsonb)) item(value)
+      where item.value ->> 'occurrenceId' = p_occurrence_id
+    )
+  ) merged;
+$$;
+
+revoke all on function internal.permanent_teacher_replacement_upsert_override(jsonb, text, jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.permanent_teacher_replacement_expected_bookings(
+  p_bookings jsonb,
+  p_student_id text,
+  p_source_teacher_id text,
+  p_replacement_teacher_id text,
+  p_affected_occurrence_ids jsonb
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  booking_record record;
+  booking jsonb;
+  next_booking jsonb;
+  overrides jsonb;
+  occurrence_override jsonb;
+  occurrence_id text;
+  source_date date;
+  resolved_teacher_id text;
+  repeat_count integer;
+  occurrence_index integer;
+  changes_default boolean;
+  result jsonb := '[]'::jsonb;
+begin
+  if jsonb_typeof(p_bookings) is distinct from 'array'
+     or jsonb_typeof(p_affected_occurrence_ids) is distinct from 'array'
+     or nullif(trim(p_student_id), '') is null
+     or nullif(trim(p_source_teacher_id), '') is null
+     or nullif(trim(p_replacement_teacher_id), '') is null
+     or trim(p_source_teacher_id) = trim(p_replacement_teacher_id) then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_booking_projection';
+  end if;
+
+  for booking_record in
+    select item.value as value, item.ordinality as ordinality
+    from jsonb_array_elements(p_bookings) with ordinality as item(value, ordinality)
+    order by item.ordinality
+  loop
+    booking := booking_record.value;
+    next_booking := booking;
+    overrides := case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+      then booking -> 'occurrenceOverrides' else '[]'::jsonb end;
+    for occurrence_id in
+      select value from jsonb_array_elements_text(p_affected_occurrence_ids)
+      where pg_catalog.left(value, length(value) - 11) = booking ->> 'id'
+      order by value collate "C"
+    loop
+      overrides := internal.permanent_teacher_replacement_upsert_override(
+        overrides,
+        occurrence_id,
+        jsonb_build_object('status', 'confirmed', 'teacherId', trim(p_replacement_teacher_id))
+      );
+    end loop;
+
+    changes_default := nullif(trim(booking ->> 'studentId'), '') = trim(p_student_id)
+      and nullif(trim(booking ->> 'teacherId'), '') = trim(p_source_teacher_id)
+      and exists (
+        select 1 from jsonb_array_elements_text(p_affected_occurrence_ids) item(value)
+        where pg_catalog.left(item.value, length(item.value) - 11) = booking ->> 'id'
+      );
+    if changes_default then
+      next_booking := jsonb_set(next_booking, '{teacherId}', to_jsonb(trim(p_replacement_teacher_id)), true);
+      repeat_count := case when booking -> 'recurring' = 'true'::jsonb
+        then (booking ->> 'repeatCount')::integer else 1 end;
+      for occurrence_index in 0..repeat_count - 1
+      loop
+        source_date := (booking ->> 'date')::date + occurrence_index * 7;
+        occurrence_id := booking ->> 'id' || ':' || pg_catalog.to_char(source_date, 'YYYY-MM-DD');
+        select item.value into occurrence_override
+        from jsonb_array_elements(case when jsonb_typeof(booking -> 'occurrenceOverrides') = 'array'
+          then booking -> 'occurrenceOverrides' else '[]'::jsonb end) item(value)
+        where item.value ->> 'occurrenceId' = occurrence_id
+        limit 1;
+        resolved_teacher_id := case when occurrence_override ? 'teacherId'
+          then case when jsonb_typeof(occurrence_override -> 'teacherId') = 'string'
+            then nullif(trim(occurrence_override ->> 'teacherId'), '') else null end
+          else case when jsonb_typeof(booking -> 'teacherId') = 'string'
+            then nullif(trim(booking ->> 'teacherId'), '') else null end end;
+        if resolved_teacher_id = trim(p_source_teacher_id)
+           and not p_affected_occurrence_ids @> jsonb_build_array(occurrence_id) then
+          overrides := internal.permanent_teacher_replacement_upsert_override(
+            overrides,
+            occurrence_id,
+            jsonb_build_object('teacherId', trim(p_source_teacher_id))
+          );
+        end if;
+        occurrence_override := null;
+      end loop;
+    end if;
+
+    if exists (
+      select 1 from jsonb_array_elements_text(p_affected_occurrence_ids) item(value)
+      where pg_catalog.left(item.value, length(item.value) - 11) = booking ->> 'id'
+    ) then
+      next_booking := jsonb_set(next_booking, '{occurrenceOverrides}', overrides, true);
+    end if;
+    result := result || jsonb_build_array(next_booking);
+  end loop;
+  return result;
+end;
+$$;
+
+revoke all on function internal.permanent_teacher_replacement_expected_bookings(jsonb, text, text, text, jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.permanent_teacher_replacement_expected_teachers(
+  p_bookings jsonb,
+  p_teachers jsonb,
+  p_student_id text,
+  p_source_teacher_id text,
+  p_replacement_teacher_id text,
+  p_effective_date text
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  source_teacher jsonb;
+  replacement_teacher jsonb;
+  next_source jsonb;
+  next_replacement jsonb;
+  source_assignments jsonb;
+  replacement_assignments jsonb;
+  replacement_projection jsonb;
+  replacement_already_active boolean;
+  source_assigned boolean;
+  replacement_assigned boolean;
+  source_capacity numeric;
+  replacement_capacity numeric;
+  source_capacity_valid boolean;
+  replacement_capacity_valid boolean;
+  changed_ids jsonb := '[]'::jsonb;
+  next_teachers jsonb;
+begin
+  if jsonb_typeof(p_teachers) is distinct from 'array' then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_teachers';
+  end if;
+  select item.value into source_teacher from jsonb_array_elements(p_teachers) item(value)
+  where item.value ->> 'id' = p_source_teacher_id limit 1;
+  select item.value into replacement_teacher from jsonb_array_elements(p_teachers) item(value)
+  where item.value ->> 'id' = p_replacement_teacher_id limit 1;
+  if source_teacher is null or replacement_teacher is null
+     or p_source_teacher_id = p_replacement_teacher_id then
+    raise exception using errcode = '22023', message = 'permanent_replacement_teacher_not_found';
+  end if;
+
+  if source_teacher ? 'capacityAssignments'
+     and jsonb_typeof(source_teacher -> 'capacityAssignments') <> 'array' then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity_assignments';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(coalesce(source_teacher -> 'capacityAssignments', '[]'::jsonb)) item(value)
+    where jsonb_typeof(item.value) <> 'string' or nullif(trim(item.value #>> '{}'), '') is null
+  ) then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity_assignments';
+  end if;
+  select coalesce(jsonb_agg(to_jsonb(id) order by id collate "C"), '[]'::jsonb)
+  into source_assignments
+  from (
+    select distinct trim(item.value #>> '{}') as id
+    from jsonb_array_elements(coalesce(source_teacher -> 'capacityAssignments', '[]'::jsonb)) item(value)
+  ) valueset;
+  source_assigned := source_assignments @> jsonb_build_array(trim(p_student_id));
+  source_capacity_valid := jsonb_typeof(source_teacher -> 'newStudentCapacity') = 'number'
+    and (source_teacher ->> 'newStudentCapacity')::numeric = trunc((source_teacher ->> 'newStudentCapacity')::numeric)
+    and (source_teacher ->> 'newStudentCapacity')::numeric between 0 and 9007199254740991;
+  if source_teacher ? 'newStudentCapacity' and not source_capacity_valid then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity';
+  end if;
+  next_source := source_teacher;
+  if source_assigned then
+    select coalesce(jsonb_agg(value order by value #>> '{}' collate "C"), '[]'::jsonb)
+    into source_assignments
+    from jsonb_array_elements(source_assignments) item(value)
+    where item.value #>> '{}' <> trim(p_student_id);
+    next_source := jsonb_set(next_source, '{capacityAssignments}', source_assignments, true);
+    if source_capacity_valid then
+      source_capacity := (source_teacher ->> 'newStudentCapacity')::numeric + 1;
+      next_source := jsonb_set(next_source, '{newStudentCapacity}', to_jsonb(source_capacity), true);
+    end if;
+    changed_ids := changed_ids || jsonb_build_array(trim(p_source_teacher_id));
+  end if;
+
+  replacement_projection := internal.permanent_teacher_replacement_occurrence_projection(
+    p_bookings, p_student_id, p_replacement_teacher_id, p_effective_date, false
+  );
+  replacement_already_active := coalesce((replacement_projection ->> 'unbounded')::boolean, false)
+    or jsonb_array_length(replacement_projection -> 'occurrenceIds') > 0;
+  next_replacement := replacement_teacher;
+  if not replacement_already_active then
+    if replacement_teacher ? 'capacityAssignments'
+       and jsonb_typeof(replacement_teacher -> 'capacityAssignments') <> 'array' then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity_assignments';
+    end if;
+    if exists (
+      select 1 from jsonb_array_elements(coalesce(replacement_teacher -> 'capacityAssignments', '[]'::jsonb)) item(value)
+      where jsonb_typeof(item.value) <> 'string' or nullif(trim(item.value #>> '{}'), '') is null
+    ) then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity_assignments';
+    end if;
+    select coalesce(jsonb_agg(to_jsonb(id) order by id collate "C"), '[]'::jsonb)
+    into replacement_assignments
+    from (
+      select distinct trim(item.value #>> '{}') as id
+      from jsonb_array_elements(coalesce(replacement_teacher -> 'capacityAssignments', '[]'::jsonb)) item(value)
+    ) valueset;
+    replacement_assigned := replacement_assignments @> jsonb_build_array(trim(p_student_id));
+    replacement_capacity_valid := jsonb_typeof(replacement_teacher -> 'newStudentCapacity') = 'number'
+      and (replacement_teacher ->> 'newStudentCapacity')::numeric = trunc((replacement_teacher ->> 'newStudentCapacity')::numeric)
+      and (replacement_teacher ->> 'newStudentCapacity')::numeric between 0 and 9007199254740991;
+    if replacement_teacher ? 'newStudentCapacity' and not replacement_capacity_valid then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_capacity';
+    end if;
+    if not replacement_assigned then
+      if not replacement_capacity_valid then
+        raise exception using errcode = '22023', message = 'permanent_replacement_capacity_unconfigured';
+      end if;
+      replacement_capacity := (replacement_teacher ->> 'newStudentCapacity')::numeric;
+      if replacement_capacity <= 0 then
+        raise exception using errcode = '22023', message = 'permanent_replacement_capacity_exhausted';
+      end if;
+      replacement_assignments := replacement_assignments || jsonb_build_array(trim(p_student_id));
+      select coalesce(jsonb_agg(value order by value #>> '{}' collate "C"), '[]'::jsonb)
+      into replacement_assignments from jsonb_array_elements(replacement_assignments) item(value);
+      next_replacement := jsonb_set(next_replacement, '{capacityAssignments}', replacement_assignments, true);
+      next_replacement := jsonb_set(
+        next_replacement, '{newStudentCapacity}', to_jsonb(replacement_capacity - 1), true
+      );
+      changed_ids := changed_ids || jsonb_build_array(trim(p_replacement_teacher_id));
+    end if;
+  end if;
+
+  select jsonb_agg(
+    case item.value ->> 'id'
+      when p_source_teacher_id then next_source
+      when p_replacement_teacher_id then next_replacement
+      else item.value
+    end
+    order by item.ordinality
+  ) into next_teachers
+  from jsonb_array_elements(p_teachers) with ordinality as item(value, ordinality);
+  select coalesce(jsonb_agg(value order by value #>> '{}' collate "C"), '[]'::jsonb)
+  into changed_ids from jsonb_array_elements(changed_ids) item(value);
+  return jsonb_build_object('teachers', next_teachers, 'changedTeacherIds', changed_ids);
+end;
+$$;
+
+revoke all on function internal.permanent_teacher_replacement_expected_teachers(jsonb, jsonb, text, text, text, text)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.get_permanent_teacher_replacement_command_result(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_actor text
+)
+returns table (
+  command_key text,
+  operation_id text,
+  affected_occurrence_ids jsonb,
+  changed_teacher_ids jsonb,
+  audit_entry_id uuid
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  prior internal.permanent_teacher_replacement_commands%rowtype;
+  expected_key text;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if jsonb_typeof(p_command_intent) is distinct from 'object'
+     or p_command_intent - 'operationId' - 'chosenTeacherId' <> '{}'::jsonb
+     or coalesce(p_command_intent ->> 'operationId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_command_intent ->> 'chosenTeacherId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or nullif(trim(p_actor), '') is null
+     or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_replay_lookup';
+  end if;
+  expected_key := 'permanent-teacher-replacement:' || encode(extensions.digest(
+    '{"operationId":"' || (p_command_intent ->> 'operationId')
+      || '","chosenTeacherId":"' || (p_command_intent ->> 'chosenTeacherId') || '"}',
+    'sha256'
+  ), 'hex');
+  if p_command_key is distinct from expected_key then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_command_key';
+  end if;
+
+  select * into prior from internal.permanent_teacher_replacement_commands c
+  where c.command_key = p_command_key;
+  if prior.command_key is null then return; end if;
+  if prior.command_intent is distinct from p_command_intent
+     or prior.actor <> trim(p_actor)
+     or prior.operation_id <> p_command_intent ->> 'operationId'
+     or prior.replacement_teacher_id <> p_command_intent ->> 'chosenTeacherId' then
+    raise exception using errcode = '23505', message = 'permanent_replacement_idempotency_conflict';
+  end if;
+  return query select prior.command_key, prior.operation_id,
+    prior.affected_occurrence_ids, prior.changed_teacher_ids, prior.audit_id;
+end;
+$$;
+
+revoke all on function public.get_permanent_teacher_replacement_command_result(text, text, jsonb, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_permanent_teacher_replacement_command_result(text, text, jsonb, text)
+  to anon, authenticated;
+
+create or replace function public.confirm_permanent_teacher_replacement_atomic(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_operation_id text,
+  p_student_id text,
+  p_source_teacher_id text,
+  p_replacement_teacher_id text,
+  p_effective_date text,
+  p_expected_versions jsonb,
+  p_bookings jsonb,
+  p_operations jsonb,
+  p_teachers jsonb,
+  p_students jsonb,
+  p_affected_occurrence_ids jsonb,
+  p_changed_teacher_ids jsonb,
+  p_actor text
+)
+returns table (
+  command_key text,
+  operation_id text,
+  applied boolean,
+  affected_occurrence_ids jsonb,
+  changed_teacher_ids jsonb,
+  bookings_row public.ops_state,
+  operations_row public.ops_state,
+  teachers_row public.ops_state,
+  students_row public.ops_state,
+  audit_entry_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  booking_state public.ops_state%rowtype;
+  operation_state public.ops_state%rowtype;
+  student_state public.ops_state%rowtype;
+  teacher_state public.ops_state%rowtype;
+  saved_booking_state public.ops_state%rowtype;
+  saved_operation_state public.ops_state%rowtype;
+  saved_student_state public.ops_state%rowtype;
+  saved_teacher_state public.ops_state%rowtype;
+  prior internal.permanent_teacher_replacement_commands%rowtype;
+  expected_booking_version bigint;
+  expected_operation_version bigint;
+  expected_student_version bigint;
+  expected_teacher_version bigint;
+  expected_key text;
+  expected_projection jsonb;
+  replacement_relationship_projection jsonb;
+  replacement_already_active boolean;
+  replacement_already_assigned boolean;
+  expected_bookings jsonb;
+  expected_teacher_projection jsonb;
+  expected_teachers jsonb;
+  expected_changed_teacher_ids jsonb;
+  expected_students jsonb;
+  current_operation jsonb;
+  next_operation jsonb;
+  current_student jsonb;
+  current_source_teacher jsonb;
+  current_replacement_teacher jsonb;
+  replacement_teacher_name text;
+  confirmed_at_text text;
+  confirmed_at_value timestamptz;
+  payload_hash text;
+  audit_id uuid;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if jsonb_typeof(p_command_intent) is distinct from 'object'
+     or p_command_intent - 'operationId' - 'chosenTeacherId' <> '{}'::jsonb
+     or p_command_intent ->> 'operationId' is distinct from p_operation_id
+     or p_command_intent ->> 'chosenTeacherId' is distinct from p_replacement_teacher_id
+     or coalesce(p_operation_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_student_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_source_teacher_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_replacement_teacher_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or p_source_teacher_id = p_replacement_teacher_id
+     or coalesce(p_effective_date, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+     or jsonb_typeof(p_expected_versions) is distinct from 'object'
+     or p_expected_versions - 'bookings' - 'operations' - 'students' - 'teachers' <> '{}'::jsonb
+     or jsonb_typeof(p_expected_versions -> 'bookings') is distinct from 'number'
+     or jsonb_typeof(p_expected_versions -> 'operations') is distinct from 'number'
+     or jsonb_typeof(p_expected_versions -> 'students') is distinct from 'number'
+     or jsonb_typeof(p_expected_versions -> 'teachers') is distinct from 'number'
+     or jsonb_typeof(p_bookings) is distinct from 'array'
+     or jsonb_typeof(p_operations) is distinct from 'array'
+     or jsonb_typeof(p_teachers) is distinct from 'array'
+     or jsonb_typeof(p_students) is distinct from 'array'
+     or jsonb_typeof(p_affected_occurrence_ids) is distinct from 'array'
+     or jsonb_typeof(p_changed_teacher_ids) is distinct from 'array'
+     or nullif(trim(p_actor), '') is null
+     or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_command';
+  end if;
+  expected_key := 'permanent-teacher-replacement:' || encode(extensions.digest(
+    '{"operationId":"' || p_operation_id || '","chosenTeacherId":"'
+      || p_replacement_teacher_id || '"}', 'sha256'
+  ), 'hex');
+  if p_command_key is distinct from expected_key then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_command_key';
+  end if;
+  begin
+    expected_booking_version := (p_expected_versions ->> 'bookings')::bigint;
+    expected_operation_version := (p_expected_versions ->> 'operations')::bigint;
+    expected_student_version := (p_expected_versions ->> 'students')::bigint;
+    expected_teacher_version := (p_expected_versions ->> 'teachers')::bigint;
+    if pg_catalog.to_char(p_effective_date::date, 'YYYY-MM-DD') <> p_effective_date then
+      raise exception using errcode = '22023', message = 'invalid_permanent_replacement_versions';
+    end if;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_versions';
+  end;
+  if expected_booking_version < 1 or expected_operation_version < 1
+     or expected_student_version < 1 or expected_teacher_version < 1 then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_versions';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_affected_occurrence_ids) item(value)
+    where jsonb_typeof(item.value) <> 'string'
+       or (item.value #>> '{}') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}:[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+  ) or (select count(*) from jsonb_array_elements(p_affected_occurrence_ids))
+       <> (select count(distinct value) from jsonb_array_elements_text(p_affected_occurrence_ids) item(value))
+     or jsonb_array_length(p_affected_occurrence_ids) = 0
+     or exists (
+       select 1 from jsonb_array_elements(p_changed_teacher_ids) item(value)
+       where jsonb_typeof(item.value) <> 'string'
+          or (item.value #>> '{}') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     ) or (select count(*) from jsonb_array_elements(p_changed_teacher_ids))
+       <> (select count(distinct value) from jsonb_array_elements_text(p_changed_teacher_ids) item(value)) then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_change_ids';
+  end if;
+
+  payload_hash := encode(extensions.digest(jsonb_build_object(
+    'commandIntent', p_command_intent,
+    'operationId', p_operation_id,
+    'studentId', p_student_id,
+    'sourceTeacherId', p_source_teacher_id,
+    'replacementTeacherId', p_replacement_teacher_id,
+    'effectiveDate', p_effective_date,
+    'expectedVersions', p_expected_versions,
+    'bookings', p_bookings,
+    'operations', p_operations,
+    'teachers', p_teachers,
+    'students', p_students,
+    'affectedOccurrenceIds', p_affected_occurrence_ids,
+    'changedTeacherIds', p_changed_teacher_ids
+  )::text, 'sha256'), 'hex');
+
+  -- Global lock order for every four-projection permanent handover:
+  -- bookings -> operations -> students -> teachers.
+  select * into booking_state from public.ops_state s where s.entity = 'bookings' for update;
+  select * into operation_state from public.ops_state s where s.entity = 'operations' for update;
+  select * into student_state from public.ops_state s where s.entity = 'students' for update;
+  select * into teacher_state from public.ops_state s where s.entity = 'teachers' for update;
+  if booking_state.entity is null or operation_state.entity is null
+     or student_state.entity is null or teacher_state.entity is null
+     or jsonb_typeof(booking_state.payload) is distinct from 'array'
+     or jsonb_typeof(operation_state.payload) is distinct from 'array'
+     or jsonb_typeof(student_state.payload) is distinct from 'array'
+     or jsonb_typeof(teacher_state.payload) is distinct from 'array' then
+    raise exception using errcode = '55000', message = 'permanent_replacement_state_missing';
+  end if;
+
+  -- Observe a concurrent identical commit only after the authoritative rows
+  -- are locked.  Replay is bound to intent + actor and returns the immutable
+  -- first result; it deliberately does not revalidate the caller timestamp.
+  select * into prior from internal.permanent_teacher_replacement_commands c
+  where c.command_key = p_command_key;
+  if prior.command_key is not null then
+    if prior.command_intent is distinct from p_command_intent
+       or prior.actor <> trim(p_actor)
+       or prior.operation_id <> p_operation_id
+       or prior.student_id <> p_student_id
+       or prior.source_teacher_id <> p_source_teacher_id
+       or prior.replacement_teacher_id <> p_replacement_teacher_id
+       or pg_catalog.to_char(prior.effective_date, 'YYYY-MM-DD') <> p_effective_date
+       or prior.affected_occurrence_ids is distinct from p_affected_occurrence_ids
+       or prior.changed_teacher_ids is distinct from p_changed_teacher_ids then
+      raise exception using errcode = '23505', message = 'permanent_replacement_idempotency_conflict';
+    end if;
+    return query select prior.command_key, prior.operation_id, false,
+      prior.affected_occurrence_ids, prior.changed_teacher_ids,
+      booking_state, operation_state, teacher_state, student_state, prior.audit_id;
+    return;
+  end if;
+
+  current_operation := (
+    select item.value from jsonb_array_elements(operation_state.payload) item(value)
+    where item.value ->> 'id' = p_operation_id limit 1
+  );
+  if current_operation is null then
+    raise exception using errcode = '22023', message = 'permanent_replacement_operation_not_found';
+  end if;
+  if nullif(trim(current_operation ->> 'status'), '') = '已确认' then
+    raise exception using errcode = '40001', message = 'permanent_replacement_confirmed_without_ledger';
+  end if;
+  if booking_state.version is distinct from expected_booking_version
+     or operation_state.version is distinct from expected_operation_version
+     or student_state.version is distinct from expected_student_version
+     or teacher_state.version is distinct from expected_teacher_version then
+    raise exception using errcode = '40001', message = 'version_conflict';
+  end if;
+
+  if exists (
+    select 1 from jsonb_array_elements(booking_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(operation_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(student_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(teacher_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) then
+    raise exception using errcode = '22023', message = 'duplicate_permanent_replacement_identity';
+  end if;
+  if nullif(trim(current_operation ->> 'type'), '') is distinct from '老师离职'
+     or nullif(trim(current_operation ->> 'status'), '') is distinct from '待处理'
+     or nullif(trim(current_operation ->> 'studentId'), '') is distinct from p_student_id
+     or nullif(trim(current_operation ->> 'teacherId'), '') is distinct from p_source_teacher_id
+     or nullif(trim(current_operation ->> 'eventEnd'), '') is distinct from p_effective_date
+     or (
+       nullif(trim(current_operation ->> 'chosenTeacherId'), '') is not null
+       and nullif(trim(current_operation ->> 'chosenTeacherId'), '') <> p_replacement_teacher_id
+     )
+     or jsonb_typeof(current_operation -> 'recommendedTeacherIds') is distinct from 'array'
+     or not (current_operation -> 'recommendedTeacherIds') @> jsonb_build_array(p_replacement_teacher_id)
+     or coalesce(current_operation ->> 'creationCommandKey', '')
+       !~ '^teacher-departure-create:[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     or p_operation_id is distinct from 'OPS-DEPARTURE-' || pg_catalog.left(encode(extensions.digest(
+       (current_operation ->> 'creationCommandKey') || chr(31) || p_student_id, 'sha256'
+     ), 'hex'), 24)
+     or not exists (
+       select 1
+       from internal.teacher_departure_creation_commands creation
+       cross join lateral jsonb_array_elements(creation.affected_groups) creation_group(value)
+       where creation.command_key = current_operation ->> 'creationCommandKey'
+         and creation.source_teacher_id = p_source_teacher_id
+         and pg_catalog.to_char(creation.effective_date, 'YYYY-MM-DD') = p_effective_date
+         and creation_group.value ->> 'operationId' = p_operation_id
+         and creation_group.value ->> 'studentId' = p_student_id
+         and creation_group.value -> 'affectedOccurrenceIds'
+           is not distinct from current_operation -> 'affectedOccurrenceIds'
+     ) then
+    raise exception using errcode = '22023', message = 'permanent_replacement_operation_mismatch';
+  end if;
+  current_student := (
+    select item.value from jsonb_array_elements(student_state.payload) item(value)
+    where item.value ->> 'id' = p_student_id limit 1
+  );
+  current_source_teacher := (
+    select item.value from jsonb_array_elements(teacher_state.payload) item(value)
+    where item.value ->> 'id' = p_source_teacher_id limit 1
+  );
+  current_replacement_teacher := (
+    select item.value from jsonb_array_elements(teacher_state.payload) item(value)
+    where item.value ->> 'id' = p_replacement_teacher_id limit 1
+  );
+  if current_student is null or current_source_teacher is null or current_replacement_teacher is null then
+    raise exception using errcode = '22023', message = 'permanent_replacement_subject_not_found';
+  end if;
+  if current_student ->> 'importArchived' = 'true' then
+    raise exception using errcode = '42501', message = 'archived_student_operation_read_only';
+  end if;
+  replacement_relationship_projection := internal.permanent_teacher_replacement_occurrence_projection(
+    booking_state.payload, p_student_id, p_replacement_teacher_id, p_effective_date, false
+  );
+  replacement_already_active := coalesce(
+    (replacement_relationship_projection ->> 'unbounded')::boolean, false
+  ) or jsonb_array_length(replacement_relationship_projection -> 'occurrenceIds') > 0;
+  replacement_already_assigned := coalesce(
+    current_replacement_teacher -> 'capacityAssignments' @> jsonb_build_array(p_student_id), false
+  );
+  replacement_teacher_name := nullif(trim(current_replacement_teacher ->> 'name'), '');
+  if replacement_teacher_name is null
+     or nullif(trim(current_source_teacher ->> 'name'), '') is null
+     or (
+       not replacement_already_active
+       and not replacement_already_assigned
+       and current_replacement_teacher -> 'acceptsStudents' is distinct from 'true'::jsonb
+     )
+     or (
+       nullif(trim(current_student ->> 'teacher'), '') is not null
+       and nullif(trim(current_student ->> 'teacher'), '') not in (
+         nullif(trim(current_source_teacher ->> 'name'), ''), '待匹配', '待确认'
+       )
+     ) then
+    raise exception using errcode = '22023', message = 'permanent_replacement_assignment_mismatch';
+  end if;
+
+  expected_projection := internal.permanent_teacher_replacement_occurrence_projection(
+    booking_state.payload, p_student_id, p_source_teacher_id, p_effective_date, true
+  );
+  if (expected_projection ->> 'unbounded')::boolean
+     or jsonb_array_length(expected_projection -> 'occurrenceIds') = 0
+     or expected_projection -> 'occurrenceIds' is distinct from p_affected_occurrence_ids then
+    raise exception using errcode = '22023', message = 'permanent_replacement_occurrence_closure_mismatch';
+  end if;
+  if jsonb_typeof(current_replacement_teacher -> 'subjects') is distinct from 'array'
+     or exists (
+       select 1
+       from jsonb_array_elements_text(p_affected_occurrence_ids) affected(value)
+       join jsonb_array_elements(booking_state.payload) booking(value)
+         on pg_catalog.left(affected.value, length(affected.value) - 11)
+           = booking.value ->> 'id'
+       where nullif(trim(booking.value ->> 'teacherSubjectId'), '') is null
+          or not (current_replacement_teacher -> 'subjects')
+            @> jsonb_build_array(booking.value ->> 'teacherSubjectId')
+     ) then
+    raise exception using errcode = '22023', message = 'permanent_replacement_subject_mismatch';
+  end if;
+
+  expected_bookings := internal.permanent_teacher_replacement_expected_bookings(
+    booking_state.payload, p_student_id, p_source_teacher_id,
+    p_replacement_teacher_id, p_affected_occurrence_ids
+  );
+  if expected_bookings is not distinct from booking_state.payload
+     or p_bookings is distinct from expected_bookings then
+    raise exception using errcode = '22023', message = 'permanent_replacement_booking_payload_mismatch';
+  end if;
+
+  expected_teacher_projection := internal.permanent_teacher_replacement_expected_teachers(
+    booking_state.payload, teacher_state.payload, p_student_id,
+    p_source_teacher_id, p_replacement_teacher_id, p_effective_date
+  );
+  expected_teachers := expected_teacher_projection -> 'teachers';
+  expected_changed_teacher_ids := expected_teacher_projection -> 'changedTeacherIds';
+  if p_changed_teacher_ids is distinct from expected_changed_teacher_ids
+     or p_teachers is distinct from expected_teachers then
+    raise exception using errcode = '22023', message = 'permanent_replacement_teacher_payload_mismatch';
+  end if;
+
+  select jsonb_agg(
+    case when item.value ->> 'id' = p_student_id
+      then jsonb_set(item.value, '{teacher}', to_jsonb(replacement_teacher_name), true)
+      else item.value end
+    order by item.ordinality
+  ) into expected_students
+  from jsonb_array_elements(student_state.payload) with ordinality as item(value, ordinality);
+  if p_students is distinct from expected_students then
+    raise exception using errcode = '22023', message = 'permanent_replacement_student_payload_mismatch';
+  end if;
+
+  next_operation := (
+    select item.value from jsonb_array_elements(p_operations) item(value)
+    where item.value ->> 'id' = p_operation_id limit 1
+  );
+  if next_operation is null
+     or next_operation ->> 'status' is distinct from '已确认'
+     or next_operation ->> 'chosenTeacherId' is distinct from p_replacement_teacher_id
+     or next_operation -> 'affectedOccurrenceIds' is distinct from p_affected_occurrence_ids
+     or next_operation -> 'changedTeacherIds' is distinct from p_changed_teacher_ids
+     or next_operation ->> 'confirmationAction' is distinct from 'permanent_replacement'
+     or next_operation ->> 'confirmationCommandKey' is distinct from p_command_key
+     or next_operation ->> 'confirmedBy' is distinct from trim(p_actor)
+     or (current_operation - 'status' - 'chosenTeacherId' - 'affectedOccurrenceIds'
+       - 'changedTeacherIds' - 'confirmationAction' - 'confirmationCommandKey'
+       - 'confirmedAt' - 'confirmedBy') is distinct from
+       (next_operation - 'status' - 'chosenTeacherId' - 'affectedOccurrenceIds'
+       - 'changedTeacherIds' - 'confirmationAction' - 'confirmationCommandKey'
+       - 'confirmedAt' - 'confirmedBy') then
+    raise exception using errcode = '22023', message = 'permanent_replacement_operation_payload_mismatch';
+  end if;
+  confirmed_at_text := next_operation ->> 'confirmedAt';
+  if coalesce(confirmed_at_text, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_confirmed_at';
+  end if;
+  begin
+    confirmed_at_value := confirmed_at_text::timestamptz;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_confirmed_at';
+  end;
+  if confirmed_at_value < clock_timestamp() - interval '15 minutes'
+     or confirmed_at_value > clock_timestamp() + interval '2 minutes' then
+    raise exception using errcode = '22023', message = 'invalid_permanent_replacement_confirmed_at';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(operation_state.payload) old_item(value)
+    full join jsonb_array_elements(p_operations) new_item(value)
+      on old_item.value ->> 'id' = new_item.value ->> 'id'
+    where coalesce(old_item.value ->> 'id', new_item.value ->> 'id') <> p_operation_id
+      and old_item.value is distinct from new_item.value
+  ) or exists (
+    select 1 from jsonb_array_elements(p_operations) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1
+    from jsonb_array_elements(operation_state.payload) with ordinality old_item(value, ordinality)
+    full join jsonb_array_elements(p_operations) with ordinality new_item(value, ordinality)
+      on old_item.ordinality = new_item.ordinality
+    where old_item.value ->> 'id' is distinct from new_item.value ->> 'id'
+  ) then
+    raise exception using errcode = '22023', message = 'unrelated_permanent_replacement_operation_changed';
+  end if;
+
+  saved_booking_state := booking_state;
+  saved_operation_state := operation_state;
+  saved_student_state := student_state;
+  saved_teacher_state := teacher_state;
+  if booking_state.payload is distinct from expected_bookings then
+    update public.ops_state s set payload = expected_bookings, version = s.version + 1,
+      updated_at = now(), updated_by = trim(p_actor)
+    where s.entity = 'bookings' returning s.* into saved_booking_state;
+    insert into public.ops_mutation_log(entity, version, actor)
+    values ('bookings', saved_booking_state.version, saved_booking_state.updated_by);
+  end if;
+  if operation_state.payload is distinct from p_operations then
+    update public.ops_state s set payload = p_operations, version = s.version + 1,
+      updated_at = now(), updated_by = trim(p_actor)
+    where s.entity = 'operations' returning s.* into saved_operation_state;
+    insert into public.ops_mutation_log(entity, version, actor)
+    values ('operations', saved_operation_state.version, saved_operation_state.updated_by);
+  end if;
+  if student_state.payload is distinct from expected_students then
+    update public.ops_state s set payload = expected_students, version = s.version + 1,
+      updated_at = now(), updated_by = trim(p_actor)
+    where s.entity = 'students' returning s.* into saved_student_state;
+    insert into public.ops_mutation_log(entity, version, actor)
+    values ('students', saved_student_state.version, saved_student_state.updated_by);
+  end if;
+  if teacher_state.payload is distinct from expected_teachers then
+    update public.ops_state s set payload = expected_teachers, version = s.version + 1,
+      updated_at = now(), updated_by = trim(p_actor)
+    where s.entity = 'teachers' returning s.* into saved_teacher_state;
+    insert into public.ops_mutation_log(entity, version, actor)
+    values ('teachers', saved_teacher_state.version, saved_teacher_state.updated_by);
+  end if;
+
+  audit_id := internal.append_operational_contract_audit(
+    'operation.permanent_teacher_replacement', trim(p_actor), 'operation', p_operation_id,
+    jsonb_build_object(
+      'commandKey', p_command_key,
+      'studentId', p_student_id,
+      'sourceTeacherId', p_source_teacher_id,
+      'replacementTeacherId', p_replacement_teacher_id,
+      'effectiveDate', p_effective_date,
+      'affectedOccurrenceIds', p_affected_occurrence_ids,
+      'changedTeacherIds', p_changed_teacher_ids,
+      'versionsBefore', p_expected_versions,
+      'versionsAfter', jsonb_build_object(
+        'bookings', saved_booking_state.version,
+        'operations', saved_operation_state.version,
+        'students', saved_student_state.version,
+        'teachers', saved_teacher_state.version
+      ),
+      'payloadSha256', payload_hash
+    )
+  );
+  insert into internal.permanent_teacher_replacement_commands (
+    command_key, command_intent, command_hash, operation_id, student_id,
+    source_teacher_id, replacement_teacher_id, effective_date,
+    affected_occurrence_ids, changed_teacher_ids, booking_version,
+    operation_version, student_version, teacher_version, actor, audit_id
+  ) values (
+    p_command_key, p_command_intent, payload_hash, p_operation_id, p_student_id,
+    p_source_teacher_id, p_replacement_teacher_id, p_effective_date::date,
+    p_affected_occurrence_ids, p_changed_teacher_ids, saved_booking_state.version,
+    saved_operation_state.version, saved_student_state.version,
+    saved_teacher_state.version, trim(p_actor), audit_id
+  );
+
+  return query select p_command_key, p_operation_id, true,
+    p_affected_occurrence_ids, p_changed_teacher_ids,
+    saved_booking_state, saved_operation_state, saved_teacher_state,
+    saved_student_state, audit_id;
+end;
+$$;
+
+revoke all on function public.confirm_permanent_teacher_replacement_atomic(text, text, jsonb, text, text, text, text, text, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.confirm_permanent_teacher_replacement_atomic(text, text, jsonb, text, text, text, text, text, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, text)
+  to anon, authenticated;
+
+-- Executable migration fixtures protect the two most delicate projections:
+-- the complete future occurrence closure/history overrides and the exact
+-- capacity transfer. They execute during migration and roll back the whole
+-- migration if PostgreSQL semantics drift from the reviewed contract.
+do $$
+declare
+  old_bookings jsonb := '[{"id":"B-1","studentId":"S-1","teacherId":"T-1","date":"2026-09-01","start":"17:00","duration":60,"recurring":true,"repeatCount":3,"kind":"常规课","teacherSubjectId":"Math","occurrenceOverrides":[{"occurrenceId":"B-1:2026-09-01","status":"completed"}]}]'::jsonb;
+  collision_bookings jsonb;
+  affected jsonb;
+  projected jsonb;
+  teachers jsonb;
+  teacher_projection jsonb;
+begin
+  projected := internal.permanent_teacher_replacement_occurrence_projection(
+    old_bookings, 'S-1', 'T-1', '2026-09-08', true
+  );
+  affected := projected -> 'occurrenceIds';
+  if affected is distinct from '["B-1:2026-09-08","B-1:2026-09-15"]'::jsonb then
+    raise exception 'permanent_replacement_fixture_occurrence_closure_mismatch';
+  end if;
+  projected := internal.permanent_teacher_replacement_expected_bookings(
+    old_bookings, 'S-1', 'T-1', 'T-2', affected
+  );
+  if projected #>> '{0,teacherId}' <> 'T-2'
+     or projected #>> '{0,occurrenceOverrides,0,teacherId}' <> 'T-1'
+     or projected #>> '{0,occurrenceOverrides,1,teacherId}' <> 'T-2'
+     or projected #>> '{0,occurrenceOverrides,2,teacherId}' <> 'T-2' then
+    raise exception 'permanent_replacement_fixture_booking_history_mismatch';
+  end if;
+
+  -- Booking ids may themselves contain colons.  An occurrence belongs to the
+  -- series obtained by removing only its final :YYYY-MM-DD suffix; a prefix
+  -- match would incorrectly mutate the first booking below as well.
+  collision_bookings := '[{"id":"B","studentId":"S-1","teacherId":"T-1","date":"2026-09-08","start":"16:00","duration":60,"recurring":false},{"id":"B:2026-09-08","studentId":"S-1","teacherId":"T-1","date":"2026-09-08","start":"17:00","duration":60,"recurring":false}]'::jsonb;
+  projected := internal.permanent_teacher_replacement_expected_bookings(
+    collision_bookings, 'S-1', 'T-1', 'T-2',
+    '["B:2026-09-08:2026-09-08"]'::jsonb
+  );
+  if projected #>> '{0,teacherId}' <> 'T-1'
+     or projected #> '{0,occurrenceOverrides}' is not null
+     or projected #>> '{1,teacherId}' <> 'T-2'
+     or projected #>> '{1,occurrenceOverrides,0,occurrenceId}'
+       <> 'B:2026-09-08:2026-09-08' then
+    raise exception 'permanent_replacement_fixture_colon_booking_id_collision';
+  end if;
+
+  teachers := '[{"id":"T-1","name":"One","newStudentCapacity":0,"capacityAssignments":["S-1"]},{"id":"T-2","name":"Two","newStudentCapacity":2,"capacityAssignments":[]}]'::jsonb;
+  teacher_projection := internal.permanent_teacher_replacement_expected_teachers(
+    old_bookings, teachers, 'S-1', 'T-1', 'T-2', '2026-09-08'
+  );
+  if teacher_projection -> 'changedTeacherIds' is distinct from '["T-1","T-2"]'::jsonb
+     or teacher_projection #>> '{teachers,0,newStudentCapacity}' <> '1'
+     or teacher_projection #> '{teachers,0,capacityAssignments}' is distinct from '[]'::jsonb
+     or teacher_projection #>> '{teachers,1,newStudentCapacity}' <> '1'
+     or teacher_projection #> '{teachers,1,capacityAssignments}' is distinct from '["S-1"]'::jsonb then
+    raise exception 'permanent_replacement_fixture_capacity_mismatch';
+  end if;
+
+  begin
+    perform internal.permanent_teacher_replacement_occurrence_projection(
+      '[{"id":"B-BAD","studentId":"S-1","teacherId":"T-1","date":"2026-09-08","start":"17:00","duration":60,"recurring":false,"occurrenceOverrides":[{"occurrenceId":"B-BAD:2026-09-08","teacherId":7}]}]'::jsonb,
+      'S-1', 'T-1', '2026-09-08', true
+    );
+    raise exception 'permanent_replacement_fixture_non_string_override_accepted';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'invalid_permanent_replacement_override' then raise; end if;
+  end;
+end;
+$$;
+
+-- BEGIN EXAM SUBMISSION ATOMIC SUFFIX
+-- One exam edit changes the authoritative student record and the complete set
+-- of managed exam reminders. The browser submits only the exam form, an opaque
+-- UUID command key and two OCC versions; both projections are derived on the
+-- server and independently reproduced here from locked state.
+
+create table if not exists internal.exam_submission_commands (
+  command_key text primary key check (
+    command_key ~ '^exam-submit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  ),
+  command_intent jsonb not null check (jsonb_typeof(command_intent) = 'object'),
+  command_hash text not null check (command_hash ~ '^[a-f0-9]{64}$'),
+  action text not null check (action in ('create', 'update')),
+  student_id text not null check (length(student_id) between 1 and 120),
+  exam_id text not null check (length(exam_id) between 1 and 120),
+  student_version bigint not null check (student_version > 0),
+  task_version bigint not null check (task_version > 0),
+  actor text not null check (length(actor) between 1 and 120),
+  applied_at timestamptz not null default now(),
+  audit_id uuid not null references internal.operational_contract_audit(id)
+);
+
+alter table internal.exam_submission_commands enable row level security;
+revoke all on table internal.exam_submission_commands from public, anon, authenticated, service_role;
+
+create or replace function internal.validate_exam_submission_intent(p_intent jsonb)
+returns void
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  exam jsonb;
+  date_text text;
+begin
+  if jsonb_typeof(p_intent) is distinct from 'object'
+     or p_intent - 'studentId' - 'exam' <> '{}'::jsonb
+     or coalesce(p_intent ->> 'studentId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$'
+     or jsonb_typeof(p_intent -> 'exam') is distinct from 'object' then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_intent';
+  end if;
+  exam := p_intent -> 'exam';
+  if exam - 'id' - 'subject' - 'examType' - 'examVariant' - 'examMonth'
+      - 'examDate' - 'resultDateOverride' - 'includeRecall' <> '{}'::jsonb
+     or coalesce(exam ->> 'id', '') !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$'
+     or jsonb_typeof(exam -> 'subject') is distinct from 'string'
+     or length(trim(exam ->> 'subject')) not between 1 and 200
+     or jsonb_typeof(exam -> 'examType') is distinct from 'string'
+     or exam ->> 'examType' not in ('scholarship', 'selective', 'aeas', 'other')
+     or jsonb_typeof(exam -> 'examVariant') is distinct from 'string'
+     or exam ->> 'examVariant' not in (
+       'scholarship', 'selective', 'oc', 'mgs', 'gate', 'jmss', 'aeas',
+       'school_interview', 'australian_university_final',
+       'australian_university_assignment', 'vce', 'wace', 'hsc', 'qce',
+       'sace', 'icas', 'amc', 'ielts_paper', 'ielts_computer', 'pte', 'ccl', 'other'
+     )
+     or coalesce(exam ->> 'examMonth', '') !~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
+     or jsonb_typeof(exam -> 'includeRecall') is distinct from 'boolean'
+     or (exam ? 'examDate' and jsonb_typeof(exam -> 'examDate') is distinct from 'string')
+     or (exam ? 'resultDateOverride'
+       and jsonb_typeof(exam -> 'resultDateOverride') is distinct from 'string') then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_exam';
+  end if;
+  if exam ? 'examDate' then
+    date_text := exam ->> 'examDate';
+    begin
+      if date_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         or pg_catalog.to_char(date_text::date, 'YYYY-MM-DD') <> date_text
+         or pg_catalog.left(date_text, 7) <> exam ->> 'examMonth' then
+        raise exception using errcode = '22023', message = 'invalid_exam_submission_exam_date';
+      end if;
+    exception when others then
+      raise exception using errcode = '22023', message = 'invalid_exam_submission_exam_date';
+    end;
+  end if;
+  if exam ? 'resultDateOverride' then
+    date_text := exam ->> 'resultDateOverride';
+    begin
+      if date_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         or pg_catalog.to_char(date_text::date, 'YYYY-MM-DD') <> date_text then
+        raise exception using errcode = '22023', message = 'invalid_exam_submission_result_date';
+      end if;
+    exception when others then
+      raise exception using errcode = '22023', message = 'invalid_exam_submission_result_date';
+    end;
+  end if;
+end;
+$$;
+
+revoke all on function internal.validate_exam_submission_intent(jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.exam_submission_result_date(p_exam jsonb)
+returns text
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  exam_date date;
+  variant text;
+  remaining integer;
+  target date;
+  target_month date;
+  last_day integer;
+begin
+  if not (p_exam ? 'examDate') then return null; end if;
+  exam_date := (p_exam ->> 'examDate')::date;
+  if p_exam ? 'resultDateOverride' then return p_exam ->> 'resultDateOverride'; end if;
+  variant := p_exam ->> 'examVariant';
+  if variant in ('scholarship', 'selective', 'oc', 'mgs', 'gate', 'jmss') then
+    return pg_catalog.to_char(exam_date + 30, 'YYYY-MM-DD');
+  elsif variant in ('school_interview', 'ielts_computer') then
+    return pg_catalog.to_char(exam_date + 3, 'YYYY-MM-DD');
+  elsif variant = 'australian_university_assignment' then
+    return pg_catalog.to_char(exam_date + 14, 'YYYY-MM-DD');
+  elsif variant = 'pte' then
+    return pg_catalog.to_char(exam_date + 1, 'YYYY-MM-DD');
+  elsif variant = 'ccl' then
+    return pg_catalog.to_char(exam_date + 42, 'YYYY-MM-DD');
+  elsif variant in ('aeas', 'ielts_paper') then
+    target := exam_date;
+    remaining := 10;
+    while remaining > 0 loop
+      target := target + 1;
+      if extract(isodow from target) between 1 and 5 then remaining := remaining - 1; end if;
+    end loop;
+    return pg_catalog.to_char(target, 'YYYY-MM-DD');
+  elsif variant = 'australian_university_final' then
+    target := pg_catalog.make_date(extract(year from exam_date)::integer, 7, 15);
+    if target <= exam_date then
+      target := pg_catalog.make_date(extract(year from exam_date)::integer, 12, 15);
+    end if;
+    if target <= exam_date then
+      target := pg_catalog.make_date(extract(year from exam_date)::integer + 1, 7, 15);
+    end if;
+    return pg_catalog.to_char(target, 'YYYY-MM-DD');
+  elsif variant in ('icas', 'amc') then
+    target_month := (pg_catalog.date_trunc('month', exam_date)::date + interval '2 months')::date;
+    last_day := extract(day from (target_month + interval '1 month - 1 day')::date)::integer;
+    target := target_month + (least(extract(day from exam_date)::integer, last_day) - 1);
+    return pg_catalog.to_char(target, 'YYYY-MM-DD');
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function internal.exam_submission_result_date(jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.exam_submission_expected_students(
+  p_students jsonb,
+  p_intent jsonb
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  target_id text := p_intent ->> 'studentId';
+  exam_id text := p_intent -> 'exam' ->> 'id';
+  current_student jsonb;
+  previous_exam jsonb;
+  final_exam jsonb;
+  next_exams jsonb;
+  next_student jsonb;
+  result_date text;
+  result jsonb;
+begin
+  perform internal.validate_exam_submission_intent(p_intent);
+  if jsonb_typeof(p_students) is distinct from 'array'
+     or exists (select 1 from jsonb_array_elements(p_students) item(value)
+       where jsonb_typeof(item.value) is distinct from 'object'
+          or nullif(trim(item.value ->> 'id'), '') is null)
+     or exists (select 1 from jsonb_array_elements(p_students) item(value)
+       group by item.value ->> 'id' having count(*) > 1) then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_students';
+  end if;
+  select item.value into current_student
+  from jsonb_array_elements(p_students) item(value)
+  where item.value ->> 'id' = target_id;
+  if current_student is null then
+    raise exception using errcode = '22023', message = 'exam_submission_student_not_found';
+  end if;
+  if current_student -> 'importArchived' = 'true'::jsonb then
+    raise exception using errcode = '42501', message = 'archived_student_exam_read_only';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_students) student(value)
+    where student.value ? 'exams' and jsonb_typeof(student.value -> 'exams') is distinct from 'array'
+  ) or exists (
+    select 1
+    from jsonb_array_elements(p_students) student(value),
+      jsonb_array_elements(case when jsonb_typeof(student.value -> 'exams') = 'array'
+        then student.value -> 'exams' else '[]'::jsonb end) exam(value)
+    where jsonb_typeof(exam.value) is distinct from 'object'
+       or nullif(trim(exam.value ->> 'id'), '') is null
+  ) or exists (
+    select 1
+    from jsonb_array_elements(p_students) student(value),
+      jsonb_array_elements(case when jsonb_typeof(student.value -> 'exams') = 'array'
+        then student.value -> 'exams' else '[]'::jsonb end) exam(value)
+    group by student.value ->> 'id', exam.value ->> 'id'
+    having count(*) > 1
+  ) then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_history';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(p_students) student(value),
+      jsonb_array_elements(case when jsonb_typeof(student.value -> 'exams') = 'array'
+        then student.value -> 'exams' else '[]'::jsonb end) exam(value)
+    where student.value ->> 'id' <> target_id and exam.value ->> 'id' = exam_id
+  ) then
+    raise exception using errcode = '23505', message = 'exam_submission_identity_conflict';
+  end if;
+  select exam.value into previous_exam
+  from jsonb_array_elements(case when jsonb_typeof(current_student -> 'exams') = 'array'
+    then current_student -> 'exams' else '[]'::jsonb end) exam(value)
+  where exam.value ->> 'id' = exam_id;
+  final_exam := p_intent -> 'exam';
+  if jsonb_typeof(previous_exam -> 'followUpState') = 'object' then
+    final_exam := final_exam || jsonb_build_object('followUpState', previous_exam -> 'followUpState');
+  end if;
+  select coalesce(jsonb_agg(item.value order by
+    item.value ->> 'examMonth' collate "C",
+    case when item.value ? 'examDate' then 1 else 0 end,
+    coalesce(item.value ->> 'examDate', '') collate "C",
+    item.value ->> 'id' collate "C"
+  ), '[]'::jsonb) into next_exams
+  from (
+    select exam.value
+    from jsonb_array_elements(case when jsonb_typeof(current_student -> 'exams') = 'array'
+      then current_student -> 'exams' else '[]'::jsonb end) exam(value)
+    where exam.value ->> 'id' <> exam_id
+    union all
+    select final_exam
+  ) item;
+  result_date := internal.exam_submission_result_date(final_exam);
+  next_student := current_student - 'exams' - 'examSubject' - 'examDate' - 'resultDate';
+  next_student := jsonb_set(next_student, '{exams}', next_exams, true);
+  next_student := jsonb_set(next_student, '{examSubject}', to_jsonb(final_exam ->> 'subject'), true);
+  if final_exam ? 'examDate' then
+    next_student := jsonb_set(next_student, '{examDate}', to_jsonb(final_exam ->> 'examDate'), true);
+  end if;
+  if result_date is not null then
+    next_student := jsonb_set(next_student, '{resultDate}', to_jsonb(result_date), true);
+  end if;
+  select jsonb_agg(case when item.value ->> 'id' = target_id then next_student else item.value end
+    order by item.ordinality)
+  into result
+  from jsonb_array_elements(p_students) with ordinality item(value, ordinality);
+  return result;
+end;
+$$;
+
+revoke all on function internal.exam_submission_expected_students(jsonb, jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.exam_submission_incoming_tasks(
+  p_students jsonb,
+  p_intent jsonb,
+  p_prepared_at timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $$
+declare
+  student jsonb;
+  previous_exam jsonb;
+  exam jsonb := p_intent -> 'exam';
+  follow_up jsonb := '{}'::jsonb;
+  step_state jsonb;
+  suffix text;
+  kind text;
+  role_name text;
+  title_text text;
+  recipient text;
+  due_date text;
+  result_date text;
+  rule_key text;
+  due_instant timestamptz;
+  due_at_text text;
+  completed boolean;
+  task jsonb;
+  result jsonb := '[]'::jsonb;
+begin
+  perform internal.validate_exam_submission_intent(p_intent);
+  select item.value into student from jsonb_array_elements(p_students) item(value)
+  where item.value ->> 'id' = p_intent ->> 'studentId';
+  if student is null then
+    raise exception using errcode = '22023', message = 'exam_submission_student_not_found';
+  end if;
+  select item.value into previous_exam
+  from jsonb_array_elements(case when jsonb_typeof(student -> 'exams') = 'array'
+    then student -> 'exams' else '[]'::jsonb end) item(value)
+  where item.value ->> 'id' = exam ->> 'id';
+  if jsonb_typeof(previous_exam -> 'followUpState') = 'object' then
+    follow_up := previous_exam -> 'followUpState';
+  end if;
+  result_date := internal.exam_submission_result_date(exam);
+
+  for suffix, kind, role_name in
+    select * from (values
+      ('care'::text, 'exam_care'::text, 'academic_coordinator'::text),
+      ('recall'::text, 'exam_recall'::text, 'academic_coordinator'::text),
+      ('results'::text, 'exam_results_follow_up'::text, 'course_planner'::text)
+    ) definitions
+  loop
+    if not (exam ? 'examDate') then continue; end if;
+    if suffix = 'recall' and exam -> 'includeRecall' is distinct from 'true'::jsonb then continue; end if;
+    if suffix = 'results' and result_date is null then continue; end if;
+    due_date := case when suffix = 'results' then result_date else exam ->> 'examDate' end;
+    recipient := nullif(trim(case when role_name = 'academic_coordinator'
+      then student ->> 'owner' else student ->> 'planner' end), '');
+    if recipient is null or recipient ~ '^(待分配|待确认|未知|角色待配置[:：])' then continue; end if;
+    step_state := follow_up -> kind;
+    if step_state ->> 'status' = 'not_required' then continue; end if;
+    completed := step_state ->> 'status' = 'completed';
+    if completed then
+      begin
+        if nullif(step_state ->> 'completedAt', '') is null then
+          raise exception using errcode = '22023', message = 'invalid_exam_submission_follow_up';
+        end if;
+        perform (step_state ->> 'completedAt')::timestamptz;
+      exception when others then
+        raise exception using errcode = '22023', message = 'invalid_exam_submission_follow_up';
+      end;
+    end if;
+    rule_key := 'exam:' || (exam ->> 'id') || ':' || suffix;
+    title_text := (exam ->> 'subject') || case suffix
+      when 'care' then '考试当天关心'
+      when 'recall' then '考试回忆'
+      else '出分关心' end;
+    due_instant := (due_date::date + time '18:00') at time zone 'Australia/Melbourne';
+    due_at_text := pg_catalog.to_char(due_instant at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+    task := jsonb_build_object(
+      'id', 'TSK-EXAM-' || pg_catalog.left(encode(extensions.digest(
+        pg_catalog.convert_to((p_intent ->> 'studentId') || chr(31) || rule_key, 'UTF8'), 'sha256'
+      ), 'hex'), 24),
+      'title', title_text,
+      'owner', recipient,
+      'assignees', jsonb_build_array(recipient),
+      'watchers', jsonb_build_array('Ops Admin'),
+      'studentId', p_intent ->> 'studentId',
+      'due', due_date || ' 18:00',
+      'dueAt', due_at_text,
+      'status', case when completed then 'done'
+        when due_date::date < (p_prepared_at at time zone 'Australia/Melbourne')::date then 'overdue'
+        when due_date::date = (p_prepared_at at time zone 'Australia/Melbourne')::date then 'today'
+        else 'upcoming' end,
+      'tone', case when completed then 'green' when suffix = 'results' then 'purple' else 'amber' end,
+      'category', '考试',
+      'trigger', (exam ->> 'subject') || ' 考试记录 · 收件：' || recipient,
+      'ruleKey', rule_key,
+      'anchorBookingId', 'exam:' || (exam ->> 'id')
+    );
+    if completed then
+      task := task || jsonb_build_object(
+        'result', '考试跟进已完成',
+        'closedAt', step_state ->> 'completedAt'
+      );
+    end if;
+    result := result || jsonb_build_array(task);
+  end loop;
+  return result;
+end;
+$$;
+
+revoke all on function internal.exam_submission_incoming_tasks(jsonb, jsonb, timestamptz)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.exam_submission_task_due_sort(p_value text)
+returns timestamptz
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $$
+begin
+  if nullif(trim(p_value), '') is null then return 'infinity'::timestamptz; end if;
+  return p_value::timestamptz;
+exception when others then
+  return 'infinity'::timestamptz;
+end;
+$$;
+
+revoke all on function internal.exam_submission_task_due_sort(text)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.exam_submission_reconcile_tasks(
+  p_tasks jsonb,
+  p_incoming jsonb,
+  p_exam_id text,
+  p_closed_at text
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $$
+declare
+  task_record record;
+  task jsonb;
+  incoming_task jsonb;
+  next_task jsonb;
+  prepared jsonb := '[]'::jsonb;
+  managed boolean;
+  first_ordinality bigint;
+  existing jsonb;
+begin
+  if jsonb_typeof(p_tasks) is distinct from 'array'
+     or jsonb_typeof(p_incoming) is distinct from 'array'
+     or exists (select 1 from jsonb_array_elements(p_tasks) item(value)
+       where jsonb_typeof(item.value) is distinct from 'object'
+          or nullif(trim(item.value ->> 'id'), '') is null)
+     or exists (select 1 from jsonb_array_elements(p_tasks) item(value)
+       group by item.value ->> 'id' having count(*) > 1) then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_tasks';
+  end if;
+  for task_record in
+    select item.value, item.ordinality
+    from jsonb_array_elements(p_tasks) with ordinality item(value, ordinality)
+    order by item.ordinality
+  loop
+    task := task_record.value;
+    managed := task ->> 'anchorBookingId' = 'exam:' || p_exam_id
+      and task ->> 'ruleKey' in (
+        'exam:' || p_exam_id || ':care',
+        'exam:' || p_exam_id || ':recall',
+        'exam:' || p_exam_id || ':results'
+      );
+    next_task := task;
+    if managed and not exists (
+      select 1 from jsonb_array_elements(p_incoming) item(value)
+      where item.value ->> 'ruleKey' = task ->> 'ruleKey'
+        and item.value ->> 'anchorBookingId' = task ->> 'anchorBookingId'
+    ) then
+      if task ->> 'status' <> 'done' then
+        next_task := task || jsonb_build_object(
+          'status', 'done', 'tone', 'green', 'closedAt', p_closed_at,
+          'result', '考试日期或规则更新，任务自动关闭'
+        );
+      end if;
+    elsif managed and task ->> 'status' = 'done'
+       and task ->> 'result' = '考试日期或规则更新，任务自动关闭' then
+      next_task := (task - 'closedAt' - 'result') || jsonb_build_object('status', 'waiting', 'tone', 'neutral');
+    end if;
+    prepared := prepared || jsonb_build_array(next_task);
+  end loop;
+
+  for incoming_task in select value from jsonb_array_elements(p_incoming)
+  loop
+    select item.ordinality into first_ordinality
+    from jsonb_array_elements(prepared) with ordinality item(value, ordinality)
+    where item.value ->> 'ruleKey' = incoming_task ->> 'ruleKey'
+      and item.value ->> 'anchorBookingId' = incoming_task ->> 'anchorBookingId'
+    order by item.ordinality limit 1;
+    select item.value into existing
+    from jsonb_array_elements(prepared) with ordinality item(value, ordinality)
+    where item.value ->> 'ruleKey' = incoming_task ->> 'ruleKey'
+      and item.value ->> 'anchorBookingId' = incoming_task ->> 'anchorBookingId'
+    order by case when item.value ->> 'status' = 'done' then 0 else 1 end, item.ordinality
+    limit 1;
+    if existing is null then
+      prepared := prepared || jsonb_build_array(incoming_task);
+    else
+      next_task := incoming_task || jsonb_build_object('id', existing ->> 'id');
+      if existing ->> 'status' = 'done' then
+        next_task := (next_task - 'result' - 'closedAt') || jsonb_build_object(
+          'status', existing -> 'status', 'tone', existing -> 'tone'
+        );
+        if existing ? 'result' then next_task := next_task || jsonb_build_object('result', existing -> 'result'); end if;
+        if existing ? 'closedAt' then next_task := next_task || jsonb_build_object('closedAt', existing -> 'closedAt'); end if;
+      end if;
+      select coalesce(jsonb_agg(
+        case when item.ordinality = first_ordinality then next_task else item.value end
+        order by item.ordinality
+      ), '[]'::jsonb) into prepared
+      from jsonb_array_elements(prepared) with ordinality item(value, ordinality)
+      where item.ordinality = first_ordinality
+         or item.value ->> 'ruleKey' is distinct from incoming_task ->> 'ruleKey'
+         or item.value ->> 'anchorBookingId' is distinct from incoming_task ->> 'anchorBookingId';
+    end if;
+    first_ordinality := null;
+    existing := null;
+  end loop;
+
+  select coalesce(jsonb_agg(item.value order by
+    internal.exam_submission_task_due_sort(item.value ->> 'dueAt'), item.ordinality
+  ), '[]'::jsonb) into prepared
+  from jsonb_array_elements(prepared) with ordinality item(value, ordinality);
+  if exists (
+    select 1 from jsonb_array_elements(prepared) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) then
+    raise exception using errcode = '23505', message = 'exam_submission_task_identity_conflict';
+  end if;
+  return prepared;
+end;
+$$;
+
+revoke all on function internal.exam_submission_reconcile_tasks(jsonb, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.get_exam_submission_command_result(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_actor text
+)
+returns table (
+  command_key text,
+  action text,
+  student_id text,
+  exam_id text,
+  audit_entry_id uuid
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  prior internal.exam_submission_commands%rowtype;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  perform internal.validate_exam_submission_intent(p_command_intent);
+  if coalesce(p_command_key, '') !~ '^exam-submit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_replay_lookup';
+  end if;
+  select * into prior from internal.exam_submission_commands c where c.command_key = p_command_key;
+  if prior.command_key is null then return; end if;
+  if prior.command_intent is distinct from p_command_intent
+     or prior.actor <> trim(p_actor)
+     or prior.student_id <> p_command_intent ->> 'studentId'
+     or prior.exam_id <> p_command_intent -> 'exam' ->> 'id' then
+    raise exception using errcode = '23505', message = 'exam_submission_idempotency_conflict';
+  end if;
+  return query select prior.command_key, prior.action, prior.student_id,
+    prior.exam_id, prior.audit_id;
+end;
+$$;
+
+revoke all on function public.get_exam_submission_command_result(text, text, jsonb, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_exam_submission_command_result(text, text, jsonb, text)
+  to anon, authenticated;
+
+create or replace function public.submit_exam_atomic(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_student_id text,
+  p_exam_id text,
+  p_action text,
+  p_expected_versions jsonb,
+  p_students jsonb,
+  p_tasks jsonb,
+  p_prepared_at text,
+  p_actor text
+)
+returns table (
+  command_key text,
+  action text,
+  applied boolean,
+  student_id text,
+  exam_id text,
+  students_row public.ops_state,
+  tasks_row public.ops_state,
+  audit_entry_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  student_state public.ops_state%rowtype;
+  task_state public.ops_state%rowtype;
+  saved_student_state public.ops_state%rowtype;
+  saved_task_state public.ops_state%rowtype;
+  prior internal.exam_submission_commands%rowtype;
+  expected_student_version bigint;
+  expected_task_version bigint;
+  prepared_at_value timestamptz;
+  expected_action text;
+  expected_students jsonb;
+  incoming_tasks jsonb;
+  expected_tasks jsonb;
+  audit_id uuid;
+  committed_at timestamptz;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  perform internal.validate_exam_submission_intent(p_command_intent);
+  if coalesce(p_command_key, '') !~ '^exam-submit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     or p_command_intent ->> 'studentId' is distinct from p_student_id
+     or p_command_intent -> 'exam' ->> 'id' is distinct from p_exam_id
+     or p_action not in ('create', 'update')
+     or jsonb_typeof(p_expected_versions) is distinct from 'object'
+     or p_expected_versions - 'students' - 'tasks' <> '{}'::jsonb
+     or jsonb_typeof(p_expected_versions -> 'students') is distinct from 'number'
+     or jsonb_typeof(p_expected_versions -> 'tasks') is distinct from 'number'
+     or jsonb_typeof(p_students) is distinct from 'array'
+     or jsonb_typeof(p_tasks) is distinct from 'array'
+     or coalesce(p_prepared_at, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_command';
+  end if;
+  begin
+    expected_student_version := (p_expected_versions ->> 'students')::bigint;
+    expected_task_version := (p_expected_versions ->> 'tasks')::bigint;
+    prepared_at_value := p_prepared_at::timestamptz;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_command';
+  end;
+  if expected_student_version < 1 or expected_task_version < 1
+     or prepared_at_value < clock_timestamp() - interval '15 minutes'
+     or prepared_at_value > clock_timestamp() + interval '2 minutes' then
+    raise exception using errcode = '22023', message = 'invalid_exam_submission_command';
+  end if;
+
+  -- Global order for this two-row transaction: students -> tasks.
+  select * into student_state from public.ops_state s where s.entity = 'students' for update;
+  select * into task_state from public.ops_state s where s.entity = 'tasks' for update;
+  if student_state.entity is null or task_state.entity is null
+     or jsonb_typeof(student_state.payload) is distinct from 'array'
+     or jsonb_typeof(task_state.payload) is distinct from 'array' then
+    raise exception using errcode = '55000', message = 'exam_submission_state_missing';
+  end if;
+
+  select * into prior from internal.exam_submission_commands c where c.command_key = p_command_key;
+  if prior.command_key is not null then
+    if prior.command_intent is distinct from p_command_intent
+       or prior.actor <> trim(p_actor)
+       or prior.student_id <> p_student_id
+       or prior.exam_id <> p_exam_id
+       or prior.action <> p_action then
+      raise exception using errcode = '23505', message = 'exam_submission_idempotency_conflict';
+    end if;
+    return query select prior.command_key, prior.action, false, prior.student_id,
+      prior.exam_id, student_state, task_state, prior.audit_id;
+    return;
+  end if;
+
+  if student_state.version is distinct from expected_student_version
+     or task_state.version is distinct from expected_task_version then
+    raise exception using errcode = '40001', message = 'version_conflict';
+  end if;
+  expected_action := case when exists (
+    select 1
+    from jsonb_array_elements(student_state.payload) student(value),
+      jsonb_array_elements(case when jsonb_typeof(student.value -> 'exams') = 'array'
+        then student.value -> 'exams' else '[]'::jsonb end) exam(value)
+    where student.value ->> 'id' = p_student_id and exam.value ->> 'id' = p_exam_id
+  ) then 'update' else 'create' end;
+  if p_action <> expected_action then
+    raise exception using errcode = '40001', message = 'exam_submission_action_conflict';
+  end if;
+  expected_students := internal.exam_submission_expected_students(student_state.payload, p_command_intent);
+  incoming_tasks := internal.exam_submission_incoming_tasks(
+    student_state.payload, p_command_intent, prepared_at_value
+  );
+  expected_tasks := internal.exam_submission_reconcile_tasks(
+    task_state.payload, incoming_tasks, p_exam_id, p_prepared_at
+  );
+  if p_students is distinct from expected_students then
+    raise exception using errcode = '22023', message = 'exam_submission_student_payload_mismatch';
+  end if;
+  if p_tasks is distinct from expected_tasks then
+    raise exception using errcode = '22023', message = 'exam_submission_task_payload_mismatch';
+  end if;
+
+  committed_at := clock_timestamp();
+  update public.ops_state set
+    payload = p_students,
+    version = version + 1,
+    updated_at = committed_at,
+    updated_by = left(trim(p_actor), 120)
+  where entity = 'students'
+  returning * into saved_student_state;
+  update public.ops_state set
+    payload = p_tasks,
+    version = version + 1,
+    updated_at = committed_at,
+    updated_by = left(trim(p_actor), 120)
+  where entity = 'tasks'
+  returning * into saved_task_state;
+  insert into public.ops_mutation_log(entity, version, actor) values
+    ('students', saved_student_state.version, left(trim(p_actor), 120)),
+    ('tasks', saved_task_state.version, left(trim(p_actor), 120));
+  audit_id := internal.append_operational_contract_audit(
+    'exam_submission.committed', left(trim(p_actor), 120), 'student', p_student_id,
+    jsonb_build_object(
+      'commandKey', p_command_key,
+      'action', p_action,
+      'studentId', p_student_id,
+      'examId', p_exam_id,
+      'studentVersion', saved_student_state.version,
+      'taskVersion', saved_task_state.version,
+      'managedTaskCount', jsonb_array_length(incoming_tasks),
+      'commandHash', encode(extensions.digest(p_command_intent::text, 'sha256'), 'hex')
+    )
+  );
+  insert into internal.exam_submission_commands (
+    command_key, command_intent, command_hash, action, student_id, exam_id,
+    student_version, task_version, actor, applied_at, audit_id
+  ) values (
+    p_command_key, p_command_intent,
+    encode(extensions.digest(p_command_intent::text, 'sha256'), 'hex'),
+    p_action, p_student_id, p_exam_id, saved_student_state.version,
+    saved_task_state.version, left(trim(p_actor), 120), committed_at, audit_id
+  );
+  return query select p_command_key, p_action, true, p_student_id, p_exam_id,
+    saved_student_state, saved_task_state, audit_id;
+end;
+$$;
+
+revoke all on function public.submit_exam_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.submit_exam_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, text, text)
+  to anon, authenticated;
+
+-- Migration-time pure fixtures keep the TypeScript and SQL projections tied
+-- to the same result-date, routing, stable-id and reconciliation contracts.
+do $exam_submission_contract_fixture$
+declare
+  fixture_students jsonb := jsonb_build_array(jsonb_build_object(
+    'id', 'STU-FIXTURE', 'name', 'Fixture Student', 'owner', 'Abby',
+    'planner', 'Tara', 'status', '在读', 'exams', jsonb_build_array(jsonb_build_object(
+      'id', 'EXM_FIXTURE', 'subject', 'Previous', 'examType', 'selective',
+      'examVariant', 'selective', 'examMonth', '2026-09',
+      'examDate', '2026-09-01', 'includeRecall', true
+    ))
+  ));
+  fixture_intent jsonb := jsonb_build_object(
+    'studentId', 'STU-FIXTURE',
+    'exam', jsonb_build_object(
+      'id', 'EXM-FIXTURE', 'subject', 'Selective', 'examType', 'selective',
+      'examVariant', 'selective', 'examMonth', '2026-09',
+      'examDate', '2026-09-01', 'includeRecall', true
+    )
+  );
+  projected_students jsonb;
+  incoming jsonb;
+  reconciled jsonb;
+begin
+  projected_students := internal.exam_submission_expected_students(fixture_students, fixture_intent);
+  if projected_students #>> '{0,resultDate}' <> '2026-10-01'
+     or projected_students #>> '{0,exams,0,id}' <> 'EXM-FIXTURE'
+     or projected_students #>> '{0,exams,1,id}' <> 'EXM_FIXTURE' then
+    raise exception 'exam_submission_student_fixture_failed';
+  end if;
+  incoming := internal.exam_submission_incoming_tasks(
+    fixture_students, fixture_intent, '2026-08-15T00:00:00.000Z'::timestamptz
+  );
+  if jsonb_array_length(incoming) <> 3
+     or incoming #>> '{0,owner}' <> 'Abby'
+     or incoming #>> '{2,owner}' <> 'Tara'
+     or incoming #>> '{0,watchers,0}' <> 'Ops Admin'
+     or incoming #>> '{0,dueAt}' <> '2026-09-01T08:00:00.000Z'
+     or incoming #>> '{0,id}' <> 'TSK-EXAM-f0c09a89b51b2bf60e44a7bc' then
+    raise exception 'exam_submission_task_fixture_failed';
+  end if;
+  reconciled := internal.exam_submission_reconcile_tasks(
+    jsonb_build_array(jsonb_build_object(
+      'id', 'TSK-MANUAL', 'title', 'Manual', 'owner', 'Abby',
+      'studentId', 'STU-FIXTURE', 'due', '待确认', 'status', 'waiting',
+      'tone', 'neutral', 'category', '资料', 'trigger', '人工创建'
+    )),
+    incoming, 'EXM-FIXTURE', '2026-08-15T00:00:00.000Z'
+  );
+  if jsonb_array_length(reconciled) <> 4
+     or reconciled #>> '{3,id}' <> 'TSK-MANUAL' then
+    raise exception 'exam_submission_reconcile_fixture_failed';
+  end if;
+end;
+$exam_submission_contract_fixture$;
+-- END EXAM SUBMISSION ATOMIC SUFFIX
+-- BEGIN TEACHER DEPARTURE CREATION ATOMIC SUFFIX
+-- Creating a teacher-departure workflow is one five-entity decision. The
+-- browser supplies only the departing teacher, effective date, detail,
+-- idempotency key and five OCC versions. The server derives the complete
+-- student/occurrence closure, candidate set, operations and watched tasks;
+-- this transaction locks every input before accepting that exact projection.
+
+create table if not exists internal.teacher_departure_creation_commands (
+  command_key text primary key
+    check (command_key ~ '^teacher-departure-create:[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'),
+  command_intent jsonb not null check (jsonb_typeof(command_intent) = 'object'),
+  command_hash text not null check (command_hash ~ '^[a-f0-9]{64}$'),
+  source_teacher_id text not null check (length(source_teacher_id) between 1 and 120),
+  effective_date date not null,
+  operation_ids jsonb not null check (jsonb_typeof(operation_ids) = 'array'),
+  affected_student_ids jsonb not null check (jsonb_typeof(affected_student_ids) = 'array'),
+  affected_groups jsonb not null check (jsonb_typeof(affected_groups) = 'array'),
+  booking_version bigint not null check (booking_version > 0),
+  operation_version bigint not null check (operation_version > 0),
+  student_version bigint not null check (student_version > 0),
+  task_version bigint not null check (task_version > 0),
+  teacher_version bigint not null check (teacher_version > 0),
+  actor text not null check (length(actor) between 1 and 120),
+  applied_at timestamptz not null default now(),
+  audit_id uuid not null references internal.operational_contract_audit(id)
+);
+
+alter table internal.teacher_departure_creation_commands enable row level security;
+revoke all on table internal.teacher_departure_creation_commands from public, anon, authenticated, service_role;
+
+-- Reuse the reviewed permanent-handover occurrence projector for each current
+-- student. This gives creation and later confirmation one definition of a
+-- finite, confirmed future lesson, including moved overrides.
+create or replace function internal.teacher_departure_creation_projection(
+  p_bookings jsonb,
+  p_students jsonb,
+  p_source_teacher_id text,
+  p_effective_date text
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  student_item jsonb;
+  student_id text;
+  projection jsonb;
+  groups jsonb := '[]'::jsonb;
+begin
+  if jsonb_typeof(p_bookings) is distinct from 'array'
+     or jsonb_typeof(p_students) is distinct from 'array'
+     or coalesce(p_source_teacher_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_effective_date, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_projection';
+  end if;
+
+  -- A count-less series that can ever resolve to the departing teacher is an
+  -- explicit blocker even if its student reference is currently malformed.
+  if exists (
+    select 1
+    from jsonb_array_elements(p_bookings) booking(value)
+    where booking.value -> 'recurring' = 'true'::jsonb
+      and not (booking.value ? 'repeatCount')
+      and booking.value ->> 'kind' is distinct from '代课'
+      and (
+        booking.value ->> 'teacherId' = p_source_teacher_id
+        or exists (
+          select 1
+          from jsonb_array_elements(case when jsonb_typeof(booking.value -> 'occurrenceOverrides') = 'array'
+            then booking.value -> 'occurrenceOverrides' else '[]'::jsonb end) override_item(value)
+          where case when override_item.value ? 'teacherId'
+            then override_item.value ->> 'teacherId'
+            else booking.value ->> 'teacherId' end = p_source_teacher_id
+        )
+      )
+  ) then
+    raise exception using errcode = '22023', message = 'unbounded_teacher_departure_series';
+  end if;
+
+  for student_item in
+    select item.value
+    from jsonb_array_elements(p_students) item(value)
+    order by item.value ->> 'id' collate "C"
+  loop
+    student_id := nullif(trim(student_item ->> 'id'), '');
+    if coalesce(student_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$' then
+      raise exception using errcode = '22023', message = 'invalid_teacher_departure_student';
+    end if;
+    projection := internal.permanent_teacher_replacement_occurrence_projection(
+      p_bookings, student_id, p_source_teacher_id, p_effective_date, true
+    );
+    if jsonb_array_length(projection -> 'occurrenceIds') > 0 then
+      if student_item ->> 'importArchived' = 'true'
+         or coalesce(student_item ->> 'status', '') not in (
+           '在读', '活跃 + 有课时', '活跃 + 无课时', '在读 + 加课待排'
+         ) then
+        raise exception using errcode = '42501', message = 'teacher_departure_student_read_only';
+      end if;
+      groups := groups || jsonb_build_array(jsonb_build_object(
+        'studentId', student_id,
+        'affectedOccurrenceIds', projection -> 'occurrenceIds'
+      ));
+    end if;
+  end loop;
+  return groups;
+end;
+$$;
+
+revoke all on function internal.teacher_departure_creation_projection(jsonb, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+
+create or replace function internal.teacher_departure_creation_tasks(
+  p_command_key text,
+  p_operation_id text,
+  p_student_id text,
+  p_student_owner text,
+  p_effective_date date,
+  p_submitted_at timestamptz
+)
+returns jsonb
+language plpgsql
+stable
+security invoker
+set search_path = ''
+as $$
+declare
+  definition jsonb;
+  task_owner text;
+  due_date date;
+  due_at_text text;
+  task_status text;
+  task_tone text;
+  result jsonb := '[]'::jsonb;
+begin
+  if coalesce(p_command_key, '') !~ '^teacher-departure-create:'
+     or nullif(trim(p_operation_id), '') is null
+     or nullif(trim(p_student_id), '') is null
+     or p_effective_date is null
+     or p_submitted_at is null then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_task_projection';
+  end if;
+
+  for definition in
+    select item.value from jsonb_array_elements('[
+      {"rule":"recommendation","title":"筛选并确认推荐老师名单","owner":"Tiffany","offset":-14,"tone":"red","trigger":"老师离职：推荐老师名单"},
+      {"rule":"new-teacher-contact","title":"开启新老师沟通","owner":"student","offset":-14,"tone":"amber","trigger":"老师离职：新老师沟通"},
+      {"rule":"handover","title":"确认 Handover Notes 与原老师约定 DDL","owner":"student","offset":-7,"tone":"blue","trigger":"老师离职：交接资料"},
+      {"rule":"parent-contact","title":"告知家长并记录最终安排","owner":"student","offset":-7,"tone":"red","trigger":"老师离职：家长沟通"},
+      {"rule":"management-watcher","title":"向龙老师汇报离职交接进度","owner":"思佳","offset":-7,"tone":"amber","trigger":"老师离职：管理确认"}
+    ]'::jsonb) item(value)
+  loop
+    task_owner := case when definition ->> 'owner' = 'student'
+      then coalesce(nullif(trim(p_student_owner), ''), '待分配')
+      else definition ->> 'owner' end;
+    due_date := p_effective_date + (definition ->> 'offset')::integer;
+    due_at_text := pg_catalog.to_char(
+      ((due_date::timestamp + interval '18 hours') at time zone 'Australia/Melbourne') at time zone 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+    );
+    if due_date < (p_submitted_at at time zone 'Australia/Melbourne')::date then
+      task_status := 'overdue';
+      task_tone := 'red';
+    elsif due_date = (p_submitted_at at time zone 'Australia/Melbourne')::date then
+      task_status := 'today';
+      task_tone := 'amber';
+    else
+      task_status := 'upcoming';
+      task_tone := definition ->> 'tone';
+    end if;
+    result := result || jsonb_build_array(jsonb_build_object(
+      'id', 'TSK-DEPARTURE-' || pg_catalog.left(encode(extensions.digest(
+        p_command_key || chr(31) || p_student_id || chr(31) || (definition ->> 'rule'), 'sha256'
+      ), 'hex'), 24),
+      'title', definition ->> 'title',
+      'owner', task_owner,
+      'assignees', jsonb_build_array(task_owner),
+      'watchers', jsonb_build_array('Ops Admin'),
+      'studentId', p_student_id,
+      'due', pg_catalog.to_char(due_date, 'YYYY-MM-DD') || ' 18:00',
+      'dueAt', due_at_text,
+      'status', task_status,
+      'tone', task_tone,
+      'category', '请假代课',
+      'trigger', definition ->> 'trigger',
+      'ruleKey', 'teacher-departure:' || p_operation_id || ':' || (definition ->> 'rule'),
+      'anchorBookingId', p_operation_id
+    ));
+  end loop;
+  return result;
+end;
+$$;
+
+revoke all on function internal.teacher_departure_creation_tasks(text, text, text, text, date, timestamptz)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.get_teacher_departure_creation_command_result(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_actor text
+)
+returns table (
+  command_key text,
+  source_teacher_id text,
+  effective_date text,
+  operation_ids jsonb,
+  affected_student_ids jsonb,
+  audit_entry_id uuid
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  prior internal.teacher_departure_creation_commands%rowtype;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if coalesce(p_command_key, '') !~ '^teacher-departure-create:[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     or jsonb_typeof(p_command_intent) is distinct from 'object'
+     or p_command_intent - 'sourceTeacherId' - 'effectiveDate' - 'detail' <> '{}'::jsonb
+     or coalesce(p_command_intent ->> 'sourceTeacherId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_command_intent ->> 'effectiveDate', '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+     or nullif(trim(p_command_intent ->> 'detail'), '') is null
+     or length(trim(p_command_intent ->> 'detail')) > 2000
+     or nullif(trim(p_actor), '') is null
+     or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_replay_lookup';
+  end if;
+
+  select * into prior from internal.teacher_departure_creation_commands c
+  where c.command_key = p_command_key;
+  if prior.command_key is null then return; end if;
+  if prior.command_intent is distinct from p_command_intent
+     or prior.actor <> trim(p_actor)
+     or prior.source_teacher_id <> p_command_intent ->> 'sourceTeacherId'
+     or pg_catalog.to_char(prior.effective_date, 'YYYY-MM-DD') <> p_command_intent ->> 'effectiveDate' then
+    raise exception using errcode = '23505', message = 'teacher_departure_creation_idempotency_conflict';
+  end if;
+  return query select prior.command_key, prior.source_teacher_id,
+    pg_catalog.to_char(prior.effective_date, 'YYYY-MM-DD'), prior.operation_ids,
+    prior.affected_student_ids, prior.audit_id;
+end;
+$$;
+
+revoke all on function public.get_teacher_departure_creation_command_result(text, text, jsonb, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_teacher_departure_creation_command_result(text, text, jsonb, text)
+  to anon, authenticated;
+
+create or replace function public.create_teacher_departure_atomic(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_source_teacher_id text,
+  p_effective_date text,
+  p_detail text,
+  p_expected_versions jsonb,
+  p_operations jsonb,
+  p_tasks jsonb,
+  p_affected_groups jsonb,
+  p_submitted_at text,
+  p_actor text
+)
+returns table (
+  command_key text,
+  applied boolean,
+  source_teacher_id text,
+  effective_date text,
+  operation_ids jsonb,
+  affected_student_ids jsonb,
+  operations_row public.ops_state,
+  tasks_row public.ops_state,
+  audit_entry_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  booking_state public.ops_state%rowtype;
+  operation_state public.ops_state%rowtype;
+  student_state public.ops_state%rowtype;
+  task_state public.ops_state%rowtype;
+  teacher_state public.ops_state%rowtype;
+  saved_operation_state public.ops_state%rowtype;
+  saved_task_state public.ops_state%rowtype;
+  prior internal.teacher_departure_creation_commands%rowtype;
+  expected_booking_version bigint;
+  expected_operation_version bigint;
+  expected_student_version bigint;
+  expected_task_version bigint;
+  expected_teacher_version bigint;
+  submitted_at_value timestamptz;
+  expected_closure jsonb;
+  supplied_closure jsonb;
+  group_item jsonb;
+  student_item jsonb;
+  candidate_teacher jsonb;
+  candidate_relationship_projection jsonb;
+  candidate_already_active boolean;
+  candidate_already_assigned boolean;
+  affected_booking jsonb;
+  student_id text;
+  operation_id text;
+  candidate_id text;
+  occurrence_id text;
+  candidate_ids jsonb;
+  affected_ids jsonb;
+  generated_operations jsonb := '[]'::jsonb;
+  generated_tasks jsonb := '[]'::jsonb;
+  expected_operations jsonb;
+  expected_tasks jsonb;
+  operation_ids_value jsonb := '[]'::jsonb;
+  affected_student_ids_value jsonb := '[]'::jsonb;
+  payload_hash text;
+  audit_id uuid;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if coalesce(p_command_key, '') !~ '^teacher-departure-create:[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$'
+     or coalesce(p_source_teacher_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or coalesce(p_effective_date, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+     or nullif(trim(p_detail), '') is null or length(trim(p_detail)) > 2000
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120
+     or jsonb_typeof(p_command_intent) is distinct from 'object'
+     or p_command_intent - 'sourceTeacherId' - 'effectiveDate' - 'detail' <> '{}'::jsonb
+     or p_command_intent is distinct from jsonb_build_object(
+       'sourceTeacherId', trim(p_source_teacher_id),
+       'effectiveDate', p_effective_date,
+       'detail', trim(p_detail)
+     )
+     or jsonb_typeof(p_expected_versions) is distinct from 'object'
+     or p_expected_versions - 'bookings' - 'operations' - 'students' - 'tasks' - 'teachers' <> '{}'::jsonb
+     or jsonb_typeof(p_operations) is distinct from 'array'
+     or jsonb_typeof(p_tasks) is distinct from 'array'
+     or jsonb_typeof(p_affected_groups) is distinct from 'array'
+     or jsonb_array_length(p_affected_groups) = 0
+     or coalesce(p_submitted_at, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_creation_request';
+  end if;
+  begin
+    if pg_catalog.to_char(p_effective_date::date, 'YYYY-MM-DD') <> p_effective_date then
+      raise exception using errcode = '22023', message = 'invalid_teacher_departure_effective_date';
+    end if;
+    submitted_at_value := p_submitted_at::timestamptz;
+    expected_booking_version := (p_expected_versions ->> 'bookings')::bigint;
+    expected_operation_version := (p_expected_versions ->> 'operations')::bigint;
+    expected_student_version := (p_expected_versions ->> 'students')::bigint;
+    expected_task_version := (p_expected_versions ->> 'tasks')::bigint;
+    expected_teacher_version := (p_expected_versions ->> 'teachers')::bigint;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_creation_types';
+  end;
+  if submitted_at_value < clock_timestamp() - interval '15 minutes'
+     or submitted_at_value > clock_timestamp() + interval '2 minutes'
+     or expected_booking_version < 1 or expected_operation_version < 1
+     or expected_student_version < 1 or expected_task_version < 1
+     or expected_teacher_version < 1 then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_creation_versions';
+  end if;
+
+  payload_hash := encode(extensions.digest(jsonb_build_object(
+    'commandIntent', p_command_intent,
+    'expectedVersions', p_expected_versions,
+    'operations', p_operations,
+    'tasks', p_tasks,
+    'affectedGroups', p_affected_groups,
+    'submittedAt', p_submitted_at
+  )::text, 'sha256'), 'hex');
+
+  -- Global lock order for every five-entity departure creation:
+  -- bookings -> operations -> students -> tasks -> teachers.
+  select * into booking_state from public.ops_state s where s.entity = 'bookings' for update;
+  select * into operation_state from public.ops_state s where s.entity = 'operations' for update;
+  select * into student_state from public.ops_state s where s.entity = 'students' for update;
+  select * into task_state from public.ops_state s where s.entity = 'tasks' for update;
+  select * into teacher_state from public.ops_state s where s.entity = 'teachers' for update;
+  if booking_state.entity is null or operation_state.entity is null
+     or student_state.entity is null or task_state.entity is null or teacher_state.entity is null
+     or jsonb_typeof(booking_state.payload) is distinct from 'array'
+     or jsonb_typeof(operation_state.payload) is distinct from 'array'
+     or jsonb_typeof(student_state.payload) is distinct from 'array'
+     or jsonb_typeof(task_state.payload) is distinct from 'array'
+     or jsonb_typeof(teacher_state.payload) is distinct from 'array' then
+    raise exception using errcode = '55000', message = 'teacher_departure_creation_state_missing';
+  end if;
+
+  select * into prior from internal.teacher_departure_creation_commands c
+  where c.command_key = p_command_key;
+  if prior.command_key is not null then
+    if prior.command_intent is distinct from p_command_intent
+       or prior.actor <> trim(p_actor)
+       or prior.source_teacher_id <> trim(p_source_teacher_id)
+       or pg_catalog.to_char(prior.effective_date, 'YYYY-MM-DD') <> p_effective_date
+       or prior.affected_groups is distinct from p_affected_groups then
+      raise exception using errcode = '23505', message = 'teacher_departure_creation_idempotency_conflict';
+    end if;
+    return query select prior.command_key, false, prior.source_teacher_id,
+      pg_catalog.to_char(prior.effective_date, 'YYYY-MM-DD'), prior.operation_ids,
+      prior.affected_student_ids, operation_state, task_state, prior.audit_id;
+    return;
+  end if;
+
+  if booking_state.version is distinct from expected_booking_version
+     or operation_state.version is distinct from expected_operation_version
+     or student_state.version is distinct from expected_student_version
+     or task_state.version is distinct from expected_task_version
+     or teacher_state.version is distinct from expected_teacher_version then
+    raise exception using errcode = '40001', message = 'version_conflict';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(booking_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(operation_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(student_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(task_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) or exists (
+    select 1 from jsonb_array_elements(teacher_state.payload) item(value)
+    group by item.value ->> 'id' having item.value ->> 'id' is null or count(*) > 1
+  ) then
+    raise exception using errcode = '22023', message = 'duplicate_teacher_departure_state_identity';
+  end if;
+  if (select count(*) from jsonb_array_elements(teacher_state.payload) item(value)
+      where item.value ->> 'id' = p_source_teacher_id) <> 1 then
+    raise exception using errcode = '22023', message = 'teacher_departure_source_teacher_not_found';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(operation_state.payload) item(value)
+    where item.value ->> 'type' = '老师离职'
+      and item.value ->> 'status' = '待处理'
+      and item.value ->> 'teacherId' = p_source_teacher_id
+  ) then
+    raise exception using errcode = '40001', message = 'teacher_departure_workflow_already_exists';
+  end if;
+
+  expected_closure := internal.teacher_departure_creation_projection(
+    booking_state.payload, student_state.payload, p_source_teacher_id, p_effective_date
+  );
+  if jsonb_array_length(expected_closure) = 0 then
+    raise exception using errcode = '22023', message = 'teacher_departure_occurrence_not_found';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_affected_groups) item(value)
+    where jsonb_typeof(item.value) is distinct from 'object'
+      or item.value - 'studentId' - 'operationId' - 'affectedOccurrenceIds' - 'candidateTeacherIds' <> '{}'::jsonb
+      or coalesce(item.value ->> 'studentId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+      or coalesce(item.value ->> 'operationId', '') !~ '^OPS-DEPARTURE-[a-f0-9]{24}$'
+      or jsonb_typeof(item.value -> 'affectedOccurrenceIds') is distinct from 'array'
+      or jsonb_array_length(item.value -> 'affectedOccurrenceIds') = 0
+      or jsonb_typeof(item.value -> 'candidateTeacherIds') is distinct from 'array'
+      or jsonb_array_length(item.value -> 'candidateTeacherIds') = 0
+  ) or (select count(*) from jsonb_array_elements(p_affected_groups)) <>
+       (select count(distinct value ->> 'studentId') from jsonb_array_elements(p_affected_groups) item(value)) then
+    raise exception using errcode = '22023', message = 'invalid_teacher_departure_groups';
+  end if;
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'studentId', item.value ->> 'studentId',
+    'affectedOccurrenceIds', item.value -> 'affectedOccurrenceIds'
+  ) order by item.value ->> 'studentId' collate "C"), '[]'::jsonb)
+  into supplied_closure
+  from jsonb_array_elements(p_affected_groups) item(value);
+  if supplied_closure is distinct from expected_closure then
+    raise exception using errcode = '22023', message = 'teacher_departure_occurrence_closure_mismatch';
+  end if;
+
+  for group_item in
+    select item.value from jsonb_array_elements(p_affected_groups) item(value)
+    order by item.value ->> 'studentId' collate "C"
+  loop
+    student_id := group_item ->> 'studentId';
+    operation_id := 'OPS-DEPARTURE-' || pg_catalog.left(encode(extensions.digest(
+      p_command_key || chr(31) || student_id, 'sha256'
+    ), 'hex'), 24);
+    affected_ids := group_item -> 'affectedOccurrenceIds';
+    candidate_ids := group_item -> 'candidateTeacherIds';
+    if group_item ->> 'operationId' is distinct from operation_id
+       or exists (
+         select 1 from jsonb_array_elements(affected_ids) item(value)
+         where jsonb_typeof(item.value) is distinct from 'string'
+           or (item.value #>> '{}') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}:[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+       )
+       or (select count(*) from jsonb_array_elements(affected_ids)) <>
+          (select count(distinct value) from jsonb_array_elements_text(affected_ids) item(value))
+       or exists (
+         select 1 from jsonb_array_elements(candidate_ids) item(value)
+         where jsonb_typeof(item.value) is distinct from 'string'
+           or (item.value #>> '{}') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+       )
+       or (select count(*) from jsonb_array_elements(candidate_ids)) <>
+          (select count(distinct value) from jsonb_array_elements_text(candidate_ids) item(value))
+       or candidate_ids is distinct from (
+         select coalesce(jsonb_agg(to_jsonb(value) order by value collate "C"), '[]'::jsonb)
+         from jsonb_array_elements_text(candidate_ids) item(value)
+       ) then
+      raise exception using errcode = '22023', message = 'invalid_teacher_departure_group_identity';
+    end if;
+    select item.value into student_item from jsonb_array_elements(student_state.payload) item(value)
+    where item.value ->> 'id' = student_id limit 1;
+    if student_item is null then
+      raise exception using errcode = '22023', message = 'teacher_departure_student_not_found';
+    end if;
+    if exists (
+      select 1 from jsonb_array_elements(operation_state.payload) item(value)
+      where item.value ->> 'id' = operation_id
+    ) then
+      raise exception using errcode = '23505', message = 'teacher_departure_operation_id_collision';
+    end if;
+
+    for occurrence_id in select value from jsonb_array_elements_text(affected_ids) item(value)
+    loop
+      select item.value into affected_booking
+      from jsonb_array_elements(booking_state.payload) item(value)
+      where item.value ->> 'id' = pg_catalog.left(occurrence_id, length(occurrence_id) - 11)
+      limit 1;
+      if affected_booking is null
+         or nullif(trim(affected_booking ->> 'teacherSubjectId'), '') is null then
+        raise exception using errcode = '22023', message = 'teacher_departure_subject_missing';
+      end if;
+    end loop;
+
+    -- The authenticated server computed the exhaustive AVA/conflict closure
+    -- from exactly these five versions. Holding all five locks plus OCC proves
+    -- that snapshot has not drifted; the database additionally rechecks the
+    -- non-temporal eligibility invariants before accepting its exact diff.
+    for candidate_id in select value from jsonb_array_elements_text(candidate_ids) item(value)
+    loop
+      select item.value into candidate_teacher from jsonb_array_elements(teacher_state.payload) item(value)
+      where item.value ->> 'id' = candidate_id limit 1;
+      if candidate_teacher is null
+         or candidate_id = p_source_teacher_id
+         or jsonb_typeof(candidate_teacher -> 'subjects') is distinct from 'array'
+         or jsonb_typeof(candidate_teacher -> 'availabilityWindows') is distinct from 'array'
+         or jsonb_array_length(candidate_teacher -> 'availabilityWindows') = 0
+         or (candidate_teacher ? 'capacityAssignments'
+           and jsonb_typeof(candidate_teacher -> 'capacityAssignments') is distinct from 'array')
+         or exists (
+           select 1 from jsonb_array_elements(candidate_teacher -> 'availabilityWindows') window_item(value)
+           where jsonb_typeof(window_item.value) is distinct from 'object'
+             or window_item.value ->> 'teacherId' is distinct from candidate_id
+         )
+         or exists (
+           select 1
+           from jsonb_array_elements(affected_ids) affected(value)
+           join jsonb_array_elements(booking_state.payload) booking(value)
+             on booking.value ->> 'id' = pg_catalog.left(affected.value #>> '{}', length(affected.value #>> '{}') - 11)
+           where not (candidate_teacher -> 'subjects') @> jsonb_build_array(booking.value ->> 'teacherSubjectId')
+         )
+         then
+        raise exception using errcode = '22023', message = 'invalid_teacher_departure_candidate';
+      end if;
+      candidate_relationship_projection := internal.permanent_teacher_replacement_occurrence_projection(
+        booking_state.payload, student_id, candidate_id, p_effective_date, false
+      );
+      candidate_already_active := coalesce(
+        (candidate_relationship_projection ->> 'unbounded')::boolean, false
+      ) or jsonb_array_length(candidate_relationship_projection -> 'occurrenceIds') > 0;
+      candidate_already_assigned := coalesce(
+        candidate_teacher -> 'capacityAssignments' @> jsonb_build_array(student_id), false
+      );
+      if not candidate_already_active and not candidate_already_assigned and (
+        candidate_teacher -> 'acceptsStudents' is distinct from 'true'::jsonb
+        or not case when jsonb_typeof(candidate_teacher -> 'newStudentCapacity') = 'number'
+          then (candidate_teacher ->> 'newStudentCapacity')::numeric
+            = trunc((candidate_teacher ->> 'newStudentCapacity')::numeric)
+            and (candidate_teacher ->> 'newStudentCapacity')::numeric > 0
+          else false end
+      ) then
+        raise exception using errcode = '22023', message = 'invalid_teacher_departure_candidate';
+      end if;
+    end loop;
+
+    generated_operations := generated_operations || jsonb_build_array(jsonb_build_object(
+      'id', operation_id,
+      'studentId', student_id,
+      'type', '老师离职',
+      'detail', trim(p_detail),
+      'status', '待处理',
+      'createdAt', p_submitted_at,
+      'teacherId', trim(p_source_teacher_id),
+      'eventStart', p_effective_date,
+      'eventEnd', p_effective_date,
+      'affectedLessonCount', jsonb_array_length(affected_ids),
+      'affectedOccurrenceIds', affected_ids,
+      'recommendedTeacherIds', candidate_ids,
+      'creationCommandKey', p_command_key
+    ));
+    generated_tasks := generated_tasks || internal.teacher_departure_creation_tasks(
+      p_command_key, operation_id, student_id, student_item ->> 'owner',
+      p_effective_date::date, submitted_at_value
+    );
+    operation_ids_value := operation_ids_value || jsonb_build_array(operation_id);
+    affected_student_ids_value := affected_student_ids_value || jsonb_build_array(student_id);
+  end loop;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(generated_tasks) generated(value)
+    join jsonb_array_elements(task_state.payload) existing(value)
+      on generated.value ->> 'id' = existing.value ->> 'id'
+  ) then
+    raise exception using errcode = '23505', message = 'teacher_departure_task_id_collision';
+  end if;
+  expected_operations := generated_operations || operation_state.payload;
+  expected_tasks := generated_tasks || task_state.payload;
+  if p_operations is distinct from expected_operations
+     or p_tasks is distinct from expected_tasks then
+    raise exception using errcode = '22023', message = 'teacher_departure_payload_mismatch';
+  end if;
+
+  update public.ops_state s set payload = expected_operations, version = s.version + 1,
+    updated_at = now(), updated_by = trim(p_actor)
+  where s.entity = 'operations' returning s.* into saved_operation_state;
+  insert into public.ops_mutation_log(entity, version, actor)
+  values ('operations', saved_operation_state.version, saved_operation_state.updated_by);
+  update public.ops_state s set payload = expected_tasks, version = s.version + 1,
+    updated_at = now(), updated_by = trim(p_actor)
+  where s.entity = 'tasks' returning s.* into saved_task_state;
+  insert into public.ops_mutation_log(entity, version, actor)
+  values ('tasks', saved_task_state.version, saved_task_state.updated_by);
+
+  audit_id := internal.append_operational_contract_audit(
+    'operation.teacher_departure_create', trim(p_actor), 'teacher', p_source_teacher_id,
+    jsonb_build_object(
+      'commandKey', p_command_key,
+      'effectiveDate', p_effective_date,
+      'operationIds', operation_ids_value,
+      'affectedStudentIds', affected_student_ids_value,
+      'affectedGroups', p_affected_groups,
+      'versionsBefore', p_expected_versions,
+      'versionsAfter', jsonb_build_object(
+        'bookings', booking_state.version,
+        'operations', saved_operation_state.version,
+        'students', student_state.version,
+        'tasks', saved_task_state.version,
+        'teachers', teacher_state.version
+      ),
+      'payloadSha256', payload_hash
+    )
+  );
+  insert into internal.teacher_departure_creation_commands (
+    command_key, command_intent, command_hash, source_teacher_id, effective_date,
+    operation_ids, affected_student_ids, affected_groups, booking_version,
+    operation_version, student_version, task_version, teacher_version, actor, audit_id
+  ) values (
+    p_command_key, p_command_intent, payload_hash, p_source_teacher_id, p_effective_date::date,
+    operation_ids_value, affected_student_ids_value, p_affected_groups, booking_state.version,
+    saved_operation_state.version, student_state.version, saved_task_state.version,
+    teacher_state.version, trim(p_actor), audit_id
+  );
+
+  return query select p_command_key, true, p_source_teacher_id, p_effective_date,
+    operation_ids_value, affected_student_ids_value, saved_operation_state,
+    saved_task_state, audit_id;
+end;
+$$;
+
+revoke all on function public.create_teacher_departure_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.create_teacher_departure_atomic(text, text, jsonb, text, text, text, jsonb, jsonb, jsonb, jsonb, text, text)
+  to anon, authenticated;
+
+-- Executable fixtures pin the shared occurrence closure and stable task
+-- projection without mutating live ops_state during migration.
+do $$
+declare
+  fixture_bookings jsonb := '[{"id":"B-DEP","studentId":"S-1","teacherId":"T-1","date":"2026-09-01","start":"17:00","duration":60,"timezone":"Australia/Melbourne","kind":"常规课","recurring":true,"repeatCount":2,"teacherSubjectId":"Maths&Science"}]'::jsonb;
+  fixture_students jsonb := '[{"id":"S-1","status":"在读","owner":"Abby"}]'::jsonb;
+  projected jsonb;
+  tasks jsonb;
+begin
+  projected := internal.teacher_departure_creation_projection(
+    fixture_bookings, fixture_students, 'T-1', '2026-09-01'
+  );
+  if projected is distinct from '[{"studentId":"S-1","affectedOccurrenceIds":["B-DEP:2026-09-01","B-DEP:2026-09-08"]}]'::jsonb then
+    raise exception 'teacher_departure_creation_fixture_projection_mismatch';
+  end if;
+  tasks := internal.teacher_departure_creation_tasks(
+    'teacher-departure-create:123e4567-e89b-42d3-a456-426614174000',
+    'OPS-DEPARTURE-0123456789abcdef01234567', 'S-1', 'Abby',
+    '2026-09-01'::date, '2026-08-15T00:00:00.000Z'::timestamptz
+  );
+  if jsonb_array_length(tasks) <> 5
+     or tasks #>> '{0,watchers,0}' <> 'Ops Admin'
+     or tasks #>> '{1,owner}' <> 'Abby'
+     or tasks #>> '{4,owner}' <> '思佳'
+     or tasks #>> '{0,due}' <> '2026-08-18 18:00'
+     or tasks #>> '{0,id}' <> 'TSK-DEPARTURE-33b1857fea16f74280c16518'
+     or 'OPS-DEPARTURE-' || pg_catalog.left(encode(extensions.digest(
+       'teacher-departure-create:123e4567-e89b-42d3-a456-426614174000'
+         || chr(31) || 'S-1', 'sha256'
+     ), 'hex'), 24) <> 'OPS-DEPARTURE-a7bff281fd38f8e19efe75c7' then
+    raise exception 'teacher_departure_creation_fixture_tasks_mismatch';
+  end if;
+end;
+$$;
+-- END TEACHER DEPARTURE CREATION ATOMIC SUFFIX
+-- BEGIN EXAM FOLLOW UP ATOMIC SUFFIX
+-- Completing a managed exam reminder changes one task and the corresponding
+-- durable student exam step. The browser supplies only an opaque command,
+-- action, task id and two OCC versions. Identity, recipient, clock and both
+-- full projections are derived independently from locked authoritative state.
+
+create table if not exists internal.exam_follow_up_commands (
+  command_key text primary key check (
+    command_key ~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  ),
+  command_intent jsonb not null check (jsonb_typeof(command_intent) = 'object'),
+  command_hash text not null check (command_hash ~ '^[a-f0-9]{64}$'),
+  action text not null check (action in ('complete', 'undo')),
+  task_id text not null check (length(task_id) between 1 and 120),
+  student_id text not null check (length(student_id) between 1 and 120),
+  exam_id text not null check (length(exam_id) between 1 and 120),
+  follow_up_kind text not null check (
+    follow_up_kind in ('exam_care', 'exam_recall', 'exam_results_follow_up')
+  ),
+  completion_command_key text not null check (
+    completion_command_key ~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+  ),
+  prior_task jsonb not null check (jsonb_typeof(prior_task) = 'object'),
+  prior_follow_up_state_exists boolean not null,
+  prior_follow_up_state jsonb,
+  committed_task jsonb not null check (jsonb_typeof(committed_task) = 'object'),
+  committed_follow_up_state_exists boolean not null,
+  committed_follow_up_state jsonb,
+  student_version bigint not null check (student_version > 0),
+  task_version bigint not null check (task_version > 0),
+  actor text not null check (length(actor) between 1 and 120),
+  applied_at timestamptz not null default now(),
+  audit_id uuid not null references internal.operational_contract_audit(id),
+  check (
+    (prior_follow_up_state_exists and jsonb_typeof(prior_follow_up_state) is not distinct from 'object')
+    or (not prior_follow_up_state_exists and prior_follow_up_state is null)
+  ),
+  check (
+    (committed_follow_up_state_exists and jsonb_typeof(committed_follow_up_state) is not distinct from 'object')
+    or (not committed_follow_up_state_exists and committed_follow_up_state is null)
+  ),
+  check (
+    (action = 'complete' and completion_command_key = command_key)
+    or action = 'undo'
+  )
+);
+
+alter table internal.exam_follow_up_commands enable row level security;
+revoke all on table internal.exam_follow_up_commands from public, anon, authenticated, service_role;
+
+create or replace function internal.validate_exam_follow_up_intent(p_intent jsonb)
+returns void
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+begin
+  if jsonb_typeof(p_intent) is distinct from 'object'
+     or p_intent - 'action' - 'taskId' - 'completionCommandKey' <> '{}'::jsonb
+     or coalesce(p_intent ->> 'action', '') not in ('complete', 'undo')
+     or coalesce(p_intent ->> 'taskId', '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or (p_intent ->> 'action' = 'complete' and p_intent ? 'completionCommandKey')
+     or (p_intent ->> 'action' = 'undo' and (
+       coalesce(p_intent ->> 'completionCommandKey', '')
+         !~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     )) then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_intent';
+  end if;
+end;
+$$;
+
+revoke all on function internal.validate_exam_follow_up_intent(jsonb)
+  from public, anon, authenticated, service_role;
+
+-- Resolves the managed task/student/exam binding and verifies that its
+-- recipient fields are the exact owner/planner projection used at creation.
+create or replace function internal.exam_follow_up_identity(
+  p_students jsonb,
+  p_tasks jsonb,
+  p_task_id text
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  task jsonb;
+  student jsonb;
+  exam jsonb;
+  rule_parts text[];
+  exam_id text;
+  suffix text;
+  follow_up_kind text;
+  expected_recipient text;
+  follow_up_exists boolean;
+  follow_up_state jsonb;
+  step record;
+begin
+  if jsonb_typeof(p_students) is distinct from 'array'
+     or jsonb_typeof(p_tasks) is distinct from 'array'
+     or coalesce(p_task_id, '') !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$'
+     or exists (select 1 from jsonb_array_elements(p_students) item(value)
+       where jsonb_typeof(item.value) is distinct from 'object'
+          or nullif(trim(item.value ->> 'id'), '') is null)
+     or exists (select 1 from jsonb_array_elements(p_students) item(value)
+       group by item.value ->> 'id' having count(*) > 1)
+     or exists (select 1 from jsonb_array_elements(p_tasks) item(value)
+       where jsonb_typeof(item.value) is distinct from 'object'
+          or nullif(trim(item.value ->> 'id'), '') is null)
+     or exists (select 1 from jsonb_array_elements(p_tasks) item(value)
+       group by item.value ->> 'id' having count(*) > 1) then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_state';
+  end if;
+
+  select item.value into task from jsonb_array_elements(p_tasks) item(value)
+  where item.value ->> 'id' = p_task_id;
+  if task is null then
+    raise exception using errcode = '22023', message = 'exam_follow_up_task_not_found';
+  end if;
+  rule_parts := pg_catalog.regexp_match(
+    coalesce(task ->> 'ruleKey', ''), '^exam:([^:]+):(care|recall|results)$'
+  );
+  if task ->> 'category' is distinct from '考试'
+     or rule_parts is null
+     or task ->> 'anchorBookingId' is distinct from 'exam:' || rule_parts[1]
+     or nullif(trim(task ->> 'studentId'), '') is null then
+    raise exception using errcode = '22023', message = 'exam_follow_up_task_identity_conflict';
+  end if;
+  exam_id := rule_parts[1];
+  suffix := rule_parts[2];
+  follow_up_kind := case suffix
+    when 'care' then 'exam_care'
+    when 'recall' then 'exam_recall'
+    else 'exam_results_follow_up' end;
+
+  select item.value into student from jsonb_array_elements(p_students) item(value)
+  where item.value ->> 'id' = task ->> 'studentId';
+  if student is null then
+    raise exception using errcode = '22023', message = 'exam_follow_up_student_not_found';
+  end if;
+  if student ->> 'importArchived' = 'true' then
+    raise exception using errcode = '42501', message = 'exam_follow_up_archived_student';
+  end if;
+  if jsonb_typeof(student -> 'exams') is distinct from 'array'
+     or exists (select 1 from jsonb_array_elements(student -> 'exams') item(value)
+       where jsonb_typeof(item.value) is distinct from 'object'
+          or nullif(trim(item.value ->> 'id'), '') is null)
+     or exists (select 1 from jsonb_array_elements(student -> 'exams') item(value)
+       group by item.value ->> 'id' having count(*) > 1) then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_history';
+  end if;
+  select item.value into exam from jsonb_array_elements(student -> 'exams') item(value)
+  where item.value ->> 'id' = exam_id;
+  if exam is null then
+    raise exception using errcode = '22023', message = 'exam_follow_up_exam_not_found';
+  end if;
+
+  expected_recipient := nullif(trim(case when suffix = 'results'
+    then student ->> 'planner' else student ->> 'owner' end), '');
+  if expected_recipient is null
+     or expected_recipient ~ '^(待分配|待确认|未知|角色待配置[:：])'
+     or lower(trim(coalesce(task ->> 'owner', ''))) <> lower(expected_recipient)
+     or jsonb_typeof(task -> 'assignees') is distinct from 'array'
+     or jsonb_array_length(task -> 'assignees') <> 1
+     or lower(trim(coalesce(task #>> '{assignees,0}', ''))) <> lower(expected_recipient)
+     or jsonb_typeof(task -> 'watchers') is distinct from 'array'
+     or jsonb_array_length(task -> 'watchers') <> 1
+     or lower(trim(coalesce(task #>> '{watchers,0}', ''))) <> lower('Ops Admin') then
+    raise exception using errcode = '22023', message = 'exam_follow_up_recipient_conflict';
+  end if;
+
+  follow_up_exists := exam ? 'followUpState';
+  if follow_up_exists and jsonb_typeof(exam -> 'followUpState') is distinct from 'object' then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_state';
+  end if;
+  follow_up_state := case when follow_up_exists then exam -> 'followUpState' else '{}'::jsonb end;
+  if follow_up_state - 'exam_care' - 'exam_recall' - 'exam_results_follow_up' <> '{}'::jsonb then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_state';
+  end if;
+  for step in select key, value from jsonb_each(follow_up_state) loop
+    if jsonb_typeof(step.value) is distinct from 'object'
+       or coalesce(step.value ->> 'status', '') not in ('pending', 'completed', 'not_required')
+       or (step.value ->> 'status' = 'completed' and nullif(step.value ->> 'completedAt', '') is null) then
+      raise exception using errcode = '22023', message = 'invalid_exam_follow_up_state';
+    end if;
+    if step.value ->> 'status' = 'completed' then
+      begin
+        perform (step.value ->> 'completedAt')::timestamptz;
+      exception when others then
+        raise exception using errcode = '22023', message = 'invalid_exam_follow_up_state';
+      end;
+    end if;
+  end loop;
+
+  return jsonb_build_object(
+    'taskId', p_task_id,
+    'studentId', task ->> 'studentId',
+    'examId', exam_id,
+    'followUpKind', follow_up_kind,
+    'task', task,
+    'followUpStateExists', follow_up_exists,
+    'followUpState', follow_up_state
+  );
+end;
+$$;
+
+revoke all on function internal.exam_follow_up_identity(jsonb, jsonb, text)
+  from public, anon, authenticated, service_role;
+
+-- Applies a previously derived task and whole follow-up-state snapshot while
+-- preserving every unrelated row, exam field and array position.
+create or replace function internal.exam_follow_up_replace(
+  p_students jsonb,
+  p_tasks jsonb,
+  p_identity jsonb,
+  p_next_task jsonb,
+  p_next_follow_up_state_exists boolean,
+  p_next_follow_up_state jsonb
+)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  next_students jsonb;
+  next_tasks jsonb;
+begin
+  if jsonb_typeof(p_identity) is distinct from 'object'
+     or jsonb_typeof(p_next_task) is distinct from 'object'
+     or (p_next_follow_up_state_exists and jsonb_typeof(p_next_follow_up_state) is distinct from 'object')
+     or (not p_next_follow_up_state_exists and p_next_follow_up_state is not null) then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_replacement';
+  end if;
+
+  select jsonb_agg(
+    case when student.value ->> 'id' = p_identity ->> 'studentId' then
+      (student.value - 'exams') || jsonb_build_object('exams', (
+        select jsonb_agg(
+          case when exam.value ->> 'id' = p_identity ->> 'examId' then
+            (exam.value - 'followUpState') || case when p_next_follow_up_state_exists
+              then jsonb_build_object('followUpState', p_next_follow_up_state)
+              else '{}'::jsonb end
+          else exam.value end
+          order by exam.ordinality
+        )
+        from jsonb_array_elements(student.value -> 'exams') with ordinality exam(value, ordinality)
+      ))
+    else student.value end
+    order by student.ordinality
+  ) into next_students
+  from jsonb_array_elements(p_students) with ordinality student(value, ordinality);
+
+  select jsonb_agg(
+    case when task.value ->> 'id' = p_identity ->> 'taskId'
+      then p_next_task else task.value end
+    order by task.ordinality
+  ) into next_tasks
+  from jsonb_array_elements(p_tasks) with ordinality task(value, ordinality);
+
+  return jsonb_build_object('students', next_students, 'tasks', next_tasks);
+end;
+$$;
+
+revoke all on function internal.exam_follow_up_replace(jsonb, jsonb, jsonb, jsonb, boolean, jsonb)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.get_exam_follow_up_command_result(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_actor text
+)
+returns table (
+  command_key text,
+  action text,
+  task_id text,
+  student_id text,
+  exam_id text,
+  follow_up_kind text,
+  completion_command_key text,
+  audit_entry_id uuid
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  prior internal.exam_follow_up_commands%rowtype;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  perform internal.validate_exam_follow_up_intent(p_command_intent);
+  if coalesce(p_command_key, '')
+       !~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_replay_lookup';
+  end if;
+  select * into prior from internal.exam_follow_up_commands c where c.command_key = p_command_key;
+  if prior.command_key is null then return; end if;
+  if prior.command_intent is distinct from p_command_intent
+     or prior.actor <> trim(p_actor)
+     or prior.action <> p_command_intent ->> 'action'
+     or prior.task_id <> p_command_intent ->> 'taskId' then
+    raise exception using errcode = '23505', message = 'exam_follow_up_idempotency_conflict';
+  end if;
+  return query select prior.command_key, prior.action, prior.task_id,
+    prior.student_id, prior.exam_id, prior.follow_up_kind,
+    prior.completion_command_key, prior.audit_id;
+end;
+$$;
+
+revoke all on function public.get_exam_follow_up_command_result(text, text, jsonb, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_exam_follow_up_command_result(text, text, jsonb, text)
+  to anon, authenticated;
+
+-- The server-only undo lookup returns the immutable completion before-image.
+-- It is actor-bound and the mutating RPC rechecks every field under row locks.
+create or replace function public.get_exam_follow_up_completion_context(
+  p_secret text,
+  p_completion_command_key text,
+  p_actor text
+)
+returns table (
+  command_key text,
+  task_id text,
+  student_id text,
+  exam_id text,
+  follow_up_kind text,
+  prior_task jsonb,
+  prior_follow_up_state_exists boolean,
+  prior_follow_up_state jsonb,
+  committed_task jsonb,
+  committed_follow_up_state jsonb
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  completion internal.exam_follow_up_commands%rowtype;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if coalesce(p_completion_command_key, '')
+       !~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_completion_lookup';
+  end if;
+  select * into completion from internal.exam_follow_up_commands c
+  where c.command_key = p_completion_command_key;
+  if completion.command_key is null then return; end if;
+  if completion.action <> 'complete' or completion.actor <> trim(p_actor)
+     or not completion.committed_follow_up_state_exists then
+    raise exception using errcode = '42501', message = 'exam_follow_up_completion_forbidden';
+  end if;
+  return query select completion.command_key, completion.task_id,
+    completion.student_id, completion.exam_id, completion.follow_up_kind,
+    completion.prior_task, completion.prior_follow_up_state_exists,
+    completion.prior_follow_up_state, completion.committed_task,
+    completion.committed_follow_up_state;
+end;
+$$;
+
+revoke all on function public.get_exam_follow_up_completion_context(text, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_exam_follow_up_completion_context(text, text, text)
+  to anon, authenticated;
+
+create or replace function public.mutate_exam_follow_up_atomic(
+  p_secret text,
+  p_command_key text,
+  p_command_intent jsonb,
+  p_action text,
+  p_expected_versions jsonb,
+  p_students jsonb,
+  p_tasks jsonb,
+  p_prepared_at text,
+  p_actor text
+)
+returns table (
+  command_key text,
+  action text,
+  applied boolean,
+  task_id text,
+  student_id text,
+  exam_id text,
+  follow_up_kind text,
+  completion_command_key text,
+  students_row public.ops_state,
+  tasks_row public.ops_state,
+  audit_entry_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  student_state public.ops_state%rowtype;
+  task_state public.ops_state%rowtype;
+  saved_student_state public.ops_state%rowtype;
+  saved_task_state public.ops_state%rowtype;
+  prior internal.exam_follow_up_commands%rowtype;
+  completion internal.exam_follow_up_commands%rowtype;
+  expected_student_version bigint;
+  expected_task_version bigint;
+  prepared_at_value timestamptz;
+  identity_value jsonb;
+  current_task jsonb;
+  current_follow_up_state_exists boolean;
+  current_follow_up_state jsonb;
+  prior_task_value jsonb;
+  prior_follow_up_state_exists_value boolean;
+  prior_follow_up_state_value jsonb;
+  committed_task_value jsonb;
+  committed_follow_up_state_exists_value boolean;
+  committed_follow_up_state_value jsonb;
+  completion_command_key_value text;
+  projection jsonb;
+  audit_id uuid;
+  committed_at timestamptz;
+  payload_hash text;
+begin
+  if not internal.verify_ops_secret(p_secret) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  perform internal.validate_exam_follow_up_intent(p_command_intent);
+  if coalesce(p_command_key, '')
+       !~ '^exam-follow-up:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+     or p_action is distinct from p_command_intent ->> 'action'
+     or jsonb_typeof(p_expected_versions) is distinct from 'object'
+     or p_expected_versions - 'students' - 'tasks' <> '{}'::jsonb
+     or jsonb_typeof(p_expected_versions -> 'students') is distinct from 'number'
+     or coalesce(p_expected_versions ->> 'students', '') !~ '^[1-9][0-9]*$'
+     or jsonb_typeof(p_expected_versions -> 'tasks') is distinct from 'number'
+     or coalesce(p_expected_versions ->> 'tasks', '') !~ '^[1-9][0-9]*$'
+     or jsonb_typeof(p_students) is distinct from 'array'
+     or jsonb_typeof(p_tasks) is distinct from 'array'
+     or coalesce(p_prepared_at, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
+     or nullif(trim(p_actor), '') is null or length(trim(p_actor)) > 120 then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_command';
+  end if;
+  begin
+    expected_student_version := (p_expected_versions ->> 'students')::bigint;
+    expected_task_version := (p_expected_versions ->> 'tasks')::bigint;
+    prepared_at_value := p_prepared_at::timestamptz;
+  exception when others then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_command';
+  end;
+  if expected_student_version < 1 or expected_task_version < 1 then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_command';
+  end if;
+
+  -- Global order for this two-row transaction: students -> tasks.
+  select * into student_state from public.ops_state s where s.entity = 'students' for update;
+  select * into task_state from public.ops_state s where s.entity = 'tasks' for update;
+  if student_state.entity is null or task_state.entity is null
+     or jsonb_typeof(student_state.payload) is distinct from 'array'
+     or jsonb_typeof(task_state.payload) is distinct from 'array' then
+    raise exception using errcode = '55000', message = 'exam_follow_up_state_missing';
+  end if;
+
+  select * into prior from internal.exam_follow_up_commands c where c.command_key = p_command_key;
+  if prior.command_key is not null then
+    if prior.command_intent is distinct from p_command_intent
+       or prior.actor <> trim(p_actor)
+       or prior.action <> p_action
+       or prior.task_id <> p_command_intent ->> 'taskId' then
+      raise exception using errcode = '23505', message = 'exam_follow_up_idempotency_conflict';
+    end if;
+    return query select prior.command_key, prior.action, false, prior.task_id,
+      prior.student_id, prior.exam_id, prior.follow_up_kind,
+      prior.completion_command_key, student_state, task_state, prior.audit_id;
+    return;
+  end if;
+
+  -- Fresh commands must carry a recent server-issued projection clock. Replays
+  -- above remain valid indefinitely after an unknown transport outcome.
+  if prepared_at_value < clock_timestamp() - interval '15 minutes'
+     or prepared_at_value > clock_timestamp() + interval '2 minutes' then
+    raise exception using errcode = '22023', message = 'invalid_exam_follow_up_command';
+  end if;
+  if student_state.version is distinct from expected_student_version
+     or task_state.version is distinct from expected_task_version then
+    raise exception using errcode = '40001', message = 'version_conflict';
+  end if;
+
+  identity_value := internal.exam_follow_up_identity(
+    student_state.payload, task_state.payload, p_command_intent ->> 'taskId'
+  );
+  current_task := identity_value -> 'task';
+  current_follow_up_state_exists := (identity_value ->> 'followUpStateExists')::boolean;
+  current_follow_up_state := identity_value -> 'followUpState';
+
+  if p_action = 'complete' then
+    if coalesce(current_task ->> 'status', '') not in ('overdue', 'today', 'upcoming', 'waiting')
+       or current_follow_up_state -> (identity_value ->> 'followUpKind') ->> 'status'
+         in ('completed', 'not_required') then
+      raise exception using errcode = '40001', message = 'exam_follow_up_action_conflict';
+    end if;
+    prior_task_value := current_task;
+    prior_follow_up_state_exists_value := current_follow_up_state_exists;
+    prior_follow_up_state_value := case when current_follow_up_state_exists
+      then current_follow_up_state else null end;
+    committed_task_value := current_task || jsonb_build_object(
+      'status', 'done',
+      'tone', 'green',
+      'closedAt', p_prepared_at,
+      'result', '已由当前操作员确认完成'
+    );
+    committed_follow_up_state_exists_value := true;
+    committed_follow_up_state_value := current_follow_up_state || jsonb_build_object(
+      identity_value ->> 'followUpKind', jsonb_build_object(
+        'status', 'completed',
+        'completedAt', p_prepared_at,
+        'completedBy', trim(p_actor)
+      )
+    );
+    completion_command_key_value := p_command_key;
+  else
+    select * into completion from internal.exam_follow_up_commands c
+    where c.command_key = p_command_intent ->> 'completionCommandKey';
+    if completion.command_key is null
+       or completion.action <> 'complete'
+       or completion.actor <> trim(p_actor)
+       or completion.task_id <> identity_value ->> 'taskId'
+       or completion.student_id <> identity_value ->> 'studentId'
+       or completion.exam_id <> identity_value ->> 'examId'
+       or completion.follow_up_kind <> identity_value ->> 'followUpKind' then
+      raise exception using errcode = '42501', message = 'exam_follow_up_completion_forbidden';
+    end if;
+    if current_task is distinct from completion.committed_task
+       or not current_follow_up_state_exists
+       or current_follow_up_state is distinct from completion.committed_follow_up_state then
+      raise exception using errcode = '40001', message = 'exam_follow_up_undo_conflict';
+    end if;
+    prior_task_value := current_task;
+    prior_follow_up_state_exists_value := current_follow_up_state_exists;
+    prior_follow_up_state_value := current_follow_up_state;
+    committed_task_value := completion.prior_task;
+    committed_follow_up_state_exists_value := completion.prior_follow_up_state_exists;
+    committed_follow_up_state_value := completion.prior_follow_up_state;
+    completion_command_key_value := completion.command_key;
+  end if;
+
+  projection := internal.exam_follow_up_replace(
+    student_state.payload,
+    task_state.payload,
+    identity_value,
+    committed_task_value,
+    committed_follow_up_state_exists_value,
+    committed_follow_up_state_value
+  );
+  if p_students is distinct from projection -> 'students' then
+    raise exception using errcode = '22023', message = 'exam_follow_up_student_payload_mismatch';
+  end if;
+  if p_tasks is distinct from projection -> 'tasks' then
+    raise exception using errcode = '22023', message = 'exam_follow_up_task_payload_mismatch';
+  end if;
+
+  committed_at := clock_timestamp();
+  update public.ops_state set
+    payload = projection -> 'students',
+    version = version + 1,
+    updated_at = committed_at,
+    updated_by = left(trim(p_actor), 120)
+  where entity = 'students'
+  returning * into saved_student_state;
+  update public.ops_state set
+    payload = projection -> 'tasks',
+    version = version + 1,
+    updated_at = committed_at,
+    updated_by = left(trim(p_actor), 120)
+  where entity = 'tasks'
+  returning * into saved_task_state;
+  insert into public.ops_mutation_log(entity, version, actor) values
+    ('students', saved_student_state.version, left(trim(p_actor), 120)),
+    ('tasks', saved_task_state.version, left(trim(p_actor), 120));
+
+  payload_hash := encode(extensions.digest(pg_catalog.convert_to(
+    p_command_intent::text || chr(31) || p_students::text || chr(31) || p_tasks::text,
+    'UTF8'
+  ), 'sha256'), 'hex');
+  audit_id := internal.append_operational_contract_audit(
+    case when p_action = 'complete'
+      then 'exam_follow_up.completed' else 'exam_follow_up.undone' end,
+    left(trim(p_actor), 120),
+    'task',
+    identity_value ->> 'taskId',
+    jsonb_build_object(
+      'commandKey', p_command_key,
+      'action', p_action,
+      'completionCommandKey', completion_command_key_value,
+      'studentId', identity_value ->> 'studentId',
+      'examId', identity_value ->> 'examId',
+      'followUpKind', identity_value ->> 'followUpKind',
+      'versionsBefore', p_expected_versions,
+      'versionsAfter', jsonb_build_object(
+        'students', saved_student_state.version,
+        'tasks', saved_task_state.version
+      ),
+      'payloadSha256', payload_hash
+    )
+  );
+  insert into internal.exam_follow_up_commands (
+    command_key, command_intent, command_hash, action, task_id, student_id,
+    exam_id, follow_up_kind, completion_command_key, prior_task,
+    prior_follow_up_state_exists, prior_follow_up_state, committed_task,
+    committed_follow_up_state_exists, committed_follow_up_state,
+    student_version, task_version, actor, applied_at, audit_id
+  ) values (
+    p_command_key, p_command_intent, payload_hash, p_action,
+    identity_value ->> 'taskId', identity_value ->> 'studentId',
+    identity_value ->> 'examId', identity_value ->> 'followUpKind',
+    completion_command_key_value, prior_task_value,
+    prior_follow_up_state_exists_value, prior_follow_up_state_value,
+    committed_task_value, committed_follow_up_state_exists_value,
+    committed_follow_up_state_value, saved_student_state.version,
+    saved_task_state.version, left(trim(p_actor), 120), committed_at, audit_id
+  );
+  return query select p_command_key, p_action, true,
+    identity_value ->> 'taskId', identity_value ->> 'studentId',
+    identity_value ->> 'examId', identity_value ->> 'followUpKind',
+    completion_command_key_value, saved_student_state, saved_task_state, audit_id;
+end;
+$$;
+
+revoke all on function public.mutate_exam_follow_up_atomic(text, text, jsonb, text, jsonb, jsonb, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.mutate_exam_follow_up_atomic(text, text, jsonb, text, jsonb, jsonb, jsonb, text, text)
+  to anon, authenticated;
+
+-- Executable pure fixture pins managed identity, exact recipient routing and
+-- whole-state replacement without touching live ops_state rows.
+do $exam_follow_up_contract_fixture$
+declare
+  fixture_students jsonb := '[{"id":"STU-1","owner":"Abby","planner":"Tara","status":"在读","exams":[{"id":"EXM-1","subject":"Maths","examType":"selective","examMonth":"2026-09","followUpState":{"exam_recall":{"status":"pending"}}}]}]'::jsonb;
+  fixture_tasks jsonb := '[{"id":"TSK-1","title":"Maths考试回忆","owner":"Abby","assignees":["Abby"],"watchers":["Ops Admin"],"studentId":"STU-1","due":"2026-09-01 18:00","status":"upcoming","tone":"amber","category":"考试","trigger":"fixture","ruleKey":"exam:EXM-1:recall","anchorBookingId":"exam:EXM-1"}]'::jsonb;
+  identity_value jsonb;
+  next_task jsonb;
+  next_state jsonb;
+  projection jsonb;
+begin
+  identity_value := internal.exam_follow_up_identity(fixture_students, fixture_tasks, 'TSK-1');
+  if identity_value ->> 'studentId' <> 'STU-1'
+     or identity_value ->> 'examId' <> 'EXM-1'
+     or identity_value ->> 'followUpKind' <> 'exam_recall' then
+    raise exception 'exam_follow_up_identity_fixture_failed';
+  end if;
+  next_task := identity_value -> 'task' || jsonb_build_object(
+    'status', 'done', 'tone', 'green',
+    'closedAt', '2026-08-15T00:00:00.000Z',
+    'result', '已由当前操作员确认完成'
+  );
+  next_state := identity_value -> 'followUpState' || jsonb_build_object(
+    'exam_recall', jsonb_build_object(
+      'status', 'completed', 'completedAt', '2026-08-15T00:00:00.000Z', 'completedBy', 'Abby'
+    )
+  );
+  projection := internal.exam_follow_up_replace(
+    fixture_students, fixture_tasks, identity_value, next_task, true, next_state
+  );
+  if projection #>> '{students,0,exams,0,followUpState,exam_recall,status}' <> 'completed'
+     or projection #>> '{tasks,0,status}' <> 'done'
+     or projection #>> '{tasks,0,result}' <> '已由当前操作员确认完成' then
+    raise exception 'exam_follow_up_projection_fixture_failed';
+  end if;
+end;
+$exam_follow_up_contract_fixture$;
+-- END EXAM FOLLOW UP ATOMIC SUFFIX

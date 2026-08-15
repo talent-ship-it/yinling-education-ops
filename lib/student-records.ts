@@ -268,12 +268,23 @@ export function setExamFollowUpStepState(
 export function compareStudentExams(left: StudentExamRecord, right: StudentExamRecord) {
   validateExam(left);
   validateExam(right);
-  const byMonth = left.examMonth.localeCompare(right.examMonth);
+  const compareUtf8C = (leftValue: string, rightValue: string) => {
+    if (leftValue === rightValue) return 0;
+    const leftBytes = new TextEncoder().encode(leftValue);
+    const rightBytes = new TextEncoder().encode(rightValue);
+    const sharedLength = Math.min(leftBytes.length, rightBytes.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+      const difference = leftBytes[index] - rightBytes[index];
+      if (difference) return difference;
+    }
+    return leftBytes.length - rightBytes.length;
+  };
+  const byMonth = compareUtf8C(left.examMonth, right.examMonth);
   if (byMonth) return byMonth;
   if (!left.examDate && right.examDate) return -1;
   if (left.examDate && !right.examDate) return 1;
-  const byDate = (left.examDate ?? "").localeCompare(right.examDate ?? "");
-  return byDate || left.id.localeCompare(right.id);
+  const byDate = compareUtf8C(left.examDate ?? "", right.examDate ?? "");
+  return byDate || compareUtf8C(left.id, right.id);
 }
 
 export function sortStudentExams(records: readonly StudentExamRecord[]) {
@@ -323,6 +334,7 @@ export type ExamResultDateRule = Readonly<
   | { kind: "calendar_days"; days: number }
   | { kind: "weekdays"; days: number }
   | { kind: "calendar_months"; months: number }
+  | { kind: "australian_university_final" }
   | { kind: "fixed_date"; date: string }
   | { kind: "explicit_date_required" }
 >;
@@ -345,7 +357,7 @@ export const DEFAULT_EXAM_RESULT_DATE_RULES: Readonly<Record<ExamVariant, ExamRe
   jmss: CALENDAR_DAYS_30,
   aeas: Object.freeze({ kind: "weekdays", days: 10 }),
   school_interview: Object.freeze({ kind: "calendar_days", days: 3 }),
-  australian_university_final: Object.freeze({ kind: "calendar_months", months: 1 }),
+  australian_university_final: Object.freeze({ kind: "australian_university_final" }),
   australian_university_assignment: Object.freeze({ kind: "calendar_days", days: 14 }),
   vce: EXPLICIT_DATE_REQUIRED,
   wace: EXPLICIT_DATE_REQUIRED,
@@ -357,7 +369,7 @@ export const DEFAULT_EXAM_RESULT_DATE_RULES: Readonly<Record<ExamVariant, ExamRe
   ielts_paper: Object.freeze({ kind: "weekdays", days: 10 }),
   ielts_computer: Object.freeze({ kind: "calendar_days", days: 3 }),
   pte: Object.freeze({ kind: "calendar_days", days: 1 }),
-  ccl: Object.freeze({ kind: "calendar_days", days: 28 }),
+  ccl: Object.freeze({ kind: "calendar_days", days: 42 }),
   other: EXPLICIT_DATE_REQUIRED,
 });
 
@@ -398,6 +410,11 @@ export function applyExamResultDateRule(examDate: string, rule: ExamResultDateRu
   }
   if (rule.kind === "calendar_days") return addCalendarDays(examDate, rule.days);
   if (rule.kind === "weekdays") return addWeekdays(examDate, rule.days);
+  if (rule.kind === "australian_university_final") {
+    const year = Number(examDate.slice(0, 4));
+    const candidates = [`${year}-07-15`, `${year}-12-15`, `${year + 1}-07-15`];
+    return candidates.find((candidate) => candidate > examDate)!;
+  }
   return addCalendarMonths(examDate, rule.months);
 }
 
@@ -415,6 +432,8 @@ export type ExamTaskDefinition = {
   kind: ExamTaskKind;
   title: string;
   dueDate: string;
+  /** Complete business recipient contract; `assigneeRole` remains the primary owner for legacy callers. */
+  assigneeRoles: readonly ExamTaskAssigneeRole[];
   assigneeRole: ExamTaskAssigneeRole;
   completionStatus: ExamFollowUpStatus;
   completedAt?: string;
@@ -445,6 +464,7 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
     kind: "exam_care",
     title: `${record.subject}考试当天关心`,
     dueDate: record.examDate,
+    assigneeRoles: ["academic_coordinator"],
     assigneeRole: "academic_coordinator",
     ...followUpFields(record, "exam_care"),
   }];
@@ -455,6 +475,7 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
       kind: "exam_recall",
       title: `${record.subject}考试回忆`,
       dueDate: record.examDate,
+      assigneeRoles: ["academic_coordinator"],
       assigneeRole: "academic_coordinator",
       ...followUpFields(record, "exam_recall"),
     });
@@ -468,6 +489,7 @@ export function buildExamTaskDefinitions(record: StudentExamRecord, options: Exa
       kind: "exam_results_follow_up",
       title: `${record.subject}出分关心`,
       dueDate: resultDate,
+      assigneeRoles: ["course_planner"],
       assigneeRole: "course_planner",
       ...followUpFields(record, "exam_results_follow_up"),
     });

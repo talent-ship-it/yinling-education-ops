@@ -84,9 +84,9 @@ const student = {
 };
 
 const teachers = [
-  { id: "T-1", name: "Teacher One", capacityAssignments: ["S-1"], availabilityWindows: availability("T-1") },
-  { id: "T-2", name: "Teacher Two", capacityAssignments: [], availabilityWindows: availability("T-2") },
-  { id: "T-3", name: "Teacher Without AVA", capacityAssignments: [] },
+  { id: "T-1", name: "Teacher One", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: ["S-1"], availabilityStatus: "可接新生", availabilityWindows: availability("T-1") },
+  { id: "T-2", name: "Teacher Two", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityStatus: "可接新生", availabilityWindows: availability("T-2") },
+  { id: "T-3", name: "Teacher Without AVA", acceptsStudents: false, newStudentCapacity: 0, capacityAssignments: [], availabilityStatus: "暂停接新" },
 ];
 
 const operation = {
@@ -153,6 +153,7 @@ function transition(
     nextPayload,
     rows,
     context: adminContext(rows, limited),
+    now: new Date("2026-08-13T00:00:00.000Z"),
   });
 }
 
@@ -162,11 +163,16 @@ function rejected(value: unknown) {
 
 test("app-state applies invariant validation after scoped merge", async () => {
   const source = await readFile(new URL("../app/api/app-state/route.ts", import.meta.url), "utf8");
+  const transitionSource = await readFile(new URL("../lib/ops-state-transition.ts", import.meta.url), "utf8");
   const merge = source.indexOf("const payload = mergeScopedPayload");
   const guard = source.indexOf("assertOpsStateTransition({");
   const write = source.indexOf("const saved = await putOpsState");
   assert.ok(merge >= 0 && guard > merge && write > guard);
   assert.match(source, /error instanceof OpsStateTransitionError/);
+  const teacherGuard = transitionSource.indexOf("if (currentTeacherId !== nextTeacherId)");
+  const cancelledReturn = transitionSource.indexOf('if (!scheduleChanged || nextOccurrence.status === "cancelled") return');
+  assert.ok(teacherGuard >= 0 && cancelledReturn > teacherGuard, "the direct API guard must reject teacher changes before cancelled occurrences return");
+  assert.match(transitionSource, /请使用代课或永久换老师专用流程/);
 });
 
 test("legal parent confirmation, one occurrence edit and deterministic classroom metadata pass", () => {
@@ -179,6 +185,33 @@ test("legal parent confirmation, one occurrence edit and deterministic classroom
     occurrenceOverrides: [{ occurrenceId, date: "2026-09-14", start: "10:30", durationMinutes: 60, status: "confirmed" }],
   };
   transition("bookings", current, [edited, conflictingBooking]);
+
+  const cancelled = {
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, status: "cancelled" }],
+  };
+  transition("bookings", current, [cancelled, conflictingBooking]);
+
+  const moved = {
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, date: "2026-09-15", start: "10:30", status: "confirmed" }],
+  };
+  transition("bookings", current, [moved, conflictingBooking]);
+
+  const substitutedCurrent = {
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, teacherId: "T-2", status: "confirmed" }],
+  };
+  const substitutedRescheduled = {
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, teacherId: "T-2", start: "10:30", status: "confirmed" }],
+  };
+  transition(
+    "bookings",
+    [substitutedCurrent, conflictingBooking],
+    [substitutedRescheduled, conflictingBooking],
+    fixtureRows([substitutedCurrent, conflictingBooking]),
+  );
 
   const withClassroom = {
     ...booking,
@@ -223,6 +256,117 @@ test("generic occurrence writes cannot fabricate, settle, mark leave, skip AVA o
   }
 });
 
+test("an old client cannot change an occurrence's effective teacher through app-state", () => {
+  const current = [booking, conflictingBooking];
+  const occurrenceId = "B-1:2026-09-14";
+  assert.throws(() => transition("bookings", current, [{
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, teacherId: "T-2", status: "confirmed" }],
+  }, conflictingBooking]), (error: unknown) => error instanceof OpsStateTransitionError
+    && error.status === 403
+    && /代课或永久换老师专用流程/.test(error.message));
+
+  const substitutedCurrent = {
+    ...booking,
+    occurrenceOverrides: [{ occurrenceId, teacherId: "T-2", status: "confirmed" }],
+  };
+  assert.throws(() => transition(
+    "bookings",
+    [substitutedCurrent, conflictingBooking],
+    [{ ...booking, occurrenceOverrides: [{ occurrenceId, status: "confirmed" }] }, conflictingBooking],
+    fixtureRows([substitutedCurrent, conflictingBooking]),
+  ), (error: unknown) => error instanceof OpsStateTransitionError
+    && error.status === 403
+    && /代课或永久换老师专用流程/.test(error.message));
+});
+
+function packageReservationRows(
+  primary: RecordValue,
+  otherRepeatCount: number,
+) {
+  const sharedPackageStudent = {
+    ...student,
+    lessonPackages: [{
+      id: "P-1",
+      name: "Shared package",
+      subjectIds: ["English", "Math"],
+      purchaseRecords: [{ id: "PUR-SHARED", purchasedAt: "2026-08-01T00:00:00.000Z", hours: 20 }],
+      consumedHours: 1,
+    }],
+  };
+  const otherSubjectSeries = {
+    ...booking,
+    id: "B-SHARED-MATH",
+    teacherId: "T-2",
+    date: "2026-09-08",
+    start: "12:00",
+    course: "Math",
+    recurring: true,
+    repeatCount: otherRepeatCount,
+  };
+  return [
+    row("students", [sharedPackageStudent]),
+    row("teachers", teachers),
+    row("bookings", [primary, otherSubjectSeries]),
+    row("operations", [operation]),
+    row("payroll", [payrollSummary, payrollLedger]),
+  ];
+}
+
+test("generic duration increases recalculate all subjects sharing one package", () => {
+  const current = [booking, {
+    ...booking,
+    id: "B-SHARED-MATH",
+    teacherId: "T-2",
+    date: "2026-09-08",
+    start: "12:00",
+    course: "Math",
+    recurring: true,
+    repeatCount: 15,
+  }];
+  const occurrenceId = "B-1:2026-09-14";
+  const increased = { ...booking, occurrenceOverrides: [{ occurrenceId, durationMinutes: 120, status: "confirmed" }] };
+  assert.throws(() => transition(
+    "bookings",
+    current,
+    [increased, current[1]],
+    packageReservationRows(booking, 15),
+  ), (error: unknown) => error instanceof OpsStateTransitionError
+    && error.status === 403
+    && /共享课包未来排课/.test(error.message));
+});
+
+test("generic cancelled-to-confirmed edits cannot over-reserve a shared package", () => {
+  const occurrenceId = "B-1:2026-09-14";
+  const cancelled = { ...booking, occurrenceOverrides: [{ occurrenceId, status: "cancelled" }] };
+  const confirmed = { ...booking, occurrenceOverrides: [{ occurrenceId, status: "confirmed" }] };
+  const rows = packageReservationRows(cancelled, 16);
+  const other = (rows.find((entry) => entry.entity === "bookings")!.payload as RecordValue[])[1];
+  assert.throws(
+    () => transition("bookings", [cancelled, other], [confirmed, other], rows),
+    (error: unknown) => error instanceof OpsStateTransitionError
+      && error.status === 403
+      && /共享课包未来排课/.test(error.message),
+  );
+});
+
+test("generic duration reductions remain saveable even when legacy reservations are still high", () => {
+  const occurrenceId = "B-1:2026-09-14";
+  const long = { ...booking, occurrenceOverrides: [{ occurrenceId, durationMinutes: 120, status: "confirmed" }] };
+  const shorter = { ...booking, occurrenceOverrides: [{ occurrenceId, durationMinutes: 60, status: "confirmed" }] };
+  const rows = packageReservationRows(long, 16);
+  const other = (rows.find((entry) => entry.entity === "bookings")!.payload as RecordValue[])[1];
+  transition("bookings", [long, other], [shorter, other], rows);
+});
+
+test("generic cancellations remain saveable because they reduce future package reservation", () => {
+  const occurrenceId = "B-1:2026-09-14";
+  const cancelled = { ...booking, occurrenceOverrides: [{ occurrenceId, status: "cancelled" }] };
+  const rows = packageReservationRows(booking, 16);
+  const other = (rows.find((entry) => entry.entity === "bookings")!.payload as RecordValue[])[1];
+  transition("bookings", [booking, other], [cancelled, other], rows);
+});
+
 test("operations allow pending creation and candidate selection but reject generic confirmation", () => {
   const current = [operation];
   const created = {
@@ -235,6 +379,12 @@ test("operations allow pending creation and candidate selection but reject gener
   transition("operations", current, [operation, created]);
   transition("operations", current, [{ ...operation, chosenTeacherId: "T-2" }]);
   transition("operations", [{ ...operation, chosenTeacherId: "T-2" }], [operation]);
+  assert.throws(() => transition("operations", current, [operation, {
+    ...created,
+    type: "老师离职",
+  }]), (error: unknown) => error instanceof OpsStateTransitionError
+    && error.status === 403
+    && /专用原子创建流程/.test(error.message));
 
   assert.throws(() => transition("operations", current, [{
     ...operation,
@@ -267,6 +417,72 @@ test("teacher capacity assignments remain dedicated-API owned for all admin scop
       limited,
     );
   }
+});
+
+test("generic task writes require unique legal watchers and preserve Ops Admin even for full admin", () => {
+  const validTask = {
+    id: "TASK-1",
+    studentId: "S-1",
+    owner: "Abby",
+    title: "Follow up",
+    watchers: ["Abby", "Ops Admin"],
+  };
+  transition("tasks", [validTask], [{ ...validTask, title: "Updated" }]);
+
+  for (const watchers of [
+    ["Abby"],
+    ["Ops Admin", "Ops Admin"],
+    ["ops admin", "Ops Admin"],
+    ["Ops Admin", " Abby"],
+    ["Ops Admin", ""],
+    ["Ops Admin", 42],
+  ]) {
+    assert.throws(() => transition("tasks", [validTask], [{ ...validTask, title: "Updated", watchers }]), rejected);
+  }
+  assert.throws(() => transition("tasks", [validTask], [{ ...validTask, title: "Updated", watchers: undefined }]), rejected);
+});
+
+test("an unchanged legacy task remains deploy-order compatible but must be repaired before editing", () => {
+  const legacy = { id: "TASK-LEGACY", studentId: "S-1", owner: "Abby", title: "Legacy" };
+  transition("tasks", [legacy], [legacy]);
+  assert.throws(() => transition("tasks", [legacy], [{ ...legacy, title: "Edited" }]), rejected);
+  transition("tasks", [legacy], [{ ...legacy, title: "Edited", watchers: ["Ops Admin"] }]);
+});
+
+test("generic teacher writes freeze authority and identity while validating reviewed manual state", () => {
+  assert.throws(() => transition("teachers", teachers, teachers.slice(1)), rejected);
+  assert.throws(() => transition("teachers", teachers, [...teachers, {
+    id: "T-NEW", name: "New", acceptsStudents: false, newStudentCapacity: 0, capacityAssignments: [],
+  }]), rejected);
+
+  for (const changed of [
+    { ...teachers[0], name: "Forged identity" },
+    { ...teachers[0], subjects: ["Forged subject"] },
+    { ...teachers[0], teacherSourceRefs: [{ workbook: "k12", sourceId: "fake", sourceRow: 1 }] },
+    { ...teachers[0], availabilitySourceText: "forged source" },
+    { ...teachers[0], arbitraryField: "forged" },
+  ]) {
+    assert.throws(() => transition("teachers", teachers, [changed, ...teachers.slice(1)]), rejected);
+  }
+
+  for (const changed of [
+    { ...teachers[0], acceptsStudents: "true" },
+    { ...teachers[0], newStudentCapacity: -1 },
+    { ...teachers[0], newStudentCapacity: 1.5 },
+    { ...teachers[0], newStudentCapacity: Number.MAX_SAFE_INTEGER + 1 },
+    { ...teachers[0], newStudentCapacity: 0, acceptsStudents: true },
+    { ...teachers[0], availabilityStatus: "forged" },
+    { ...teachers[0], availabilityWindows: availability("T-2") },
+  ]) {
+    assert.throws(() => transition("teachers", teachers, [changed, ...teachers.slice(1)]), rejected);
+  }
+
+  transition("teachers", teachers, [{
+    ...teachers[0],
+    acceptsStudents: false,
+    newStudentCapacity: 0,
+    availabilityStatus: "暂停接新",
+  }, ...teachers.slice(1)]);
 });
 
 test("student settlement ledger and consumed hours are immutable while package purchases still work", () => {
@@ -314,6 +530,62 @@ test("student settlement ledger and consumed hours are immutable while package p
       }],
     })),
   }]), rejected);
+});
+
+test("generic student writes cannot create or mutate managed exam history", () => {
+  const exam = {
+    id: "EXM-1",
+    subject: "Selective",
+    examType: "selective",
+    examMonth: "2026-09",
+  };
+  const withExam = { ...student, exams: [exam] };
+  transition("students", [withExam], [{ ...withExam, name: "Allowed profile edit" }]);
+  assert.throws(() => transition("students", [withExam], [{
+    ...withExam,
+    exams: [{ ...exam, followUpState: { exam_care: { status: "completed", completedAt: "2026-08-15T00:00:00.000Z" } } }],
+  }]), rejected);
+  assert.throws(() => transition("students", [], [{
+    id: "S-NEW",
+    name: "New Student",
+    owner: "Abby",
+    exams: [exam],
+  }]), rejected);
+  assert.throws(() => transition("students", [], [{
+    id: "S-NEW",
+    name: "New Student",
+    owner: "Abby",
+    exams: { injected: true },
+  }]), rejected);
+  transition("students", [], [{ id: "S-NEW", name: "New Student", owner: "Abby", exams: [] }]);
+});
+
+test("generic task writes cannot bypass managed exam completion", () => {
+  const managed = {
+    id: "TSK-EXAM-1",
+    title: "Selective考试当天关心",
+    owner: "Abby",
+    assignees: ["Abby"],
+    watchers: ["Ops Admin"],
+    studentId: "S-1",
+    due: "2026-09-01 18:00",
+    status: "upcoming",
+    tone: "amber",
+    category: "考试",
+    trigger: "exam",
+    ruleKey: "exam:EXM-1:care",
+    anchorBookingId: "exam:EXM-1",
+  };
+  transition("tasks", [managed], [managed]);
+  assert.throws(() => transition("tasks", [managed], [{
+    ...managed,
+    status: "done",
+    tone: "green",
+    result: "forged",
+    closedAt: "2026-08-15T00:00:00.000Z",
+  }]), rejected);
+  assert.throws(() => transition("tasks", [managed], []), rejected);
+  assert.throws(() => transition("tasks", [], [managed]), rejected);
 });
 
 test("student follow-up and LP revision/audit histories are append-only", () => {

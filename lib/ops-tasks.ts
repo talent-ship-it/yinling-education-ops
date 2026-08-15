@@ -64,7 +64,8 @@ export const TRIAL_STANDARD_TASK_RULES = TRIAL_TASK_RULES;
 export const TRIAL_SHORT_NOTICE_TASK_RULES = [
   "trial.parent-follow-up",
   "trial.scheduling",
-  "trial.short-notice-prep",
+  "trial.lp-review",
+  "trial.prep",
 ] as const;
 
 /** Every trial rule managed by reconciliation, including mutually exclusive rules. */
@@ -81,6 +82,50 @@ export const TRIAL_REQUEST_TASK_RULES = [
 ] as const satisfies readonly TrialTaskRuleKey[];
 
 export type TrialRequestTaskRuleKey = (typeof TRIAL_REQUEST_TASK_RULES)[number];
+
+export const TRIAL_ESCALATION_TASK_RULES = [
+  "trial.parent-no-reply-follow-up",
+  "trial.teaching-control-escalation",
+] as const;
+
+export const TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT = "试听已完成排课，升级任务自动关闭";
+export const TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT = "家长已回复，升级任务自动关闭";
+
+export type TrialEscalationTaskRuleKey =
+  | (typeof TRIAL_ESCALATION_TASK_RULES)[number]
+  | `trial.parent-progress-sync.${number}`;
+
+export function isTrialEscalationTaskRule(ruleKey: string | undefined): ruleKey is TrialEscalationTaskRuleKey {
+  return Boolean(
+    ruleKey
+      && (
+        (TRIAL_ESCALATION_TASK_RULES as readonly string[]).includes(ruleKey)
+        || /^trial\.parent-progress-sync\.[1-9]\d*$/.test(ruleKey)
+      ),
+  );
+}
+
+/** Close every still-open no-reply escalation after a terminal workflow signal. */
+export function closeTrialEscalationTasks<T extends OpsTask>(
+  tasks: readonly T[],
+  input: Readonly<{
+    anchorBookingId: string;
+    closedAt: Date | string;
+    studentId?: string;
+    result?: string;
+  }>,
+): T[] {
+  if (!input.anchorBookingId.trim()) throw new TypeError("anchorBookingId is required");
+  if (input.studentId !== undefined && !input.studentId.trim()) throw new TypeError("studentId must not be empty");
+  const closedAt = asDate(input.closedAt, "closedAt").toISOString();
+  const result = input.result?.trim() || TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT;
+  return tasks.map((task) => task.anchorBookingId === input.anchorBookingId
+    && (!input.studentId || task.studentId === input.studentId)
+    && isTrialEscalationTaskRule(task.ruleKey)
+    && task.status !== "done"
+    ? { ...task, status: "done", tone: "green", result, closedAt }
+    : { ...task });
+}
 
 export const TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT = "试听时距规则已切换，任务自动关闭";
 
@@ -109,6 +154,18 @@ export interface TrialBookingTaskInput {
   timeZone?: string;
   sameDayHour?: number;
   idFactory?: (ruleKey: TrialTaskRuleKey, anchorBookingId: string) => string;
+}
+
+export interface TrialEscalationTaskInput {
+  anchorBookingId: string;
+  studentId: string;
+  owner: string;
+  requestedAt: Date | string;
+  now: Date | string;
+  timeZone?: string;
+  /** Number of 24-hour parent progress-sync tasks to materialize. */
+  parentProgressSyncCount?: number;
+  idFactory?: (ruleKey: TrialEscalationTaskRuleKey, anchorBookingId: string) => string;
 }
 
 export interface LinkTrialRequestTasksInput extends TrialBookingTaskInput {
@@ -298,7 +355,7 @@ const trialRuleDetails: Record<
     title: "完成试听排课",
     tone: "red",
     category: "排课",
-    trigger: "试听需求进入后 48 小时内完成排课",
+    trigger: "试听需求进入后 24 小时内完成排课",
   },
   "trial.lp-review": {
     title: "审核试听 LP",
@@ -326,11 +383,104 @@ const trialRuleDetails: Record<
   },
 };
 
+const shortNoticeRuleDetails: Partial<Record<
+  TrialTaskRuleKey,
+  Pick<RuleBoundTask, "title" | "tone" | "category" | "trigger">
+>> = {
+  "trial.lp-review": {
+    title: "紧急审核试听 LP",
+    tone: "red",
+    category: "LP",
+    trigger: "试听距开课不足 72 小时，按 N-1 最低时效立即审核 LP",
+  },
+  "trial.prep": {
+    title: "紧急确认老师备课内容与资料",
+    tone: "red",
+    category: "LP",
+    trigger: "试听距开课不足 72 小时，按 N-1 最低时效立即确认备课",
+  },
+};
+
 function automaticTaskRecipients(owner: string) {
   return {
     assignees: [owner],
     watchers: [DEFAULT_TEACHING_CONTROL_WATCHER],
   };
+}
+
+/**
+ * Materialize the no-reply escalation schedule without reading external state.
+ * Callers choose how many recurring 24-hour parent syncs to create; each cycle
+ * has its own stable rule key so reconciliation remains idempotent.
+ */
+export function generateTrialEscalationTasks(input: TrialEscalationTaskInput): RuleBoundTask[] {
+  const timeZone = input.timeZone ?? MELBOURNE_TIME_ZONE;
+  const requestedAt = asDate(input.requestedAt, "requestedAt");
+  const now = asDate(input.now, "now");
+  const syncCount = input.parentProgressSyncCount ?? 1;
+  if (!Number.isSafeInteger(syncCount) || syncCount < 0 || syncCount > 365) {
+    throw new RangeError("parentProgressSyncCount must be an integer from 0 to 365");
+  }
+  if (!input.anchorBookingId.trim()) throw new TypeError("anchorBookingId is required");
+  if (!input.studentId.trim()) throw new TypeError("studentId is required");
+  if (!input.owner.trim()) throw new TypeError("owner is required");
+
+  const definitions: Array<{
+    ruleKey: TrialEscalationTaskRuleKey;
+    hoursAfterRequest: number;
+    title: string;
+    tone: TaskTone;
+    trigger: string;
+  }> = [
+    {
+      ruleKey: "trial.parent-no-reply-follow-up",
+      hoursAfterRequest: FIXED_REMINDER_RULES.parentNoReplyFollowUpHoursAfterRequest,
+      title: "家长未回复：再次跟进",
+      tone: "amber",
+      trigger: "试听需求进入 4 小时后仍未回复，提醒教务再次跟进",
+    },
+    {
+      ruleKey: "trial.teaching-control-escalation",
+      hoursAfterRequest: FIXED_REMINDER_RULES.teachingControlEscalationHoursAfterRequest,
+      title: "家长未回复：向负责人汇报",
+      tone: "red",
+      trigger: "试听需求进入 8 小时后仍未回复，向负责人汇报",
+    },
+    ...Array.from({ length: syncCount }, (_, index) => {
+      const cycle = index + 1;
+      const hoursAfterRequest = FIXED_REMINDER_RULES.parentProgressSyncHoursAfterRequest
+        + index * FIXED_REMINDER_RULES.parentProgressSyncIntervalHours;
+      return {
+        ruleKey: `trial.parent-progress-sync.${cycle}` as const,
+        hoursAfterRequest,
+        title: `向家长同步试听安排进度（第 ${cycle} 次）`,
+        tone: "red" as const,
+        trigger: cycle === 1
+          ? "试听需求进入 24 小时后向家长同步进度"
+          : `首次同步后每 24 小时继续向家长同步进度（第 ${cycle} 次）`,
+      };
+    }),
+  ];
+  const idFactory = input.idFactory ?? ((ruleKey, anchorBookingId) => `TSK:${anchorBookingId}:${ruleKey}`);
+
+  return definitions.map((definition) => {
+    const dueAt = new Date(requestedAt.getTime() + definition.hoursAfterRequest * TASK_SPACING_MS);
+    return {
+      id: idFactory(definition.ruleKey, input.anchorBookingId),
+      title: definition.title,
+      owner: input.owner,
+      ...automaticTaskRecipients(input.owner),
+      studentId: input.studentId,
+      due: formatDue(dueAt, timeZone),
+      dueAt: dueAt.toISOString(),
+      status: statusForDueAt(dueAt, now, timeZone),
+      tone: definition.tone,
+      category: "试听",
+      trigger: definition.trigger,
+      ruleKey: definition.ruleKey,
+      anchorBookingId: input.anchorBookingId,
+    };
+  });
 }
 
 /**
@@ -437,13 +587,13 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
     requestIdealTimes,
     now,
     trialStartsAt,
-    shortNotice ? 1 : 0,
+    shortNotice ? 2 : 0,
   );
   const activeRules: readonly TrialTaskRuleKey[] = shortNotice
     ? TRIAL_SHORT_NOTICE_TASK_RULES
     : TRIAL_STANDARD_TASK_RULES;
   const scheduledTimes = shortNotice
-    ? [...requestTimes, new Date(now.getTime() + 1)]
+    ? [...requestTimes, new Date(now.getTime() + 1), new Date(now.getTime() + 2)]
     : [
         ...requestTimes,
         atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial, 18, timeZone),
@@ -456,7 +606,7 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
     const dueAt = scheduledTimes[index];
     return {
       id: idFactory(ruleKey, input.anchorBookingId),
-      ...trialRuleDetails[ruleKey],
+      ...(shortNotice ? shortNoticeRuleDetails[ruleKey] ?? trialRuleDetails[ruleKey] : trialRuleDetails[ruleKey]),
       owner: input.owner,
       ...automaticTaskRecipients(input.owner),
       studentId: input.studentId,
@@ -547,7 +697,13 @@ export function linkTrialRequestTasksToBooking<T extends OpsTask>(
   const fullTasks = generateTrialBookingTasks(input);
   const requestRuleSet = new Set<string>(TRIAL_REQUEST_TASK_RULES);
   const overrides = new Map<TrialRequestTaskRuleKey, RuleBoundTask>();
-  let base: OpsTask[] = [...tasks];
+  const linkedAt = asDate(input.now, "now").toISOString();
+  let base: OpsTask[] = closeTrialEscalationTasks(tasks, {
+    anchorBookingId: input.requestAnchorBookingId,
+    studentId: input.studentId,
+    closedAt: linkedAt,
+    result: TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT,
+  });
   const nowTime = asDate(input.now, "now").getTime();
   let previousOpenDueTime = nowTime;
 

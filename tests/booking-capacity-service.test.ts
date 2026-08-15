@@ -5,6 +5,7 @@ import {
   BookingCapacityServiceError,
   parseBookingCapacityCommand,
   prepareBookingCapacityMutation,
+  reconcileTeacherStudentCapacity,
   type BookingCapacityCommand,
 } from "../lib/booking-capacity-service.ts";
 import { createMonthlyAvailabilityWindows } from "../lib/teacher-availability.ts";
@@ -40,8 +41,8 @@ function sharedRows(bookings: unknown[] = [], owner = "Abby") {
       }],
     }]),
     row("teachers", [
-      { id: "T-1", name: "Teacher A", acceptsStudents: true, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
-      { id: "T-2", name: "Teacher B", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+      { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
+      { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
     ]),
   ];
 }
@@ -63,6 +64,7 @@ function upsert(overrides: Partial<NonNullable<BookingCapacityCommand["booking"]
       repeatCount: 1,
       packageId: "P-1",
       subjectId: "English",
+      teacherSubjectId: "Local English",
       ...overrides,
     },
   };
@@ -89,20 +91,59 @@ test("first non-substitute booking consumes exactly one stable capacity assignme
   assert.deepEqual(prepared.teachers[0].capacityAssignments, ["S-1"]);
   assert.equal(prepared.bookings[0].course, "English");
   assert.equal(prepared.bookings[0].packageId, "P-1");
+  assert.equal(prepared.bookings[0].teacherSubjectId, "Local English");
+});
+
+test("every first non-substitute relationship requires explicit teacher acceptance", () => {
+  const notAccepting = sharedRows().map((state) => state.entity === "teachers" ? row("teachers", [
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: false, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+  ]) : state);
+
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ kind: "常规课" }),
+    rows: notAccepting,
+    actor: "Abby",
+    fullAdmin: false,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("teacher_not_accepting"));
+});
+
+test("an existing non-substitute teacher/student relationship may be scheduled while intake is paused", () => {
+  const existing = {
+    id: "B-EXISTING", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: false, repeatCount: 1,
+    packageId: "P-1", course: "English",
+  };
+  const rows = sharedRows([existing]).map((state) => state.entity === "teachers" ? row("teachers", [
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: false, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+  ]) : state);
+
+  const prepared = prepareBookingCapacityMutation({
+    command: upsert({ date: "2026-09-08" }, "B-2"),
+    rows,
+    actor: "Abby",
+    fullAdmin: false,
+    now: new Date("2026-08-13T00:00:00Z"),
+  });
+  assert.equal(prepared.action, "create");
+  assert.equal(prepared.teachers[0].newStudentCapacity, 0);
+  assert.deepEqual(prepared.teachers[0].capacityAssignments, ["S-1"]);
 });
 
 test("first non-substitute relationship requires explicitly configured capacity", () => {
   const missingCapacity = sharedRows().map((state) => state.entity === "teachers" ? row("teachers", [
-    { id: "T-1", name: "Teacher A", acceptsStudents: true, capacityAssignments: [], availabilityWindows: availability },
-    { id: "T-2", name: "Teacher B", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, capacityAssignments: [], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
   ]) : state);
   assert.throws(() => prepareBookingCapacityMutation({
     command: upsert(), rows: missingCapacity, actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z"),
   }), error("teacher_capacity_unconfigured"));
 
   const unsafeCapacity = sharedRows().map((state) => state.entity === "teachers" ? row("teachers", [
-    { id: "T-1", name: "Teacher A", acceptsStudents: true, newStudentCapacity: 1.5, capacityAssignments: [], availabilityWindows: availability },
-    { id: "T-2", name: "Teacher B", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 1.5, capacityAssignments: [], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
   ]) : state);
   assert.throws(() => prepareBookingCapacityMutation({
     command: upsert(), rows: unsafeCapacity, actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z"),
@@ -120,8 +161,12 @@ test("another booking for the same teacher/student does not consume again", () =
 });
 
 test("substitute never consumes capacity", () => {
+  const paused = sharedRows().map((state) => state.entity === "teachers" ? row("teachers", [
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: false, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+  ]) : state);
   const prepared = prepareBookingCapacityMutation({
-    command: upsert({ kind: "代课" }), rows: sharedRows(), actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z"),
+    command: upsert({ kind: "代课" }), rows: paused, actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z"),
   });
   assert.equal(prepared.teachers[0].newStudentCapacity, 1);
   assert.deepEqual(prepared.teachers[0].capacityAssignments, []);
@@ -134,8 +179,8 @@ test("admin teacher move releases the old relationship and consumes the new one"
     packageId: "P-1", course: "English", requestedAt: "2026-08-01T00:00:00Z",
   };
   const rows = sharedRows([currentBooking]).map((state) => state.entity === "teachers" ? row("teachers", [
-    { id: "T-1", name: "Teacher A", acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
-    { id: "T-2", name: "Teacher B", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
   ]) : state);
   const prepared = prepareBookingCapacityMutation({ command: upsert({ teacherId: "T-2" }), rows, actor: "Nixon", fullAdmin: true, now: new Date("2026-08-13T00:00:00Z") });
   assert.deepEqual(prepared.changedTeacherIds, ["T-1", "T-2"]);
@@ -152,8 +197,8 @@ test("deleting the final relationship restores capacity, but not while another r
     packageId: "P-1", course: "English",
   };
   const teachers = [
-    { id: "T-1", name: "Teacher A", acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
-    { id: "T-2", name: "Teacher B", acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
   ];
   const command: BookingCapacityCommand = { action: "delete", bookingId: "B-1", expectedVersions: { bookings: 3, students: 3, teachers: 3 } };
   const singleRows = sharedRows([current]).map((state) => state.entity === "teachers" ? row("teachers", teachers) : state);
@@ -172,6 +217,19 @@ test("non-trial package/subject is mandatory and checked on the server", () => {
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ packageId: undefined }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("package_required"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ subjectId: "Math" }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("subject_not_allowed"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert({ packageId: "P-X" }), rows: sharedRows(), actor: "Abby", fullAdmin: false }), error("package_subject_mismatch"));
+});
+
+test("teacher subject qualification is bound to the authoritative Tencent sub-sheet", () => {
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ teacherSubjectId: "Maths&Science" }),
+    rows: sharedRows(),
+    actor: "Abby",
+    fullAdmin: false,
+  }), error("teacher_subject_not_allowed"));
+  assert.throws(() => parseBookingCapacityCommand({
+    ...upsert(),
+    booking: { ...upsert().booking, teacherSubjectId: undefined },
+  }), error("invalid_request"));
 });
 
 test("non-trial bookings cannot use an exhausted or overdrawn package", () => {
@@ -319,4 +377,33 @@ test("archived students reject booking creates, edits, and deletes for every ope
 test("staff is owner-scoped and teachers cannot mutate capacity or assignments", () => {
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert(), rows: sharedRows([], "Thea"), actor: "Abby", fullAdmin: false }), error("student_scope_forbidden"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert(), rows: sharedRows(), actor: "Helen Ceperkovic", fullAdmin: false }), error("student_scope_forbidden"));
+});
+
+test("reviewed relationship transitions atomically release and consume capacity", () => {
+  const result = reconcileTeacherStudentCapacity({
+    teachers: [
+      { id: "T-1", name: "Old", newStudentCapacity: 0, capacityAssignments: ["S-1"] },
+      { id: "T-2", name: "New", newStudentCapacity: 2, capacityAssignments: [] },
+    ],
+    transitions: [
+      { teacherId: "T-1", studentId: "S-1", beforeActive: true, afterActive: false },
+      { teacherId: "T-2", studentId: "S-1", beforeActive: false, afterActive: true },
+    ],
+  });
+  assert.deepEqual(result.changedTeacherIds, ["T-1", "T-2"]);
+  assert.deepEqual(result.teachers.map((teacher) => ({
+    id: teacher.id,
+    remaining: teacher.newStudentCapacity,
+    assignments: teacher.capacityAssignments,
+  })), [
+    { id: "T-1", remaining: 1, assignments: [] },
+    { id: "T-2", remaining: 1, assignments: ["S-1"] },
+  ]);
+});
+
+test("reviewed relationship transitions fail closed without configured capacity", () => {
+  assert.throws(() => reconcileTeacherStudentCapacity({
+    teachers: [{ id: "T-2", name: "New", capacityAssignments: [] }],
+    transitions: [{ teacherId: "T-2", studentId: "S-1", beforeActive: false, afterActive: true }],
+  }), error("teacher_capacity_unconfigured"));
 });

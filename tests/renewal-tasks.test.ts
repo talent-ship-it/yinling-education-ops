@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { DEFAULT_TEACHING_CONTROL_WATCHER, type OpsTask } from "../lib/ops-tasks";
 import {
+  buildRenewalDateNote,
   calculateRenewalTaskDueAt,
   generateRenewalTask,
   reconcileRenewalTasks,
@@ -10,6 +11,7 @@ import {
   RENEWAL_INACTIVE_RESULT,
   RENEWAL_NOT_DUE_RESULT,
   RENEWAL_TASK_RULE_KEY,
+  renewalProjectionStateForStudent,
   renewalTaskAnchor,
   renewalStatusForPackage,
 } from "../lib/renewal-tasks";
@@ -46,6 +48,30 @@ function legacyTask(overrides: Partial<OpsTask> = {}): OpsTask {
 test("uses a collision-safe stable anchor for each student and package", () => {
   assert.equal(renewalTaskAnchor("STU:1", "PKG / A"), "renewal:STU%3A1:PKG%20%2F%20A");
   assert.notEqual(renewalTaskAnchor("STU-1", "PKG-1"), renewalTaskAnchor("STU-1", "PKG-2"));
+});
+
+test("keeps one package task and puts depletion evidence in its trigger", () => {
+  const task = generateRenewalTask(projection({
+    renewalDateNote: "预计由 Local English 课耗尽",
+  }), { now: NOW });
+  assert.ok(task);
+  assert.equal(task.anchorBookingId, renewalTaskAnchor("STU-1", "PKG-1"));
+  assert.equal(task.title, "课包续课跟进 · 数学 20 小时");
+  assert.equal(task.trigger, "预计由 Local English 课耗尽");
+  assert.equal(generateRenewalTask(projection(), { now: NOW })?.anchorBookingId, renewalTaskAnchor("STU-1", "PKG-1"));
+});
+
+test("automatic renewal notes explain subject, insufficient balance, and a lesson within seven days", () => {
+  assert.equal(buildRenewalDateNote({
+    depletionSubjectId: "Math",
+    remainingHours: 0.5,
+    depletionLessonHours: 1,
+    nextLessonAfterDepletion: { subjectId: "English", date: "2026-08-22", start: "10:30", withinSevenDays: true },
+  }), "预计由 Math 课耗尽；当前余额 0.5 小时，不足耗尽课次 1 小时；耗尽后下一节 English 课：2026-08-22 10:30（不足 7 天）");
+  assert.equal(buildRenewalDateNote({
+    remainingHours: 0.5,
+    nextScheduledLesson: { subjectId: "Math", date: "2026-08-20", start: "09:00", hours: 1 },
+  }), "当前余额 0.5 小时，不足下一节 Math 课 1 小时");
 });
 
 test("generates one active renewal task at depletion with explicit recipients", () => {
@@ -97,6 +123,75 @@ test("resolves renewal state by student and package without spreading one packag
   const legacy = [{ studentId: "STU-1", status: "renewed" as const }];
   assert.equal(renewalStatusForPackage(legacy, { studentId: "STU-1", packageId: "ONLY", packageCount: 1 }), "renewed");
   assert.equal(renewalStatusForPackage(legacy, { studentId: "STU-1", packageId: "PKG-1", packageCount: 2 }), undefined);
+
+});
+
+test("student activity explicitly closes and later rebuilds the stable automatic package task", () => {
+  assert.equal(renewalProjectionStateForStudent("not_renewed_active", false), "inactive");
+  assert.equal(renewalProjectionStateForStudent("not_renewed_inactive", true), "active");
+  assert.equal(renewalProjectionStateForStudent("not_renewed_exam_finished", true), "active");
+  assert.equal(renewalProjectionStateForStudent("renewed", true), "renewed");
+  assert.equal(renewalProjectionStateForStudent("renewed", false), "renewed");
+
+  const active = reconcileRenewalTasks([], [projection()], { now: NOW, idFactory: () => "stable-activity-id" });
+  const inactive = reconcileRenewalTasks(active, [projection({
+    status: renewalProjectionStateForStudent("not_renewed_active", false),
+  })], { now: "2026-08-11T00:00:00.000Z" });
+  assert.equal(inactive[0].result, RENEWAL_INACTIVE_RESULT);
+  const restored = reconcileRenewalTasks(inactive, [projection({
+    status: renewalProjectionStateForStudent("not_renewed_inactive", true),
+  })], { now: "2026-08-12T00:00:00.000Z", idFactory: () => "discarded-id" });
+  assert.equal(restored[0].id, "stable-activity-id");
+  assert.notEqual(restored[0].status, "done");
+  assert.equal(restored[0].result, undefined);
+});
+
+test("legacy subject statuses never decide a shared package task in either source order", () => {
+  const mathRenewed = {
+    studentId: "STU-1",
+    packageId: "PKG-1",
+    subjectId: "Math",
+    status: "renewed" as const,
+  };
+  const englishActive = {
+    studentId: "STU-1",
+    packageId: "PKG-1",
+    subjectId: "English",
+    status: "not_renewed_active" as const,
+  };
+
+  for (const records of [
+    [mathRenewed, englishActive],
+    [englishActive, mathRenewed],
+  ]) {
+    const status = renewalStatusForPackage(records, {
+      studentId: "STU-1",
+      packageId: "PKG-1",
+      packageCount: 1,
+    });
+    assert.equal(status, undefined);
+    const tasks = reconcileRenewalTasks([], [projection({
+      status: status ?? "not_renewed_active",
+    })], { now: NOW });
+    assert.equal(tasks.length, 1);
+    assert.notEqual(tasks[0].status, "done");
+  }
+});
+
+test("legacy subject-anchor tasks close safely when the package task is reconciled", () => {
+  const legacySubjectTasks = ["MATH", "ENGLISH"].map((subject): OpsTask => ({
+    ...legacyTask(),
+    id: `legacy-${subject}`,
+    studentId: "STU-1",
+    ruleKey: RENEWAL_TASK_RULE_KEY,
+    anchorBookingId: `renewal:STU-1:PKG-1:subject:${subject}`,
+  }));
+  const reconciled = reconcileRenewalTasks(legacySubjectTasks, [projection()], {
+    now: NOW,
+    scopeStudentIds: ["STU-1"],
+  });
+  assert.equal(reconciled.filter((task) => task.anchorBookingId?.includes(":subject:") && task.result === RENEWAL_NOT_DUE_RESULT).length, 2);
+  assert.equal(reconciled.filter((task) => task.anchorBookingId === renewalTaskAnchor("STU-1", "PKG-1")).length, 1);
 });
 
 test("renewing one package closes only that package task", () => {
@@ -270,4 +365,5 @@ test("rejects duplicate package projections and malformed required data", () => 
   );
   assert.throws(() => generateRenewalTask(projection({ owner: "" }), { now: NOW }), /owner is required/);
   assert.throws(() => generateRenewalTask(projection({ depletionAt: "bad" }), { now: NOW }), /depletionAt/);
+  assert.throws(() => generateRenewalTask(projection({ renewalDateNote: "" }), { now: NOW }), /renewalDateNote/);
 });

@@ -20,8 +20,8 @@ const rows: OpsStateRow[] = [
     updated_at: "2026-07-28T00:00:00.000Z",
     updated_by: "Admin",
     payload: [
-      { id: "STU-ABBY", name: "Abby student", owner: "Abby", teacher: "Helen Ceperkovic" },
-      { id: "STU-THEA", name: "Thea student", owner: "Thea", teacher: "Another teacher" },
+      { id: "STU-ABBY", name: "Abby student", owner: "Abby", planner: "Tara", teacher: "Helen Ceperkovic", exams: [{ id: "EXM-1" }] },
+      { id: "STU-THEA", name: "Thea student", owner: "Thea", planner: "Tara", teacher: "Another teacher", exams: [{ id: "EXM-2" }] },
     ],
   },
   {
@@ -63,7 +63,8 @@ const rows: OpsStateRow[] = [
       { id: "TASK-ABBY", studentId: "STU-ABBY", owner: "Abby", title: "Abby task" },
       { id: "TASK-THEA", studentId: "STU-THEA", owner: "Abby", title: "Cross-owner task" },
       { id: "TASK-PLANNER", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara"], watchers: ["Ops Admin"], title: "Planner task" },
-      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara", "Abby"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Exam result task" },
+      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Exam result task" },
+      { id: "TASK-EXAM-RECALL-LEGACY", studentId: "STU-ABBY", owner: "Abby", category: "考试", ruleKey: "exam:EXM-1:recall", anchorBookingId: "exam:EXM-1", title: "Legacy recall task" },
       { id: "TASK-WATCHED", studentId: "STU-ABBY", owner: "Tara", watchers: ["Abby"], title: "Watched by Abby" },
       { id: "TASK-TEACHER", studentId: "STU-ABBY", owner: "Abby", assignees: ["Helen Ceperkovic"], teacherVisible: true, title: "Teacher-visible task" },
       { id: "TASK-TEACHER-GENERIC", studentId: "STU-ABBY", owner: "Abby", teacherVisible: true, title: "Flag without a teacher recipient" },
@@ -97,10 +98,33 @@ test("staff receive only their assigned student records and cannot access payrol
 
   assert.deepEqual((visible.find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((item) => item.id), ["STU-ABBY"]);
   assert.deepEqual((visible.find((item) => item.entity === "files")?.payload as Array<{ id: string }>).map((item) => item.id), ["FILE-ABBY"]);
-  assert.deepEqual((visible.find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>).map((item) => item.id), ["TASK-ABBY", "TASK-EXAM-RESULT", "TASK-WATCHED", "TASK-TEACHER", "TASK-TEACHER-GENERIC"]);
+  assert.deepEqual((visible.find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>).map((item) => item.id), ["TASK-ABBY", "TASK-EXAM-RESULT", "TASK-EXAM-RECALL-LEGACY", "TASK-WATCHED", "TASK-TEACHER", "TASK-TEACHER-GENERIC"]);
   assert.equal(visible.some((item) => item.entity === "payroll"), false);
   assert.equal(visible.some((item) => item.entity === "rules"), false);
   assert.equal(canAccessStudent(access, "STU-THEA"), false);
+});
+
+test("a managed exam planner receives only the addressed task, not the student's other records", () => {
+  const access = buildOpsAccessContext(rows, "Tara", false, "staff");
+  const visible = filterOpsStateRows(rows, access);
+
+  assert.deepEqual(visible.find((item) => item.entity === "students")?.payload, []);
+  assert.deepEqual(visible.find((item) => item.entity === "bookings")?.payload, []);
+  assert.deepEqual((visible.find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>).map((item) => item.id), ["TASK-EXAM-RESULT"]);
+
+  const current = row("tasks").payload as Array<Record<string, unknown>>;
+  const submitted = current
+    .filter((task) => task.id === "TASK-EXAM-RESULT")
+    .map((task) => ({ ...task, status: "done", tone: "green", closedAt: "2026-08-15T00:00:00.000Z", result: "已完成" }));
+  const merged = mergeScopedPayload({ entity: "tasks", currentPayload: current, submittedPayload: submitted, context: access }) as Array<{ id: string; status?: string }>;
+  assert.equal(merged.find((task) => task.id === "TASK-EXAM-RESULT")?.status, "done");
+
+  assert.throws(() => mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: current,
+    submittedPayload: submitted.map((task) => ({ ...task, title: "planner attempted to change content" })),
+    context: access,
+  }), /不能修改未分配/);
 });
 
 test("teachers receive only their own assigned and booked students", () => {
@@ -315,23 +339,72 @@ test("scoped writes preserve other users' records and reject cross-owner writes"
     ],
     context: access,
   }), /不能新增未分配/);
-  const examTaskWrite = mergeScopedPayload({
-    entity: "tasks",
-    currentPayload: row("tasks").payload,
-    submittedPayload: [
-      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara", "Abby"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Exam result task", status: "done" },
-    ],
-    context: access,
-  }) as Array<{ id: string; status?: string }>;
-  assert.equal(examTaskWrite.find((task) => task.id === "TASK-EXAM-RESULT")?.status, "done");
   assert.throws(() => mergeScopedPayload({
     entity: "tasks",
     currentPayload: row("tasks").payload,
     submittedPayload: [
-      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara", "Abby"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Tampered exam title", status: "done" },
+      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Exam result task", status: "done" },
     ],
     context: access,
   }), /不能修改未分配/);
+  const reconciledExamTask = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: row("tasks").payload,
+    submittedPayload: [
+      { id: "TASK-EXAM-RESULT", studentId: "STU-ABBY", owner: "Tara", assignees: ["Tara"], watchers: ["Ops Admin"], category: "考试", ruleKey: "exam:EXM-1:results", anchorBookingId: "exam:EXM-1", title: "Reconciled exam title" },
+    ],
+    context: access,
+  }) as Array<{ id: string; title?: string }>;
+  assert.equal(reconciledExamTask.find((task) => task.id === "TASK-EXAM-RESULT")?.title, "Reconciled exam title");
+  const generatedResultTask = {
+    id: "TASK-EXAM-RESULT-NEW",
+    studentId: "STU-ABBY",
+    owner: "Tara",
+    assignees: ["Tara"],
+    watchers: ["Ops Admin"],
+    category: "考试",
+    ruleKey: "exam:EXM-1:results",
+    anchorBookingId: "exam:EXM-1",
+    title: "Generated result task",
+  };
+  const generated = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: row("tasks").payload,
+    submittedPayload: [generatedResultTask],
+    context: access,
+  }) as Array<{ id: string }>;
+  assert.equal(generated.some((task) => task.id === generatedResultTask.id), true);
+  const enrichedLegacy = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: row("tasks").payload,
+    submittedPayload: [{
+      id: "TASK-EXAM-RECALL-LEGACY",
+      studentId: "STU-ABBY",
+      owner: "Abby",
+      assignees: ["Abby"],
+      watchers: ["Ops Admin"],
+      category: "考试",
+      ruleKey: "exam:EXM-1:recall",
+      anchorBookingId: "exam:EXM-1",
+      title: "Reconciled recall task",
+    }],
+    context: access,
+  }) as Array<{ id: string; assignees?: string[] }>;
+  assert.deepEqual(enrichedLegacy.find((task) => task.id === "TASK-EXAM-RECALL-LEGACY")?.assignees, ["Abby"]);
+  for (const invalid of [
+    { ...generatedResultTask, id: "TASK-EXAM-BAD-ASSIGNEE", assignees: ["Tara", "Abby"] },
+    { ...generatedResultTask, id: "TASK-EXAM-BAD-WATCHER", watchers: ["Abby"] },
+    { ...generatedResultTask, id: "TASK-EXAM-BAD-ANCHOR", anchorBookingId: "exam:EXM-OTHER" },
+    { ...generatedResultTask, id: "TASK-EXAM-BAD-RULE", ruleKey: "exam:EXM-404:results", anchorBookingId: "exam:EXM-404" },
+    { ...generatedResultTask, id: "TASK-EXAM-BAD-OWNER", owner: "Abby", assignees: ["Abby"] },
+  ]) {
+    assert.throws(() => mergeScopedPayload({
+      entity: "tasks",
+      currentPayload: row("tasks").payload,
+      submittedPayload: [invalid],
+      context: access,
+    }), /不能新增未分配/);
+  }
   assert.throws(() => mergeScopedPayload({
     entity: "tasks",
     currentPayload: row("tasks").payload,

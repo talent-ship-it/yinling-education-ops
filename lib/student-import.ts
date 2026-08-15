@@ -4,9 +4,11 @@ import type { StudentLessonPackage } from "./student-records";
  * Pure domain logic for replacing the system student list from the latest
  * master sheet and enriching it with JWB balances.
  *
- * Matching is intentionally conservative: names are normalised only for
- * whitespace, Unicode width and case. A name shared by more than one row on
- * either side is reported as ambiguous and is never used to attach JWB data.
+ * Matching is intentionally conservative. Chinese-only names with at least
+ * two Han code points may ignore whitespace and a closed punctuation set.
+ * Mixed-script names never use that fallback. Every key must still be unique
+ * on both sides; duplicates are ambiguous and never attach JWB data. Other
+ * names are normalised only for whitespace, Unicode width and ASCII case.
  */
 
 export const MASTER_STUDENT_STATUSES = [
@@ -287,13 +289,86 @@ function importedStudentDefaults(name: string, attributes: StudentImportAttribut
   };
 }
 
-/** Conservative comparison key; it deliberately does not remove punctuation or transliterate names. */
+function isStudentImportHanCodePoint(codePoint: number) {
+  return (codePoint >= 0x3400 && codePoint <= 0x4dbf)
+    || (codePoint >= 0x4e00 && codePoint <= 0x9fff)
+    || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+    || (codePoint >= 0x20000 && codePoint <= 0x2fa1f)
+    || (codePoint >= 0x30000 && codePoint <= 0x3134f);
+}
+
+// This deliberately closed set is duplicated by the SQL write-boundary
+// helper. It covers the separators found in the two reviewed source files,
+// without treating arbitrary symbols or letters as disposable decoration.
+function isStudentImportCjkNamePunctuation(codePoint: number) {
+  return (codePoint >= 0x21 && codePoint <= 0x2f)
+    || (codePoint >= 0x3a && codePoint <= 0x40)
+    || (codePoint >= 0x5b && codePoint <= 0x60)
+    || (codePoint >= 0x7b && codePoint <= 0x7e)
+    || codePoint === 0xb7
+    || (codePoint >= 0x2010 && codePoint <= 0x2027)
+    || (codePoint >= 0x2030 && codePoint <= 0x205e)
+    || (codePoint >= 0x3001 && codePoint <= 0x3003)
+    || (codePoint >= 0x3008 && codePoint <= 0x3011)
+    || (codePoint >= 0x3014 && codePoint <= 0x301f)
+    || codePoint === 0x3030
+    || codePoint === 0x303d
+    || codePoint === 0x30fb
+    || (codePoint >= 0xfe10 && codePoint <= 0xfe19)
+    || (codePoint >= 0xfe30 && codePoint <= 0xfe52)
+    || (codePoint >= 0xfe54 && codePoint <= 0xfe61)
+    || codePoint === 0xfe63
+    || codePoint === 0xfe68;
+}
+
+/**
+ * Exact cross-runtime fallback key for Chinese-only names. NFKC is applied by
+ * cleanDisplayName; spaces and the closed punctuation set above are ignored.
+ * Any other character (including a Latin alias) fails closed.
+ */
+export function studentImportCjkNameKey(value: string) {
+  let key = "";
+  for (const character of cleanDisplayName(value)) {
+    const codePoint = character.codePointAt(0)!;
+    if (isStudentImportHanCodePoint(codePoint)) {
+      key += character;
+    } else if (codePoint !== 0x20 && !isStudentImportCjkNamePunctuation(codePoint)) {
+      return "";
+    }
+  }
+  return [...key].length >= 2 ? key : "";
+}
+
+/**
+ * Evidence-only key for the reviewed identity workflow.  A mixed display name
+ * is eligible only when it contains exactly one contiguous Han run of at
+ * least two code points.  The key is never returned to the browser and never
+ * performs an automatic match.
+ */
+export function studentImportReviewCjkKey(value: string) {
+  const runs: string[] = [];
+  let current = "";
+  for (const character of cleanDisplayName(value)) {
+    if (isStudentImportHanCodePoint(character.codePointAt(0)!)) {
+      current += character;
+      continue;
+    }
+    if ([...current].length >= 2) runs.push(current);
+    current = "";
+  }
+  if ([...current].length >= 2) runs.push(current);
+  return runs.length === 1 ? runs[0] : "";
+}
+
+/** Conservative comparison key; it never transliterates Latin-only names. */
 export function normalizeStudentImportName(value: string) {
   // Keep identity grouping deterministic across JavaScript and PostgreSQL.
   // NFKC already folds width/compatibility variants; only ASCII case folding
   // is required for the current roster contract and avoids locale-dependent
   // Unicode case mappings diverging between runtimes.
-  return cleanDisplayName(value).replace(/[A-Z]/g, (character) => character.toLowerCase());
+  const displayName = cleanDisplayName(value);
+  return studentImportCjkNameKey(displayName)
+    || displayName.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
 /**
@@ -871,7 +946,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   const linkedJwbKeys = new Set<string>();
   const linkedStudentIds = new Set<string>();
   const identityByMasterKey = new Map<string, Readonly<{
-    existing: ExistingStudentImportRecord;
+    existing?: ExistingStudentImportRecord;
     jwb?: JwbStudentImportRow;
   }>>();
   for (const [index, linkValue] of (input.identityLinks ?? []).entries()) {
@@ -910,10 +985,16 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       );
     }
     const existingMatches = existingById.get(studentId) ?? [];
-    if (existingMatches.length !== 1) {
+    const masterEntry = eligibleMasterByRawKey.get(masterKey)!;
+    const exactDerivedCreateId = studentIdForMasterSource(
+      masterEntry.row.sourceRow,
+      namespace,
+    );
+    const reviewedCreate = existingMatches.length === 0 && studentId === exactDerivedCreateId;
+    if (existingMatches.length > 1 || (existingMatches.length === 0 && !reviewedCreate)) {
       throw new StudentImportError(
         "invalid_identity_link",
-        `Identity link ${index + 1} must reference exactly one existing student`,
+        `Identity link ${index + 1} must reference one existing student or the exact derived identity`,
         linkValue.masterSourceRow,
       );
     }
@@ -929,7 +1010,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     linkedStudentIds.add(studentId);
     if (jwbKey !== undefined) linkedJwbKeys.add(jwbKey);
     identityByMasterKey.set(masterKey, {
-      existing: existingMatches[0],
+      ...(existingMatches[0] ? { existing: existingMatches[0] } : {}),
       ...(jwbMatches[0] ? { jwb: jwbMatches[0].row } : {}),
     });
   }

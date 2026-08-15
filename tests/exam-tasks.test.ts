@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   EXAM_RULE_NO_LONGER_APPLICABLE_RESULT,
+  isManagedExamTaskRecipient,
   reconcileExamTasks,
 } from "../lib/exam-tasks";
 import type { RuleBoundTask } from "../lib/ops-tasks";
@@ -70,4 +71,19 @@ test("rejects tasks outside the requested exam lifecycle", () => {
     examId: "exam-1",
     closedAt: "2026-08-13T00:00:00.000Z",
   }), /does not belong/);
+});
+
+test("recognizes a cross-owner managed exam task only for an explicit recipient", () => {
+  const resultTask = examTask("results", {
+    owner: "Tara",
+    assignees: ["Tara"],
+    watchers: ["Ops Admin"],
+  });
+
+  assert.equal(isManagedExamTaskRecipient(resultTask, "tara"), true);
+  assert.equal(isManagedExamTaskRecipient(resultTask, "Abby"), false);
+  assert.equal(isManagedExamTaskRecipient(resultTask, "Ops Admin"), true);
+  assert.equal(isManagedExamTaskRecipient({ ...resultTask, category: "资料" }, "Tara"), false);
+  assert.equal(isManagedExamTaskRecipient({ ...resultTask, anchorBookingId: "exam:other" }, "Tara"), false);
+  assert.equal(isManagedExamTaskRecipient({ ...resultTask, ruleKey: "manual:results" }, "Tara"), false);
 });

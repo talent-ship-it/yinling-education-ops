@@ -4,6 +4,7 @@ import {
   type DemoUser,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { EXAM_RULE_NO_LONGER_APPLICABLE_RESULT } from "@/lib/exam-tasks";
 import type { OpsStateRow, OpsVersionRow } from "@/lib/ops-store";
 
 type RecordValue = Record<string, unknown>;
@@ -17,6 +18,11 @@ export type OpsAccessContext = {
   teacher: boolean;
   studentIds: Set<string>;
   activeStudentIds: Set<string>;
+  /** Server-only scope facts used to authorize a managed task without exposing its student row. */
+  allActiveStudentIds: Set<string>;
+  studentOwnerById: Map<string, string>;
+  studentPlannerById: Map<string, string>;
+  studentExamIdsById: Map<string, Set<string>>;
   teacherIds: Set<string>;
 };
 
@@ -86,16 +92,102 @@ function taskAssignedTo(value: RecordValue, actor: string) {
     || taskRecipients(value, "assignees").some((recipient) => samePerson(recipient, actor));
 }
 
-function isManagedExamTask(value: RecordValue) {
+function managedExamTaskIdentity(value: RecordValue) {
   if (value.category !== "考试" || typeof value.ruleKey !== "string" || typeof value.anchorBookingId !== "string") return false;
   const match = value.ruleKey.match(/^exam:([^:]+):(care|recall|results)$/);
-  return Boolean(match && value.anchorBookingId === `exam:${match[1]}`);
+  if (!match || value.anchorBookingId !== `exam:${match[1]}`) return false;
+  return { examId: match[1], suffix: match[2] as "care" | "recall" | "results" };
 }
 
-function managedExamAssigneeChangeAllowed(existing: RecordValue, replacement: RecordValue, actor: string) {
-  if (!isManagedExamTask(existing) || !isManagedExamTask(replacement)) return false;
+function isConfiguredRecipient(value: string | undefined) {
+  const recipient = value?.trim();
+  return Boolean(recipient && !/^(?:待分配|待确认|未知|角色待配置[:：])/.test(recipient));
+}
+
+function managedExamTaskBelongsToKnownExam(context: OpsAccessContext, value: RecordValue) {
+  const identity = managedExamTaskIdentity(value);
+  const targetStudentId = rowStudentId(value);
+  return Boolean(identity
+    && targetStudentId
+    && context.studentExamIdsById.get(targetStudentId)?.has(identity.examId));
+}
+
+/**
+ * The elevated task path is deliberately narrower than ordinary task access:
+ * the rule/anchor must identify a real exam on that student and recipients are
+ * derived only from the student's owner/planner fields.
+ */
+function managedExamTaskMatchesStudent(context: OpsAccessContext, value: RecordValue) {
+  const identity = managedExamTaskIdentity(value);
+  const targetStudentId = rowStudentId(value);
+  if (!identity || !managedExamTaskBelongsToKnownExam(context, value)) return false;
+  const expectedOwner = identity.suffix === "results"
+    ? context.studentPlannerById.get(targetStudentId)
+    : context.studentOwnerById.get(targetStudentId);
+  if (!isConfiguredRecipient(expectedOwner) || !samePerson(value.owner, expectedOwner!)) return false;
+  const assignees = taskRecipients(value, "assignees");
+  const watchers = taskRecipients(value, "watchers");
+  return assignees.length === 1
+    && samePerson(assignees[0], expectedOwner!)
+    && watchers.length === 1
+    && samePerson(watchers[0], DEMO_LIMITED_ADMIN_USER);
+}
+
+function sameManagedExamTask(existing: RecordValue, replacement: RecordValue) {
+  const before = managedExamTaskIdentity(existing);
+  const after = managedExamTaskIdentity(replacement);
+  return Boolean(before && after
+    && before.examId === after.examId
+    && before.suffix === after.suffix
+    && rowId(existing) === rowId(replacement)
+    && rowStudentId(existing) === rowStudentId(replacement));
+}
+
+const MANAGED_EXAM_COMPLETION_FIELDS = ["status", "tone", "closedAt", "result"] as const;
+
+function managedExamCompletion(value: RecordValue) {
+  return Object.fromEntries(MANAGED_EXAM_COMPLETION_FIELDS.map((field) => [field, value[field]]));
+}
+
+function managedExamCoordinatorCompletionAllowed(existing: RecordValue, replacement: RecordValue) {
+  if (JSON.stringify(managedExamCompletion(existing)) === JSON.stringify(managedExamCompletion(replacement))) return true;
+  const closesAutomatically = replacement.status === "done"
+    && replacement.result === EXAM_RULE_NO_LONGER_APPLICABLE_RESULT
+    && typeof replacement.closedAt === "string";
+  const reopensAutomaticClosure = existing.status === "done"
+    && existing.result === EXAM_RULE_NO_LONGER_APPLICABLE_RESULT
+    && replacement.status === "waiting"
+    && replacement.result === undefined
+    && replacement.closedAt === undefined;
+  return closesAutomatically || reopensAutomaticClosure;
+}
+
+function managedExamCoordinatorChangeAllowed(
+  existing: RecordValue,
+  replacement: RecordValue,
+  context: OpsAccessContext,
+) {
+  const existingIdentity = managedExamTaskIdentity(existing);
+  return Boolean(existingIdentity
+    && sameManagedExamTask(existing, replacement)
+    && canOperateStudent(context, rowStudentId(existing))
+    && context.studentExamIdsById.get(rowStudentId(existing))?.has(existingIdentity.examId)
+    && managedExamTaskMatchesStudent(context, replacement)
+    && managedExamCoordinatorCompletionAllowed(existing, replacement));
+}
+
+function managedExamAssigneeChangeAllowed(
+  existing: RecordValue,
+  replacement: RecordValue,
+  context: OpsAccessContext,
+) {
+  if (!sameManagedExamTask(existing, replacement)
+    || !managedExamTaskMatchesStudent(context, existing)
+    || !managedExamTaskMatchesStudent(context, replacement)
+    || !context.allActiveStudentIds.has(rowStudentId(existing))) return false;
+  const actor = context.actor;
   if (!taskAssignedTo(existing, actor) || !taskAssignedTo(replacement, actor)) return false;
-  const mutable = new Set(["status", "tone", "closedAt", "result"]);
+  const mutable = new Set<string>(MANAGED_EXAM_COMPLETION_FIELDS);
   const stable = (value: RecordValue) => Object.fromEntries(
     Object.entries(value).filter(([key]) => !mutable.has(key)),
   );
@@ -147,7 +239,41 @@ export function buildOpsAccessContext(
       .filter(Boolean),
   );
 
-  return { actor, role, fullAdmin, limitedAdmin, staff, teacher, studentIds, activeStudentIds, teacherIds };
+  const allActiveStudentIds = new Set(
+    students
+      .filter((student) => student.importArchived !== true)
+      .map(rowId)
+      .filter(Boolean),
+  );
+  const studentOwnerById = new Map<string, string>();
+  const studentPlannerById = new Map<string, string>();
+  const studentExamIdsById = new Map<string, Set<string>>();
+  for (const student of students) {
+    const studentId = rowId(student);
+    if (!studentId) continue;
+    studentOwnerById.set(studentId, String(student.owner ?? ""));
+    studentPlannerById.set(studentId, String(student.planner ?? ""));
+    studentExamIdsById.set(studentId, new Set((Array.isArray(student.exams) ? student.exams : [])
+      .filter(isRecord)
+      .map((exam) => rowId(exam))
+      .filter(Boolean)));
+  }
+
+  return {
+    actor,
+    role,
+    fullAdmin,
+    limitedAdmin,
+    staff,
+    teacher,
+    studentIds,
+    activeStudentIds,
+    allActiveStudentIds,
+    studentOwnerById,
+    studentPlannerById,
+    studentExamIdsById,
+    teacherIds,
+  };
 }
 
 /**
@@ -195,6 +321,10 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   if (entity === "teachers") return context.staff || (context.teacher && context.teacherIds.has(rowId(value)));
   if (entity === "students") return canAccessStudent(context, rowId(value));
   if (entity === "tasks") {
+    if (context.staff && managedExamTaskBelongsToKnownExam(context, value)) {
+      if (canAccessStudent(context, rowStudentId(value))) return true;
+      return managedExamTaskMatchesStudent(context, value) && taskAssignedTo(value, context.actor);
+    }
     if (!canAccessStudent(context, rowStudentId(value))) return false;
     if (context.teacher) return taskExplicitlyVisibleToTeacher(value, context.actor);
     return context.staff && taskInvolves(value, context.actor);
@@ -274,13 +404,14 @@ export function mergeScopedPayload(input: {
     if (!replacement) return existing;
     const unchanged = JSON.stringify(existing) === JSON.stringify(replacement);
     if (unchanged) return existing;
-    const managedExamAssigneeUpdate = entity === "tasks"
-      && context.staff
-      && canOperateStudent(context, rowStudentId(existing))
-      && canOperateStudent(context, rowStudentId(replacement))
-      && !samePerson(existing.owner, context.actor)
-      && managedExamAssigneeChangeAllowed(existing, replacement, context.actor);
-    if ((!canModifyRecord(context, entity, existing) || !canModifyRecord(context, entity, replacement)) && !managedExamAssigneeUpdate) {
+    const touchesManagedExamTask = entity === "tasks"
+      && Boolean(managedExamTaskIdentity(existing) || managedExamTaskIdentity(replacement));
+    if (touchesManagedExamTask && context.staff) {
+      if (managedExamCoordinatorChangeAllowed(existing, replacement, context)
+        || managedExamAssigneeChangeAllowed(existing, replacement, context)) return replacement;
+      throw new OpsAccessError("不能修改未分配给当前账号的资料。");
+    }
+    if (!canModifyRecord(context, entity, existing) || !canModifyRecord(context, entity, replacement)) {
       throw new OpsAccessError("不能修改未分配给当前账号的资料。");
     }
     return replacement;
@@ -288,7 +419,13 @@ export function mergeScopedPayload(input: {
 
   for (const replacement of submitted) {
     if (currentById.has(rowId(replacement))) continue;
-    if (entity === "students" || !canModifyRecord(context, entity, replacement)) {
+    const managedExamIdentity = entity === "tasks" && managedExamTaskIdentity(replacement);
+    const managedExamCreate = entity === "tasks"
+      && context.staff
+      && canOperateStudent(context, rowStudentId(replacement))
+      && managedExamTaskMatchesStudent(context, replacement);
+    if (entity === "students"
+      || (managedExamIdentity ? !managedExamCreate : !canModifyRecord(context, entity, replacement))) {
       throw new OpsAccessError("不能新增未分配给当前账号的资料。");
     }
     merged.push(replacement);

@@ -1,6 +1,11 @@
 import { meetingIdForOccurrenceValue } from "./bbb-analytics";
+import {
+  BookingCapacityServiceError,
+  futureReservedPackageHours,
+} from "./booking-capacity-service";
 import type { OpsAccessContext } from "./ops-access";
 import type { OpsStateRow } from "./ops-store";
+import { DEFAULT_TEACHING_CONTROL_WATCHER } from "./ops-tasks";
 import {
   expandLessonOccurrences,
   type LegacyLessonSeries,
@@ -8,6 +13,11 @@ import {
   type LessonOccurrenceOverride,
 } from "./lesson-occurrences";
 import {
+  getLessonPackageBalance,
+  type StudentLessonPackage,
+} from "./student-records";
+import {
+  assertValidTeacherAvailability,
   expandTeacherAvailability,
   type TeacherAvailabilityWindow,
 } from "./teacher-availability";
@@ -23,6 +33,8 @@ const EDITABLE_OCCURRENCE_FIELDS = new Set([
   "date",
   "start",
   "durationMinutes",
+  // Older clients materialize the already-effective teacher on every edit.
+  // The semantic comparison in assertOccurrenceEdit permits only that no-op.
   "teacherId",
   "classroom",
 ]);
@@ -31,7 +43,6 @@ const OCCURRENCE_SCHEDULE_FIELDS = new Set([
   "date",
   "start",
   "durationMinutes",
-  "teacherId",
 ]);
 const SETTLEMENT_FIELDS = new Set([
   "settledAt",
@@ -72,6 +83,14 @@ const ARCHIVED_STUDENT_REFERENCE_ENTITIES = new Set([
 ]);
 const ATOMIC_ATTACHMENT_FILE_ID = /^(?:FU|REPORT)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ATOMIC_ATTACHMENT_SOURCE = /^\/api\/fu-attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TEACHER_MANUAL_EDIT_FIELDS = new Set([
+  "acceptsStudents",
+  "availabilityStatus",
+  "availabilityUpdated",
+  "availabilityWindows",
+  "newStudentCapacity",
+]);
+const TEACHER_AVAILABILITY_STATUSES = new Set(["可接新生", "暂停接新", "待确认"]);
 
 export class OpsStateTransitionError extends Error {
   constructor(
@@ -393,7 +412,7 @@ function assertOccurrenceEdit(input: {
   const occurrenceId = requiredText(input.nextOverride?.occurrenceId ?? input.currentOverride?.occurrenceId, "occurrenceId");
   const changed = changedFields(input.currentOverride, input.nextOverride);
   if (changed.some((field) => !EDITABLE_OCCURRENCE_FIELDS.has(field))) {
-    forbidden("单节课程只能修改时间、老师、取消状态或在线教室资料。");
+    forbidden("单节课程只能修改时间、取消状态或在线教室资料。");
   }
   if (changed.some((field) => SETTLEMENT_FIELDS.has(field))) {
     forbidden("课次结算资料只能由专用结算流程修改。");
@@ -415,6 +434,11 @@ function assertOccurrenceEdit(input: {
   const nextOccurrence = expandBooking(input.nextBooking, sourceDate, sourceDate)
     .find((item) => item.occurrenceId === occurrenceId);
   if (!nextOccurrence) forbidden("修改后的具体课次不存在。");
+  const currentTeacherId = requiredText(currentOccurrence.teacherId, "currentOccurrence.teacherId");
+  const nextTeacherId = requiredText(nextOccurrence.teacherId, "nextOccurrence.teacherId");
+  if (currentTeacherId !== nextTeacherId) {
+    forbidden("单节课程不能通过通用保存更换老师，请使用代课或永久换老师专用流程。");
+  }
   if (!["confirmed", "cancelled"].includes(nextOccurrence.status)) {
     forbidden("通用单节修改只允许确认或取消。");
   }
@@ -427,7 +451,7 @@ function assertOccurrenceEdit(input: {
   const scheduleChanged = changed.some((field) => OCCURRENCE_SCHEDULE_FIELDS.has(field));
   if (!scheduleChanged || nextOccurrence.status === "cancelled") return;
   if (![60, 90, 120].includes(nextOccurrence.scheduledDurationMinutes)) invalid("单节课程时长只能是 60、90 或 120 分钟。");
-  const teacherId = requiredText(nextOccurrence.teacherId, "occurrence.teacherId");
+  const teacherId = nextTeacherId;
   requiredText(nextOccurrence.studentId, "occurrence.studentId");
   const teacher = input.teachers.find((candidate) => candidate.id === teacherId);
   if (!teacher) forbidden("所选老师不存在。");
@@ -438,11 +462,63 @@ function assertOccurrenceEdit(input: {
   assertNoOccurrenceConflict(nextOccurrence, input.nextBooking, input.bookings);
 }
 
+function assertPackageReservationGrowth(input: {
+  currentBookings: readonly RecordValue[];
+  nextBookings: readonly RecordValue[];
+  changedPairs: ReadonlySet<string>;
+  rows: readonly OpsStateRow[];
+  now: Date;
+}) {
+  if (!Number.isFinite(input.now.getTime())) invalid("排课校验时间不正确。");
+  if (!input.changedPairs.size) return;
+  const students = byId(rowsFor(input.rows, "students"));
+  for (const pair of input.changedPairs) {
+    const [studentId, packageId] = pair.split("\u0000");
+    const student = students.get(studentId);
+    if (!student) forbidden("排课关联的学生不存在。");
+    const lessonPackages = Array.isArray(student.lessonPackages)
+      ? student.lessonPackages.filter(isRecord)
+      : [];
+    const lessonPackage = lessonPackages.find((candidate) => candidate.id === packageId);
+    if (!lessonPackage) forbidden("排课关联的共享课包不存在。");
+
+    let beforeReserved: number;
+    let afterReserved: number;
+    let available: number;
+    try {
+      beforeReserved = futureReservedPackageHours({
+        bookings: input.currentBookings,
+        studentId,
+        packageId,
+        now: input.now,
+      });
+      afterReserved = futureReservedPackageHours({
+        bookings: input.nextBookings,
+        studentId,
+        packageId,
+        now: input.now,
+      });
+      available = getLessonPackageBalance(lessonPackage as StudentLessonPackage).remainingHours;
+    } catch (error) {
+      if (error instanceof BookingCapacityServiceError) invalid(error.message);
+      invalid(error instanceof Error ? `共享课包资料无效：${error.message}` : "共享课包资料无效。");
+    }
+
+    // Existing over-reservation must not make a reduction impossible to save.
+    // Only a generic occurrence edit that increases the future reservation is
+    // responsible for proving that the new total still fits the package.
+    if (afterReserved > beforeReserved + 0.000001 && afterReserved > available + 0.000001) {
+      forbidden(`共享课包未来排课共 ${afterReserved} 小时，超过剩余 ${available} 小时。`);
+    }
+  }
+}
+
 function assertBookingsTransition(input: {
   currentPayload: unknown;
   nextPayload: unknown;
   rows: readonly OpsStateRow[];
   context: OpsAccessContext;
+  now?: Date;
 }) {
   const current = records(input.currentPayload, "bookings");
   const next = records(input.nextPayload, "bookings");
@@ -452,6 +528,7 @@ function assertBookingsTransition(input: {
     forbidden("新增、删除或整组修改排课必须使用专用排课流程。");
   }
   const teachers = rowsFor(input.rows, "teachers");
+  const changedReservationPairs = new Set<string>();
   let changedOccurrenceCount = 0;
   for (const [id, currentBooking] of currentById) {
     const nextBooking = nextById.get(id)!;
@@ -486,8 +563,22 @@ function assertBookingsTransition(input: {
         teachers,
         context: input.context,
       });
+      if (changedFields(before, after).some((field) => OCCURRENCE_SCHEDULE_FIELDS.has(field))) {
+        const studentId = requiredText(nextBooking.studentId, "booking.studentId");
+        const packageId = typeof nextBooking.packageId === "string" ? nextBooking.packageId.trim() : "";
+        if (nextBooking.kind !== "试听" && packageId) {
+          changedReservationPairs.add(`${studentId}\u0000${packageId}`);
+        }
+      }
     }
   }
+  assertPackageReservationGrowth({
+    currentBookings: current,
+    nextBookings: next,
+    changedPairs: changedReservationPairs,
+    rows: input.rows,
+    now: input.now ? new Date(input.now.getTime()) : new Date(),
+  });
 }
 
 function assertOperationsTransition(currentPayload: unknown, nextPayload: unknown, rows: readonly OpsStateRow[]) {
@@ -506,6 +597,9 @@ function assertOperationsTransition(currentPayload: unknown, nextPayload: unknow
     const existing = currentById.get(id);
     if (!existing) {
       if (operation.status !== "待处理") forbidden("新异常记录必须从待处理状态开始。");
+      if (operation.type === "老师离职") {
+        forbidden("老师离职记录必须使用专用原子创建流程。");
+      }
       if ([...OPERATION_CONFIRMATION_FIELDS].some((field) => Object.hasOwn(operation, field))) {
         forbidden("异常最终确认资料只能由专用确认流程生成。");
       }
@@ -535,26 +629,99 @@ function assertOperationsTransition(currentPayload: unknown, nextPayload: unknow
   }
 }
 
+function assertTaskWatchers(task: RecordValue) {
+  if (!Array.isArray(task.watchers)) invalid("每个任务都必须有合法的关注人清单。");
+  const watchers = task.watchers as unknown[];
+  if (!watchers.length || !watchers.every((watcher) => typeof watcher === "string"
+    && watcher.length <= 120
+    && watcher.trim()
+    && watcher === watcher.trim())) {
+    invalid("任务关注人必须是非空、已去除首尾空格的账号名称。");
+  }
+  const normalized = watchers.map((watcher) => (watcher as string).toLocaleLowerCase());
+  if (new Set(normalized).size !== normalized.length) invalid("任务关注人不能重复。");
+  if (!watchers.includes(DEFAULT_TEACHING_CONTROL_WATCHER)) {
+    forbidden(`每个任务都必须保留 ${DEFAULT_TEACHING_CONTROL_WATCHER} 关注人。`);
+  }
+}
+
+function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
+  const current = byId(records(currentPayload, "tasks"));
+  const next = records(nextPayload, "tasks");
+  const managedExamTask = (task: RecordValue) => task.category === "考试"
+    && typeof task.ruleKey === "string"
+    && /^exam:[^:]+:(care|recall|results)$/.test(task.ruleKey)
+    && task.anchorBookingId === `exam:${task.ruleKey.split(":")[1]}`;
+  const nextIds = new Set(next.map((task) => requiredText(task.id, "task.id")));
+  for (const [taskId, task] of current) {
+    if (managedExamTask(task) && !nextIds.has(taskId)) {
+      forbidden("考试提醒只能由专用考试流程删除或关闭。");
+    }
+  }
+  for (const task of next) {
+    const existing = current.get(requiredText(task.id, "task.id"));
+    if ((!existing && managedExamTask(task))
+      || (existing && !same(existing, task) && (managedExamTask(existing) || managedExamTask(task)))) {
+      forbidden("考试提醒只能由专用考试流程创建、完成或恢复。");
+    }
+    // This narrow no-op exception lets application code and the one-time
+    // watcher backfill be deployed in either order. Any new or edited task is
+    // immediately held to the canonical recipient contract.
+    if (existing && same(existing, task)) continue;
+    assertTaskWatchers(task);
+  }
+}
+
 function assertTeachersTransition(currentPayload: unknown, nextPayload: unknown) {
   const current = records(currentPayload, "teachers");
   const next = records(nextPayload, "teachers");
   const currentById = byId(current);
   const nextById = byId(next);
-  if ([...currentById.keys()].some((id) => !nextById.has(id))) {
-    forbidden("老师档案不能通过通用保存删除。");
+  if (currentById.size !== nextById.size
+    || [...currentById.keys()].some((id) => !nextById.has(id))) {
+    forbidden("新增或删除老师必须使用正式教师导入流程。");
   }
   for (const teacher of next) {
-    const existing = currentById.get(requiredText(teacher.id, "teacher.id"));
+    const teacherId = requiredText(teacher.id, "teacher.id");
+    const existing = currentById.get(teacherId)!;
+    const changed = changedFields(existing, teacher);
+    if (changed.some((field) => !TEACHER_MANUAL_EDIT_FIELDS.has(field))) {
+      forbidden("老师身份、腾讯科目、导入来源及其他非人工审核字段不能通过通用保存修改。");
+    }
     const assignments = teacher.capacityAssignments ?? [];
     if (!Array.isArray(assignments) || !assignments.every((value) => typeof value === "string" && value.trim())) {
       invalid("老师容量占用资料格式不正确。");
     }
-    if (existing) {
-      if (!same(existing.capacityAssignments ?? [], assignments)) {
-        forbidden("老师容量占用只能由专用排课流程更新。");
+    if (new Set(assignments).size !== assignments.length) invalid("老师容量占用不能重复。");
+    if (!same(existing.capacityAssignments ?? [], assignments)) {
+      forbidden("老师容量占用只能由专用排课流程更新。");
+    }
+    if (typeof teacher.acceptsStudents !== "boolean") {
+      invalid("老师接新状态必须是布尔值。");
+    }
+    const capacity = teacher.newStudentCapacity;
+    if (capacity !== undefined && (!Number.isSafeInteger(capacity) || (capacity as number) < 0)) {
+      invalid("老师可接新生数量必须是非负安全整数。");
+    }
+    if (capacity === 0 && teacher.acceptsStudents) {
+      forbidden("可接新生数量为 0 时不能开放接新。");
+    }
+    if (teacher.availabilityStatus !== undefined
+      && !TEACHER_AVAILABILITY_STATUSES.has(String(teacher.availabilityStatus))) {
+      invalid("老师 AVA 状态不正确。");
+    }
+    if (teacher.availabilityWindows !== undefined) {
+      if (!Array.isArray(teacher.availabilityWindows)) invalid("老师 AVA 时段格式不正确。");
+      try {
+        const windows = teacher.availabilityWindows as TeacherAvailabilityWindow[];
+        assertValidTeacherAvailability(windows);
+        if (windows.some((window) => window.teacherId !== teacherId)) {
+          forbidden("老师 AVA 时段不能引用其他老师。");
+        }
+      } catch (error) {
+        if (error instanceof OpsStateTransitionError) throw error;
+        invalid(error instanceof Error ? `老师 AVA 时段无效：${error.message}` : "老师 AVA 时段无效。");
       }
-    } else if (assignments.length) {
-      forbidden("新增老师不能预写容量占用。");
     }
   }
 }
@@ -633,6 +800,13 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
     }
     if (!existing && ledger(student).length) {
       forbidden("新增学生不能预写扣课时流水。");
+    }
+    if (existing && !same(existing.exams ?? [], student.exams ?? [])) {
+      forbidden("学生考试记录只能由专用考试流程更新。");
+    }
+    if (!existing && student.exams !== undefined
+      && (!Array.isArray(student.exams) || student.exams.length)) {
+      forbidden("新增学生不能预写考试记录。");
     }
     const currentPackages = byId(existing ? packages(existing) : []);
     const nextPackages = byId(packages(student));
@@ -719,6 +893,8 @@ export function assertOpsStateTransition(input: {
   nextPayload: unknown;
   rows: readonly OpsStateRow[];
   context: OpsAccessContext;
+  /** One captured clock value for deterministic future-reservation checks. */
+  now?: Date;
 }) {
   assertArchivedStudentReferencesReadOnly(input);
   switch (input.entity) {
@@ -727,6 +903,9 @@ export function assertOpsStateTransition(input: {
       return;
     case "operations":
       assertOperationsTransition(input.currentPayload, input.nextPayload, input.rows);
+      return;
+    case "tasks":
+      assertTasksTransition(input.currentPayload, input.nextPayload);
       return;
     case "teachers":
       assertTeachersTransition(input.currentPayload, input.nextPayload);

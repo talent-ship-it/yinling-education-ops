@@ -18,12 +18,12 @@ export type DisplayPreferences = {
 export const displayTimezoneOptions = [
   { id: "Australia/Melbourne", zh: "墨尔本", en: "Melbourne" },
   { id: "Australia/Adelaide", zh: "阿德莱德", en: "Adelaide" },
-  { id: "Australia/Sydney", zh: "悉尼", en: "Sydney" },
+  { id: "Australia/Sydney", zh: "悉尼 / 堪培拉", en: "Sydney / Canberra" },
   { id: "Australia/Hobart", zh: "霍巴特", en: "Hobart" },
   { id: "Australia/Brisbane", zh: "布里斯班", en: "Brisbane" },
   { id: "Australia/Perth", zh: "珀斯", en: "Perth" },
   { id: "Pacific/Auckland", zh: "新西兰", en: "New Zealand" },
-  { id: "Asia/Shanghai", zh: "中国", en: "China" },
+  { id: "Asia/Shanghai", zh: "北京时间（中国）", en: "Beijing time (China)" },
   { id: "America/Argentina/Buenos_Aires", zh: "阿根廷", en: "Argentina" },
   { id: "Europe/Sarajevo", zh: "波斯尼亚", en: "Bosnia" },
 ] as const;

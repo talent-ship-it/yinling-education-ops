@@ -81,8 +81,11 @@ import {
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
+  closeTrialEscalationTasks,
   generateTrialBookingTasks,
+  generateTrialEscalationTasks,
   generateTrialRequestTasks,
+  isTrialEscalationTaskRule,
   linkTrialRequestTasksToBooking,
   closeTasksForBooking,
   reconcileTrialBookingTasks,
@@ -116,17 +119,12 @@ import {
   addLessonPackageHours,
   appendStudentFollowUp,
   bindSubjectToLessonPackage,
-  buildExamTaskDefinitions,
   createStudentLessonPackage,
-  estimateExamResultDate,
   getLatestStudentFollowUp,
   getLessonPackageBalance,
   mapLessonPackageDepletionEstimates,
   normalizeRenewalBusinessStatus,
-  setExamFollowUpStepState,
-  sortStudentExams,
   type LessonHourLedgerEntry,
-  type ExamFollowUpStepState,
   type FuAttachmentCategory,
   type RenewalStatus as RenewalBusinessStatus,
   type StudentExamRecord,
@@ -144,7 +142,7 @@ import {
   type TeacherAvailabilityEditAction,
   type TeacherAvailabilitySubmissionReview,
 } from "@/app/teacher-availability-panel";
-import { reconcileRenewalTasks, renewalStatusForPackage, type RenewalPackageProjection } from "@/lib/renewal-tasks";
+import { buildRenewalDateNote, reconcileRenewalTasks, renewalProjectionStateForStudent, renewalStatusForPackage, renewalTaskAnchor, type RenewalPackageProjection } from "@/lib/renewal-tasks";
 import { updateBookingOccurrence } from "@/lib/booking-occurrence-updates";
 import {
   earliestLessonOccurrenceTargetDate,
@@ -153,7 +151,13 @@ import {
   type LessonOccurrenceOverride,
   type LessonOccurrenceStatus,
 } from "@/lib/lesson-occurrences";
-import { reconcileExamTasks } from "@/lib/exam-tasks";
+import { isManagedExamTaskRecipient } from "@/lib/exam-tasks";
+import {
+  parsePendingExamSubmission,
+  pendingExamMatchesDraft,
+  pendingExamRecoveryCommand,
+  type PendingExamSubmission,
+} from "@/lib/exam-submission-pending";
 import {
   scheduleMonthWindow,
   shiftScheduleMonth,
@@ -169,11 +173,38 @@ import {
   editAvailabilityDate,
   expandTeacherAvailability,
   normalizeLegacyAvailability,
+  projectTeacherSchedulingReadiness,
   promoteLegacyAvailabilityForMonth,
   type AvailabilitySlotInput,
   type TeacherAvailabilityWindow,
   type TeacherAvailabilitySubmission,
 } from "@/lib/teacher-availability";
+
+const teacherSubjectOptions = [
+  "Local English",
+  "ABC华裔English",
+  "Maths&Science",
+  "VCE数学科学",
+  "VCE其他",
+  "奖学金",
+  "AEAS",
+  "青少英语",
+  "QCE",
+  "HSC",
+  "WACE",
+  "SACE",
+  "AMC数学竞赛",
+  "科学竞赛",
+  "雅思PTE",
+  "IB",
+  "Engineering",
+  "商科",
+  "IT",
+  "理科",
+  "文科（含论文辅导）",
+  "教育学",
+  "其他科目",
+] as const;
 
 type Section =
   | "dashboard"
@@ -195,7 +226,7 @@ type Section =
   | "audit";
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentReport" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "bookingOccurrence" | "temporaryClassroom" | "lessonSettlement" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentReport" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "bookingOccurrence" | "temporaryClassroom" | "lessonSettlement" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherAvailabilitySubmit" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -277,6 +308,10 @@ type Teacher = {
   availabilityTimezone?: string;
   availabilityStatus?: "可接新生" | "暂停接新" | "待确认";
   availabilityUpdated?: string;
+  /** Verbatim Tencent roster evidence. It is never parsed into structured AVA automatically. */
+  availabilitySourceText?: string;
+  /** Verbatim Tencent roster evidence. It is reviewed before capacity is configured. */
+  capacitySourceText?: string;
   availabilityWindows?: TeacherAvailabilityWindow[];
   /** Historical weekly template only. It is never monthly confirmation. */
   availabilitySlots?: AvailabilitySlot[];
@@ -305,6 +340,7 @@ type Booking = {
   recurring?: boolean;
   repeatCount?: number;
   course?: string;
+  teacherSubjectId?: string;
   source?: string;
   sourceLessonId?: string;
   sourceStudentName?: string;
@@ -555,6 +591,12 @@ type StudentImportPreview = {
     master: { sourceId: string; revision: string; rowCount: number };
     jwb: { sourceId: string; revision: string; rowCount: number };
   };
+  identityCoverage: {
+    requiredMasterRows: number;
+    matchedRequiredMasterRows: number;
+    missingRequiredMasterRows: number;
+    ready: boolean;
+  };
   summary: {
     insert: number;
     update: number;
@@ -569,7 +611,7 @@ type StudentImportPreview = {
   };
   excluded: Array<{ sourceRow: string | number; name: string; reason: string }>;
   unmatched: Array<{ source: "master" | "jwb"; sourceRow: string | number; name: string; reason: string }>;
-  ambiguous: Array<{ kind: string; normalizedName?: string; masterSourceRows: Array<string | number>; jwbSourceRows: Array<string | number>; existingStudentIds: string[] }>;
+  ambiguous: Array<{ kind: string; masterSourceRows: Array<string | number>; jwbSourceRows: Array<string | number>; existingStudentCount: number }>;
   masterDuplicateResolutions: Array<{
     candidateKey: string;
     sourceRows: Array<{
@@ -588,6 +630,37 @@ type StudentImportPreview = {
 };
 
 type StudentImportSourceKind = "master" | "jwb";
+
+type StudentIdentityReviewCandidate = {
+  candidateKey: string;
+  master: { name: string; sourceRow: string | number };
+  jwb: { name: string; sourceRow: string | number };
+  existing?: { name: string; sourceRow?: string | number };
+  existingMatchCount: number;
+  options: Array<{
+    resolutionKey: string;
+    decision: "merge" | "create";
+    label: string;
+  }>;
+  blockedReason?: "existing_identity_ambiguous" | "identity_already_used" | "derived_identity_conflict";
+};
+
+type StudentIdentityManualReview = {
+  masters: Array<{
+    token: string;
+    name: string;
+    sourceRow: string | number;
+    status: "在读" | "活跃 + 有课时" | "不活跃 + 有课时" | "在读 + 加课待排";
+  }>;
+  jwb: Array<{ token: string; name: string; sourceRow: string | number }>;
+  existing: Array<{
+    token: string;
+    name: string;
+    sourceRow?: string | number;
+    status?: string;
+    segment?: string;
+  }>;
+};
 
 type StudentImportSourceIngestResult = {
   sourceKind: StudentImportSourceKind;
@@ -849,6 +922,75 @@ function mergeConcurrentPayload<T>(committed: T, local: T, remote: T) {
   return { value: value as T, conflicts };
 }
 
+type PendingExamFollowUp = Readonly<{
+  action: "complete" | "undo";
+  taskId: string;
+  commandKey: string;
+  completionCommandKey?: string;
+}>;
+
+function examSubmissionSessionKey(actor: string) {
+  return `insider-leads:exam-submission:${encodeURIComponent(actor.trim().toLocaleLowerCase())}`;
+}
+
+const BROWSER_UUID_V4_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
+function readPendingExamSubmission(actor: string): PendingExamSubmission | null {
+  try {
+    return parsePendingExamSubmission(
+      JSON.parse(window.sessionStorage.getItem(examSubmissionSessionKey(actor)) ?? "null"),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writePendingExamSubmission(actor: string, value: PendingExamSubmission) {
+  try {
+    window.sessionStorage.setItem(examSubmissionSessionKey(actor), JSON.stringify(value));
+  } catch {
+    // A disabled storage API only removes cross-refresh recovery; the in-memory
+    // command reference still protects retries within this page lifetime.
+  }
+}
+
+function clearPendingExamSubmission(actor: string) {
+  try { window.sessionStorage.removeItem(examSubmissionSessionKey(actor)); } catch { /* no-op */ }
+}
+
+function examFollowUpSessionKey(actor: string, action: "complete" | "undo", taskId: string) {
+  return `insider-leads:exam-follow-up:${encodeURIComponent(actor.trim().toLocaleLowerCase())}:${action}:${encodeURIComponent(taskId)}`;
+}
+
+function readPendingExamFollowUp(actor: string, action: "complete" | "undo", taskId: string) {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(examFollowUpSessionKey(actor, action, taskId)) ?? "null") as Partial<PendingExamFollowUp> | null;
+    if (!value
+      || value.action !== action
+      || value.taskId !== taskId
+      || !new RegExp(`^exam-follow-up:${BROWSER_UUID_V4_PATTERN}$`).test(String(value.commandKey ?? ""))) return null;
+    if (action === "undo" && !new RegExp(`^exam-follow-up:${BROWSER_UUID_V4_PATTERN}$`).test(String(value.completionCommandKey ?? ""))) return null;
+    return value as PendingExamFollowUp;
+  } catch {
+    return null;
+  }
+}
+
+function writePendingExamFollowUp(actor: string, value: PendingExamFollowUp) {
+  try {
+    window.sessionStorage.setItem(
+      examFollowUpSessionKey(actor, value.action, value.taskId),
+      JSON.stringify(value),
+    );
+  } catch {
+    // The in-memory map below still provides same-page lost-response replay.
+  }
+}
+
+function clearPendingExamFollowUp(actor: string, action: "complete" | "undo", taskId: string) {
+  try { window.sessionStorage.removeItem(examFollowUpSessionKey(actor, action, taskId)); } catch { /* no-op */ }
+}
+
 function useSharedState<T>(
   entity: string,
   initialValue: T,
@@ -856,6 +998,7 @@ function useSharedState<T>(
   actor: string,
   onSync: (state: SharedSyncState, message?: string) => void,
   readOnly = false,
+  scopeVersions?: Readonly<Record<string, number>>,
 ) {
   const [value, setValue] = useState<T>(initialValue);
   const [version, setVersion] = useState(initialVersion);
@@ -866,6 +1009,7 @@ function useSharedState<T>(
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const committedRef = useRef(JSON.stringify(initialValue));
   const remoteGenerationRef = useRef(0);
+  const scopeVersionsKey = JSON.stringify(scopeVersions ?? null);
 
   useEffect(() => {
     readyRef.current = true;
@@ -889,12 +1033,18 @@ function useSharedState<T>(
       const payload = value;
       const payloadSerialized = serialized;
       const scheduledGeneration = remoteGenerationRef.current;
+      const scheduledScopeVersions = JSON.parse(scopeVersionsKey) as Record<string, number> | null;
       queueRef.current = queueRef.current.then(async () => {
         if (scheduledGeneration !== remoteGenerationRef.current) return;
         const response = await fetch("/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entity, payload, expectedVersion: versionRef.current }),
+          body: JSON.stringify({
+            entity,
+            payload,
+            expectedVersion: versionRef.current,
+            ...(scheduledScopeVersions ? { scopeVersions: scheduledScopeVersions } : {}),
+          }),
         });
         const body = await response.json().catch(() => ({}));
 
@@ -924,7 +1074,7 @@ function useSharedState<T>(
         onSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : `${entity} 保存失败`);
       });
     }, 450);
-  }, [actor, entity, onSync, readOnly, value]);
+  }, [actor, entity, onSync, readOnly, scopeVersionsKey, value]);
 
   const applyRemote = useCallback((row: RemoteStateRow<T>) => {
     if (row.version <= versionRef.current) return;
@@ -1464,7 +1614,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [students, setStudents, studentsShared] = useSharedState("students", defaults.defaultStudents, versionFor("students"), currentOperator, reportSharedSync);
   const [teachers, setTeachers, teachersShared] = useSharedState("teachers", defaults.defaultTeachers, versionFor("teachers"), currentOperator, reportSharedSync);
   const [tasks, setTasks, tasksShared] = useSharedState("tasks", defaults.defaultTasks, versionFor("tasks"), currentOperator, reportSharedSync);
-  const [bookings, setBookings, bookingsShared] = useSharedState("bookings", defaults.defaultBookings, versionFor("bookings"), currentOperator, reportSharedSync);
+  const bookingScopeVersions = useMemo(() => ({
+    students: studentsShared.version,
+    teachers: teachersShared.version,
+  }), [studentsShared.version, teachersShared.version]);
+  const [bookings, setBookings, bookingsShared] = useSharedState("bookings", defaults.defaultBookings, versionFor("bookings"), currentOperator, reportSharedSync, false, bookingScopeVersions);
   const [courses, , coursesShared] = useSharedState("courses", defaults.defaultCourses, versionFor("courses"), currentOperator, reportSharedSync);
   const [lpItems, setLpItems, lpShared] = useSharedState("lpItems", defaults.defaultLpItems, versionFor("lpItems"), currentOperator, reportSharedSync);
   const [operations, setOperations, operationsShared] = useSharedState("operations", defaults.defaultOperations, versionFor("operations"), currentOperator, reportSharedSync);
@@ -1509,6 +1663,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   });
   const [studentIdentityLinkBusy, setStudentIdentityLinkBusy] = useState(false);
   const [studentIdentityLinkStatus, setStudentIdentityLinkStatus] = useState<{ count: number; unchanged: boolean } | null>(null);
+  const [studentIdentityReviewCandidates, setStudentIdentityReviewCandidates] = useState<StudentIdentityReviewCandidate[] | null>(null);
+  const [studentIdentityReviewClearKey, setStudentIdentityReviewClearKey] = useState<string | null>(null);
+  const [studentIdentityManualReview, setStudentIdentityManualReview] = useState<StudentIdentityManualReview | null>(null);
+  const [studentIdentityManualMasterToken, setStudentIdentityManualMasterToken] = useState("");
+  const [studentIdentityManualJwbToken, setStudentIdentityManualJwbToken] = useState("");
+  const [studentIdentityManualExistingToken, setStudentIdentityManualExistingToken] = useState("");
+  const [studentIdentityManualDecision, setStudentIdentityManualDecision] = useState<"create" | "merge">("create");
   const [studentMasterResolutionBusy, setStudentMasterResolutionBusy] = useState<string | null>(null);
   const [studentJwbNegativePolicy, setStudentJwbNegativePolicy] = useState<"reject" | "aggregate-only">("reject");
   const [teacherImportBusy, setTeacherImportBusy] = useState(false);
@@ -1543,6 +1704,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [teacherAvailabilityReviewBusy, setTeacherAvailabilityReviewBusy] = useState<string | null>(null);
   const [teacherAvailabilityInboxBusy, setTeacherAvailabilityInboxBusy] = useState(false);
   const [teacherAvailabilityReviewError, setTeacherAvailabilityReviewError] = useState("");
+  const [teacherAvailabilitySubmitBusy, setTeacherAvailabilitySubmitBusy] = useState(false);
+  const teacherAvailabilitySubmissionKey = useRef<string | null>(null);
   const [scheduleMode, setScheduleMode] = useState<"month" | "week" | "agenda">("month");
   const [scheduleMonth, setScheduleMonth] = useState(() => isoDateInTimezone(new Date(), defaultDisplayPreferences().timezone).slice(0, 7));
   const [scheduleFilter, setScheduleFilter] = useState("all");
@@ -1577,8 +1740,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [lpDraftType, setLpDraftType] = useState<LpWorkflowType>(LP_WORKFLOW_TYPES[0]);
   const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
   const [examDraft, setExamDraft] = useState<StudentExamRecord | null>(null);
+  const [examFormResetToken, setExamFormResetToken] = useState(0);
+  const [examSubmissionBusy, setExamSubmissionBusy] = useState(false);
+  const examSubmissionRef = useRef<PendingExamSubmission | null>(null);
+  const examFollowUpCommandRef = useRef(new Map<string, PendingExamFollowUp>());
+  const examFollowUpBusyRef = useRef(new Set<string>());
+  const examFollowUpVersionsRef = useRef({
+    students: studentsShared.version,
+    tasks: tasksShared.version,
+  });
+  useEffect(() => {
+    examFollowUpVersionsRef.current = {
+      students: studentsShared.version,
+      tasks: tasksShared.version,
+    };
+  }, [studentsShared.version, tasksShared.version]);
   const [operationFilter, setOperationFilter] = useState("open");
   const [selectedOperationId, setSelectedOperationId] = useState("OPS-001");
+  const [teacherDepartureCreationBusy, setTeacherDepartureCreationBusy] = useState(false);
+  const teacherDepartureCreationRef = useRef<{ intent: string; commandKey: string } | null>(null);
   const [renewalFilter, setRenewalFilter] = useState("attention");
   const [renewalOwnerFilter, setRenewalOwnerFilter] = useState("all");
   const [renewalPage, setRenewalPage] = useState(1);
@@ -1758,6 +1938,40 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const canViewPayroll = isFullAdminSession && currentOperator === "Nixon";
   const isAdminView = currentOperator === "Nixon" || currentOperator === DEMO_LIMITED_ADMIN_USER;
   const isTeacherView = teacherOperatorNames.has(currentOperator);
+
+  useEffect(() => {
+    if (!canUseAdminScope) return;
+    let cancelled = false;
+    void fetch("/api/student-import/source-rows", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.ready !== true || !body.sources) return;
+        const nextStatus: Partial<Record<StudentImportSourceKind, StudentImportSourceIngestResult>> = {};
+        const nextMeta: Partial<Record<StudentImportSourceKind, { sourceId: string; revision: string }>> = {};
+        for (const sourceKind of ["master", "jwb"] as const) {
+          const source = body.sources[sourceKind];
+          if (!source || typeof source.sourceId !== "string" || typeof source.revision !== "string"
+            || !Number.isSafeInteger(source.rowCount) || source.rowCount < 0) continue;
+          nextStatus[sourceKind] = {
+            sourceKind,
+            sourceId: source.sourceId,
+            revision: source.revision,
+            rowCount: source.rowCount,
+            unchanged: true,
+          };
+          nextMeta[sourceKind] = { sourceId: source.sourceId, revision: source.revision };
+        }
+        if (cancelled) return;
+        setStudentImportSourceStatus(nextStatus);
+        setStudentImportSourceMeta((current) => ({
+          master: nextMeta.master ?? current.master,
+          jwb: nextMeta.jwb ?? current.jwb,
+        }));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [canUseAdminScope]);
+
   const interfaceText = interfaceCopy[displayPreferences.language];
   const navigation = useMemo(() => navigationFor(displayPreferences.language), [displayPreferences.language]);
   const currentTeacher = useMemo(() => isTeacherView ? recordTeachers.find((teacher) => teacher.name.trim().toLocaleLowerCase() === currentOperator.trim().toLocaleLowerCase()) : undefined, [currentOperator, isTeacherView, recordTeachers]);
@@ -1787,9 +2001,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const scopedStudentIds = useMemo(() => new Set(scopedStudents.map((student) => student.id)), [scopedStudents]);
   const readableScopedStudentIds = useMemo(() => new Set(readableScopedStudents.map((student) => student.id)), [readableScopedStudents]);
   const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => {
-    if (!scopedStudentIds.has(task.studentId)) return false;
-    return new Set([task.owner, ...(task.assignees ?? []), ...(task.watchers ?? [])]).has(currentOperator);
-  }), [currentOperator, isAdminView, scopedStudentIds, tasks]);
+    const addressedManagedExamTask = initialRole === "staff"
+      && currentOperator === sessionOperator
+      && isManagedExamTaskRecipient(task, currentOperator);
+    if (!scopedStudentIds.has(task.studentId) && !addressedManagedExamTask) return false;
+    return addressedManagedExamTask
+      || new Set([task.owner, ...(task.assignees ?? []), ...(task.watchers ?? [])]).has(currentOperator);
+  }), [currentOperator, initialRole, isAdminView, scopedStudentIds, sessionOperator, tasks]);
   const scopedBookings = useMemo(() => isAdminView ? bookings : isTeacherView ? bookings.filter((booking) => booking.teacherId === currentTeacher?.id) : bookings.filter((booking) => scopedStudentIds.has(booking.studentId)), [bookings, currentTeacher?.id, isAdminView, isTeacherView, scopedStudentIds]);
   const scopedLpItems = useMemo(() => isAdminView ? lpItems : lpItems.filter((item) => item.owner === currentOperator || scopedStudentIds.has(item.studentId)), [currentOperator, isAdminView, lpItems, scopedStudentIds]);
   const scopedOperations = useMemo(() => isAdminView ? operations : operations.filter((operation) => scopedStudentIds.has(operation.studentId)), [isAdminView, operations, scopedStudentIds]);
@@ -1834,15 +2052,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, "思佳", "Tiffany", "Abby", "Tara"])).sort(), [ownerOptions]);
-  const teacherSubjectOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return recordTeachers.flatMap((teacher) => teacher.subjects).filter((subject) => {
-      const key = subject.trim();
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [recordTeachers]);
   const staleSources = useMemo(() => syncSources.filter((source) => sourceIsStale(source)), [syncSources]);
   const latestSourceSync = useMemo(() => syncSources
     .map((source) => new Date(source.synced_at))
@@ -1866,6 +2075,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const renewalStatusRecords = renewals.map((renewal) => ({
       studentId: renewal.studentId,
       packageId: renewal.packageId,
+      subjectId: renewal.subjectId,
       status: renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status),
     }));
     const scopeStudentIds: string[] = [];
@@ -1899,17 +2109,52 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return estimates.flatMap((estimate) => {
         const lessonPackage = packages.find((entry) => entry.id === estimate.packageId);
         if (!lessonPackage) return [];
-        const lowBalance = getLessonPackageBalance(lessonPackage).remainingHours < Number(rules.lowHours || 5);
+        const remainingHours = getLessonPackageBalance(lessonPackage).remainingHours;
+        const lowBalance = remainingHours < Number(rules.lowHours || 5);
         if (!estimate.depletionDate && !lowBalance) return [];
-        const status = renewalStatusForPackage(renewalStatusRecords, {
+        const recordedStatus = renewalStatusForPackage(renewalStatusRecords, {
           studentId: student.id,
           packageId: estimate.packageId,
           packageCount: packages.length,
         }) ?? "not_renewed_active";
+        const status = renewalProjectionStateForStudent(recordedStatus, isActiveStudent(student));
+        const packageOccurrences = occurrences
+          .filter((occurrence) => occurrence.packageId === estimate.packageId)
+          .sort((left, right) => left.date.localeCompare(right.date) || left.start.localeCompare(right.start) || left.id.localeCompare(right.id));
+        const depletionIndex = estimate.occurrenceId
+          ? packageOccurrences.findIndex((occurrence) => occurrence.id === estimate.occurrenceId)
+          : -1;
+        const depletionOccurrence = depletionIndex >= 0 ? packageOccurrences[depletionIndex] : undefined;
+        const nextScheduled = packageOccurrences[0];
+        const nextAfterDepletion = depletionIndex >= 0 ? packageOccurrences[depletionIndex + 1] : undefined;
+        const depletionInstant = depletionOccurrence
+          ? zonedDateTimeToUtc(depletionOccurrence.date, depletionOccurrence.start, depletionOccurrence.timezone)
+          : null;
+        const afterInstant = nextAfterDepletion
+          ? zonedDateTimeToUtc(nextAfterDepletion.date, nextAfterDepletion.start, nextAfterDepletion.timezone)
+          : null;
+        const renewalDateNote = buildRenewalDateNote({
+          depletionSubjectId: estimate.subjectId,
+          remainingHours,
+          depletionLessonHours: depletionOccurrence ? depletionOccurrence.duration / 60 : undefined,
+          nextScheduledLesson: nextScheduled ? {
+            subjectId: nextScheduled.subjectId,
+            date: nextScheduled.date,
+            start: nextScheduled.start,
+            hours: nextScheduled.duration / 60,
+          } : null,
+          nextLessonAfterDepletion: nextAfterDepletion && depletionInstant && afterInstant ? {
+            subjectId: nextAfterDepletion.subjectId,
+            date: nextAfterDepletion.date,
+            start: nextAfterDepletion.start,
+            withinSevenDays: afterInstant.getTime() - depletionInstant.getTime() < 7 * 24 * 60 * 60 * 1000,
+          } : null,
+        });
         return [{
           studentId: student.id,
           packageId: estimate.packageId,
-          packageName: lessonPackage?.name,
+          packageName: lessonPackage.name,
+          renewalDateNote: renewalDateNote || undefined,
           owner: student.owner,
           depletionAt: estimate.depletionDate
             ? zonedDateTimeToUtc(estimate.depletionDate, "18:00", "Australia/Melbourne").toISOString()
@@ -2027,38 +2272,146 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
+  const mutateManagedExamFollowUp = async (
+    task: Task,
+    action: "complete" | "undo",
+    completionCommandKey?: string,
+  ) => {
+    const scope = `${action}:${task.id}`;
+    if (examFollowUpBusyRef.current.has(scope)) throw new Error("这项考试提醒正在处理中");
+    const stored = examFollowUpCommandRef.current.get(scope)
+      ?? readPendingExamFollowUp(sessionOperator, action, task.id);
+    const pending = stored
+      && stored.completionCommandKey === completionCommandKey
+      ? stored
+      : {
+          action,
+          taskId: task.id,
+          commandKey: `exam-follow-up:${crypto.randomUUID()}`,
+          ...(completionCommandKey ? { completionCommandKey } : {}),
+        } satisfies PendingExamFollowUp;
+    examFollowUpCommandRef.current.set(scope, pending);
+    writePendingExamFollowUp(sessionOperator, pending);
+    examFollowUpBusyRef.current.add(scope);
+    try {
+      const response = await fetch("/api/exams/follow-up", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commandKey: pending.commandKey,
+          action,
+          taskId: task.id,
+          expectedVersions: examFollowUpVersionsRef.current,
+          ...(completionCommandKey ? { completionCommandKey } : {}),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.committed || !body.studentRow || !body.taskRow) {
+        throw new Error(body.error || "考试提醒保存失败");
+      }
+      studentsShared.applyRemote(body.studentRow as RemoteStateRow<Student[]>);
+      tasksShared.applyRemote(body.taskRow as RemoteStateRow<Task[]>);
+      examFollowUpVersionsRef.current = {
+        students: Number(body.studentRow.version),
+        tasks: Number(body.taskRow.version),
+      };
+      examFollowUpCommandRef.current.delete(scope);
+      clearPendingExamFollowUp(sessionOperator, action, task.id);
+      return body as {
+        action: "complete" | "undo";
+        applied: boolean;
+        commandKey: string;
+        completionCommandKey: string;
+        studentRow: RemoteStateRow<Student[]>;
+        taskRow: RemoteStateRow<Task[]>;
+      };
+    } finally {
+      examFollowUpBusyRef.current.delete(scope);
+    }
+  };
+
+  const completeManagedExamFollowUp = async (task: Task) => {
+    try {
+      const completed = await mutateManagedExamFollowUp(task, "complete");
+      const completionCommandKey = completed.completionCommandKey;
+      const undo = async () => {
+        try {
+          await mutateManagedExamFollowUp(task, "undo", completionCommandKey);
+          notify("已原子撤销考试提醒完成状态");
+        } catch (error) {
+          notify(
+            error instanceof Error ? `${error.message}；可重试撤销` : "考试提醒撤销状态未知；可重试",
+            () => { void undo(); },
+          );
+        }
+      };
+      notify(
+        completed.applied === false
+          ? "考试提醒完成状态已确认，系统没有重复写入"
+          : "考试提醒与学生考试状态已同步完成",
+        () => { void undo(); },
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "考试提醒保存失败");
+    }
+  };
+
   const completeTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === "done") return;
-    const before = { ...task };
-    let examFollowUpUndo: { examId: string; followUpKind: "exam_care" | "exam_recall" | "exam_results_follow_up"; previous: ExamFollowUpStepState | undefined } | null = null;
-    setTasks((current) => current.map((item) => item.id === taskId ? { ...item, status: "done", tone: "green", closedAt: new Date().toISOString(), result: "已由当前操作员确认完成" } : item));
-    if (task.anchorBookingId?.startsWith("exam:") && task.ruleKey?.startsWith("exam:")) {
-      const examId = task.anchorBookingId.slice("exam:".length);
-      const followUpKind = task.ruleKey.endsWith(":care") ? "exam_care" : task.ruleKey.endsWith(":recall") ? "exam_recall" : task.ruleKey.endsWith(":results") ? "exam_results_follow_up" : null;
-      if (followUpKind) {
-        const completedAt = new Date().toISOString();
-        const exam = recordStudents.find((student) => student.id === task.studentId)?.exams?.find((entry) => entry.id === examId);
-        examFollowUpUndo = { examId, followUpKind, previous: exam?.followUpState?.[followUpKind] };
-        setStudents((current) => current.map((student) => student.id !== task.studentId ? student : {
-          ...student,
-          exams: student.exams?.map((exam) => exam.id !== examId ? exam : {
-            ...setExamFollowUpStepState(exam, followUpKind, { status: "completed", completedAt, completedBy: operatorLabel(sessionOperator) }),
-          }),
-        }));
-      }
+    const examRule = task.ruleKey?.match(/^exam:([^:]+):(care|recall|results)$/);
+    if (task.category === "考试" && examRule && task.anchorBookingId === `exam:${examRule[1]}`) {
+      void completeManagedExamFollowUp(task);
+      return;
     }
+    const before = { ...task };
+    const completedAt = new Date();
+    const progressCycleMatch = task.ruleKey?.match(/^trial\.parent-progress-sync\.([1-9]\d*)$/);
+    const progressCycle = progressCycleMatch ? Number(progressCycleMatch[1]) : null;
+    const progressDueAt = task.dueAt ? Date.parse(task.dueAt) : Number.NaN;
+    const nextProgressTask = progressCycle && Number.isFinite(progressDueAt) && task.anchorBookingId
+      ? generateTrialEscalationTasks({
+          anchorBookingId: task.anchorBookingId,
+          studentId: task.studentId,
+          owner: task.owner,
+          requestedAt: new Date(progressDueAt - progressCycle * 24 * 60 * 60 * 1000),
+          now: completedAt,
+          parentProgressSyncCount: progressCycle + 1,
+          idFactory: () => id("TSK"),
+        }).find((candidate) => candidate.ruleKey === `trial.parent-progress-sync.${progressCycle + 1}`)
+      : undefined;
+    setTasks((current) => {
+      const completed = current.map((item) => item.id === taskId ? { ...item, status: "done" as const, tone: "green" as const, closedAt: completedAt.toISOString(), result: "已由当前操作员确认完成" } : item);
+      return nextProgressTask && isTrialEscalationTaskRule(task.ruleKey)
+        ? sortTasksByDueAt(upsertTasksByRule(completed, [nextProgressTask]))
+        : completed;
+    });
     addAudit("完成强提醒任务", `${task.title} · ${studentById(task.studentId)?.name ?? "未关联学生"}`, "green");
     notify("已完成并写入操作记录", () => {
-      setTasks((current) => current.map((item) => item.id === taskId ? before : item));
-      if (examFollowUpUndo) {
-        const { examId, followUpKind, previous } = examFollowUpUndo;
-        setStudents((current) => current.map((student) => student.id !== task.studentId ? student : {
-          ...student,
-          exams: student.exams?.map((exam) => exam.id !== examId ? exam : setExamFollowUpStepState(exam, followUpKind, previous)),
-        }));
-      }
+      setTasks((current) => current
+        .filter((item) => item.id !== nextProgressTask?.id)
+        .map((item) => item.id === taskId ? before : item));
       addAudit("撤销完成强提醒任务", `${task.title} · 恢复为 ${before.status}`, "amber");
+    });
+  };
+
+  const recordTrialParentReply = (task: Task) => {
+    if (!task.anchorBookingId) return;
+    const before = tasks.filter((item) => item.studentId === task.studentId
+      && item.anchorBookingId === task.anchorBookingId
+      && (isTrialEscalationTaskRule(item.ruleKey) || item.id === task.id));
+    const repliedAt = new Date();
+    setTasks((current) => closeTrialEscalationTasks(
+      current.map((item) => item.id === task.id && item.status !== "done"
+        ? { ...item, status: "done" as const, tone: "green" as const, result: "家长已回复", closedAt: repliedAt.toISOString() }
+        : item),
+      { anchorBookingId: task.anchorBookingId!, studentId: task.studentId, closedAt: repliedAt },
+    ));
+    addAudit("记录试听家长回复", `${studentById(task.studentId)?.name ?? task.studentId} · 未回复升级链已关闭`, "green");
+    notify("已记录家长回复，后续未回复升级任务已关闭", () => {
+      const beforeById = new Map(before.map((item) => [item.id, item]));
+      setTasks((current) => current.map((item) => beforeById.get(item.id) ?? item));
+      addAudit("撤销试听家长回复", `${studentById(task.studentId)?.name ?? task.studentId} · 恢复升级任务`, "amber");
     });
   };
 
@@ -2225,11 +2578,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setGlobalSearchOpen(true);
+        if (!(modal === "exam" && examSubmissionBusy)) setGlobalSearchOpen(true);
       }
       if (event.key === "Escape") {
         setGlobalSearchOpen(false);
-        setModal(null);
+        if (!(modal === "exam" && examSubmissionBusy)) setModal(null);
         setMobileMenuOpen(false);
         setOperatorMenuOpen(false);
         setDisplayPreferencesOpen(false);
@@ -2238,7 +2591,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [examSubmissionBusy, modal]);
 
   useEffect(() => {
     if (!operatorMenuOpen) return;
@@ -2277,16 +2630,31 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const pageSize = 12;
   const safeStudentPage = Math.min(studentPage, Math.max(1, Math.ceil(filteredStudents.length / pageSize)));
   const pagedStudents = filteredStudents.slice((safeStudentPage - 1) * pageSize, safeStudentPage * pageSize);
-  const teacherMatch = (teacher: Teacher) => teacher.subjects.some((subject) => selectedStudent.course.includes(subject.split(" ").slice(-1)[0])) ? 94 : teacher.subjects.some((subject) => subject.includes("English") && selectedStudent.course.includes("English")) ? 87 : 76;
+  // Booking course labels are fine-grained and are not an authority mapping to
+  // Tencent's 23 teacher subject sheets.  Matching therefore requires an
+  // explicit sheet category and never derives a percentage from course text.
+  const teacherSubjectMatch = (teacher: Teacher) =>
+    teacherSubject !== "all" && teacher.subjects.includes(teacherSubject);
+  const teacherSchedulingReadiness = (teacher: Teacher) => projectTeacherSchedulingReadiness({
+    teacherId: teacher.id,
+    availabilityWindows: teacher.availabilityWindows,
+    availabilitySourceText: teacher.availabilitySourceText,
+    newStudentCapacity: teacher.newStudentCapacity,
+    capacitySourceText: teacher.capacitySourceText,
+    acceptsStudents: teacher.acceptsStudents,
+    now: new Date(),
+  });
   const filteredTeachers = recordTeachers.filter((teacher) => {
     const matchesSearch = `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")} ${teacher.subjectDetail ?? ""} ${teacher.location ?? ""} ${teacher.timezone}`.toLowerCase().includes(teacherQuery.trim().toLowerCase());
     if (!matchesSearch || (teacherSubject !== "all" && !teacher.subjects.includes(teacherSubject))) return false;
     if (teacherDay !== "all" && !(teacher.availabilityWindows ?? []).some((window) => window.day === Number(teacherDay))) return false;
-    if (teacherView === "available") return teacher.acceptsStudents;
-    if (teacherView === "capacity") return teacher.load < teacher.capacity * 0.8;
-    if (teacherView === "matched") return teacherMatch(teacher) >= 85;
+    const readiness = teacherSchedulingReadiness(teacher);
+    if (teacherView === "available") return readiness.readyForNewStudentMatching;
+    if (teacherView === "capacity") return readiness.capacity.status === "ready" && (readiness.capacity.remaining ?? 0) > 0;
+    if (teacherView === "matched") return teacherSubjectMatch(teacher);
+    if (teacherView === "review") return readiness.reviewReasons.length > 0;
     return true;
-  }).sort((a, b) => teacherMatch(b) - teacherMatch(a));
+  }).sort((a, b) => Number(teacherSubjectMatch(b)) - Number(teacherSubjectMatch(a)) || a.name.localeCompare(b.name));
   const teacherPageSize = 8;
   const safeTeacherPage = Math.min(teacherPage, Math.max(1, Math.ceil(filteredTeachers.length / teacherPageSize)));
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
@@ -2338,7 +2706,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     else if (section === "fu") setModal("studentEvidence");
     else if (section === "followUp") setModal("studentFollowUp");
     else if (section === "lessonPackages") setModal("lessonPackage");
-    else if (section === "exams") setModal("exam");
+    else if (section === "exams") {
+      setExamDraft(null);
+      setModal("exam");
+    }
     else setModal("file");
   };
 
@@ -2376,13 +2747,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const substitutionCandidates = (booking: Booking, unavailableTeacherId: string) => {
     const unavailableTeacher = teacherById(unavailableTeacherId);
     const student = studentById(booking.studentId);
-    if (!unavailableTeacher || !student) return [];
+    if (!unavailableTeacher || !student || !booking.teacherSubjectId) return [];
     const candidatePool = hasRealSnapshot ? recordTeachers : teachers;
     return candidatePool.filter((teacher) => {
       if (teacher.id === unavailableTeacherId || !teacher.availabilityWindows?.length) return false;
-      const sharesSubject = teacher.subjects.some((subject) => unavailableTeacher.subjects.includes(subject))
-        || teacher.subjects.some((subject) => student.course.includes(subject.split(" ").slice(-1)[0]));
-      return sharesSubject
+      return teacher.subjects.includes(booking.teacherSubjectId!)
         && teacherAvailableAt(teacher, booking.date, booking.start, booking.duration, booking.timezone)
         && !teacherHasBookingConflict(teacher.id, booking);
     }).slice(0, 5);
@@ -2435,6 +2804,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         requestedAt: createdAt,
         now: createdAt,
       }));
+      generated.push(...generateTrialEscalationTasks({
+        anchorBookingId: item.id,
+        studentId,
+        owner: responsibleOperations,
+        requestedAt: createdAt,
+        now: createdAt,
+        parentProgressSyncCount: 1,
+      }));
     }
     const alreadyHasParentRequestTask = workflowType === "试听 LP" || workflowType === "换老师试听";
     if (fields.specifiedContentStatus === "需要跟进" && !alreadyHasParentRequestTask) {
@@ -2453,6 +2830,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const assignTeacher = (teacher: Teacher) => {
     if (!selectedStudent) return;
+    if (!teacherSubjectMatch(teacher)) {
+      notify("请先选择老师所在的腾讯表科目，系统不会从课程名称猜测");
+      return;
+    }
     const beforeTeacher = selectedStudent.teacher;
     const beforeNext = selectedStudent.next;
     const beforeTone = selectedStudent.nextTone;
@@ -2487,6 +2868,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const toggleTeacherAvailability = (teacher: Teacher) => {
     const nextAccepts = !teacher.acceptsStudents;
     const nextStatus = nextAccepts ? "可接新生" : "暂停接新";
+    if (nextAccepts && (!Number.isSafeInteger(teacher.newStudentCapacity) || (teacher.newStudentCapacity ?? 0) <= 0)) {
+      notify("请先录入大于 0 的可接新生数量，再开放接新");
+      return;
+    }
     requestConfirmation({
       title: nextAccepts ? "确认开放接新" : "确认暂停接新",
       detail: `${teacher.name} 的接新状态将改为「${nextStatus}」。`,
@@ -2647,21 +3032,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const openBookingOccurrenceEditor = (booking: BookingOccurrence) => {
+    if (["completed", "abnormal", "leave"].includes(booking.occurrenceStatus)) {
+      notify("已完成、异常或请假课次必须使用对应的结算/异常流程处理");
+      return;
+    }
     setBookingOccurrenceDraft(booking);
     setModal("bookingOccurrence");
   };
 
-  const submitBookingOccurrence = (event: FormEvent<HTMLFormElement>) => {
+  const submitBookingOccurrence = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!bookingOccurrenceDraft) return;
     const data = new FormData(event.currentTarget);
     const date = String(data.get("date") ?? "");
     const start = String(data.get("start") ?? "");
     const duration = Number(data.get("duration") ?? 60);
-    const teacherId = String(data.get("teacherId") ?? bookingOccurrenceDraft.teacherId);
+    const teacherId = bookingOccurrenceDraft.teacherId;
     const status = String(data.get("status") ?? bookingOccurrenceDraft.occurrenceStatus) as LessonOccurrenceStatus;
-    if (status === "leave") {
-      notify("请使用学生请假或老师请假入口，并填写请假原因");
+    if (status !== "confirmed" && status !== "cancelled") {
+      notify("请使用结算、异常或请假流程更新本节状态");
       return;
     }
     if (!date || !start || !teacherById(teacherId) || ![60, 90, 120].includes(duration)) {
@@ -2690,6 +3079,34 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     const previousBookings = bookings;
     try {
+      const singleLesson = bookingOccurrenceDraft.recurring !== true
+        || bookingOccurrenceDraft.repeatCount === 1;
+      if (status === "cancelled" && singleLesson) {
+        await writeBookingCapacityMutation({
+          action: "delete",
+          bookingId: bookingOccurrenceDraft.id,
+        });
+        if (bookingOccurrenceDraft.kind === "试听") {
+          setTasks((current) => closeTasksForBooking(
+            current,
+            bookingOccurrenceDraft.id,
+            new Date(),
+            "单次试听已取消",
+          ));
+        }
+        addAudit(
+          "取消单次课程",
+          `${studentById(bookingOccurrenceDraft.studentId)?.name ?? bookingOccurrenceDraft.studentId} · ${bookingOccurrenceDraft.occurrenceKey} · 已原子回补容量`,
+          "amber",
+        );
+        setSelectedBookingId(bookings.find((booking) => booking.id !== bookingOccurrenceDraft.id)?.id ?? "");
+        setSelectedBookingDate(null);
+        setSelectedBookingDateId(null);
+        setBookingOccurrenceDraft(null);
+        setModal(null);
+        notify("单次课程已取消，老师可接新生容量已原子回补");
+        return;
+      }
       const next = updateBookingOccurrence(bookings, {
         occurrenceId: bookingOccurrenceDraft.occurrenceKey,
         date,
@@ -3120,6 +3537,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const source = body.source as StudentImportSourceIngestResult;
       setStudentImportSourceStatus((current) => ({ ...current, [sourceKind]: source }));
       setStudentImportPreview(null);
+      setStudentIdentityReviewCandidates(null);
+      setStudentIdentityManualReview(null);
+      setStudentIdentityReviewClearKey(null);
       notify(source.unchanged ? "该 revision 内容未变化" : "来源已保存，请继续录入另一来源或重新预检");
     } catch (error) {
       notify(error instanceof Error ? error.message : "学生来源录入失败");
@@ -3144,6 +3564,41 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     await submitStudentImportSource(sourceKind, rawJson);
   };
 
+  const refreshStudentIdentityReview = async (announce = true, alreadyBusy = false) => {
+    if (studentIdentityLinkBusy && !alreadyBusy) return;
+    if (!alreadyBusy) setStudentIdentityLinkBusy(true);
+    try {
+      const response = await fetch("/api/student-import/identity-links", { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok
+        || !Array.isArray(body.candidates)
+        || !Number.isSafeInteger(body.identityLinkCount)
+        || typeof body.clearKey !== "string"
+        || !body.manualReview
+        || !Array.isArray(body.manualReview.masters)
+        || !Array.isArray(body.manualReview.jwb)
+        || !Array.isArray(body.manualReview.existing)) {
+        throw new Error(body.error || "学生身份审核候选读取失败");
+      }
+      setStudentIdentityReviewCandidates(body.candidates as StudentIdentityReviewCandidate[]);
+      setStudentIdentityReviewClearKey(body.clearKey);
+      const manualReview = body.manualReview as StudentIdentityManualReview;
+      setStudentIdentityManualReview(manualReview);
+      setStudentIdentityManualMasterToken((current) =>
+        manualReview.masters.some((item) => item.token === current) ? current : "");
+      setStudentIdentityManualJwbToken((current) =>
+        manualReview.jwb.some((item) => item.token === current) ? current : "");
+      setStudentIdentityManualExistingToken((current) =>
+        manualReview.existing.some((item) => item.token === current) ? current : "");
+      setStudentIdentityLinkStatus({ count: body.identityLinkCount, unchanged: true });
+      if (announce) notify(`已读取 ${body.candidates.length} 条姓名候选和 ${manualReview.masters.length} 条待手工配对记录`);
+    } catch (error) {
+      if (announce) notify(error instanceof Error ? error.message : "学生身份审核候选读取失败");
+    } finally {
+      if (!alreadyBusy) setStudentIdentityLinkBusy(false);
+    }
+  };
+
   const previewStudentImport = async () => {
     if (studentImportBusy) return;
     setStudentImportBusy(true);
@@ -3154,6 +3609,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       setStudentImportPreview(body as StudentImportPreview);
       const summary = (body as StudentImportPreview).summary;
       addAudit("预检学生正式导入", `新增 ${summary.insert} · 更新 ${summary.update} · 课包 ${summary.importedPackages} · 缺逐课包 ${summary.studentsMissingPackageData}`, summary.ambiguous || summary.studentsMissingPackageData ? "amber" : "blue");
+      await refreshStudentIdentityReview(false);
     } catch (error) {
       notify(error instanceof Error ? error.message : "学生导入预检失败");
     } finally {
@@ -3162,23 +3618,103 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const clearStudentIdentityLinks = async () => {
-    if (studentIdentityLinkBusy) return;
+    const clearKey = studentIdentityReviewClearKey;
+    if (studentIdentityLinkBusy || !clearKey) {
+      if (!clearKey) notify("请先读取最新身份审核列表再清空");
+      return;
+    }
     setStudentIdentityLinkBusy(true);
     try {
       const response = await fetch("/api/student-import/identity-links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ links: [] }),
+        body: JSON.stringify({ resolutionKey: clearKey, decision: "clear" }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok || typeof body.count !== "number") {
         throw new Error(body.error || "旧身份链接清除失败");
       }
-      setStudentIdentityLinkStatus({ count: body.count, unchanged: body.unchanged === true });
       setStudentImportPreview(null);
-      notify(body.unchanged ? "当前没有旧身份链接" : "旧身份链接已清除，请重新预检");
+      await refreshStudentIdentityReview(false, true);
+      notify(body.unchanged ? "当前链接为空；旧审核选项也已全部作废" : "身份链接已清除，旧审核选项已作废");
     } catch (error) {
       notify(error instanceof Error ? error.message : "旧身份链接清除失败");
+    } finally {
+      setStudentIdentityLinkBusy(false);
+    }
+  };
+
+  const requestClearStudentIdentityLinks = () => {
+    if (studentIdentityLinkBusy) return;
+    if (!studentIdentityReviewClearKey) {
+      notify("请先读取最新身份审核列表再清空");
+      return;
+    }
+    requestConfirmation({
+      title: "确认清空全部学生身份链接",
+      detail: `当前已保存 ${studentIdentityLinkStatus?.count ?? 0} 条人工审核链接。`,
+      items: ["清空后正式导入会重新变为身份覆盖不足", "需要逐条重新人工确认才能恢复"],
+      confirmLabel: "确认清空全部链接",
+      tone: "danger",
+      onConfirm: clearStudentIdentityLinks,
+    });
+  };
+
+  const confirmStudentIdentityReview = async (
+    resolutionKey: string,
+    decision: "merge" | "create",
+  ) => {
+    if (studentIdentityLinkBusy || studentImportBusy) return;
+    setStudentIdentityLinkBusy(true);
+    try {
+      const response = await fetch("/api/student-import/identity-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolutionKey, decision }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || typeof body.count !== "number") {
+        throw new Error(body.error || "学生身份审核保存失败");
+      }
+      setStudentIdentityLinkStatus({ count: body.count, unchanged: body.unchanged === true });
+      setStudentImportPreview(null);
+      await refreshStudentIdentityReview(false, true);
+      notify(body.unchanged ? "该身份审核决定已保存" : "身份审核决定已保存，请继续审核或重新预检");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "学生身份审核保存失败");
+    } finally {
+      setStudentIdentityLinkBusy(false);
+    }
+  };
+
+  const confirmStudentIdentityManualPair = async () => {
+    if (studentIdentityLinkBusy || studentImportBusy
+      || !studentIdentityManualMasterToken || !studentIdentityManualJwbToken
+      || (studentIdentityManualDecision === "merge" && !studentIdentityManualExistingToken)) return;
+    setStudentIdentityLinkBusy(true);
+    try {
+      const response = await fetch("/api/student-import/identity-links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          masterToken: studentIdentityManualMasterToken,
+          jwbToken: studentIdentityManualJwbToken,
+          decision: studentIdentityManualDecision,
+          ...(studentIdentityManualDecision === "merge"
+            ? { existingToken: studentIdentityManualExistingToken }
+            : {}),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || typeof body.count !== "number") {
+        throw new Error(body.error || "学生身份手工配对保存失败");
+      }
+      setStudentIdentityLinkStatus({ count: body.count, unchanged: body.unchanged === true });
+      setStudentImportPreview(null);
+      await refreshStudentIdentityReview(false, true);
+      notify(body.unchanged ? "该手工配对已经保存" : "手工配对已保存，请继续处理剩余记录");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "学生身份手工配对保存失败");
     } finally {
       setStudentIdentityLinkBusy(false);
     }
@@ -3238,7 +3774,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           });
           const body = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(body.error || "学生正式导入失败");
-          addAudit("完成学生正式导入", `学生资料版本 ${body.studentVersion} · 新增 ${body.summary?.insert ?? 0} · 更新 ${body.summary?.update ?? 0}`, "green");
+          addAudit("完成学生正式导入", `学生资料版本 ${body.studentVersion} · 新增 ${preview.summary.insert} · 更新 ${preview.summary.update}${body.replayed === true ? " · 已恢复既有提交结果" : ""}`, "green");
           setStudentImportPreview(null);
           notify("学生正式导入已提交，正在载入最新共享资料");
           window.setTimeout(() => window.location.reload(), 700);
@@ -3574,6 +4110,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const teacherId = isTeacherView ? (currentTeacher?.id ?? "") : String(data.get("teacherId") ?? "").trim();
     const duration = Number(data.get("duration") ?? 60);
     const subjectId = String(data.get("subjectId") ?? "").trim();
+    const teacherSubjectId = String(data.get("teacherSubjectId") ?? "").trim();
     const packageId = String(data.get("packageId") ?? "").trim();
     const student = studentById(studentId);
     const teacher = teacherById(teacherId);
@@ -3583,6 +4120,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     if (isTeacherView && !scopedStudentIds.has(studentId)) {
       notify("老师账号只能为自己的学生创建临时课堂。");
+      return;
+    }
+    if (!teacherSubjectId || !teacher.subjects.includes(teacherSubjectId)) {
+      notify(`请按腾讯老师子表为 ${teacher.name} 选择其可教的科目分类。`);
       return;
     }
     const lessonPackage = student.lessonPackages?.find((entry) => entry.id === packageId);
@@ -3614,6 +4155,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       repeatCount: 1,
       packageId,
       course: subjectId,
+      teacherSubjectId,
     };
 
     setClassroomBusy(true);
@@ -3758,7 +4300,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const totalMinutes = scopedBookings.reduce((sum, booking) => sum + booking.duration, 0);
     const todayLabel = new Intl.DateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
     return <>
-      <ViewHeading eyebrow={todayLabel} title={english ? "My teaching workspace" : "我的教学工作台"} actions={<><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
+      <ViewHeading eyebrow={todayLabel} title={english ? "My teaching workspace" : "我的教学工作台"} actions={<><button className="secondary-button" type="button" onClick={() => { teacherAvailabilitySubmissionKey.current = crypto.randomUUID(); setModal("teacherAvailabilitySubmit"); }}><Clock3 size={17} /> {english ? "Submit availability" : "提交月度 AVA"}</button><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
       <section className="command-strip teacher-command-strip" aria-label={english ? "Teacher shortcuts" : "老师快捷操作"}>
         <button type="button" onClick={() => openNewBooking()}><CalendarPlus size={18} /><span><strong>{english ? "Schedule a lesson" : "安排课程"}</strong></span><ChevronRight size={16} /></button>
         <button type="button" onClick={() => setActive("schedule")}><CalendarDays size={18} /><span><strong>{english ? "View schedule" : "查看课表"}</strong></span><ChevronRight size={16} /></button>
@@ -3803,7 +4345,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         {canViewPayroll && <button type="button" onClick={() => setActive("payroll")}><Wallet size={18} /><span><strong>核对薪资</strong></span><ChevronRight size={16} /></button>}
       </section>
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => studentById(studentId)?.name} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onOpen={(task) => goToStudent(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => studentById(studentId)?.name} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><p className="eyebrow">墨尔本今日</p><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel"><div className="panel-header"><div><h2>风险与缺口</h2></div><StatusPill tone="amber">{operatorTodayBookings.filter((booking) => booking.occurrenceStatus === "abnormal").length + operatorExamStudents.length + operatorDstBookings.length + pendingAva} 项</StatusPill></div>{operatorTodayBookings.filter((booking) => booking.occurrenceStatus === "abnormal").map((booking) => <RiskRow key={booking.occurrenceKey} tone="red" title={`${studentById(booking.studentId)?.name ?? booking.studentId} 课堂出勤异常`} detail={`${booking.date} ${booking.start} · 待人工复核`} action={() => { setSelectedBookingId(booking.id); setSelectedBookingDate(booking.date); setSelectedBookingDateId(booking.id); setActive("schedule"); }} />)}{nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 ${rules.examDays} 天窗口`} detail={`${nearestExam.examSubject ?? "考试"} · ${nearestExam.examDate}`} action={() => goToStudent(nearestExam.id)} /> : null}{operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}<RiskRow tone="blue" title={`${pendingAva} 位老师本月 AVA 未收集`} detail={currentAvaMonth} action={() => setActive("teachers")} /></article>
       </section>
@@ -3852,15 +4394,22 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const renderTeachers = () => {
     const viewItems = [
-      { id: "available", label: "可接新生", count: recordTeachers.filter((teacher) => teacher.acceptsStudents).length },
-      { id: "matched", label: "高匹配", count: recordTeachers.filter((teacher) => teacherMatch(teacher) >= 85).length },
-      { id: "capacity", label: "容量充足", count: recordTeachers.filter((teacher) => teacher.load < teacher.capacity * 0.8).length },
+      { id: "available", label: "可接新生", count: recordTeachers.filter((teacher) => teacherSchedulingReadiness(teacher).readyForNewStudentMatching).length },
+      { id: "matched", label: "科目符合", count: recordTeachers.filter(teacherSubjectMatch).length },
+      { id: "capacity", label: "容量充足", count: recordTeachers.filter((teacher) => {
+        const readiness = teacherSchedulingReadiness(teacher);
+        return readiness.capacity.status === "ready" && (readiness.capacity.remaining ?? 0) > 0;
+      }).length },
+      { id: "review", label: "待结构化", count: recordTeachers.filter((teacher) => teacherSchedulingReadiness(teacher).reviewReasons.length > 0).length },
       { id: "all", label: "全部老师", count: recordTeachers.length },
     ];
     const visibleSelectedTeacher = pagedTeachers.find((teacher) => teacher.id === selectedTeacherId) ?? pagedTeachers[0];
+    const visibleSelectedTeacherReadiness = visibleSelectedTeacher
+      ? teacherSchedulingReadiness(visibleSelectedTeacher)
+      : null;
     return <>
-      <ViewHeading eyebrow="教师总表" title="老师资源库" actions={<button className="primary-button" type="button" disabled={!visibleSelectedTeacher} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
-      <section className="matching-context"><div><span>当前匹配学生</span><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {selectedStudent.timezone}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
+      <ViewHeading eyebrow="教师总表" title="老师资源库" actions={<button className="primary-button" type="button" disabled={!visibleSelectedTeacher || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
+      <section className="matching-context"><div><span>当前匹配学生</span><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {selectedStudent.timezone} · 腾讯表科目：{teacherSubject === "all" ? "尚未选择" : teacherSubject}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
       {visibleSelectedTeacher ? <>
         {isAdminView ? <div className="heading-actions"><button className="secondary-button" type="button" onClick={() => setModal("ava")}><Plus size={16} /> 录入月度 AVA</button></div> : null}
         <TeacherAvailabilityPanel
@@ -3888,7 +4437,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <section className="panel collection-shell">
         <ViewTabs value={teacherView} items={viewItems} onChange={(value) => { setTeacherView(value); setTeacherPage(1); }} label="老师保存视图" />
         <ListToolbar query={teacherQuery} onQuery={(value) => { setTeacherQuery(value); setTeacherPage(1); }} placeholder="搜索老师、科目、ID 或时区" count={`${filteredTeachers.length} 位老师`}>
-          <select className="filter-select" value={teacherSubject} onChange={(event) => { setTeacherSubject(event.target.value); setTeacherPage(1); }} aria-label="按标准科目筛选"><option value="all">全部科目</option>{teacherSubjectOptions.map((subject) => <option key={subject}>{subject}</option>)}</select>
+          <select className="filter-select" value={teacherSubject} onChange={(event) => { setTeacherSubject(event.target.value); setTeacherPage(1); }} aria-label="按腾讯表科目筛选"><option value="all">先选腾讯表科目（匹配必选）</option>{teacherSubjectOptions.map((subject) => <option key={subject}>{subject}</option>)}</select>
           <select className="filter-select" value={teacherDay} onChange={(event) => { setTeacherDay(event.target.value); setTeacherPage(1); }} aria-label="按星期可排筛选"><option value="all">全部星期</option><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select>
           <button className="toolbar-button" type="button" onClick={() => { setTeacherQuery(""); setTeacherSubject("all"); setTeacherDay("all"); setTeacherView("available"); }}><Filter size={15} /> 清除筛选</button>
         </ListToolbar>
@@ -3899,12 +4448,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               {pagedTeachers.length ? pagedTeachers.map((teacher) => {
                 const ava = availabilitySummary(teacher);
                 const capacity = teacherCapacitySummary(teacher);
-                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span className="teacher-load"><strong className={teacher.newStudentCapacity === 0 ? "low-hours" : ""}>{capacity.value}</strong><small>{capacity.detail}</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
+                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}</small></span></span><strong className="match-score">{teacherSubject === "all" ? "待选科目" : teacherSubjectMatch(teacher) ? "科目符合" : "不符合"}</strong><span className="teacher-load"><strong className={teacher.newStudentCapacity === 0 ? "low-hours" : ""}>{capacity.value}</strong><small>{capacity.detail}</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
               }) : <EmptyState title="没有匹配的老师" detail="切换视图或清除搜索条件。" />}
             </div>
             <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={(page) => { setTeacherPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(visibleSelectedTeacher)}%</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>已排 / 可接总数</span><strong className={visibleSelectedTeacher.newStudentCapacity === 0 ? "low-hours" : ""}>{teacherCapacitySummary(visibleSelectedTeacher).value}</strong><p>{teacherCapacitySummary(visibleSelectedTeacher).detail}</p></div></div><button className="primary-button full" type="button" disabled={!visibleSelectedTeacher.acceptsStudents} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button>{isAdminView && <><button className="secondary-button full" type="button" onClick={() => { setTeacherCapacityDraft(visibleSelectedTeacher); setModal("teacherCapacity"); }}>调整可接新生数量</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></>}</aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
+          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>腾讯表科目核验</span><strong>{teacherSubject === "all" ? "请先选择科目" : teacherSubjectMatch(visibleSelectedTeacher) ? `符合：${teacherSubject}` : `不符合：${teacherSubject}`}</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>已排 / 可接总数</span><strong className={visibleSelectedTeacher.newStudentCapacity === 0 ? "low-hours" : ""}>{teacherCapacitySummary(visibleSelectedTeacher).value}</strong><p>{teacherCapacitySummary(visibleSelectedTeacher).detail}</p></div></div>{visibleSelectedTeacherReadiness && !visibleSelectedTeacherReadiness.readyForNewStudentMatching ? <div className="form-notice"><CircleAlert size={16} /> 当前不能进入新生匹配：{visibleSelectedTeacherReadiness.reviewReasons.map((reason) => ({ availability_missing: "缺少结构化 AVA", availability_expired: "AVA 已过期", availability_invalid: "AVA 数据无效", capacity_missing: "容量未配置", capacity_invalid: "容量数据无效", accepting_status_missing: "接新状态待确认" })[reason]).join("、") || "当前暂停接新或容量为 0"}</div> : null}{visibleSelectedTeacher.availabilitySourceText || visibleSelectedTeacher.capacitySourceText ? <div className="detail-section teacher-source-evidence"><span>腾讯表原始记录（仅供人工结构化）</span>{visibleSelectedTeacher.availabilitySourceText ? <p><strong>AVA：</strong>{visibleSelectedTeacher.availabilitySourceText}</p> : null}{visibleSelectedTeacher.capacitySourceText ? <p><strong>容量：</strong>{visibleSelectedTeacher.capacitySourceText}</p> : null}</div> : null}<button className="primary-button full" type="button" disabled={!visibleSelectedTeacherReadiness?.readyForNewStudentMatching || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button>{isAdminView && <><button className="secondary-button full" type="button" onClick={() => { setTeacherCapacityDraft(visibleSelectedTeacher); setModal("teacherCapacity"); }}>调整可接新生数量</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></>}</aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
         </div>
       </section>
     </>;
@@ -4513,7 +5062,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               )}
               {operationTeacher && (
                 <div className="detail-section">
-                  <span>代课候选</span>
+                  <span>{selectedOperation.type === "老师离职" ? "永久接替老师" : "代课候选"}</span>
                   {recommendedTeachers.length ? (
                     <div className="operation-recommendations">
                       {recommendedTeachers.map((teacher) => (
@@ -4530,12 +5079,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                               selectedOperation.chosenTeacherId;
                             if (previousTeacherId === teacher.id) return;
                             requestConfirmation({
-                              title: "确认选择代课候选",
+                              title: selectedOperation.type === "老师离职" ? "确认选择永久接替老师" : "确认选择代课候选",
                               detail: `${operationStudent.name} · ${teacher.name}`,
-                              items: [
-                                "确认异常处理时会把所选日期范围内的具体课次改给该老师",
-                                "正式提交前仍需学生、原老师和代课老师确认",
-                              ],
+                              items: selectedOperation.type === "老师离职"
+                                ? [
+                                    "确认异常处理时会从离职生效日起调整全部未来常规课次，不局限于当前预览范围",
+                                    "学生主档老师、原老师与新老师容量会在同一事务中更新",
+                                  ]
+                                : [
+                                    "确认异常处理时会把所选日期范围内的具体课次改给该老师",
+                                    "正式提交前仍需学生、原老师和代课老师确认",
+                                  ],
                               confirmLabel: "记录此候选",
                               onConfirm: () => {
                                 setOperations((current) =>
@@ -4549,12 +5103,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                                   ),
                                 );
                                 addAudit(
-                                  "选择代课推荐老师",
+                                  selectedOperation.type === "老师离职" ? "选择永久接替老师" : "选择代课推荐老师",
                                   `${operationStudent.name} · ${teacher.name}`,
                                   "green",
                                 );
                                 notify(
-                                  `${teacher.name} 已选为代课老师`,
+                                  `${teacher.name} 已选为${selectedOperation.type === "老师离职" ? "永久接替" : "代课"}老师`,
                                   () => {
                                     setOperations((current) =>
                                       current.map((entry) =>
@@ -4620,13 +5174,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                         `${selectedOperation.eventStart || "开始日期待确认"} 至 ${selectedOperation.eventEnd || "结束日期待确认"}`,
                         `${selectedOperation.affectedLessonCount ?? 0} 节课程可能受影响`,
                         selectedOperation.chosenTeacherId
-                          ? `代课候选：${teacherById(selectedOperation.chosenTeacherId)?.name ?? selectedOperation.chosenTeacherId}`
-                          : "尚未选择代课候选",
+                          ? `${selectedOperation.type === "老师离职" ? "永久接替" : "代课"}候选：${teacherById(selectedOperation.chosenTeacherId)?.name ?? selectedOperation.chosenTeacherId}`
+                          : `尚未选择${selectedOperation.type === "老师离职" ? "永久接替" : "代课"}候选`,
+                        ...(selectedOperation.type === "老师离职"
+                          ? ["会从离职生效日起永久调整全部未来常规课，并原子更新学生主档与老师容量"]
+                          : []),
                         "确认后，工作台里的后续沟通任务仍会保留",
                       ],
                       confirmLabel: "确认处理完成",
                       onConfirm: async () => {
-                        const response = await fetch("/api/operations/confirm", {
+                        const permanentReplacement = selectedOperation.type === "老师离职";
+                        const response = await fetch(permanentReplacement
+                          ? "/api/operations/permanent-replacement"
+                          : "/api/operations/confirm", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
@@ -4636,6 +5196,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                               bookings: bookingsShared.version,
                               operations: operationsShared.version,
                               teachers: teachersShared.version,
+                              ...(permanentReplacement ? { students: studentsShared.version } : {}),
                             },
                           }),
                         });
@@ -4645,13 +5206,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                         }
                         bookingsShared.applyRemote(body.bookingRow as RemoteStateRow<Booking[]>);
                         operationsShared.applyRemote(body.operationRow as RemoteStateRow<Operation[]>);
+                        if (permanentReplacement) {
+                          if (!body.teacherRow || !body.studentRow) throw new Error("永久换师提交缺少老师或学生原子结果");
+                          teachersShared.applyRemote(body.teacherRow as RemoteStateRow<Teacher[]>);
+                          studentsShared.applyRemote(body.studentRow as RemoteStateRow<Student[]>);
+                        }
                         const affectedCount = Array.isArray(body.affectedOccurrenceIds) ? body.affectedOccurrenceIds.length : 0;
                         notify(affectedCount ? `已原子更新 ${affectedCount} 节具体课程，后续任务仍保留` : "已确认，后续任务仍保留在工作台");
                       },
                     });
                   }}
+                  disabled={selectedOperation.type === "老师离职" && !selectedOperation.chosenTeacherId}
                 >
-                  确认处理
+                  {selectedOperation.type === "老师离职" ? "确认永久换师" : "确认处理"}
                 </button>
               )}
               <button
@@ -4704,19 +5271,62 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const structuredRows = packages.flatMap((lessonPackage): RenewalDisplayRow[] => {
         const estimate = estimateByPackage.get(lessonPackage.id);
         const remaining = getLessonPackageBalance(lessonPackage).remainingHours;
-        const existing = scopedRenewals.find((renewal) => renewal.studentId === student.id && renewal.packageId === lessonPackage.id)
-          ?? (packages.length === 1 ? scopedRenewals.find((renewal) => renewal.studentId === student.id && !renewal.packageId) : undefined);
         const needsAttention = isActiveStudent(student)
           && Boolean(estimate?.depletionDate || remaining < Number(rules.lowHours || 5));
+        const packageExact = scopedRenewals.find((renewal) => renewal.studentId === student.id
+          && renewal.packageId === lessonPackage.id
+          && !renewal.subjectId);
+        const legacySubjectRows = scopedRenewals.filter((renewal) => renewal.studentId === student.id
+          && renewal.packageId === lessonPackage.id
+          && Boolean(renewal.subjectId));
+        const subjectLegacy = legacySubjectRows.length === 1 ? legacySubjectRows[0] : undefined;
+        const studentLegacy = packages.length === 1
+          ? scopedRenewals.find((renewal) => renewal.studentId === student.id && !renewal.packageId && !renewal.subjectId)
+          : undefined;
+        const existing = packageExact ?? subjectLegacy ?? studentLegacy;
         if (!existing && !needsAttention) return [];
-        const nextOccurrence = scopedBookings
-          .filter((booking) => booking.studentId === student.id && booking.packageId === lessonPackage.id)
-          .flatMap((booking) => bookingOccurrencesWithinRange(booking, today, projectionEnd))
-          .filter((occurrence) => bookingInstant(occurrence).getTime() >= now.getTime())
-          .sort((left, right) => bookingInstant(left).getTime() - bookingInstant(right).getTime())[0];
+        const packageOccurrences = projectedOccurrences
+          .filter((occurrence) => occurrence.packageId === lessonPackage.id)
+          .sort((left, right) => left.date.localeCompare(right.date) || left.start.localeCompare(right.start) || left.id.localeCompare(right.id));
+        const depletionIndex = estimate?.occurrenceId
+          ? packageOccurrences.findIndex((occurrence) => occurrence.id === estimate.occurrenceId)
+          : -1;
+        const depletionOccurrence = depletionIndex >= 0 ? packageOccurrences[depletionIndex] : undefined;
+        const nextScheduled = packageOccurrences[0];
+        const nextAfterDepletion = depletionIndex >= 0 ? packageOccurrences[depletionIndex + 1] : undefined;
+        const depletionInstant = depletionOccurrence
+          ? zonedDateTimeToUtc(depletionOccurrence.date, depletionOccurrence.start, depletionOccurrence.timezone)
+          : null;
+        const afterInstant = nextAfterDepletion
+          ? zonedDateTimeToUtc(nextAfterDepletion.date, nextAfterDepletion.start, nextAfterDepletion.timezone)
+          : null;
+        const automaticRenewalDateNote = buildRenewalDateNote({
+          depletionSubjectId: estimate?.subjectId,
+          remainingHours: remaining,
+          depletionLessonHours: depletionOccurrence ? depletionOccurrence.duration / 60 : undefined,
+          nextScheduledLesson: nextScheduled ? {
+            subjectId: nextScheduled.subjectId,
+            date: nextScheduled.date,
+            start: nextScheduled.start,
+            hours: nextScheduled.duration / 60,
+          } : null,
+          nextLessonAfterDepletion: nextAfterDepletion && depletionInstant && afterInstant ? {
+            subjectId: nextAfterDepletion.subjectId,
+            date: nextAfterDepletion.date,
+            start: nextAfterDepletion.start,
+            withinSevenDays: afterInstant.getTime() - depletionInstant.getTime() < 7 * 24 * 60 * 60 * 1000,
+          } : null,
+        });
+        const nextBookingOccurrence = nextScheduled
+          ? scopedBookings
+              .filter((booking) => booking.studentId === student.id && booking.packageId === lessonPackage.id)
+              .flatMap((booking) => bookingOccurrencesWithinRange(booking, today, projectionEnd))
+              .find((occurrence) => occurrence.occurrenceKey === nextScheduled.id)
+          : undefined;
+        const anchor = renewalTaskAnchor(student.id, lessonPackage.id);
         return [{
           ...(existing ?? {
-            id: `REN-AUTO-${student.id}-${lessonPackage.id}`,
+            id: `REN-AUTO:${anchor}`,
             studentId: student.id,
             status: "待跟进" as const,
             businessStatus: "not_renewed_active" as const,
@@ -4724,24 +5334,33 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           }),
           packageId: lessonPackage.id,
           packageName: lessonPackage.name,
-          subjectLabel: lessonPackage.subjectIds.join("、") || student.course,
-          teacherName: nextOccurrence ? teacherById(nextOccurrence.teacherId)?.name ?? "待确认" : "待确认",
+          subjectId: undefined,
+          subjectLabel: estimate?.subjectId ? `耗尽科目：${estimate.subjectId}` : lessonPackage.subjectIds.join(" / "),
+          teacherName: nextBookingOccurrence ? teacherById(nextBookingOccurrence.teacherId)?.name ?? "待确认" : "待确认",
           remaining,
           estimate: estimate?.depletionDate ?? existing?.estimate ?? "待确认",
+          renewalDateNote: automaticRenewalDateNote || existing?.renewalDateNote,
           businessStatus: existing?.businessStatus ?? normalizeRenewalBusinessStatus(existing?.status ?? "待跟进"),
         }];
       });
+      const representedRenewalIds = new Set(structuredRows.map((row) => row.id));
+      const representedPackageIds = new Set(structuredRows.map((row) => row.packageId).filter(Boolean));
       const legacyRows = scopedRenewals
-        .filter((renewal) => renewal.studentId === student.id && !renewal.packageId && (packages.length !== 1 || !structuredRows.some((row) => row.id === renewal.id)))
-        .map((renewal): RenewalDisplayRow => ({
-          ...renewal,
-          packageName: packages.length ? "未关联课包" : "历史课时",
-          subjectLabel: student.course,
-          teacherName: student.teacher || "待确认",
-          remaining: student.remainingHours ?? renewal.remaining,
-          estimate: renewal.estimate ?? student.renewalDate ?? student.renewalMonth ?? "待确认",
-          businessStatus: renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status),
-        }));
+        .filter((renewal) => renewal.studentId === student.id
+          && !representedRenewalIds.has(renewal.id)
+          && (!renewal.packageId || !representedPackageIds.has(renewal.packageId)))
+        .map((renewal): RenewalDisplayRow => {
+          const linkedPackage = packages.find((lessonPackage) => lessonPackage.id === renewal.packageId);
+          return {
+            ...renewal,
+            packageName: linkedPackage?.name ?? (packages.length ? "未关联课包" : "历史课时"),
+            subjectLabel: renewal.subjectId ?? linkedPackage?.subjectIds.join(" / ") ?? student.course,
+            teacherName: student.teacher || "待确认",
+            remaining: linkedPackage ? getLessonPackageBalance(linkedPackage).remainingHours : student.remainingHours ?? renewal.remaining,
+            estimate: renewal.estimate ?? student.renewalDate ?? student.renewalMonth ?? "待确认",
+            businessStatus: renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status),
+          };
+        });
       return [...structuredRows, ...legacyRows];
     });
     const businessStatusFor = (renewal: Renewal) => renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status);
@@ -4782,7 +5401,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               const businessStatus = businessStatusFor(renewal);
               const displayStatus = RENEWAL_STATUS_LABELS[businessStatus];
               const businessTone: Tone = businessStatus === "renewed" ? "green" : businessStatus === "not_renewed_active" ? "amber" : "neutral";
-              return <div className="collection-row renewal-grid-row" key={`${renewal.studentId}:${renewal.packageId ?? renewal.id}`}>
+              const rowKey = renewal.packageId
+                ? renewalTaskAnchor(renewal.studentId, renewal.packageId)
+                : `renewal-record:${renewal.id}`;
+              return <div className="collection-row renewal-grid-row" key={rowKey}>
                 <button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : businessTone} /><span><strong>{student?.name}</strong><small>{renewal.packageName ?? "未关联课包"} · {renewal.subjectLabel ?? student?.course}</small></span></button>
                 <strong className={lowHours ? "low-hours" : ""}>{renewal.remaining} 小时</strong>
                 <span><strong>{renewal.estimate}</strong>{renewal.renewalDateNote ? <small>{renewal.renewalDateNote}</small> : null}</span>
@@ -5791,17 +6413,103 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </div>
           <div className="student-identity-link-bar">
             <div>
-              <strong>稳定身份链接</strong>
-              <small>{studentIdentityLinkStatus ? "旧身份链接已清空" : "只允许清除旧链接；新链接须由服务端证据审核生成"}</small>
+              <strong>人工审核身份链接</strong>
+              <small>{studentIdentityLinkStatus ? `当前已保存 ${studentIdentityLinkStatus.count} 条` : "只根据当前服务器来源生成候选，不会自动关联"}</small>
             </div>
-            <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy} onClick={() => void clearStudentIdentityLinks()}>{studentIdentityLinkBusy ? "正在清除…" : "清除旧身份链接"}</button>
+            <div className="toolbar-actions">
+              <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy} onClick={() => void refreshStudentIdentityReview()}>{studentIdentityLinkBusy ? "正在读取…" : "读取人工审核候选"}</button>
+              <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy || !studentIdentityReviewClearKey} onClick={requestClearStudentIdentityLinks}>{studentIdentityLinkBusy ? "正在处理…" : "清空全部身份链接"}</button>
+            </div>
           </div>
+          {studentIdentityReviewCandidates?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-review-title">
+            <div>
+              <h3 id="student-identity-review-title">学生身份逐条人工确认</h3>
+              <small>候选仅作为人工证据。每次确认都会由服务器和数据库重新核对当前来源版本、来源行及学生版本。</small>
+            </div>
+            {studentIdentityReviewCandidates.map((candidate) => <article key={candidate.candidateKey}>
+              <div>
+                <strong>学生总表：{candidate.master.name}</strong>
+                <small>学生总表来源行 {String(candidate.master.sourceRow)}</small>
+                <strong>教务宝：{candidate.jwb.name}</strong>
+                <small>教务宝来源行 {String(candidate.jwb.sourceRow)}</small>
+                {candidate.existing ? <small>现有系统记录：{candidate.existing.name}{candidate.existing.sourceRow !== undefined ? ` · 来源行 ${String(candidate.existing.sourceRow)}` : " · 无来源行标记"}</small> : <small>现有系统：没有唯一同键记录</small>}
+                {candidate.existingMatchCount > 1 ? <small>现有系统共有 {candidate.existingMatchCount} 条同键记录；自动候选不会猜测要合并哪一条。</small> : null}
+                {candidate.blockedReason ? <small>当前不可提交：{
+                  candidate.blockedReason === "existing_identity_ambiguous"
+                    ? "现有系统有多条同键记录"
+                    : candidate.blockedReason === "identity_already_used"
+                      ? "现有身份已被其他审核链接占用"
+                      : "待创建的稳定身份已存在冲突"
+                }</small> : null}
+              </div>
+              <div className="teacher-identity-resolution-actions">
+                {candidate.options.map((option) => <button
+                  className="primary-button"
+                  type="button"
+                  key={option.resolutionKey}
+                  disabled={studentIdentityLinkBusy || studentImportBusy}
+                  onClick={() => void confirmStudentIdentityReview(option.resolutionKey, option.decision)}
+                >{studentIdentityLinkBusy ? "正在确认…" : option.label}</button>)}
+              </div>
+            </article>)}
+          </section> : studentIdentityReviewCandidates ? <div className="form-notice"><Link2 size={16} /> 当前没有可提交的人工身份审核候选。</div> : null}
+          {studentIdentityManualReview ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-manual-title">
+            <div>
+              <h3 id="student-identity-manual-title">剩余学生手工配对</h3>
+              <small>姓名候选之外的必要学生在这里逐条选择。提交到服务器的只有当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
+            </div>
+            <article>
+              <div>
+                <label>学生总表记录
+                  <select value={studentIdentityManualMasterToken} disabled={studentIdentityLinkBusy || !studentIdentityManualReview.masters.length} onChange={(event) => setStudentIdentityManualMasterToken(event.target.value)}>
+                    <option value="">请选择待配对学生</option>
+                    {studentIdentityManualReview.masters.map((item) => <option value={item.token} key={item.token}>{item.name} · 来源行 {String(item.sourceRow)} · {item.status}</option>)}
+                  </select>
+                </label>
+                <label>教务宝记录
+                  <select value={studentIdentityManualJwbToken} disabled={studentIdentityLinkBusy || !studentIdentityManualReview.jwb.length} onChange={(event) => setStudentIdentityManualJwbToken(event.target.value)}>
+                    <option value="">请选择对应教务宝记录</option>
+                    {studentIdentityManualReview.jwb.map((item) => <option value={item.token} key={item.token}>{item.name} · 来源行 {String(item.sourceRow)}</option>)}
+                  </select>
+                </label>
+                <label>处理方式
+                  <select value={studentIdentityManualDecision} disabled={studentIdentityLinkBusy} onChange={(event) => setStudentIdentityManualDecision(event.target.value as "create" | "merge")}>
+                    <option value="create">确认为新学生身份</option>
+                    <option value="merge">合并到现有系统学生</option>
+                  </select>
+                </label>
+                {studentIdentityManualDecision === "merge" ? <label>现有系统学生
+                  <select value={studentIdentityManualExistingToken} disabled={studentIdentityLinkBusy || !studentIdentityManualReview.existing.length} onChange={(event) => setStudentIdentityManualExistingToken(event.target.value)}>
+                    <option value="">请选择可辨识的现有学生</option>
+                    {studentIdentityManualReview.existing.map((item) => <option value={item.token} key={item.token}>{[
+                      item.name,
+                      item.sourceRow !== undefined ? `来源行 ${String(item.sourceRow)}` : undefined,
+                      item.status,
+                      item.segment,
+                    ].filter(Boolean).join(" · ")}</option>)}
+                  </select>
+                </label> : null}
+              </div>
+              <div className="teacher-identity-resolution-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={studentIdentityLinkBusy || studentImportBusy
+                    || !studentIdentityManualMasterToken || !studentIdentityManualJwbToken
+                    || (studentIdentityManualDecision === "merge" && !studentIdentityManualExistingToken)}
+                  onClick={() => void confirmStudentIdentityManualPair()}
+                >{studentIdentityLinkBusy ? "正在确认…" : "确认这组手工配对"}</button>
+              </div>
+            </article>
+            <small>待配对：学生总表 {studentIdentityManualReview.masters.length} 条 · 教务宝 {studentIdentityManualReview.jwb.length} 条。可见证据完全相同的现有学生不会出现在合并选项中。</small>
+          </section> : null}
           {studentImportPreview ? <>
             <section className="sync-summary">
               <SummaryCard icon={<UserPlus size={19} />} tone="green" title={`${studentImportPreview.summary.insert} 新增 · ${studentImportPreview.summary.update} 更新`} text={`${studentImportPreview.summary.unchanged} 位无需修改`} />
               <SummaryCard icon={<UserRoundX size={19} />} tone="amber" title={`${studentImportPreview.summary.excluded} 位按规则排除`} text={`${studentImportPreview.summary.preservedManualTrials} 位手工试听保留 · ${studentImportPreview.summary.preservedReferencedArchived} 位历史归档`} />
               <SummaryCard icon={<CircleAlert size={19} />} tone={studentImportPreview.summary.ambiguous ? "red" : "blue"} title={`${studentImportPreview.summary.ambiguous} 个歧义`} text={`${studentImportPreview.summary.unmatched} 个未匹配`} />
               <SummaryCard icon={<BookOpen size={19} />} tone={studentImportPreview.summary.studentsMissingPackageData ? "amber" : "green"} title={`${studentImportPreview.summary.importedPackages} 个逐课包`} text={`${studentImportPreview.summary.studentsMissingPackageData} 位缺逐课包数据`} />
+              <SummaryCard icon={<Link2 size={19} />} tone={studentImportPreview.identityCoverage.ready ? "green" : "red"} title={`${studentImportPreview.identityCoverage.matchedRequiredMasterRows}/${studentImportPreview.identityCoverage.requiredMasterRows} 个必要身份已关联`} text={studentImportPreview.identityCoverage.ready ? "教务宝身份覆盖已就绪" : `${studentImportPreview.identityCoverage.missingRequiredMasterRows} 位仍需审核身份对应`} />
             </section>
             {studentImportPreview.masterDuplicateResolutions?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-master-resolution-title">
               <div>
@@ -5837,6 +6545,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </article>)}
             </section> : null}
             {studentImportPreview.ambiguous.length ? <div className="form-notice"><CircleAlert size={16} /> 有歧义的姓名必须先在来源中处理，系统不会猜测关联。</div> : null}
+            {!studentImportPreview.identityCoverage.ready ? <div className="form-notice"><CircleAlert size={16} /> 在读、有课时或加课待排学生必须先与教务宝身份完成审核对应；系统不会按相似姓名猜测，也不会允许提交低覆盖计划。</div> : null}
           </> : <EmptyState title="尚未预检" detail="" />}
         </section> : null}
         {canUseAdminScope ? <section className="panel import-preview-panel">
@@ -7467,36 +8176,127 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const submitExam = (event: FormEvent<HTMLFormElement>) => {
+  const reconcilePendingExamSubmission = async (pending: PendingExamSubmission) => {
+    const recovery = pendingExamRecoveryCommand(pending);
+    if (!recovery) throw new Error("上一次考试提交记录已损坏，不能安全覆盖");
+    const response = await fetch("/api/exams/submit/reconcile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(recovery),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.resolved !== true
+      || body.commandKey !== recovery.commandKey
+      || body.studentId !== recovery.studentId
+      || body.examId !== recovery.exam.id) {
+      throw new Error(body.error || "上一次考试提交结果仍无法确认，请稍后重试");
+    }
+    if (body.committed === true) {
+      if (!body.studentRow || !body.taskRow) {
+        throw new Error("上一次考试提交结果不完整，请稍后重试");
+      }
+      studentsShared.applyRemote(body.studentRow as RemoteStateRow<Student[]>);
+      tasksShared.applyRemote(body.taskRow as RemoteStateRow<Task[]>);
+      examSubmissionRef.current = null;
+      clearPendingExamSubmission(sessionOperator);
+      return { committed: true as const, recovery };
+    }
+    return { committed: false as const, recovery };
+  };
+
+  const submitExam = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (examSubmissionBusy) return;
     try {
       const parsed = parseExamFormData(new FormData(event.currentTarget));
-      const previousExam = parsed.examId ? selectedStudent.exams?.find((entry) => entry.id === parsed.examId) : undefined;
-      const exam: StudentExamRecord = { id: parsed.examId ?? id("EXM"), subject: parsed.subject, examType: parsed.examType, examVariant: parsed.examVariant, examMonth: parsed.examMonth, examDate: parsed.examDate, resultDateOverride: parsed.resultDateOverride, includeRecall: parsed.includeRecall, followUpState: previousExam?.followUpState };
-      const resultDate = estimateExamResultDate(exam);
-      setStudents((current) => current.map((student) => student.id === selectedStudent.id ? {
-        ...student,
-        exams: sortStudentExams([...(student.exams ?? []).filter((entry) => entry.id !== exam.id), exam]),
-        examSubject: exam.subject,
-        examDate: exam.examDate,
-        resultDate: resultDate ?? undefined,
-      } : student));
-      const taskDefinitions = buildExamTaskDefinitions(exam, { includeRecall: parsed.includeRecall, resultDate: resultDate ?? undefined });
-      const examTasks: Task[] = taskDefinitions.filter((definition) => definition.completionStatus !== "not_required").map((definition) => {
-        const dueAt = zonedDateTimeToUtc(definition.dueDate, "18:00", "Australia/Melbourne");
-        const owner = definition.assigneeRole === "course_planner" ? (selectedStudent.planner ?? "Tara") : selectedStudent.owner;
-        const completed = definition.completionStatus === "completed";
-        return { id: id("TSK"), title: definition.title, owner, ...taskRecipients(owner, definition.assigneeRole === "course_planner" ? [selectedStudent.owner] : [selectedStudent.planner ?? "Tara"]), studentId: selectedStudent.id, due: formatInstant(dueAt, "Australia/Melbourne", displayPreferences), dueAt: dueAt.toISOString(), status: completed ? "done" : statusForDueAt(dueAt, new Date()), tone: completed ? "green" : definition.kind === "exam_results_follow_up" ? "purple" : "amber", category: "考试", trigger: `${exam.subject} 考试记录`, result: completed ? "考试跟进已完成" : undefined, closedAt: completed ? definition.completedAt : undefined, ruleKey: definition.key, anchorBookingId: `exam:${exam.id}` };
+      const recovered = examSubmissionRef.current ?? readPendingExamSubmission(sessionOperator);
+      const examDraftWithoutId = {
+        subject: parsed.subject,
+        examType: parsed.examType,
+        examVariant: parsed.examVariant,
+        examMonth: parsed.examMonth,
+        ...(parsed.examDate ? { examDate: parsed.examDate } : {}),
+        ...(parsed.resultDateOverride ? { resultDateOverride: parsed.resultDateOverride } : {}),
+        includeRecall: parsed.includeRecall,
+      };
+      const recoveredMatchesDraft = pendingExamMatchesDraft(
+        recovered,
+        selectedStudent.id,
+        examDraftWithoutId,
+      ) && (!parsed.examId || parsed.examId === recovered?.examId);
+      if (recovered && !recoveredMatchesDraft) {
+        // Never replace an unresolved actor-level command with a different
+        // student or draft. First perform a read-only ledger lookup. A missing
+        // entry restores the exact old intent for a same-key retry; a committed
+        // entry is applied and cleared, but this new draft is never submitted.
+        examSubmissionRef.current = recovered;
+        setExamSubmissionBusy(true);
+        const reconciled = await reconcilePendingExamSubmission(recovered);
+        if (reconciled.committed) {
+          setExamDraft(null);
+          setModal(null);
+          notify("上一次考试提交已确认；当前新内容尚未提交，请重新录入");
+        } else {
+          setSelectedStudentId(reconciled.recovery.studentId);
+          setExamDraft(reconciled.recovery.exam as StudentExamRecord);
+          setExamFormResetToken((current) => current + 1);
+          notify("上一次考试尚未确认，已恢复原内容；请再次保存以沿用原编号");
+        }
+        return;
+      }
+      const examId = parsed.examId
+        ?? recovered?.examId
+        ?? `EXM-${crypto.randomUUID()}`;
+      const exam = { id: examId, ...examDraftWithoutId };
+      const intent = JSON.stringify([selectedStudent.id, exam]);
+      if (!recovered || recovered.intent !== intent) {
+        examSubmissionRef.current = {
+          intent,
+          examId,
+          commandKey: `exam-submit:${crypto.randomUUID()}`,
+        };
+      } else {
+        examSubmissionRef.current = recovered;
+      }
+      writePendingExamSubmission(sessionOperator, examSubmissionRef.current);
+      setExamSubmissionBusy(true);
+      const response = await fetch("/api/exams/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commandKey: examSubmissionRef.current.commandKey,
+          studentId: selectedStudent.id,
+          exam,
+          expectedVersions: {
+            students: studentsShared.version,
+            tasks: tasksShared.version,
+          },
+        }),
       });
-      setTasks((current) => {
-        return reconcileExamTasks(current, examTasks, { examId: exam.id, closedAt: new Date().toISOString() });
-      });
-      addAudit(previousExam ? "更新学生考试" : "记录学生考试", `${selectedStudent.name} · ${exam.subject} · ${exam.examDate ?? exam.examMonth}`, "amber");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.committed || !body.studentRow || !body.taskRow) {
+        throw new Error(body.error || "考试保存失败");
+      }
+      studentsShared.applyRemote(body.studentRow as RemoteStateRow<Student[]>);
+      tasksShared.applyRemote(body.taskRow as RemoteStateRow<Task[]>);
+      const previousExam = selectedStudent.exams?.find((entry) => entry.id === exam.id);
+      examSubmissionRef.current = null;
+      clearPendingExamSubmission(sessionOperator);
       setExamDraft(null);
       setModal(null);
-      notify(examTasks.length ? `考试已保存，并生成 ${examTasks.length} 项提醒` : "考试月份已保存；确定日期后再生成提醒");
+      if (body.applied === false) {
+        notify("考试提交已确认，系统没有重复写入");
+        return;
+      }
+      addAudit(previousExam ? "更新学生考试" : "记录学生考试", `${selectedStudent.name} · ${exam.subject} · ${exam.examDate ?? exam.examMonth}`, "amber");
+      const unresolvedRoles = Array.isArray(body.unresolvedRoleLabels) ? body.unresolvedRoleLabels : [];
+      const routingNotice = unresolvedRoles.length ? `；${unresolvedRoles.join("、")}账号待配置，未生成对应任务` : "";
+      const generatedTaskCount = Number(body.generatedTaskCount ?? 0);
+      notify(generatedTaskCount ? `考试已保存，并生成 ${generatedTaskCount} 项提醒${routingNotice}` : `考试已保存；确定日期及收件账号后再生成提醒${routingNotice}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "考试内容无效");
+    } finally {
+      setExamSubmissionBusy(false);
     }
   };
 
@@ -7539,44 +8339,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const submitNewPayroll = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const existingTeacherId = String(data.get("teacherId") ?? "").trim();
-    const newTeacherName = String(data.get("newTeacherName") ?? "").trim();
+    const teacherId = String(data.get("teacherId") ?? "").trim();
     const month = String(data.get("month") ?? payrollMonthSelection).trim();
     const currency = String(data.get("currency") ?? "AUD") as PayrollRow["currency"];
     const rate = Number(data.get("rate") ?? 0);
-    if (!month || (!existingTeacherId && !newTeacherName)) {
-      notify("请选择老师和薪资月份，或填写新老师姓名");
+    if (!month || !teacherId) {
+      notify("请选择现有老师和薪资月份");
       return;
     }
     if (!Number.isFinite(rate) || rate < 0) {
       notify("请填写有效的课时费");
       return;
     }
-    let teacherId = existingTeacherId;
-    let teacherName = teacherById(existingTeacherId)?.name ?? newTeacherName;
-    if (newTeacherName) {
-      const duplicateTeacher = teachers.find((teacher) => teacher.name.trim().toLowerCase() === newTeacherName.toLowerCase());
-      if (duplicateTeacher) {
-        teacherId = duplicateTeacher.id;
-        teacherName = duplicateTeacher.name;
-      } else {
-        teacherId = id("TEA");
-        const newTeacher: Teacher = {
-          id: teacherId,
-          name: newTeacherName,
-          initials: initials(newTeacherName),
-          subjects: ["待确认"],
-          timezone: "Australia/Melbourne",
-          availability: "待补充",
-          load: 0,
-          capacity: 0,
-          acceptsStudents: false,
-          note: "由薪资页面新增，教师资料待补充",
-          availabilityStatus: "待确认",
-        };
-        setTeachers((current) => [newTeacher, ...current]);
-      }
-    }
+    const teacherName = teacherById(teacherId)?.name;
     if (!teacherId || !teacherName) {
       notify("没有找到所选老师");
       return;
@@ -7708,22 +8483,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const provisionalCourse = String(
         data.get("provisionalCourse") ?? "",
       ).trim();
-      const provisionalName = String(data.get("provisionalName") ?? "").trim();
       const provisionalGuardianWechat = String(data.get("provisionalGuardianWechat") ?? "").trim();
       if (!provisionalCourse) {
         notify("暂未有姓名时，至少要填写科目/课程");
         return;
       }
       studentId = id("STU-TEMP");
-      if (!provisionalName && !provisionalGuardianWechat) {
-        notify("暂未有学生姓名时，请填写家长微信名");
+      if (!provisionalGuardianWechat) {
+        notify("临时试听档案必须填写家长微信名");
         return;
       }
-      const displayName = provisionalName || provisionalGuardianWechat;
+      const displayName = provisionalGuardianWechat;
       provisionalStudent = {
         id: studentId,
         name: displayName,
-        initials: provisionalName ? initials(provisionalName) : "待",
+        initials: "待",
         status: workflowType === "学生直报（无试听）" ? "在读" : "活跃 + 无课时",
         segment: workflowType === "学生直报（无试听）" ? "已报名" : "试听",
         owner,
@@ -7742,7 +8516,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           lpWorkflowOptions.find((option) => option.id === workflowType)
             ?.lpNeed ?? "待确认",
         followUp: "未记录",
-        notes: "临时 LP 档案，姓名待补",
+        notes: "家长微信名临时 LP 档案，学生姓名待补",
       };
       workflowStudent = provisionalStudent;
       setStudents((current) => [provisionalStudent!, ...current]);
@@ -7848,6 +8622,52 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     notify("LP 新版本和修订历史已保存");
   };
 
+  const submitTeacherAvailability = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!isTeacherView || !currentTeacher || teacherAvailabilitySubmitBusy) return;
+    const data = new FormData(event.currentTarget);
+    const slots = [1, 2, 3, 4, 5, 6, 0].flatMap((day) => {
+      if (data.get(`slot-${day}`) !== "on") return [];
+      const start = String(data.get(`start-${day}`) ?? "").trim();
+      const end = String(data.get(`end-${day}`) ?? "").trim();
+      return [{ day, start, end }];
+    });
+    if (!slots.length) {
+      notify("请至少选择一个可约星期和时间段");
+      return;
+    }
+    if (slots.some((slot) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.start)
+      || !/^([01]\d|2[0-3]):[0-5]\d$/.test(slot.end)
+      || slot.end <= slot.start)) {
+      notify("请检查每个已选时段的开始和结束时间");
+      return;
+    }
+    setTeacherAvailabilitySubmitBusy(true);
+    try {
+      const response = await fetch("/api/teacher-availability/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionKey: teacherAvailabilitySubmissionKey.current ??= crypto.randomUUID(),
+          month: String(data.get("month") ?? ""),
+          timezone: cleanTimezone(data.get("timezone")),
+          additionalStudents: Number(data.get("additionalStudents") ?? 0),
+          slots,
+          notes: String(data.get("notes") ?? "").trim(),
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.submitted) throw new Error(body.error || "月度 AVA 提交失败");
+      teacherAvailabilitySubmissionKey.current = null;
+      setModal(null);
+      notify(body.unchanged ? "这份 AVA 已经提交，仍在等待教务审核" : "月度 AVA 已提交，教务审核后才会用于排课");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "月度 AVA 提交失败");
+    } finally {
+      setTeacherAvailabilitySubmitBusy(false);
+    }
+  };
+
   const submitAva = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isAdminView) {
@@ -7918,6 +8738,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             ...(input.booking.repeatCount !== undefined ? { repeatCount: input.booking.repeatCount } : {}),
             ...(input.booking.packageId ? { packageId: input.booking.packageId } : {}),
             subjectId: input.booking.course,
+            teacherSubjectId: input.booking.teacherSubjectId,
           },
         } : {}),
       }),
@@ -7951,6 +8772,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const kind = String(data.get("kind") ?? "常规课") as Booking["kind"];
     const packageId = String(data.get("packageId") ?? bookingDraft?.packageId ?? "").trim();
     const subjectId = String(data.get("subjectId") ?? bookingDraft?.course ?? "").trim();
+    const teacherSubjectId = String(data.get("teacherSubjectId") ?? bookingDraft?.teacherSubjectId ?? "").trim();
     const recurring = data.get("recurring") === "on";
     const repeatCountRaw = String(data.get("repeatCount") ?? "").trim();
     const parsedRepeatCount = Number(repeatCountRaw);
@@ -7988,6 +8810,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       notify("请选择本节课程科目。");
       return;
     }
+    if (!teacherSubjectId || !teacher.subjects.includes(teacherSubjectId)) {
+      notify(`请按腾讯老师子表为 ${teacher.name} 选择其可教的科目分类。`);
+      return;
+    }
     const studentPackages = student.lessonPackages ?? [];
     const studentSubjectIds = Array.from(new Set([
       student.course,
@@ -8011,6 +8837,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const firstTeacherStudentBooking = !bookingDraft && !bookings.some((item) => item.kind !== "代课" && item.teacherId === teacherId && item.studentId === studentId);
     const movingTeacherOrStudent = Boolean(bookingDraft && (bookingDraft.teacherId !== teacherId || bookingDraft.studentId !== studentId));
     const newTeacherStudentBooking = movingTeacherOrStudent && !bookings.some((item) => item.id !== bookingDraft?.id && item.kind !== "代课" && item.teacherId === teacherId && item.studentId === studentId);
+    const establishesTeacherStudentRelationship = kind !== "代课" && !bookings.some(
+      (item) => item.kind !== "代课" && item.teacherId === teacherId && item.studentId === studentId,
+    );
     const targetCapacityConfigured = Number.isSafeInteger(teacher.newStudentCapacity) && (teacher.newStudentCapacity as number) >= 0;
     const targetCapacityAvailable = targetCapacityConfigured && (teacher.newStudentCapacity as number) > 0;
     if (kind !== "代课" && firstTeacherStudentBooking && !targetCapacityConfigured) {
@@ -8031,6 +8860,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     if (bookingDraft && kind !== "代课" && newTeacherStudentBooking && !targetCapacityAvailable) {
       notify(`${teacher.name} 的可接新生数量为 0，请先选择其他老师或由教务调整数量。`);
+      return;
+    }
+    if (establishesTeacherStudentRelationship && !teacher.acceptsStudents) {
+      notify(`${teacher.name} 当前暂停接新，不能建立新的师生关系。已有师生关系可继续排课。`);
       return;
     }
     if (
@@ -8058,10 +8891,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
     if (conflictDate) {
       notify(`${conflictDate} 的学生或老师已有重叠课程，请调整本轮排课。`);
-      return;
-    }
-    if (kind === "试听" && !teacher.acceptsStudents) {
-      notify(`${teacher.name} 当前不是“可接新生”状态，不能安排试听。`);
       return;
     }
     const unavailableDate = proposedDates.find(
@@ -8096,6 +8925,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       requestedAt: bookingDraft?.requestedAt ?? submittedAt.toISOString(),
       packageId: packageId || undefined,
       course: subjectId,
+      teacherSubjectId,
     };
     if (isPastBooking(booking) && !bookingDraft) {
       notify("不能创建已经过去的课程，请检查日期、时间和录入时区。");
@@ -8228,7 +9058,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
   };
 
-  const submitOperation = (event: FormEvent<HTMLFormElement>) => {
+  const submitOperation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isTeacherView) {
       notify("老师账号不能创建教务异常，请联系负责教务处理");
@@ -8254,10 +9084,70 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
 
+    if (type === "老师离职") {
+      if (teacherDepartureCreationBusy) return;
+      const effectiveDateValue = new Date(`${eventEnd}T00:00:00.000Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(eventEnd)
+        || Number.isNaN(effectiveDateValue.valueOf())
+        || effectiveDateValue.toISOString().slice(0, 10) !== eventEnd) {
+        notify("请填写有效的离职生效日期");
+        return;
+      }
+      const intent = JSON.stringify([teacherId, eventEnd, detail]);
+      if (teacherDepartureCreationRef.current?.intent !== intent) {
+        teacherDepartureCreationRef.current = {
+          intent,
+          commandKey: `teacher-departure-create:${crypto.randomUUID()}`,
+        };
+      }
+      setTeacherDepartureCreationBusy(true);
+      try {
+        const response = await fetch("/api/operations/departure/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            commandKey: teacherDepartureCreationRef.current.commandKey,
+            sourceTeacherId: teacherId,
+            effectiveDate: eventEnd,
+            detail,
+            expectedVersions: {
+              bookings: bookingsShared.version,
+              operations: operationsShared.version,
+              students: studentsShared.version,
+              tasks: tasksShared.version,
+              teachers: teachersShared.version,
+            },
+          }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.operationRow || !body.taskRow) {
+          throw new Error(body.error || "老师离职流程创建失败");
+        }
+        operationsShared.applyRemote(body.operationRow as RemoteStateRow<Operation[]>);
+        tasksShared.applyRemote(body.taskRow as RemoteStateRow<Task[]>);
+        if (Array.isArray(body.operationIds) && typeof body.operationIds[0] === "string") {
+          setSelectedOperationId(body.operationIds[0]);
+        }
+        if (Array.isArray(body.affectedStudentIds) && typeof body.affectedStudentIds[0] === "string") {
+          setSelectedStudentId(body.affectedStudentIds[0]);
+        }
+        teacherDepartureCreationRef.current = null;
+        setOperationDraft(null);
+        setModal(null);
+        setActive("operations");
+        notify(`已原子创建 ${body.operationIds?.length ?? 0} 条离职记录与 ${body.generatedTaskCount ?? 0} 项交接任务`);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "老师离职流程创建失败");
+      } finally {
+        setTeacherDepartureCreationBusy(false);
+      }
+      return;
+    }
+
     const studentLeave = type === "学生请假" || type === "停课";
     const teacherAbsence = Boolean(
       teacherId &&
-        (type === "请假" || type === "老师请假" || type === "老师离职"),
+        (type === "请假" || type === "老师请假"),
     );
     const substitution = Boolean(teacherId && (type === "代课" || type === "换老师"));
     const teacherImpact = teacherAbsence || substitution;
@@ -8271,21 +9161,26 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
 
-    const affectedOccurrences = occurrenceImpact
-      ? bookings
-          .filter(
-            (booking) =>
-              (studentLeave ? booking.studentId === studentId : booking.teacherId === teacherId) &&
-              (!substitution || booking.studentId === studentId) &&
-              (!operationDraft?.sourceBookingId ||
-                booking.id === operationDraft.sourceBookingId),
-          )
-          .flatMap((booking) =>
-            bookingOccurrencesWithinRange(booking, eventStart, eventEnd),
-          )
-      : [];
+    let affectedOccurrences: BookingOccurrence[] = [];
+    if (occurrenceImpact) {
+      affectedOccurrences = bookings
+        .filter(
+          (booking) =>
+            (studentLeave ? booking.studentId === studentId : booking.teacherId === teacherId) &&
+            (!substitution || booking.studentId === studentId) &&
+            (!operationDraft?.sourceBookingId ||
+              booking.id === operationDraft.sourceBookingId),
+        )
+        .flatMap((booking) =>
+          bookingOccurrencesWithinRange(booking, eventStart, eventEnd),
+        );
+    }
     if (occurrenceImpact && !affectedOccurrences.length) {
       notify("在所选日期范围内未找到受影响课程，未创建任务。");
+      return;
+    }
+    if (teacherImpact && affectedOccurrences.some((booking) => !booking.teacherSubjectId)) {
+      notify("受影响课程缺少老师腾讯表科目分类，请先编辑整个课程系列并人工选择分类。");
       return;
     }
 
@@ -8333,13 +9228,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const generatedTasks: Task[] = targetStudentIds.flatMap(
       (targetId): Task[] => {
         const student = studentById(targetId);
-        const relatedOccurrences = affectedOccurrences
-          .filter((booking) => booking.studentId === targetId)
-          .sort((left, right) => left.date.localeCompare(right.date));
-        const affectedDates = relatedOccurrences.map((booking) => booking.date);
-        const lastAffectedDate = affectedDates.at(-1) ?? eventEnd;
-        const handoverBaseDate =
-          affectedDates.length > 1 ? affectedDates.at(-2)! : lastAffectedDate;
         const priorTeacherOccurrences = teacherId && eventStart
           ? bookings
               .filter((booking) => booking.teacherId === teacherId && booking.studentId === targetId)
@@ -8418,74 +9306,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               trigger: "老师请假：代课老师一周备课",
             },
           ];
-        if (teacherAbsence && type === "老师离职")
-          return [
-            {
-              id: id("TSK"),
-              title: "筛选并确认推荐老师名单",
-              owner: "Tiffany",
-              studentId: targetId,
-              ...taskTiming(
-                shiftIsoDate(eventEnd, -14),
-                "Australia/Melbourne",
-                "red",
-              ),
-              category: "排课",
-              trigger: "老师离职：推荐老师名单",
-            },
-            {
-              id: id("TSK"),
-              title: "开启新老师沟通",
-              owner: student?.owner ?? "待分配",
-              studentId: targetId,
-              ...taskTiming(
-                shiftIsoDate(eventEnd, -14),
-                "Australia/Melbourne",
-                "amber",
-              ),
-              category: "排课",
-              trigger: "老师离职：新老师沟通",
-            },
-            {
-              id: id("TSK"),
-              title: "确认 Handover Notes 与原老师约定 DDL",
-              owner: student?.owner ?? "待分配",
-              studentId: targetId,
-              ...taskTiming(
-                shiftIsoDate(handoverBaseDate, 1),
-                "Australia/Melbourne",
-                "blue",
-              ),
-              category: "LP",
-              trigger: "老师离职：交接资料",
-            },
-            {
-              id: id("TSK"),
-              title: "告知家长并记录最终安排",
-              owner: student?.owner ?? "待分配",
-              studentId: targetId,
-              ...taskTiming(
-                shiftIsoDate(handoverBaseDate, 1),
-                "Australia/Melbourne",
-                "red",
-              ),
-              category: "资料",
-              trigger: "老师离职：家长沟通",
-            },
-            {
-              id: id("TSK"),
-              title: "向龙老师汇报离职交接进度",
-              owner: "思佳",
-              studentId: targetId,
-              ...taskTiming(
-                shiftIsoDate(eventEnd, -7),
-                "Australia/Melbourne",
-                "amber",
-              ),
-              category: "排课",
-              trigger: "老师离职：管理确认",
-            },
-          ];
         return [
           {
             id: id("TSK"),
@@ -8562,7 +9382,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     try {
       if (attachment instanceof File && attachment.size > 0) {
         const upload = new FormData();
-        upload.set("commandKey", commandKeyForAttachment("renewal", renewalDraft.studentId, attachment, [attemptedAt, businessStatus, result, note, renewalDateNote]));
+        upload.set("commandKey", commandKeyForAttachment("renewal", renewalDraft.studentId, attachment, [renewalDraft.packageId ?? "", attemptedAt, businessStatus, result, note, renewalDateNote]));
         upload.set("studentId", renewalDraft.studentId);
         upload.set("file", attachment);
         upload.set("fileTitle", `续课 FU · ${formatFollowUpTime(attemptedAt, displayPreferences)}`);
@@ -8583,6 +9403,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const contacted = result === "已跟进" || result === "等待家长";
       const updated: Renewal = {
         ...renewalDraft,
+        packageId: renewalDraft.packageId,
+        subjectId: undefined,
         status: result,
         businessStatus,
         lastAttemptAt: attemptedAt,
@@ -8605,7 +9427,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       }
       addAudit(
         "记录续课跟进",
-        `${student.name} · ${RENEWAL_STATUS_LABELS[businessStatus]} · ${result} · ${formatFollowUpTime(attemptedAt, displayPreferences)}${attachmentTitle ? ` · 已归档截图 ${attachmentTitle}` : ""}${note ? ` · ${note}` : ""}`,
+        `${student.name} · ${renewalDraft.packageName ?? renewalDraft.packageId ?? "未关联课包"} · ${RENEWAL_STATUS_LABELS[businessStatus]} · ${result} · ${formatFollowUpTime(attemptedAt, displayPreferences)}${attachmentTitle ? ` · 已归档截图 ${attachmentTitle}` : ""}${note ? ` · ${note}` : ""}`,
         result === "本次未跟进" ? "amber" : businessStatus === "renewed" ? "green" : "blue",
       );
       setModal(null);
@@ -8832,8 +9654,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitLessonPackage}><LessonPackageForm existingPackages={(selectedStudent.lessonPackages ?? []).map((lessonPackage) => ({ value: lessonPackage.id, label: lessonPackage.name }))} subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course])).map((value) => ({ value }))} initialSubjectIds={[selectedStudent.course]} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存课包</button></footer></form>
       </Dialog>}
 
-      {modal === "exam" && <Dialog title={examDraft ? "编辑学生考试" : "记录学生考试"} onClose={() => { setExamDraft(null); setModal(null); }}>
-        <form className="form-grid" onSubmit={submitExam}><ExamForm initialExamId={examDraft?.id} subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course, examDraft?.subject ?? ""])).filter(Boolean).map((value) => ({ value }))} initialSubject={examDraft?.subject ?? selectedStudent.course} initialType={examDraft?.examType} initialVariant={examDraft?.examVariant} initialMonth={examDraft?.examMonth ?? new Date().toISOString().slice(0, 7)} initialDate={examDraft?.examDate} initialResultDateOverride={examDraft?.resultDateOverride} initialIncludeRecall={examDraft?.includeRecall} /><footer><button className="secondary-button" type="button" onClick={() => { setExamDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><CalendarPlus size={16} /> 保存考试</button></footer></form>
+      {modal === "exam" && <Dialog title={examDraft ? "编辑学生考试" : "记录学生考试"} onClose={() => { if (examSubmissionBusy) return; setExamDraft(null); setModal(null); }}>
+        <form className="form-grid" onSubmit={submitExam}><ExamForm key={`${selectedStudent.id}:${examDraft?.id ?? "new"}:${examFormResetToken}`} initialExamId={examDraft?.id} subjectOptions={Array.from(new Set([...courses.map((course) => course.name), selectedStudent.course, examDraft?.subject ?? ""])).filter(Boolean).map((value) => ({ value }))} initialSubject={examDraft?.subject ?? selectedStudent.course} initialType={examDraft?.examType} initialVariant={examDraft?.examVariant} initialMonth={examDraft?.examMonth ?? new Date().toISOString().slice(0, 7)} initialDate={examDraft?.examDate} initialResultDateOverride={examDraft?.resultDateOverride} initialIncludeRecall={examDraft?.includeRecall} /><footer><button className="secondary-button" type="button" disabled={examSubmissionBusy} onClick={() => { if (examSubmissionBusy) return; setExamDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={examSubmissionBusy}><CalendarPlus size={16} /> {examSubmissionBusy ? "保存中…" : "保存考试"}</button></footer></form>
       </Dialog>}
 
       {modal === "task" && <Dialog title="添加内部任务" onClose={() => setModal(null)}>
@@ -8849,8 +9671,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "payrollNew" && <Dialog title="新增老师薪资记录" onClose={() => setModal(null)} wide>
         <form className="form-grid" onSubmit={submitNewPayroll}>
-          <label>现有老师<select name="teacherId" defaultValue=""><option value="">请选择现有老师</option>{[...teachers].sort((a, b) => a.name.localeCompare(b.name)).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.id}</option>)}</select></label>
-          <label>新老师姓名（仅新增老师时填写）<input name="newTeacherName" placeholder="例如 Olivia Chen" /></label>
+          <label>现有老师<select name="teacherId" defaultValue="" required><option value="">请选择现有老师</option>{[...teachers].sort((a, b) => a.name.localeCompare(b.name)).map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.id}</option>)}</select><small>老师档案只能通过正式教师导入建立</small></label>
           <label>薪资月份<input name="month" type="month" defaultValue={activePayrollMonth} required /></label>
           <label>教师类别<input name="section" defaultValue="教师薪资" placeholder="例如 国内教师" /></label>
           <label>币种<select name="currency" defaultValue="AUD"><option value="AUD">澳币</option><option value="CNY">人民币</option></select></label>
@@ -8883,8 +9704,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>关联学生<input name="studentId" list="lp-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="lp-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
           <label>规划老师<select name="planner" defaultValue={selectedStudent.planner ?? "Tara"}><option value="Tara">龙老师</option><option>Eileen</option></select></label>
           {isAdminView && <><label className="checkbox-field span-2"><input name="provisional" type="checkbox" /> 暂未有学生姓名，先按科目创建临时档案</label>
-          <label>临时姓名（可留空）<input name="provisionalName" placeholder="之后可在学生档案补充" /></label>
-          <label>家长微信名<input name="provisionalGuardianWechat" placeholder="姓名留空时必填" /></label>
+          <label>家长微信名<input name="provisionalGuardianWechat" placeholder="临时建档时必填，例如 Daisy" /></label>
           <label>科目 / 课程<input name="provisionalCourse" placeholder="临时建档时必填，例如 Year 9 English" /></label></>}
           <LpWorkflowFields
             initialType={lpDraftType}
@@ -8914,9 +9734,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
+      {modal === "teacherAvailabilitySubmit" && isTeacherView && currentTeacher && <Dialog title="提交下月 AVA 与可接人数" onClose={() => { teacherAvailabilitySubmissionKey.current = null; setModal(null); }} wide>
+        <form className="form-grid" onSubmit={submitTeacherAvailability}>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 提交后先进入教务审核；审核通过前不会自动用于排课，也不会从腾讯表原话猜测时段或人数。</div>
+          <label>老师<input value={currentTeacher.name} disabled /></label>
+          <label>月份<input name="month" type="month" min={isoDateInTimezone(new Date(), currentTeacher.timezone).slice(0, 7)} defaultValue={shiftScheduleMonth(isoDateInTimezone(new Date(), currentTeacher.timezone).slice(0, 7), 1)} required /></label>
+          <label>AVA 时区<select name="timezone" defaultValue={cleanTimezone(currentTeacher.availabilityTimezone ?? currentTeacher.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+          <label>本月额外可接学生数<input name="additionalStudents" type="number" min="0" max="100" step="1" defaultValue={currentTeacher.newStudentCapacity ?? 0} required /></label>
+          <div className="span-2 payroll-rate-editor"><header><strong>每周固定可约时段</strong><small>只勾选本人已经确认的时间；跨天时段请拆开提交。</small></header>{[
+            [1, "周一"], [2, "周二"], [3, "周三"], [4, "周四"], [5, "周五"], [6, "周六"], [0, "周日"],
+          ].map(([day, label]) => <label className="payroll-rate-row" key={day}><span><input name={`slot-${day}`} type="checkbox" /> <strong>{label}</strong></span><input name={`start-${day}`} type="time" defaultValue="16:00" aria-label={`${label}开始时间`} /><input name={`end-${day}`} type="time" defaultValue="20:00" aria-label={`${label}结束时间`} /></label>)}</div>
+          <label className="span-2">补充说明<textarea name="notes" rows={3} maxLength={1000} placeholder="考试周、临时不可用日期或其他需要教务复核的说明" /></label>
+          <footer><button className="secondary-button" type="button" disabled={teacherAvailabilitySubmitBusy} onClick={() => { teacherAvailabilitySubmissionKey.current = null; setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={teacherAvailabilitySubmitBusy}><Send size={16} /> {teacherAvailabilitySubmitBusy ? "正在提交…" : "提交教务审核"}</button></footer>
+        </form>
+      </Dialog>}
+
       {modal === "ava" && <Dialog title="录入月度 AVA" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitAva}>
           <label className="span-2">老师<select name="teacherId" defaultValue={selectedTeacher.id}>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.id}</option>)}</select></label>
+          {selectedTeacher.availabilitySourceText ? <div className="form-notice span-2"><CircleAlert size={16} /> 腾讯表原话：{selectedTeacher.availabilitySourceText}</div> : null}
           <label>月份<input name="month" type="month" defaultValue={isoDateInTimezone(new Date(), "Australia/Melbourne").slice(0, 7)} required /></label>
           <label>星期<select name="day" defaultValue="1"><option value="1">周一</option><option value="2">周二</option><option value="3">周三</option><option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="0">周日</option></select></label>
           <label>原始 AVA 时区<select name="timezone" defaultValue={cleanTimezone(selectedTeacher.availabilityTimezone ?? selectedTeacher.timezone)} disabled>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -8930,6 +9766,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitTeacherCapacity}>
           <label>老师<input value={teacherCapacityDraft.name} disabled /></label>
           <label>剩余可接人数<input name="newStudentCapacity" type="number" min="0" step="1" defaultValue={teacherCapacityDraft.newStudentCapacity ?? 0} required /></label>
+          {teacherCapacityDraft.capacitySourceText ? <div className="form-notice span-2"><CircleAlert size={16} /> 腾讯表原话：{teacherCapacityDraft.capacitySourceText}</div> : null}
           <footer><button className="secondary-button" type="button" onClick={() => { setTeacherCapacityDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存</button></footer>
         </form>
       </Dialog>}
@@ -8938,6 +9775,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitBooking}>
           <label>学生<input name="studentId" list="booking-student-options" value={bookingFormStudentId} onChange={(event) => { const studentId = event.target.value; const student = studentById(studentId); setBookingFormStudentId(studentId); setBookingFormSubjectId(student?.course ?? ""); }} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择学生" required />{bookingDraft && !isAdminView ? <input name="studentId" type="hidden" value={bookingDraft.studentId} /> : null}<datalist id="booking-student-options">{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
           {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={bookingDraft?.teacherId ?? bookingPrefillTeacherId ?? ""} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择老师" required />{bookingDraft && !isAdminView ? <input name="teacherId" type="hidden" value={bookingDraft.teacherId} /> : null}<datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>}
+          <label>老师腾讯表科目<select name="teacherSubjectId" defaultValue={bookingDraft?.teacherSubjectId ?? ""} required><option value="">必须人工选择</option>{teacherSubjectOptions.map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select><small>必须与所选老师所在的腾讯子表完全一致</small></label>
           <label>日期<input name="date" type="date" min={bookingDraft ? undefined : isoDateInTimezone(new Date(), scheduleTimezone)} defaultValue={bookingDraft?.date ?? isoDateInTimezone(new Date(), scheduleTimezone)} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue={bookingDraft?.start ?? "16:00"} required /></label>
           <label>录入时区<select name="timezone" defaultValue={bookingDraft?.timezone ?? scheduleTimezone}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -8957,9 +9795,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label className="span-2">课次<input value={`${studentById(bookingOccurrenceDraft.studentId)?.name ?? bookingOccurrenceDraft.studentId} · ${bookingOccurrenceDraft.occurrenceKey}`} disabled /></label>
           <label>日期<input name="date" type="date" defaultValue={bookingOccurrenceDraft.date} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue={bookingOccurrenceDraft.start} required /></label>
-          <label>老师<select name="teacherId" defaultValue={bookingOccurrenceDraft.teacherId}>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>
+          <label>老师<input value={teacherById(bookingOccurrenceDraft.teacherId)?.name ?? bookingOccurrenceDraft.teacherId} readOnly /><small>改老师请使用代课或永久换老师流程</small></label>
           <label>时长<select name="duration" defaultValue={String(bookingOccurrenceDraft.duration)}><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
-          <label className="span-2">本节状态<select name="status" defaultValue={bookingOccurrenceDraft.occurrenceStatus === "leave" ? "confirmed" : bookingOccurrenceDraft.occurrenceStatus}><option value="confirmed">已确认</option><option value="cancelled">取消本节</option><option value="abnormal">异常待处理</option>{bookingOccurrenceDraft.occurrenceStatus === "completed" && <option value="completed">已完成</option>}</select></label>
+          <label className="span-2">本节状态<select name="status" defaultValue={bookingOccurrenceDraft.occurrenceStatus}><option value="confirmed">已确认</option><option value="cancelled">取消本节</option></select></label>
           <footer><button className="secondary-button" type="button" onClick={() => { setBookingOccurrenceDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存本节</button></footer>
         </form>
       </Dialog>}
@@ -8968,6 +9806,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitTemporaryClassroom}>
           <label>学生<select name="studentId" value={temporaryClassroomStudentId} onChange={(event) => { const student = studentById(event.target.value); setTemporaryClassroomStudentId(event.target.value); setTemporaryClassroomSubjectId(student?.course || student?.lessonPackages?.flatMap((entry) => entry.subjectIds)[0] || ""); }} required><option value="">请选择学生</option>{(isTeacherView ? scopedStudents : recordStudents).map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</select></label>
           {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<select name="teacherId" defaultValue={selectedTeacher?.id ?? ""} required><option value="">请选择老师</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>}
+          <label>老师腾讯表科目<select name="teacherSubjectId" defaultValue="" required><option value="">必须人工选择</option>{teacherSubjectOptions.map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select><small>必须与所选老师所在的腾讯子表完全一致</small></label>
           <label>课程科目<select name="subjectId" value={temporaryClassroomSubjectId} onChange={(event) => setTemporaryClassroomSubjectId(event.target.value)} required><option value="">请选择科目</option>{Array.from(new Set([studentById(temporaryClassroomStudentId)?.course, ...(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).flatMap((entry) => entry.subjectIds)].filter((subject): subject is string => Boolean(subject)))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课包<select key={`${temporaryClassroomStudentId}:${temporaryClassroomSubjectId}`} name="packageId" required><option value="">请选择有余额的课包</option>{(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).filter((entry) => entry.subjectIds.includes(temporaryClassroomSubjectId)).map((entry) => { const balance = getLessonPackageBalance(entry).remainingHours; return <option value={entry.id} key={entry.id} disabled={balance <= 0}>{entry.name} · 剩余 {balance} 小时{balance <= 0 ? " · 不可开课" : ""}</option>; })}</select></label>
           <label>课程时长<select name="duration" defaultValue="60"><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
@@ -8988,7 +9827,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
-      {modal === "operation" && <Dialog title="记录调课、请假、代课或离职" onClose={() => { setOperationDraft(null); setModal(null); }}>
+      {modal === "operation" && <Dialog title="记录调课、请假、代课或离职" onClose={() => { if (teacherDepartureCreationBusy) return; teacherDepartureCreationRef.current = null; setOperationDraft(null); setModal(null); }}>
         <form className="form-grid" onSubmit={submitOperation}>
           <label>学生<input name="studentId" list="operation-student-options" defaultValue={operationDraft?.studentId ?? selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="operation-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.owner}</option>)}</datalist></label>
           <label>类型<select name="type" defaultValue={operationDraft?.type ?? "调课"}><option>调课</option><option>学生请假</option><option>老师请假</option><option>停课</option><option>代课</option><option>换老师</option><option>老师离职</option></select></label>
@@ -8997,13 +9836,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>影响结束 / 离职日<input name="eventEnd" type="date" defaultValue={operationDraft?.eventEnd ?? shiftIsoDate(isoDateInTimezone(new Date(), "Australia/Melbourne"), 1)} /></label>
           <label className="span-2">原因与处理说明<textarea name="detail" rows={4} defaultValue={operationDraft?.detail ?? ""} placeholder="记录请假原因、原时间、可选时间或需要的后续确认" required /></label>
           <div className="form-notice span-2"><CircleAlert size={16} /> 录入老师和影响日期后，系统会找出受影响课程，并仅从科目匹配且有结构化 AVA 的老师中给出候选。最终人选、扣课和对外通知仍由人工决定。</div>
-          <footer><button className="secondary-button" type="button" onClick={() => { setOperationDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><ClipboardCheck size={16} /> 记录并生成任务</button></footer>
+          <footer><button className="secondary-button" type="button" disabled={teacherDepartureCreationBusy} onClick={() => { teacherDepartureCreationRef.current = null; setOperationDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={teacherDepartureCreationBusy}><ClipboardCheck size={16} /> {teacherDepartureCreationBusy ? "正在原子创建…" : "记录并生成任务"}</button></footer>
         </form>
       </Dialog>}
 
       {modal === "renewal" && renewalDraft && <Dialog title="记录续课跟进" onClose={() => { setModal(null); setRenewalDraft(null); }}>
         <form className="form-grid renewal-followup-form" onSubmit={submitRenewalFollowUp}>
           <label>学生<input value={studentById(renewalDraft.studentId)?.name ?? renewalDraft.studentId} disabled /></label>
+          <label>课包 / 耗尽科目<input value={`${renewalDraft.packageName ?? renewalDraft.packageId ?? "未关联课包"} · ${renewalDraft.renewalDateNote ?? "耗尽科目待排课确认"}`} disabled /></label>
           <label>续课状态<select name="businessStatus" defaultValue={renewalDraft.businessStatus ?? normalizeRenewalBusinessStatus(renewalDraft.status)}>{Object.entries(RENEWAL_STATUS_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
           <label>本次结果<select name="result" defaultValue={renewalDraft.status === "本次未跟进" ? "本次未跟进" : renewalDraft.status === "等待家长" ? "等待家长" : "已跟进"}><option>已跟进</option><option>本次未跟进</option><option>等待家长</option></select></label>
           <label>本次操作时间<input name="attemptedAt" type="datetime-local" defaultValue={currentLocalDateTimeValue()} required /></label>

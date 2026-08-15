@@ -13,6 +13,7 @@ export interface ToDoListProps {
   filter: ToDoFilter;
   onFilterChange: (filter: ToDoFilter) => void;
   onComplete: (taskId: string) => void;
+  onParentReplied?: (task: OpsTask) => void;
   onOpen: (task: OpsTask) => void;
 }
 
@@ -32,8 +33,9 @@ function TaskRows({
   tasks,
   studentName,
   onComplete,
+  onParentReplied,
   onOpen,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onOpen"> & { tasks: OpsTask[] }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onParentReplied" | "onOpen"> & { tasks: OpsTask[] }) {
   return (
     <div className="task-list">
       {tasks.map((task) => (
@@ -46,6 +48,14 @@ function TaskRows({
             </span>
           </button>
           <span className={`due-label ${task.status}`}>{task.due}</span>
+          {onParentReplied && (task.ruleKey === "trial.parent-follow-up"
+            || task.ruleKey === "trial.parent-no-reply-follow-up"
+            || task.ruleKey === "trial.teaching-control-escalation"
+            || task.ruleKey?.startsWith("trial.parent-progress-sync.")) ? <button
+              className="compact-button reply-button"
+              type="button"
+              onClick={() => onParentReplied(task)}
+            >家长已回</button> : null}
           <button
             className="complete-button"
             type="button"
@@ -65,7 +75,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onOpen"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onParentReplied" | "onOpen"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -81,14 +91,14 @@ function TaskSection({
   );
 }
 
-export function ToDoList({ tasks, studentName, filter, onFilterChange, onComplete, onOpen }: ToDoListProps) {
+export function ToDoList({ tasks, studentName, filter, onFilterChange, onComplete, onParentReplied, onOpen }: ToDoListProps) {
   const filtered = filterTasks(tasks, filter);
   const today = sortTasksByDueAt(filtered.filter((task) => task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => task.status === "overdue"));
   const remaining = sortTasksByDueAt(
     filtered.filter((task) => task.status !== "today" && task.status !== "overdue"),
   );
-  const rowProps = { studentName, onComplete, onOpen };
+  const rowProps = { studentName, onComplete, onParentReplied, onOpen };
 
   return (
     <section className="panel task-panel to-do-list" aria-label="To Do List">

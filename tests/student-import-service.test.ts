@@ -5,12 +5,19 @@ import type { OpsStateRow } from "../lib/ops-store.ts";
 import {
   assertStudentImportCommit,
   buildMasterDuplicateResolutionCandidates,
+  buildStudentIdentityReviewCandidates,
   hasStudentImportAdminAccess,
   masterDuplicateDecisionForCandidate,
   parseMasterDuplicateResolutionRequest,
+  parseStudentIdentityManualReviewRequest,
+  parseStudentIdentityReviewClearRequest,
+  parseStudentIdentityReviewRequest,
   parseStudentImportCommitRequest,
   parseStudentImportSourceIngestRequest,
+  parseStudentImportSourceUnavailableDetail,
   prepareStudentImport as prepareStudentImportStrict,
+  prepareStudentIdentityReview,
+  resolveStudentIdentityReviewCandidate,
   resolveMasterDuplicateCandidate,
   StudentImportServiceError,
 } from "../lib/student-import-service.ts";
@@ -69,6 +76,7 @@ test("selected duplicate row binds only to its current reviewed identity link", 
   const snapshot = {
     identityLinks: [reviewedLink],
     identityLinkFingerprint: `sha256:${"a".repeat(64)}`,
+    identityReviewEpoch: 0,
     masterDuplicateResolutions: [],
     masterDuplicateResolutionFingerprint: `sha256:${"0".repeat(64)}`,
     fuAttachmentReferences: {
@@ -176,6 +184,246 @@ test("duplicate hard keys also bind to the current students version", () => {
   assert.notEqual(before[0].options[0].resolutionKey, after[0].options[0].resolutionKey);
 });
 
+test("identity review exposes only evidence plus opaque closed merge/create options", () => {
+  const base = {
+    master: {
+      sourceId: "master-private",
+      revision: "master-r1",
+      rows: [{ sourceRow: "M-7", name: "William 王小明", status: "在读" }],
+    },
+    jwb: {
+      sourceId: "jwb-private",
+      revision: "jwb-r1",
+      rows: [{ sourceRow: "J-9", name: "JWB 王小明 Account", remainingHours: 3, contractHours: 5 }],
+    },
+    studentsVersion: 4,
+    existingStudents: [{ id: "STU-PRIVATE-7", name: "王小明 Student", status: "在读" }],
+  } as const;
+  const merge = buildStudentIdentityReviewCandidates(base);
+  assert.equal(merge.length, 1);
+  assert.deepEqual(merge[0].options.map((option) => option.decision), ["merge", "create"]);
+  assert.match(merge[0].options[0].resolutionKey, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(merge[0].master, { name: "William 王小明", sourceRow: "M-7" });
+  assert.deepEqual(merge[0].jwb, { name: "JWB 王小明 Account", sourceRow: "J-9" });
+  assert.deepEqual(merge[0].existing, { name: "王小明 Student" });
+  assert.equal(merge[0].existingMatchCount, 1);
+  const serialized = JSON.stringify(merge);
+  assert.doesNotMatch(serialized, /STU-PRIVATE-7|reviewKey|normalized/i);
+
+  const create = buildStudentIdentityReviewCandidates({ ...base, existingStudents: [] });
+  assert.equal(create[0].options[0].decision, "create");
+  assert.notEqual(create[0].options[0].resolutionKey, merge[0].options[0].resolutionKey);
+
+  const changedRevision = buildStudentIdentityReviewCandidates({
+    ...base,
+    master: { ...base.master, revision: "master-r2" },
+  });
+  const changedStudents = buildStudentIdentityReviewCandidates({ ...base, studentsVersion: 5 });
+  const changedEpoch = buildStudentIdentityReviewCandidates({ ...base, reviewEpoch: 1 });
+  assert.notEqual(changedRevision[0].options[0].resolutionKey, merge[0].options[0].resolutionKey);
+  assert.notEqual(changedStudents[0].options[0].resolutionKey, merge[0].options[0].resolutionKey);
+  assert.notEqual(changedEpoch[0].options[0].resolutionKey, merge[0].options[0].resolutionKey);
+});
+
+test("identity review is globally unique, fail-closed and never trusts browser refs", () => {
+  const input = {
+    master: {
+      sourceId: "master",
+      revision: "m1",
+      rows: [{ sourceRow: 1, name: "Alice 张三", status: "在读" }],
+    },
+    jwb: {
+      sourceId: "jwb",
+      revision: "j1",
+      rows: [{ sourceRow: 2, name: "张三" }],
+    },
+    studentsVersion: 1,
+    existingStudents: [
+      { id: "S-1", name: "张三 Current" },
+      { id: "S-2", name: "Current 张三" },
+    ],
+  } as const;
+  const ambiguousExisting = buildStudentIdentityReviewCandidates(input);
+  assert.equal(ambiguousExisting.length, 1);
+  assert.deepEqual(ambiguousExisting[0].options.map((option) => option.decision), ["create"]);
+  assert.equal(ambiguousExisting[0].existingMatchCount, 2);
+  assert.equal(ambiguousExisting[0].blockedReason, undefined);
+  assert.deepEqual(buildStudentIdentityReviewCandidates({
+    ...input,
+    master: { ...input.master, rows: [...input.master.rows, { sourceRow: 3, name: "张三 Bob", status: "在读" }] },
+  }), []);
+  assert.deepEqual(buildStudentIdentityReviewCandidates({
+    ...input,
+    master: {
+      ...input.master,
+      rows: [...input.master.rows, { sourceRow: 3, name: "张三 Bob", status: "不活跃 + 无课时" }],
+    },
+  }), []);
+  assert.deepEqual(buildStudentIdentityReviewCandidates({
+    ...input,
+    existingStudents: [],
+    jwb: { ...input.jwb, rows: [...input.jwb.rows, { sourceRow: 4, name: "JWB 张三 Account" }] },
+  }), []);
+
+  const available = buildStudentIdentityReviewCandidates({ ...input, existingStudents: [] });
+  const option = available[0].options[0];
+  const request = parseStudentIdentityReviewRequest({
+    resolutionKey: option.resolutionKey,
+    decision: option.decision,
+  });
+  assert.equal(resolveStudentIdentityReviewCandidate(request, available).option, option);
+  assert.throws(() => parseStudentIdentityReviewRequest({
+    resolutionKey: option.resolutionKey,
+    decision: option.decision,
+    masterSourceRow: 1,
+  }), serviceError("invalid_identity_review_request"));
+  assert.throws(() => resolveStudentIdentityReviewCandidate(request, buildStudentIdentityReviewCandidates({
+    ...input,
+    existingStudents: [],
+    studentsVersion: 2,
+  })), serviceError("identity_review_unavailable"));
+});
+
+test("prepared identity review uses the parsed current link set and students version", () => {
+  const snapshot = sourceSnapshot();
+  snapshot.master.rows[0].name = "Sample 张三";
+  snapshot.jwb.rows[0].name = "张三";
+  const first = prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, []),
+    manualTokenSecret: "test-secret",
+  });
+  assert.equal(first.candidates.length, 1);
+  assert.equal(first.manualReview.masters.length, 1);
+  assert.equal(first.manualReview.jwb.length, 1);
+  assert.match(first.manualReview.masters[0].token, /^sha256:[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(first.manualReview), /STU-/);
+  assert.deepEqual(parseStudentIdentityManualReviewRequest({
+    masterToken: first.manualReview.masters[0].token,
+    jwbToken: first.manualReview.jwb[0].token,
+    decision: "create",
+  }), {
+    masterToken: first.manualReview.masters[0].token,
+    jwbToken: first.manualReview.jwb[0].token,
+    decision: "create",
+  });
+  assert.throws(() => parseStudentIdentityManualReviewRequest({
+    masterToken: first.manualReview.masters[0].token,
+    jwbToken: first.manualReview.jwb[0].token,
+    decision: "create",
+    masterSourceRow: 1,
+  }), serviceError("invalid_identity_review_request"));
+  assert.deepEqual(parseStudentIdentityReviewClearRequest({
+    resolutionKey: first.clearKey,
+    decision: "clear",
+  }), { resolutionKey: first.clearKey, decision: "clear" });
+  snapshot.identityLinks = [{
+    masterSourceRow: 1,
+    jwbSourceRow: 101,
+    studentId: studentIdForMasterSource(1, snapshot.master.sourceId),
+  }];
+  snapshot.identityLinkFingerprint = `sha256:${"a".repeat(64)}`;
+  const linked = prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, []),
+    manualTokenSecret: "test-secret",
+  });
+  assert.equal(linked.identityLinkCount, 1);
+  assert.deepEqual(linked.candidates, []);
+  assert.deepEqual(linked.manualReview.masters, []);
+  assert.deepEqual(linked.manualReview.jwb, []);
+  assert.equal(linked.decisionCandidates.length, 1);
+  const replay = linked.decisionCandidates[0].options[0];
+  assert.doesNotThrow(() => resolveStudentIdentityReviewCandidate({
+    resolutionKey: replay.resolutionKey,
+    decision: replay.decision,
+  }, linked.decisionCandidates));
+
+  snapshot.identityLinks = [{
+    masterSourceRow: 1,
+    jwbSourceRow: 101,
+    studentId: "STU-EXISTING",
+  }];
+  const merged = prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, [{ id: "STU-EXISTING", name: "Existing 张三" }]),
+    manualTokenSecret: "test-secret",
+  });
+  assert.deepEqual(merged.candidates, []);
+  assert.equal(merged.decisionCandidates.length, 1);
+  assert.equal(merged.decisionCandidates[0].options[0].decision, "merge");
+});
+
+test("prepared identity review opens only after an explicit duplicate-row decision", () => {
+  const snapshot = sourceSnapshot();
+  snapshot.master.rows = [
+    { sourceRow: 1, name: "Sample 张三", status: "在读" },
+    { sourceRow: 2, name: "Sample 张三", status: "在读" },
+  ];
+  snapshot.jwb.rows = [{ sourceRow: 101, name: "张三" }];
+  const pending = prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, []),
+    manualTokenSecret: "test-secret",
+  });
+  assert.deepEqual(pending.candidates, []);
+  assert.deepEqual(pending.manualReview.masters, []);
+
+  snapshot.masterDuplicateResolutions = [{
+    decision: "select",
+    sourceRows: [1, 2],
+    selectedSourceRow: 1,
+  }];
+  snapshot.masterDuplicateResolutionFingerprint = `sha256:${"b".repeat(64)}`;
+  const resolved = prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, []),
+    manualTokenSecret: "test-secret",
+  });
+  assert.equal(resolved.candidates.length, 1);
+  assert.equal(resolved.candidates[0].master.sourceRow, 1);
+  assert.equal(resolved.manualReview.masters.length, 1);
+  assert.equal(resolved.manualReview.masters[0].sourceRow, 1);
+});
+
+test("manual review tokens are HMAC-bound to secret, source/student CAS and epoch", () => {
+  const snapshot = sourceSnapshot();
+  snapshot.master.rows[0].name = "No automatic evidence";
+  snapshot.jwb.rows[0].name = "Different JWB evidence";
+  const prepare = (manualTokenSecret: string) => prepareStudentIdentityReview({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(7, [{ id: "PRIVATE-CURRENT-ID", name: "Current Evidence" }]),
+    manualTokenSecret,
+  });
+  const first = prepare("secret-a");
+  const changedSecret = prepare("secret-b");
+  assert.equal(first.candidates.length, 0);
+  assert.equal(first.manualReview.masters.length, 1);
+  assert.equal(first.manualReview.jwb.length, 1);
+  assert.equal(first.manualReview.existing.length, 1);
+  assert.notEqual(first.manualReview.masters[0].token, changedSecret.manualReview.masters[0].token);
+  assert.doesNotMatch(JSON.stringify(first.manualReview), /PRIVATE-CURRENT-ID/);
+
+  const linkedSnapshot = structuredClone(snapshot);
+  linkedSnapshot.identityLinks = [{
+    masterSourceRow: 1,
+    jwbSourceRow: 101,
+    studentId: studentIdForMasterSource(1, snapshot.master.sourceId),
+  }];
+  linkedSnapshot.identityLinkFingerprint = `sha256:${"c".repeat(64)}`;
+  const closedPlan = prepareStudentImport({
+    sourceSnapshot: linkedSnapshot,
+    studentsRow: studentsRow(7, [{ id: "PRIVATE-CURRENT-ID", name: "Current Evidence" }]),
+  });
+  assert.equal(closedPlan.response.identityCoverage.ready, true);
+  assert.equal(closedPlan.response.canCommit, true);
+
+  snapshot.identityReviewEpoch = 1;
+  const changedEpoch = prepare("secret-a");
+  assert.notEqual(first.manualReview.masters[0].token, changedEpoch.manualReview.masters[0].token);
+  assert.notEqual(first.clearKey, changedEpoch.clearKey);
+});
+
 function sourceSnapshot(input?: Readonly<{
   masterRevision?: string;
   jwbRevision?: string;
@@ -184,6 +432,7 @@ function sourceSnapshot(input?: Readonly<{
   return {
     identityLinks: [],
     identityLinkFingerprint: `sha256:${"0".repeat(64)}`,
+    identityReviewEpoch: 0,
     masterDuplicateResolutions: [],
     masterDuplicateResolutionFingerprint: `sha256:${"0".repeat(64)}`,
     fuAttachmentReferences: {
@@ -314,6 +563,22 @@ test("only a verified full admin or the limited admin can access formal import",
   assert.equal(hasStudentImportAdminAccess("Ops Admin", false), true);
   assert.equal(hasStudentImportAdminAccess("Abby", false), false);
   assert.equal(hasStudentImportAdminAccess(null, false), false);
+});
+
+test("missing source detail is narrow, ordered and never guessed", () => {
+  assert.deepEqual(parseStudentImportSourceUnavailableDetail("missing_sources=master"), ["master"]);
+  assert.deepEqual(parseStudentImportSourceUnavailableDetail("missing_sources=jwb"), ["jwb"]);
+  assert.deepEqual(
+    parseStudentImportSourceUnavailableDetail("missing_sources=master,jwb"),
+    ["master", "jwb"],
+  );
+  assert.deepEqual(
+    parseStudentImportSourceUnavailableDetail("missing_sources=jwb,master"),
+    ["master", "jwb"],
+  );
+  assert.equal(parseStudentImportSourceUnavailableDetail("missing_sources=master,master"), null);
+  assert.equal(parseStudentImportSourceUnavailableDetail("student_import_source_rows_unavailable"), null);
+  assert.equal(parseStudentImportSourceUnavailableDetail(undefined), null);
 });
 
 test("builds a deterministic server-side dry run without exposing replacement students", () => {
@@ -499,6 +764,23 @@ test("binds the fingerprint to both source revisions, exact plan and students ve
   assert.notEqual(base.response.planFingerprint, changedVersion.response.planFingerprint);
 });
 
+test("binds a unique Chinese-name fallback plan to the reviewed JWB revision", () => {
+  const firstSnapshot = sourceSnapshot();
+  firstSnapshot.master.rows[0].name = "张·三";
+  firstSnapshot.jwb.rows[0].name = "张（三）";
+  const secondSnapshot = structuredClone(firstSnapshot);
+  secondSnapshot.jwb.revision = "jwb-revision-b";
+
+  const first = prepareStudentImport({ sourceSnapshot: firstSnapshot, studentsRow: studentsRow() });
+  const second = prepareStudentImport({ sourceSnapshot: secondSnapshot, studentsRow: studentsRow() });
+
+  assert.equal(first.plan.students[0].jwbMatchStatus, "matched");
+  assert.equal(first.plan.students[0].jwbSourceRow, 101);
+  assert.deepEqual(first.plan.students, second.plan.students);
+  assert.notEqual(first.response.planFingerprint, second.response.planFingerprint);
+  assert.equal(second.sourceRevisions.jwb, "jwb-revision-b");
+});
+
 test("binds the fingerprint and commit source revisions to the locked bookings version", () => {
   const beforeRows = referenceRows();
   const afterRows = referenceRows();
@@ -575,6 +857,8 @@ test("ambiguity blocks commit by default and is still returned in the dry run", 
   assert.equal(prepared.response.canCommit, false);
   assert.equal(prepared.response.summary.ambiguous, 1);
   assert.equal(prepared.response.ambiguous.length, 1);
+  assert.doesNotMatch(JSON.stringify(prepared.response.ambiguous), /existingStudentIds|normalizedName/);
+  assert.equal(typeof prepared.response.ambiguous[0].existingStudentCount, "number");
   assert.throws(() => assertStudentImportCommit({
     planFingerprint: prepared.response.planFingerprint,
     expectedStudentVersion: prepared.response.expectedStudentVersion,
@@ -594,6 +878,47 @@ test("an empty replacement plan is visible but cannot be committed", () => {
     planFingerprint: prepared.response.planFingerprint,
     expectedStudentVersion: prepared.response.expectedStudentVersion,
   }, prepared), serviceError("empty_plan"));
+});
+
+test("fails closed when studying or hour-bearing master identities are not matched to JWB", () => {
+  const snapshot = sourceSnapshot();
+  snapshot.master.rows = [
+    { sourceRow: 1, name: "Unmatched Studying Learner", status: "在读" },
+    { sourceRow: 2, name: "No Hours Learner", status: "活跃 + 无课时" },
+  ];
+  snapshot.jwb.rows = [];
+  const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
+
+  assert.deepEqual(prepared.response.identityCoverage, {
+    requiredMasterRows: 1,
+    matchedRequiredMasterRows: 0,
+    missingRequiredMasterRows: 1,
+    ready: false,
+  });
+  assert.equal(prepared.response.canCommit, false);
+  assert.throws(() => assertStudentImportCommit({
+    planFingerprint: prepared.response.planFingerprint,
+    expectedStudentVersion: prepared.response.expectedStudentVersion,
+  }, prepared), serviceError("insufficient_identity_coverage"));
+});
+
+test("allows a master row explicitly marked active without hours to omit a JWB identity", () => {
+  const snapshot = sourceSnapshot();
+  snapshot.master.rows = [{ sourceRow: 1, name: "No Hours Learner", status: "活跃 + 无课时" }];
+  snapshot.jwb.rows = [];
+  const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
+
+  assert.deepEqual(prepared.response.identityCoverage, {
+    requiredMasterRows: 0,
+    matchedRequiredMasterRows: 0,
+    missingRequiredMasterRows: 0,
+    ready: true,
+  });
+  assert.equal(prepared.response.canCommit, true);
+  assert.doesNotThrow(() => assertStudentImportCommit({
+    planFingerprint: prepared.response.planFingerprint,
+    expectedStudentVersion: prepared.response.expectedStudentVersion,
+  }, prepared));
 });
 
 test("commit confirmation rejects a stale fingerprint or students version", () => {

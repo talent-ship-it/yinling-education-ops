@@ -119,6 +119,20 @@ test("sorts month-only exams before dated exams in the same month", () => {
   assert.deepEqual(sortStudentExams(exams).map((exam) => exam.id), ["nov", "dec-month", "dec-2", "dec-5"]);
 });
 
+test("sorts equal-date exam ids by deterministic UTF-8/C byte order", () => {
+  const base = {
+    subject: "Math",
+    examType: "selective" as const,
+    examMonth: "2026-12",
+    examDate: "2026-12-05",
+  };
+  assert.deepEqual(
+    sortStudentExams([{ ...base, id: "EXM_FIXTURE" }, { ...base, id: "EXM-FIXTURE" }])
+      .map((exam) => exam.id),
+    ["EXM-FIXTURE", "EXM_FIXTURE"],
+  );
+});
+
 test("estimates results at 30 calendar days or 10 weekdays without holiday assumptions", () => {
   assert.equal(estimateExamResultDate({
     id: "s1", subject: "Math", examType: "scholarship", examMonth: "2026-08", examDate: "2026-08-10",
@@ -145,6 +159,9 @@ test("applies reusable calendar, weekday, month and fixed-date rules", () => {
   assert.equal(addCalendarMonths("2027-01-31", 1), "2027-02-28");
   assert.equal(addCalendarMonths("2028-01-31", 1), "2028-02-29");
   assert.equal(applyExamResultDateRule("2026-08-10", { kind: "fixed_date", date: "2026-12-10" }), "2026-12-10");
+  assert.equal(applyExamResultDateRule("2026-06-10", { kind: "australian_university_final" }), "2026-07-15");
+  assert.equal(applyExamResultDateRule("2026-11-10", { kind: "australian_university_final" }), "2026-12-15");
+  assert.equal(applyExamResultDateRule("2026-12-20", { kind: "australian_university_final" }), "2027-07-15");
   assert.equal(applyExamResultDateRule("2026-08-10", { kind: "explicit_date_required" }), null);
   assert.throws(() => addCalendarMonths("2026-01-01", -1), /non-negative integer/);
 });
@@ -154,13 +171,29 @@ test("covers every documented relative exam result-date rule", () => {
   const expected: Partial<Record<(typeof EXAM_VARIANTS)[number], string | null>> = {
     scholarship: "2026-09-09", selective: "2026-09-09", oc: "2026-09-09", mgs: "2026-09-09",
     gate: "2026-09-09", jmss: "2026-09-09", aeas: "2026-08-24", school_interview: "2026-08-13",
-    australian_university_final: "2026-09-10", australian_university_assignment: "2026-08-24",
+    australian_university_final: "2026-12-15", australian_university_assignment: "2026-08-24",
     icas: "2026-10-10", amc: "2026-10-10", ielts_paper: "2026-08-24", ielts_computer: "2026-08-13",
-    pte: "2026-08-11", ccl: "2026-09-07", other: null,
+    pte: "2026-08-11", ccl: "2026-09-21", other: null,
   };
   for (const [examVariant, resultDate] of Object.entries(expected)) {
     assert.equal(estimateExamResultDate({ ...base, examVariant: examVariant as (typeof EXAM_VARIANTS)[number] }), resultDate, examVariant);
   }
+});
+
+test("uses the next July or December university-final date and honours overrides", () => {
+  const exam: StudentExamRecord = {
+    id: "university-final",
+    subject: "University final",
+    examType: "other",
+    examVariant: "australian_university_final",
+    examMonth: "2026-06",
+    examDate: "2026-06-30",
+  };
+  assert.equal(DEFAULT_EXAM_RESULT_DATE_RULES.australian_university_final.kind, "australian_university_final");
+  assert.equal(estimateExamResultDate(exam), "2026-07-15");
+  assert.equal(estimateExamResultDate({ ...exam, examMonth: "2026-11", examDate: "2026-11-30" }), "2026-12-15");
+  assert.equal(estimateExamResultDate({ ...exam, resultDateOverride: "2026-07-20" }), "2026-07-20");
+  assert.equal(estimateExamResultDate(exam, { resultDateOverride: "2026-07-25" }), "2026-07-25");
 });
 
 test("requires current fixed state-exam dates and honours explicit override precedence", () => {
@@ -196,6 +229,11 @@ test("builds stable care, recall and results task definitions", () => {
     ["exam_care", "2026-09-01", "academic_coordinator"],
     ["exam_recall", "2026-09-01", "academic_coordinator"],
     ["exam_results_follow_up", "2026-10-01", "course_planner"],
+  ]);
+  assert.deepEqual(tasks.map((task) => task.assigneeRoles), [
+    ["academic_coordinator"],
+    ["academic_coordinator"],
+    ["course_planner"],
   ]);
   assert.deepEqual(buildExamTaskDefinitions(exam, { includeRecall: false }).map((task) => task.kind), [
     "exam_care",

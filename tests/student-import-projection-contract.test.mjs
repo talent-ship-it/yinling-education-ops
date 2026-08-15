@@ -316,6 +316,7 @@ test("TypeScript golden fixture covers every projection precedence branch", () =
     jwb: { sourceId: "jwb-fixture", revision: "jwb-r1", rows: GOLDEN_JWB_ROWS },
     identityLinks: [],
     identityLinkFingerprint: `sha256:${"0".repeat(64)}`,
+    identityReviewEpoch: 0,
     masterDuplicateResolutions: [],
     masterDuplicateResolutionFingerprint: `sha256:${"1".repeat(64)}`,
     fuAttachmentReferences: {

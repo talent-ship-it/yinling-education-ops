@@ -8,7 +8,11 @@ export const FIXED_REMINDER_RULES = Object.freeze({
   lpReviewDaysBeforeTrial: 3,
   preparationDaysBeforeTrial: 2,
   minimumDaysBeforeTrial: 1,
-  schedulingFeedbackHoursAfterRequest: 48,
+  schedulingFeedbackHoursAfterRequest: 24,
+  parentNoReplyFollowUpHoursAfterRequest: 4,
+  teachingControlEscalationHoursAfterRequest: 8,
+  parentProgressSyncHoursAfterRequest: 24,
+  parentProgressSyncIntervalHours: 24,
 } as const);
 
 export const RULE_OPTIONS = Object.freeze({

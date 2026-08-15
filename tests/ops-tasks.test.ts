@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  closeTrialEscalationTasks,
   closeTasksForBooking,
   DEFAULT_TEACHING_CONTROL_WATCHER,
   generateTrialBookingTasks,
+  generateTrialEscalationTasks,
   generateTrialRequestTasks,
   linkTrialRequestTasksToBooking,
   OpsTask,
@@ -17,8 +19,11 @@ import {
   TASK_SPACING_MS,
   TaskCategory,
   TRIAL_MANAGED_TASK_RULES,
+  TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT,
+  TRIAL_ESCALATION_TASK_RULES,
   TRIAL_REQUEST_TASK_RULES,
   TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT,
+  TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT,
   TRIAL_SHORT_NOTICE_TASK_RULES,
   TRIAL_STANDARD_TASK_RULES,
   upsertTaskByRule,
@@ -153,7 +158,7 @@ test("upsert keeps manual tasks without rule metadata and rejects an unkeyed inc
   assert.throws(() => upsertTaskByRule([manual], manual), /requires ruleKey and anchorBookingId/);
 });
 
-test("trial request immediately creates stable same-day 18:00 and scheduling +48h tasks", () => {
+test("trial request immediately creates stable same-day 18:00 and scheduling +24h tasks", () => {
   const input = {
     anchorBookingId: "WORKFLOW-1",
     studentId: "STU-1",
@@ -165,13 +170,78 @@ test("trial request immediately creates stable same-day 18:00 and scheduling +48
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_REQUEST_TASK_RULES);
   assert.deepEqual(tasks.map((task) => task.dueAt), [
     "2026-08-10T08:00:00.000Z",
-    "2026-08-12T00:00:00.000Z",
+    "2026-08-11T00:00:00.000Z",
   ]);
   assert.deepEqual(tasks.map((task) => task.anchorBookingId), ["WORKFLOW-1", "WORKFLOW-1"]);
   assert.deepEqual(
     generateTrialRequestTasks(input).map((task) => task.id),
     tasks.map((task) => task.id),
   );
+});
+
+test("materializes stable 4h, 8h and recurring 24h escalation tasks", () => {
+  const input = {
+    anchorBookingId: "WORKFLOW-ESCALATION",
+    studentId: "STU-1",
+    owner: "Abby",
+    requestedAt: "2026-08-10T00:00:00.000Z",
+    now: "2026-08-10T00:00:00.000Z",
+    parentProgressSyncCount: 3,
+  } as const;
+  const tasks = generateTrialEscalationTasks(input);
+
+  assert.deepEqual(tasks.map((task) => task.ruleKey), [
+    ...TRIAL_ESCALATION_TASK_RULES,
+    "trial.parent-progress-sync.1",
+    "trial.parent-progress-sync.2",
+    "trial.parent-progress-sync.3",
+  ]);
+  assert.deepEqual(tasks.map((task) => task.dueAt), [
+    "2026-08-10T04:00:00.000Z",
+    "2026-08-10T08:00:00.000Z",
+    "2026-08-11T00:00:00.000Z",
+    "2026-08-12T00:00:00.000Z",
+    "2026-08-13T00:00:00.000Z",
+  ]);
+  assert.deepEqual(
+    generateTrialEscalationTasks(input).map((task) => task.id),
+    tasks.map((task) => task.id),
+  );
+  tasks.forEach((task) => {
+    assert.deepEqual(task.assignees, ["Abby"]);
+    assert.deepEqual(task.watchers, [DEFAULT_TEACHING_CONTROL_WATCHER]);
+  });
+  assert.throws(
+    () => generateTrialEscalationTasks({ ...input, parentProgressSyncCount: 366 }),
+    /integer from 0 to 365/,
+  );
+});
+
+test("closes every pending no-reply escalation after a parent reply without overwriting evidence", () => {
+  const generated = generateTrialEscalationTasks({
+    anchorBookingId: "WORKFLOW-PARENT-REPLIED",
+    studentId: "STU-1",
+    owner: "Abby",
+    requestedAt: "2026-08-10T00:00:00.000Z",
+    now: "2026-08-10T00:00:00.000Z",
+    parentProgressSyncCount: 2,
+  });
+  const completed = generated.map((task) => task.ruleKey === "trial.parent-no-reply-follow-up"
+    ? { ...task, status: "done" as const, tone: "green" as const, result: "家长已回消息" }
+    : task);
+  const unrelated = ruleTask({ id: "unrelated", anchorBookingId: "OTHER" });
+  const closed = closeTrialEscalationTasks([...completed, unrelated], {
+    anchorBookingId: "WORKFLOW-PARENT-REPLIED",
+    studentId: "STU-1",
+    closedAt: "2026-08-10T09:00:00.000Z",
+  });
+
+  assert.equal(closed.find((task) => task.ruleKey === "trial.parent-no-reply-follow-up")?.result, "家长已回消息");
+  for (const task of closed.filter((item) => item.anchorBookingId === "WORKFLOW-PARENT-REPLIED" && item.status === "done" && item.ruleKey !== "trial.parent-no-reply-follow-up")) {
+    assert.equal(task.result, TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT);
+    assert.equal(task.closedAt, "2026-08-10T09:00:00.000Z");
+  }
+  assert.equal(closed.find((task) => task.id === "unrelated")?.status, unrelated.status);
 });
 
 test("automatic trial tasks explicitly assign their owner and teaching-control watcher", () => {
@@ -213,7 +283,7 @@ test("stale request deadlines are compressed to strictly after now", () => {
   assert.ok(dueTimes[1] > dueTimes[0]);
 });
 
-test("normal trial workflow uses same-day 18:00, +48h, and N-3/N-2/N-1 18:00", () => {
+test("normal trial workflow uses same-day 18:00, +24h, and N-3/N-2/N-1 18:00", () => {
   const tasks = generateTrialBookingTasks({
     anchorBookingId: "BOOK-1",
     studentId: "STU-1",
@@ -225,20 +295,22 @@ test("normal trial workflow uses same-day 18:00, +48h, and N-3/N-2/N-1 18:00", (
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_STANDARD_TASK_RULES);
   assert.deepEqual(tasks.map((task) => task.dueAt), [
     "2026-08-10T08:00:00.000Z",
-    "2026-08-12T00:00:00.000Z",
+    "2026-08-11T00:00:00.000Z",
     "2026-08-17T08:00:00.000Z",
     "2026-08-18T08:00:00.000Z",
     "2026-08-19T08:00:00.000Z",
   ]);
   assert.deepEqual(tasks.map((task) => task.due), [
     "2026-08-10 18:00",
-    "2026-08-12 10:00",
+    "2026-08-11 10:00",
     "2026-08-17 18:00",
     "2026-08-18 18:00",
     "2026-08-19 18:00",
   ]);
   assert.equal(new Set(tasks.map((task) => task.id)).size, 5);
   assert.equal(new Set(tasks.map((task) => task.dueAt)).size, 5);
+  assert.match(tasks.find((task) => task.ruleKey === "trial.lp-review")?.trigger ?? "", /N-3/);
+  assert.match(tasks.find((task) => task.ruleKey === "trial.prep")?.trigger ?? "", /N-2/);
 });
 
 test("18:00 rules remain correct when the trial crosses Melbourne daylight saving", () => {
@@ -257,7 +329,7 @@ test("18:00 rules remain correct when the trial crosses Melbourne daylight savin
   ]);
 });
 
-test("a trial 71 hours away replaces N-3/N-2/N-1 with one immediate short-notice confirmation", () => {
+test("a trial 71 hours away keeps distinct immediate LP-review and preparation tasks", () => {
   const now = new Date("2026-08-10T00:00:00.000Z");
   const trial = new Date(now.getTime() + 71 * TASK_SPACING_MS);
   const tasks = generateTrialBookingTasks({
@@ -269,12 +341,15 @@ test("a trial 71 hours away replaces N-3/N-2/N-1 with one immediate short-notice
     trialStartsAt: trial,
   });
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_SHORT_NOTICE_TASK_RULES);
-  assert.equal(tasks.find((task) => task.ruleKey === "trial.short-notice-prep")?.dueAt, "2026-08-10T00:00:00.001Z");
+  assert.equal(tasks.find((task) => task.ruleKey === "trial.lp-review")?.dueAt, "2026-08-10T00:00:00.001Z");
+  assert.equal(tasks.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.002Z");
+  assert.match(tasks.find((task) => task.ruleKey === "trial.lp-review")?.trigger ?? "", /立即审核 LP/);
+  assert.match(tasks.find((task) => task.ruleKey === "trial.prep")?.trigger ?? "", /立即确认备课/);
   assert.ok(tasks.every((task) => Date.parse(task.dueAt) < trial.getTime()));
-  assert.ok(tasks.every((task) => !["trial.lp-review", "trial.prep", "trial.minimum"].includes(task.ruleKey)));
+  assert.ok(tasks.every((task) => !["trial.minimum", "trial.short-notice-prep"].includes(task.ruleKey)));
 });
 
-test("a trial under 24 hours clamps only future request deadlines and keeps one short-notice task", () => {
+test("a trial under 24 hours clamps future request deadlines and keeps two urgent tasks", () => {
   const now = new Date("2026-08-10T00:00:00.000Z");
   const trial = new Date("2026-08-10T02:00:00.000Z");
   const tasks = generateTrialBookingTasks({
@@ -287,10 +362,11 @@ test("a trial under 24 hours clamps only future request deadlines and keeps one 
   });
   const dueTimes = tasks.map((task) => Date.parse(task.dueAt));
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_SHORT_NOTICE_TASK_RULES);
-  assert.equal(dueTimes.length, 3);
-  assert.equal(new Set(dueTimes).size, 3);
+  assert.equal(dueTimes.length, 4);
+  assert.equal(new Set(dueTimes).size, 4);
   assert.ok(dueTimes.every((dueAt) => dueAt > now.getTime() && dueAt < trial.getTime()));
   assert.equal(Date.parse(tasks[2].dueAt), now.getTime() + 1);
+  assert.equal(Date.parse(tasks[3].dueAt), now.getTime() + 2);
 });
 
 test("short notice retains genuinely overdue request history", () => {
@@ -305,10 +381,12 @@ test("short notice retains genuinely overdue request history", () => {
   });
   assert.deepEqual(tasks.slice(0, 2).map((task) => task.dueAt), [
     "2026-08-10T08:00:00.000Z",
-    "2026-08-12T00:00:00.000Z",
+    "2026-08-11T00:00:00.000Z",
   ]);
-  assert.equal(tasks[2].ruleKey, "trial.short-notice-prep");
+  assert.equal(tasks[2].ruleKey, "trial.lp-review");
+  assert.equal(tasks[3].ruleKey, "trial.prep");
   assert.equal(Date.parse(tasks[2].dueAt), now.getTime() + 1);
+  assert.equal(Date.parse(tasks[3].dueAt), now.getTime() + 2);
 });
 
 test("exactly 72 hours uses the standard fixed workflow", () => {
@@ -381,10 +459,18 @@ test("rescheduling enters and exits short notice without duplicates or reopening
     requestedAt: now,
     now,
   } as const;
-  const standard = generateTrialBookingTasks({
-    ...base,
-    trialStartsAt: "2026-08-20T09:00:00.000Z",
-  }).map((task) => task.ruleKey === "trial.lp-review"
+  const standard = [
+    ...generateTrialBookingTasks({
+      ...base,
+      trialStartsAt: "2026-08-20T09:00:00.000Z",
+    }),
+    ruleTask({
+      id: "legacy-combined-short-notice",
+      studentId: base.studentId,
+      anchorBookingId: base.anchorBookingId,
+      ruleKey: "trial.short-notice-prep",
+    }),
+  ].map((task) => task.ruleKey === "trial.lp-review"
     ? {
         ...task,
         status: "done" as const,
@@ -401,11 +487,9 @@ test("rescheduling enters and exits short notice without duplicates or reopening
   const entered = reconcileTrialBookingTasks(standard, shortInput);
   assert.equal(entered.length, TRIAL_MANAGED_TASK_RULES.length);
   assert.equal(new Set(entered.map((task) => `${task.ruleKey}:${task.anchorBookingId}`)).size, entered.length);
-  assert.equal(
-    entered.filter((task) => task.ruleKey === "trial.short-notice-prep" && task.status !== "done").length,
-    1,
-  );
-  for (const ruleKey of ["trial.prep", "trial.minimum"] as const) {
+  assert.equal(entered.find((task) => task.ruleKey === "trial.prep")?.status === "done", false);
+  assert.equal(entered.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.002Z");
+  for (const ruleKey of ["trial.minimum", "trial.short-notice-prep"] as const) {
     const closed = entered.find((task) => task.ruleKey === ruleKey);
     assert.equal(closed?.status, "done");
     assert.equal(closed?.result, TRIAL_RULE_NO_LONGER_APPLICABLE_RESULT);
@@ -516,6 +600,45 @@ test("linking request tasks migrates the first two ids and reconciles one comple
   );
   assert.ok(linked.some((task) => task.id === "other-student-request"));
   assert.ok(!linked.some((task) => task.id === "discard-real-parent" || task.id === "discard-temp-scheduling"));
+});
+
+test("linking a booked trial closes every unfinished request escalation but preserves completed evidence", () => {
+  const escalations = generateTrialEscalationTasks({
+    anchorBookingId: "WORKFLOW-ESCALATION-LINK",
+    studentId: "STU-1",
+    owner: "Abby",
+    requestedAt: "2026-08-10T00:00:00.000Z",
+    now: "2026-08-10T00:00:00.000Z",
+    parentProgressSyncCount: 2,
+  }).map((task) => task.ruleKey === "trial.parent-no-reply-follow-up"
+    ? { ...task, status: "done" as const, tone: "green" as const, result: "人工完成" }
+    : task);
+  const requestTasks = generateTrialRequestTasks({
+    anchorBookingId: "WORKFLOW-ESCALATION-LINK",
+    studentId: "STU-1",
+    owner: "Abby",
+    requestedAt: "2026-08-10T00:00:00.000Z",
+    now: "2026-08-10T00:00:00.000Z",
+  });
+
+  const linked = linkTrialRequestTasksToBooking([...requestTasks, ...escalations], {
+    requestAnchorBookingId: "WORKFLOW-ESCALATION-LINK",
+    anchorBookingId: "BOOK-ESCALATION-LINK",
+    studentId: "STU-1",
+    owner: "Abby",
+    requestedAt: "2026-08-10T00:00:00.000Z",
+    now: "2026-08-11T01:00:00.000Z",
+    trialStartsAt: "2026-08-20T09:00:00.000Z",
+  });
+  const closedEscalations = linked.filter((task) => task.anchorBookingId === "WORKFLOW-ESCALATION-LINK");
+
+  assert.equal(closedEscalations.length, escalations.length);
+  assert.equal(closedEscalations.find((task) => task.ruleKey === "trial.parent-no-reply-follow-up")?.result, "人工完成");
+  for (const task of closedEscalations.filter((item) => item.ruleKey !== "trial.parent-no-reply-follow-up")) {
+    assert.equal(task.status, "done");
+    assert.equal(task.result, TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT);
+    assert.equal(task.closedAt, "2026-08-11T01:00:00.000Z");
+  }
 });
 
 test("linking preserves request deadlines that were already genuinely overdue", () => {

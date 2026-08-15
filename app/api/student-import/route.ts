@@ -11,14 +11,17 @@ import {
   commitStudentImportPlanAtomic,
   getLatestStudentImportSourceRows,
   getOpsState,
+  getStudentImportCommitReplayResult,
   OpsStoreError,
   STUDENT_IMPORT_ATOMIC_COMMIT_RPC,
+  STUDENT_IMPORT_COMMIT_REPLAY_RESULT_RPC,
   STUDENT_IMPORT_SOURCE_ROWS_RPC,
 } from "@/lib/ops-store";
 import { StudentImportError } from "@/lib/student-import";
 import {
   assertStudentImportCommit,
   hasStudentImportAdminAccess,
+  parseStudentImportSourceUnavailableDetail,
   parseStudentImportCommitRequest,
   prepareStudentImport,
   StudentImportServiceError,
@@ -53,12 +56,34 @@ function databaseContractUnavailable() {
   return noStore({
     error: "学生导入数据库合同尚未部署，当前不能读取或提交正式导入。",
     code: "student_import_contract_unavailable",
-    requiredRpcs: [STUDENT_IMPORT_SOURCE_ROWS_RPC, STUDENT_IMPORT_ATOMIC_COMMIT_RPC],
+    requiredRpcs: [
+      STUDENT_IMPORT_SOURCE_ROWS_RPC,
+      STUDENT_IMPORT_ATOMIC_COMMIT_RPC,
+      STUDENT_IMPORT_COMMIT_REPLAY_RESULT_RPC,
+    ],
   }, 501);
 }
 
+function sourceRowsUnavailable(error: OpsStoreError) {
+  const missingSources = parseStudentImportSourceUnavailableDetail(error.detail);
+  const labels = missingSources?.map((source) => source === "master" ? "学生总表" : "教务宝");
+  return noStore({
+    error: labels?.length
+      ? `学生正式导入缺少已审核的${labels.join("、")}来源快照。`
+      : "学生正式导入来源快照尚未准备完成。",
+    code: "student_import_source_rows_unavailable",
+    ...(missingSources ? { missingSources } : {}),
+  }, 503);
+}
+
+function missingSourceRows(error: unknown): error is OpsStoreError {
+  return error instanceof OpsStoreError
+    && error.code === "P0002"
+    && error.message === "student_import_source_rows_unavailable";
+}
+
 function serviceError(error: StudentImportServiceError) {
-  if (["ambiguous_plan", "stale_plan", "stale_students_version"].includes(error.code)) {
+  if (["ambiguous_plan", "insufficient_identity_coverage", "stale_plan", "stale_students_version"].includes(error.code)) {
     return noStore({ error: error.message, code: error.code }, 409);
   }
   const sourceFailure = error.code === "invalid_source_snapshot" || error.code === "invalid_students_state";
@@ -99,6 +124,7 @@ export async function GET() {
     return noStore(prepared.response);
   } catch (error) {
     if (missingRpc(error)) return databaseContractUnavailable();
+    if (missingSourceRows(error)) return sourceRowsUnavailable(error);
     if (error instanceof StudentImportServiceError) return serviceError(error);
     if (error instanceof StudentImportError) return noStore({ error: error.message, code: error.code }, 422);
     return noStore({ error: error instanceof Error ? error.message : "学生导入预检失败。" }, 503);
@@ -116,6 +142,26 @@ export async function POST(request: Request) {
   try {
     const confirmation = parseStudentImportCommitRequest(await request.json().catch(() => null));
     const prepared = await currentPlan();
+    const matchesCurrentPlan = confirmation.planFingerprint === prepared.response.planFingerprint
+      && confirmation.expectedStudentVersion === prepared.response.expectedStudentVersion;
+    if (!matchesCurrentPlan) {
+      const replay = await getStudentImportCommitReplayResult({
+        planFingerprint: confirmation.planFingerprint,
+        expectedStudentVersion: confirmation.expectedStudentVersion,
+        actor: access.session.actor,
+      });
+      if (!replay[0]) {
+        throw new OpsStoreError(
+          "学生导入重放没有返回已提交结果。",
+          "student_import_commit_replay_unavailable",
+        );
+      }
+      return noStore({
+        committed: true,
+        replayed: true,
+        studentVersion: replay[0].version,
+      });
+    }
     assertStudentImportCommit(confirmation, prepared);
     const saved = await commitStudentImportPlanAtomic({
       planFingerprint: prepared.response.planFingerprint,
@@ -135,9 +181,14 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (missingRpc(error)) return databaseContractUnavailable();
+    if (missingSourceRows(error)) return sourceRowsUnavailable(error);
     if (error instanceof StudentImportServiceError) return serviceError(error);
     if (error instanceof StudentImportError) return noStore({ error: error.message, code: error.code }, 422);
-    if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) {
+    if (error instanceof OpsStoreError && (
+      error.code === "40001"
+      || error.message === "version_conflict"
+      || error.message === "student_import_commit_replay_unavailable"
+    )) {
       return noStore({ error: "学生资料或导入来源刚刚发生变化，请重新预检。", code: "import_conflict" }, 409);
     }
     return noStore({ error: error instanceof Error ? error.message : "学生导入提交失败。" }, 503);

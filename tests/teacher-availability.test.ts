@@ -12,9 +12,65 @@ import {
   editAvailabilityDate,
   expandTeacherAvailability,
   normalizeLegacyAvailability,
+  projectTeacherSchedulingReadiness,
   promoteLegacyAvailabilityForMonth,
   type TeacherAvailabilityWindow,
 } from "../lib/teacher-availability";
+
+test("raw teacher wording remains review evidence and is never guessed into AVA or capacity", () => {
+  const review = projectTeacherSchedulingReadiness({
+    teacherId: "teacher-a",
+    availabilitySourceText: "周一下午，具体再问我",
+    capacitySourceText: "大概还能接三个",
+    acceptsStudents: true,
+  });
+  assert.equal(review.availability.status, "review_required");
+  assert.equal(review.availability.rawSourceText, "周一下午，具体再问我");
+  assert.equal(review.capacity.status, "review_required");
+  assert.equal(review.capacity.rawSourceText, "大概还能接三个");
+  assert.equal(review.capacity.remaining, undefined);
+  assert.equal(review.readyForNewStudentMatching, false);
+  assert.deepEqual(review.reviewReasons, ["availability_missing", "capacity_missing"]);
+});
+
+test("teacher scheduling readiness requires confirmed structured inputs", () => {
+  const windows = monthly("teacher-a", "2026-10", [{ day: 1, start: "09:00", end: "10:00" }]);
+  const ready = projectTeacherSchedulingReadiness({
+    teacherId: "teacher-a",
+    availabilityWindows: windows,
+    newStudentCapacity: 0,
+    acceptsStudents: true,
+    now: new Date("2026-10-05T00:00:00.000Z"),
+  });
+  assert.equal(ready.availability.confirmedWindowCount, 1);
+  assert.equal(ready.capacity.remaining, 0);
+  assert.equal(ready.readyForNewStudentMatching, false, "zero remaining capacity is configured but not matchable");
+  assert.deepEqual(ready.reviewReasons, []);
+
+  const wrongTeacher = projectTeacherSchedulingReadiness({
+    teacherId: "teacher-b",
+    availabilityWindows: windows,
+    newStudentCapacity: 1,
+    acceptsStudents: true,
+    now: new Date("2026-10-05T00:00:00.000Z"),
+  });
+  assert.deepEqual(wrongTeacher.reviewReasons, ["availability_invalid"]);
+});
+
+test("expired-only structured AVA is not ready for new-student matching", () => {
+  const review = projectTeacherSchedulingReadiness({
+    teacherId: "teacher-a",
+    availabilityWindows: monthly("teacher-a", "2026-07", [{ day: 1, start: "09:00", end: "10:00" }]),
+    newStudentCapacity: 2,
+    acceptsStudents: true,
+    now: new Date("2026-08-15T00:00:00.000Z"),
+  });
+
+  assert.equal(review.availability.status, "review_required");
+  assert.equal(review.availability.confirmedWindowCount, 0);
+  assert.equal(review.readyForNewStudentMatching, false);
+  assert.deepEqual(review.reviewReasons, ["availability_expired"]);
+});
 
 function monthly(
   teacherId: string,

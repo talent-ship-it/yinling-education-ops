@@ -16,12 +16,19 @@ test("source ingest route is admin-only, bounded and never fetches or infers a s
   assert.match(route, /error\.sourceErrorCode/);
   assert.match(route, /sourceCode: error\.sourceErrorCode/);
   assert.doesNotMatch(route, /fetch\(/);
+  assert.match(route, /export async function GET\(\)/);
+  assert.match(route, /getLatestStudentImportSourceRows\(\)/);
+  assert.match(route, /ready: true/);
+  assert.match(route, /rowCount: snapshot\.master\.rows\.length/);
+  assert.match(route, /rowCount: snapshot\.jwb\.rows\.length/);
+  assert.match(route, /student_import_source_rows_unavailable/);
+  assert.doesNotMatch(route, /rows:\s*snapshot\.(?:master|jwb)\.rows/);
   assert.match(store, /STUDENT_IMPORT_SOURCE_INGEST_RPC = "put_student_import_source_rows"/);
   assert.match(store, /p_source_kind: input\.sourceKind/);
   assert.match(store, /p_revision: input\.revision/);
-  assert.match(store, /STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC = "put_student_import_identity_links"/);
-  assert.match(store, /p_source_revisions: input\.sourceRevisions/);
-  assert.match(store, /p_links: input\.links/);
+  assert.doesNotMatch(store, /STUDENT_IMPORT_IDENTITY_LINKS_PUT_RPC/);
+  assert.match(store, /STUDENT_IMPORT_IDENTITY_CLEAR_RPC = "clear_student_import_identity_links"/);
+  assert.match(store, /STUDENT_IMPORT_IDENTITY_REVIEW_PAIR_RPC = "put_student_import_identity_review_pair"/);
 });
 
 test("formal import keeps internal reference evidence server-only while binding commit revisions", async () => {
@@ -38,6 +45,17 @@ test("formal import keeps internal reference evidence server-only while binding 
   assert.match(store, /bookingsVersion: number/);
   assert.match(store, /p_source_revisions: input\.sourceRevisions/);
   assert.match(route, /sourceRevisions: prepared\.sourceRevisions/);
+  assert.match(route, /getStudentImportCommitReplayResult\(\{/);
+  assert.match(route, /planFingerprint: confirmation\.planFingerprint/);
+  assert.match(route, /expectedStudentVersion: confirmation\.expectedStudentVersion/);
+  assert.match(route, /replayed: true/);
+  const replayResponse = route.slice(route.indexOf("replayed: true"), route.indexOf("});", route.indexOf("replayed: true")));
+  assert.doesNotMatch(replayResponse, /summary|excluded|unmatched|ambiguous/);
+  assert.match(store, /STUDENT_IMPORT_COMMIT_REPLAY_RESULT_RPC = "get_student_import_commit_replay_result"/);
+  const replayStore = store.slice(store.indexOf("export function getStudentImportCommitReplayResult"));
+  assert.match(replayStore, /p_plan_fingerprint: input\.planFingerprint/);
+  assert.match(replayStore, /p_expected_student_version: input\.expectedStudentVersion/);
+  assert.doesNotMatch(replayStore.slice(0, replayStore.indexOf("\n}")), /p_(?:students|sources|rows|links)/i);
   assert.match(route, /rows\.filter\(\(row\) => row\.entity !== "students"\)/);
   assert.match(route, /const stateEntities = \[[\s\S]*"students", "bookings"/);
   assert.doesNotMatch(route, /bookingsVersion/);

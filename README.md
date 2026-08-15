@@ -45,5 +45,6 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `OPS_API_SECRET`
+- `STUDENT_IMPORT_IDENTITY_REVIEW_TOKEN_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; never reuse `OPS_API_SECRET`
 
 Do not commit real data snapshots or secrets to GitHub.

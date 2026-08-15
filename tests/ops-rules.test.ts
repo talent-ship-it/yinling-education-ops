@@ -17,7 +17,11 @@ test("keeps confirmed workflow deadlines outside editable rules", () => {
     lpReviewDaysBeforeTrial: 3,
     preparationDaysBeforeTrial: 2,
     minimumDaysBeforeTrial: 1,
-    schedulingFeedbackHoursAfterRequest: 48,
+    schedulingFeedbackHoursAfterRequest: 24,
+    parentNoReplyFollowUpHoursAfterRequest: 4,
+    teachingControlEscalationHoursAfterRequest: 8,
+    parentProgressSyncHoursAfterRequest: 24,
+    parentProgressSyncIntervalHours: 24,
   });
   assert.deepEqual(RULE_OPTIONS.lowHours, ["3", "5", "8", "10"]);
   assert.deepEqual(RULE_OPTIONS.examDays, ["7", "14", "30", "60"]);

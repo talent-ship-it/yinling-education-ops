@@ -3,16 +3,38 @@ import { createHash } from "node:crypto";
 import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
+import {
+  BookingCapacityServiceError,
+  reconcileTeacherStudentCapacity,
+} from "@/lib/booking-capacity-service";
 import { updateBookingOccurrence } from "@/lib/booking-occurrence-updates";
-import { expandLessonOccurrences, type LessonOccurrence } from "@/lib/lesson-occurrences";
+import {
+  expandLessonOccurrences,
+  lessonOccurrenceSourceRangeForTargetRange,
+  type LessonOccurrence,
+  type LessonOccurrenceOverride,
+} from "@/lib/lesson-occurrences";
 import { expandTeacherAvailability, type TeacherAvailabilityWindow } from "@/lib/teacher-availability";
+import {
+  projectTeacherDepartureOccurrences,
+  TeacherDepartureProjectionError,
+} from "@/lib/teacher-departure-occurrences";
 
 type RecordValue = Record<string, unknown>;
 type Versions = Readonly<{ bookings: number; operations: number; teachers: number }>;
+type PermanentReplacementVersions = Readonly<{
+  bookings: number;
+  operations: number;
+  teachers: number;
+  students: number;
+}>;
 
 const REQUEST_FIELDS = new Set(["operationId", "chosenTeacherId", "expectedVersions"]);
 const VERSION_FIELDS = new Set(["bookings", "operations", "teachers"]);
 const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
+const DEPARTURE_CREATION_COMMAND_KEY = /^teacher-departure-create:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PERMANENT_REQUEST_FIELDS = new Set(["operationId", "chosenTeacherId", "expectedVersions"]);
+const PERMANENT_VERSION_FIELDS = new Set(["bookings", "operations", "teachers", "students"]);
 
 export type ConfirmOperationCommand = Readonly<{
   operationId: string;
@@ -37,6 +59,38 @@ export type OperationConfirmationIntent = Readonly<{
   chosenTeacherId: string | null;
 }>;
 
+/**
+ * One reviewed departure/student decision. Effective date and affected lesson
+ * IDs are deliberately server-derived from the stored departure operation.
+ */
+export type PermanentTeacherReplacementCommand = Readonly<{
+  operationId: string;
+  chosenTeacherId: string;
+  expectedVersions: PermanentReplacementVersions;
+}>;
+
+export type PermanentTeacherReplacementIntent = Readonly<{
+  operationId: string;
+  chosenTeacherId: string;
+}>;
+
+export type PreparedPermanentTeacherReplacement = Readonly<{
+  commandKey: string;
+  commandIntent: PermanentTeacherReplacementIntent;
+  operationId: string;
+  studentId: string;
+  sourceTeacherId: string;
+  replacementTeacherId: string;
+  effectiveDate: string;
+  expectedVersions: PermanentReplacementVersions;
+  bookings: readonly RecordValue[];
+  operations: readonly RecordValue[];
+  teachers: readonly RecordValue[];
+  students: readonly RecordValue[];
+  affectedOccurrenceIds: readonly string[];
+  changedTeacherIds: readonly string[];
+}>;
+
 export type OperationConfirmationErrorCode =
   | "invalid_request"
   | "client_fields_forbidden"
@@ -52,7 +106,13 @@ export type OperationConfirmationErrorCode =
   | "substitute_not_found"
   | "substitute_not_candidate"
   | "substitute_unavailable"
-  | "substitute_conflict";
+  | "substitute_conflict"
+  | "operation_not_departure"
+  | "student_not_found"
+  | "student_assignment_conflict"
+  | "unbounded_future_series"
+  | "replacement_capacity_unconfigured"
+  | "replacement_capacity_exhausted";
 
 export class OperationConfirmationError extends Error {
   constructor(readonly code: OperationConfirmationErrorCode, message: string) {
@@ -83,6 +143,11 @@ function version(value: unknown, field: string) {
   return value as number;
 }
 
+function persistedVersion(value: unknown, field: string) {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) fail("invalid_request", `${field} is invalid.`);
+  return value as number;
+}
+
 function assertFields(value: RecordValue, allowed: ReadonlySet<string>) {
   if (Object.keys(value).some((field) => !allowed.has(field))) {
     fail("client_fields_forbidden", "Only the reviewed operation confirmation fields may be submitted.");
@@ -107,7 +172,28 @@ export function parseConfirmOperationCommand(value: unknown): ConfirmOperationCo
   };
 }
 
-function payloadRow(rows: readonly OpsStateRow[], entity: keyof Versions) {
+export function parsePermanentTeacherReplacementCommand(value: unknown): PermanentTeacherReplacementCommand {
+  if (!isRecord(value)) fail("invalid_request", "Permanent teacher replacement is missing.");
+  assertFields(value, PERMANENT_REQUEST_FIELDS);
+  const operationId = requiredText(value.operationId, "operationId");
+  if (!OPERATION_ID.test(operationId)) fail("invalid_request", "operationId is invalid.");
+  const chosenTeacherId = requiredText(value.chosenTeacherId, "chosenTeacherId");
+  if (!OPERATION_ID.test(chosenTeacherId)) fail("invalid_request", "chosenTeacherId is invalid.");
+  if (!isRecord(value.expectedVersions)) fail("invalid_request", "expectedVersions is required.");
+  assertFields(value.expectedVersions, PERMANENT_VERSION_FIELDS);
+  return {
+    operationId,
+    chosenTeacherId,
+    expectedVersions: {
+      bookings: persistedVersion(value.expectedVersions.bookings, "expectedVersions.bookings"),
+      operations: persistedVersion(value.expectedVersions.operations, "expectedVersions.operations"),
+      teachers: persistedVersion(value.expectedVersions.teachers, "expectedVersions.teachers"),
+      students: persistedVersion(value.expectedVersions.students, "expectedVersions.students"),
+    },
+  };
+}
+
+function payloadRow(rows: readonly OpsStateRow[], entity: keyof PermanentReplacementVersions) {
   const row = rows.find((candidate) => candidate.entity === entity);
   if (!row || !Number.isSafeInteger(row.version) || !Array.isArray(row.payload) || !row.payload.every(isRecord)) {
     fail("invalid_shared_state", `${entity} shared state is unavailable.`);
@@ -213,6 +299,18 @@ function bookingForOccurrence(bookings: readonly RecordValue[], occurrence: Less
   return booking;
 }
 
+function expandBookingAroundTarget(booking: RecordValue, rangeStart: string, rangeEnd: string) {
+  const overrides = Array.isArray(booking.occurrenceOverrides)
+    ? booking.occurrenceOverrides.filter(isRecord) as LessonOccurrenceOverride[]
+    : [];
+  try {
+    const sourceRange = lessonOccurrenceSourceRangeForTargetRange(rangeStart, rangeEnd, overrides);
+    return expandBooking(booking, sourceRange.rangeStart, sourceRange.rangeEnd);
+  } catch (error) {
+    fail("invalid_shared_state", error instanceof Error ? error.message : "Booking occurrence data is invalid.");
+  }
+}
+
 function assertSubstitute(input: {
   chosenTeacherId: string;
   operation: RecordValue;
@@ -233,10 +331,14 @@ function assertSubstitute(input: {
   const subjects = Array.isArray(teacher.subjects) ? teacher.subjects.filter((item): item is string => typeof item === "string") : [];
 
   for (const occurrence of input.affected) {
-    if (occurrence.subjectId && !subjects.some((subject) => subject.includes(occurrence.subjectId!) || occurrence.subjectId!.includes(subject))) {
-      fail("substitute_not_candidate", "所选老师不能教授受影响课程的科目。");
-    }
     const booking = bookingForOccurrence(input.bookings, occurrence);
+    const teacherSubjectId = optionalText(booking.teacherSubjectId);
+    if (!teacherSubjectId) {
+      fail("invalid_shared_state", "受影响课程缺少老师腾讯表科目分类，请先人工补充后再选择代课或接替老师。");
+    }
+    if (!subjects.includes(teacherSubjectId)) {
+      fail("substitute_not_candidate", "所选老师不能教授受影响课程的腾讯表科目分类。");
+    }
     const start = occurrenceInstant(occurrence, booking);
     const end = new Date(start.getTime() + occurrence.scheduledDurationMinutes * 60_000);
     let availability;
@@ -253,7 +355,7 @@ function assertSubstitute(input: {
       fail("substitute_unavailable", `${occurrence.occurrenceId} 不在所选老师已确认 AVA 内。`);
     }
     for (const existing of input.bookings) {
-      for (const candidate of expandBooking(existing, shiftDate(occurrence.date, -7), shiftDate(occurrence.date, 7))) {
+      for (const candidate of expandBookingAroundTarget(existing, shiftDate(occurrence.date, -7), shiftDate(occurrence.date, 7))) {
         if (input.affected.some((item) => item.occurrenceId === candidate.occurrenceId)) continue;
         if (candidate.teacherId !== input.chosenTeacherId || ["cancelled", "leave"].includes(candidate.status)) continue;
         const candidateBooking = bookingForOccurrence(input.bookings, candidate);
@@ -347,4 +449,287 @@ export function prepareOperationConfirmation(input: {
     confirmedBy: input.actor,
   } : candidate);
   return { commandKey: operationConfirmationCommandKey({ operationId: input.command.operationId, chosenTeacherId }), commandIntent: operationConfirmationIntent({ operationId: input.command.operationId, chosenTeacherId }), operationId: input.command.operationId, action, ...(chosenTeacherId ? { chosenTeacherId } : {}), expectedVersions: input.command.expectedVersions, bookings: nextBookings, operations: nextOperations, affectedOccurrenceIds: exactIds };
+}
+
+export function permanentTeacherReplacementCommandKey(
+  command: Pick<PermanentTeacherReplacementCommand, "operationId" | "chosenTeacherId">,
+) {
+  return `permanent-teacher-replacement:${createHash("sha256").update(JSON.stringify(permanentTeacherReplacementIntent(command))).digest("hex")}`;
+}
+
+export function permanentTeacherReplacementIntent(
+  command: Pick<PermanentTeacherReplacementCommand, "operationId" | "chosenTeacherId">,
+): PermanentTeacherReplacementIntent {
+  return { operationId: command.operationId, chosenTeacherId: command.chosenTeacherId };
+}
+
+function finiteSeriesEnd(booking: RecordValue) {
+  const date = stateText(booking, "date", "booking");
+  if (booking.recurring !== true) return date;
+  if (!Number.isSafeInteger(booking.repeatCount) || (booking.repeatCount as number) < 1) {
+    fail("unbounded_future_series", "永久换师不能自动处理没有结束次数的旧循环课，请先人工限定课次范围。");
+  }
+  if ((booking.repeatCount as number) > 104) {
+    fail("invalid_shared_state", "循环课次数超过可安全处理的 104 次上限。");
+  }
+  return shiftDate(date, ((booking.repeatCount as number) - 1) * 7);
+}
+
+function activeFutureOccurrences(input: {
+  bookings: readonly RecordValue[];
+  studentId: string;
+  teacherId: string;
+  effectiveDate: string;
+  requireBounded: boolean;
+}) {
+  try {
+    return projectTeacherDepartureOccurrences({
+      bookings: input.bookings as never,
+      teacherId: input.teacherId,
+      effectiveDate: input.effectiveDate,
+      studentId: input.studentId,
+    })
+      .map(({ occurrence }) => occurrence);
+  } catch (error) {
+    if (error instanceof TeacherDepartureProjectionError && error.code === "unbounded_future_series") {
+      if (!input.requireBounded) return null;
+      fail("unbounded_future_series", error.message);
+    }
+    fail(
+      error instanceof TeacherDepartureProjectionError && error.code === "invalid_effective_date"
+        ? "range_invalid"
+        : "invalid_shared_state",
+      error instanceof Error ? error.message : "Booking occurrence data is invalid.",
+    );
+  }
+}
+
+function hasActiveFutureRelationship(input: {
+  bookings: readonly RecordValue[];
+  studentId: string;
+  teacherId: string;
+  effectiveDate: string;
+}) {
+  const occurrences = activeFutureOccurrences({ ...input, requireBounded: false });
+  return occurrences === null || occurrences.length > 0;
+}
+
+function makeReplacementTheFutureSeriesDefault(input: {
+  beforeBookings: readonly RecordValue[];
+  afterBookings: readonly RecordValue[];
+  affected: readonly LessonOccurrence[];
+  studentId: string;
+  sourceTeacherId: string;
+  replacementTeacherId: string;
+}) {
+  const affectedIds = new Set(input.affected.map((occurrence) => occurrence.occurrenceId));
+  const affectedSeriesIds = new Set(input.affected.map((occurrence) => occurrence.seriesId));
+  let next = input.afterBookings;
+  for (const seriesId of affectedSeriesIds) {
+    const original = input.beforeBookings.find((booking) => booking.id === seriesId);
+    if (!original
+      || optionalText(original.studentId) !== input.studentId
+      || optionalText(original.teacherId) !== input.sourceTeacherId) continue;
+    const allOriginal = expandBooking(original, stateText(original, "date", "booking"), finiteSeriesEnd(original));
+    next = next.map((booking) => booking.id === seriesId
+      ? { ...booking, teacherId: input.replacementTeacherId }
+      : booking);
+    // Preserve historical, cancelled and pre-effective occurrences explicitly
+    // when the parent series default becomes the permanent replacement.
+    for (const occurrence of allOriginal) {
+      if (affectedIds.has(occurrence.occurrenceId) || occurrence.teacherId !== input.sourceTeacherId) continue;
+      next = updateBookingOccurrence(next as never, {
+        occurrenceId: occurrence.occurrenceId,
+        teacherId: input.sourceTeacherId,
+      }) as readonly RecordValue[];
+    }
+  }
+  return next;
+}
+
+/**
+ * Prepares one permanent departure assignment for atomic server persistence.
+ * The caller submits only the reviewed operation/teacher decision and OCC
+ * versions; all future lesson IDs, capacity changes and the effective date are
+ * derived from authoritative shared state.
+ */
+export function preparePermanentTeacherReplacement(input: {
+  command: PermanentTeacherReplacementCommand;
+  rows: readonly OpsStateRow[];
+  actor: string;
+  fullAdmin: boolean;
+  role?: DemoSessionRole;
+  now?: Date;
+}): PreparedPermanentTeacherReplacement {
+  const bookingRow = payloadRow(input.rows, "bookings");
+  const operationRow = payloadRow(input.rows, "operations");
+  const teacherRow = payloadRow(input.rows, "teachers");
+  const studentRow = payloadRow(input.rows, "students");
+  const operation = operationRow.payload.find((candidate) => candidate.id === input.command.operationId);
+  if (!operation) fail("operation_not_found", "异常记录不存在。");
+  if (stateText(operation, "type", "operation") !== "老师离职") {
+    fail("operation_not_departure", "只有老师离职记录可以执行永久换师。");
+  }
+  const operationStatus = stateText(operation, "status", "operation");
+  if (operationStatus !== "待处理" && operationStatus !== "已确认") {
+    fail("invalid_shared_state", "离职记录状态无效，不能执行永久换师。");
+  }
+
+  const studentId = stateText(operation, "studentId", "operation");
+  const sourceTeacherId = stateText(operation, "teacherId", "operation");
+  const effectiveDate = stateText(operation, "eventEnd", "operation");
+  const creationCommandKey = optionalText(operation.creationCommandKey);
+  const expectedOperationId = creationCommandKey
+    ? `OPS-DEPARTURE-${createHash("sha256").update(`${creationCommandKey}\u001f${studentId}`).digest("hex").slice(0, 24)}`
+    : undefined;
+  if (!creationCommandKey
+    || !DEPARTURE_CREATION_COMMAND_KEY.test(creationCommandKey)
+    || operation.id !== expectedOperationId) {
+    fail("invalid_shared_state", "离职记录缺少可核验的原子创建来源，不能执行永久换师。");
+  }
+  const effectiveDateValue = new Date(`${effectiveDate}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)
+    || Number.isNaN(effectiveDateValue.valueOf())
+    || effectiveDateValue.toISOString().slice(0, 10) !== effectiveDate) {
+    fail("range_invalid", "离职生效日期无效。");
+  }
+  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
+  if (access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+    fail("teacher_forbidden", "老师账号不能最终确认永久换师。");
+  }
+  if (!canOperateStudent(access, studentId)) {
+    fail("operation_scope_forbidden", "当前账号不能确认这名学生的永久换师。");
+  }
+
+  if (operationStatus === "已确认") {
+    // A genuine replay must have been returned by the command ledger before
+    // this preparation step. Never synthesize a missing ledger entry from an
+    // already-mutated operation or create a second no-op audit trail.
+    fail("operation_already_confirmed", "该离职记录已经确认；找不到可重放的原子命令结果。");
+  }
+
+  const persistedChosen = optionalText(operation.chosenTeacherId);
+  if (persistedChosen && persistedChosen !== input.command.chosenTeacherId) {
+    fail("substitute_not_candidate", "所选老师与已记录的人工选择不一致。");
+  }
+  const commandKey = permanentTeacherReplacementCommandKey(input.command);
+  for (const [entity, row] of [
+    ["bookings", bookingRow], ["operations", operationRow], ["teachers", teacherRow], ["students", studentRow],
+  ] as const) {
+    if (row.version !== input.command.expectedVersions[entity]) {
+      fail("stale_expected_version", `${entity} changed after permanent replacement was opened.`);
+    }
+  }
+
+  const sourceTeacher = teacherRow.payload.find((teacher) => teacher.id === sourceTeacherId);
+  const replacementTeacher = teacherRow.payload.find((teacher) => teacher.id === input.command.chosenTeacherId);
+  if (!sourceTeacher) fail("invalid_shared_state", "离职老师不存在。");
+  if (!replacementTeacher) fail("substitute_not_found", "所选接替老师不存在。");
+  const student = studentRow.payload.find((candidate) => candidate.id === studentId);
+  if (!student) fail("student_not_found", "受影响学生不存在。");
+  const replacementAlreadyActive = hasActiveFutureRelationship({
+    bookings: bookingRow.payload,
+    studentId,
+    teacherId: input.command.chosenTeacherId,
+    effectiveDate,
+  });
+  const replacementAlreadyAssigned = Array.isArray(replacementTeacher.capacityAssignments)
+    && replacementTeacher.capacityAssignments.includes(studentId);
+  if (!replacementAlreadyActive && !replacementAlreadyAssigned && replacementTeacher.acceptsStudents !== true) {
+    fail("substitute_not_candidate", "首次建立师生关系时，所选接替老师必须已确认可接新生。");
+  }
+  const currentTeacherName = optionalText(student.teacher);
+  const sourceTeacherName = stateText(sourceTeacher, "name", "teacher");
+  if (currentTeacherName && ![sourceTeacherName, "待匹配", "待确认"].includes(currentTeacherName)) {
+    fail("student_assignment_conflict", "学生档案中的当前老师与离职记录不一致，必须先人工复核。");
+  }
+
+  const affected = activeFutureOccurrences({
+    bookings: bookingRow.payload,
+    studentId,
+    teacherId: sourceTeacherId,
+    effectiveDate,
+    requireBounded: true,
+  })!;
+  if (!affected.length) fail("affected_occurrence_not_found", "离职日起没有可永久换师的未来课次。");
+  assertSubstitute({
+    chosenTeacherId: input.command.chosenTeacherId,
+    operation,
+    teachers: teacherRow.payload,
+    bookings: bookingRow.payload,
+    affected,
+  });
+
+  let nextBookings = bookingRow.payload as readonly RecordValue[];
+  for (const occurrence of affected) {
+    nextBookings = updateBookingOccurrence(nextBookings as never, {
+      occurrenceId: occurrence.occurrenceId,
+      status: "confirmed",
+      teacherId: input.command.chosenTeacherId,
+    }) as readonly RecordValue[];
+  }
+  nextBookings = makeReplacementTheFutureSeriesDefault({
+    beforeBookings: bookingRow.payload,
+    afterBookings: nextBookings,
+    affected,
+    studentId,
+    sourceTeacherId,
+    replacementTeacherId: input.command.chosenTeacherId,
+  });
+  if (hasActiveFutureRelationship({ bookings: nextBookings, studentId, teacherId: sourceTeacherId, effectiveDate })) {
+    fail("invalid_shared_state", "永久换师后仍有未来课次指向离职老师。");
+  }
+
+  let capacity;
+  try {
+    capacity = reconcileTeacherStudentCapacity({
+      teachers: teacherRow.payload,
+      transitions: [
+        { teacherId: sourceTeacherId, studentId, beforeActive: true, afterActive: false },
+        { teacherId: input.command.chosenTeacherId, studentId, beforeActive: replacementAlreadyActive, afterActive: true },
+      ],
+    });
+  } catch (error) {
+    if (error instanceof BookingCapacityServiceError && error.code === "teacher_capacity_unconfigured") {
+      fail("replacement_capacity_unconfigured", error.message);
+    }
+    if (error instanceof BookingCapacityServiceError && error.code === "teacher_capacity_exhausted") {
+      fail("replacement_capacity_exhausted", error.message);
+    }
+    throw error;
+  }
+
+  const replacementTeacherName = stateText(replacementTeacher, "name", "teacher");
+  const nextStudents = studentRow.payload.map((candidate) => candidate.id === studentId
+    ? { ...candidate, teacher: replacementTeacherName }
+    : candidate);
+  const affectedOccurrenceIds = affected.map((occurrence) => occurrence.occurrenceId).sort();
+  const confirmedAt = (input.now ?? new Date()).toISOString();
+  const nextOperations = operationRow.payload.map((candidate) => candidate.id === input.command.operationId ? {
+    ...candidate,
+    status: "已确认",
+    chosenTeacherId: input.command.chosenTeacherId,
+    affectedOccurrenceIds,
+    changedTeacherIds: capacity.changedTeacherIds,
+    confirmationAction: "permanent_replacement",
+    confirmationCommandKey: commandKey,
+    confirmedAt,
+    confirmedBy: input.actor,
+  } : candidate);
+  return {
+    commandKey,
+    commandIntent: permanentTeacherReplacementIntent(input.command),
+    operationId: input.command.operationId,
+    studentId,
+    sourceTeacherId,
+    replacementTeacherId: input.command.chosenTeacherId,
+    effectiveDate,
+    expectedVersions: input.command.expectedVersions,
+    bookings: nextBookings,
+    operations: nextOperations,
+    teachers: capacity.teachers,
+    students: nextStudents,
+    affectedOccurrenceIds,
+    changedTeacherIds: capacity.changedTeacherIds,
+  };
 }

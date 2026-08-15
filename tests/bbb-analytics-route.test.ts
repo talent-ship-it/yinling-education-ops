@@ -47,6 +47,9 @@ test("provider callback persists evidence then uses the same atomic settlement c
   assert.match(service, /prepareLessonOccurrenceSettlement/);
   assert.match(service, /completeLessonOccurrenceAtomic/);
   assert.match(service, /trustedProvider: "bbb"/);
+  assert.match(service, /BBB_SETTLEMENT_MAX_ATTEMPTS = 3/);
+  assert.match(service, /isRetryableSettlementConflict/);
+  assert.match(service, /if \(attempt > 0\) current = await prepareCurrent\(\)/);
   assert.match(store, /p_callback_nonce_sha256/);
   assert.match(sql, /lesson\.attendance_abnormal/);
   assert.match(sql, /abnormal_settlement_mutates_financial_state/);

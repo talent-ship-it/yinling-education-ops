@@ -8,13 +8,17 @@ import {
 } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
+  getLatestStudentImportSourceRows,
   OpsStoreError,
   putStudentImportSourceRows,
   STUDENT_IMPORT_SOURCE_INGEST_RPC,
+  STUDENT_IMPORT_SOURCE_ROWS_RPC,
 } from "@/lib/ops-store";
 import {
   hasStudentImportAdminAccess,
+  parseStudentImportSourceSnapshot,
   parseStudentImportSourceIngestRequest,
+  parseStudentImportSourceUnavailableDetail,
   StudentImportServiceError,
 } from "@/lib/student-import-service";
 
@@ -46,6 +50,62 @@ async function requireAdmin() {
 function missingRpc(error: unknown) {
   return error instanceof OpsStoreError
     && (error.code === "PGRST202" || error.code === "42883");
+}
+
+function missingSourceRows(error: unknown): error is OpsStoreError {
+  return error instanceof OpsStoreError
+    && error.code === "P0002"
+    && error.message === "student_import_source_rows_unavailable";
+}
+
+function sourceRowsUnavailable(error: OpsStoreError) {
+  const missingSources = parseStudentImportSourceUnavailableDetail(error.detail);
+  return noStore({
+    ready: false,
+    code: "student_import_source_rows_unavailable",
+    ...(missingSources ? { missingSources } : {}),
+  }, 503);
+}
+
+/** Returns readiness metadata only; source rows and student PII stay server-side. */
+export async function GET() {
+  const access = await requireAdmin();
+  if ("response" in access) return access.response;
+
+  try {
+    const snapshot = parseStudentImportSourceSnapshot(await getLatestStudentImportSourceRows());
+    return noStore({
+      ready: true,
+      sources: {
+        master: {
+          sourceId: snapshot.master.sourceId,
+          revision: snapshot.master.revision,
+          rowCount: snapshot.master.rows.length,
+        },
+        jwb: {
+          sourceId: snapshot.jwb.sourceId,
+          revision: snapshot.jwb.revision,
+          rowCount: snapshot.jwb.rows.length,
+        },
+      },
+    });
+  } catch (error) {
+    if (missingRpc(error)) {
+      return noStore({
+        ready: false,
+        code: "student_import_source_contract_unavailable",
+        requiredRpc: STUDENT_IMPORT_SOURCE_ROWS_RPC,
+      }, 501);
+    }
+    if (missingSourceRows(error)) return sourceRowsUnavailable(error);
+    if (error instanceof StudentImportServiceError) {
+      return noStore({ ready: false, error: error.message, code: error.code }, 503);
+    }
+    return noStore({
+      ready: false,
+      error: error instanceof Error ? error.message : "学生来源状态读取失败。",
+    }, 503);
+  }
 }
 
 /**

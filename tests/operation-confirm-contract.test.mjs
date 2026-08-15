@@ -37,7 +37,10 @@ test("operation confirmation stays behind one reviewed atomic RPC", async () => 
   assert.ok(route.indexOf("getOperationConfirmationCommandResult") < route.indexOf("prepareOperationConfirmation({"));
   assert.ok(route.indexOf("canOperateStudent") < route.indexOf("getOperationConfirmationCommandResult({"));
   assert.match(route, /confirmOperationOccurrencesAtomic/);
-  assert.match(client, /fetch\("\/api\/operations\/confirm"/);
+  assert.match(
+    client,
+    /fetch\(permanentReplacement[\s\S]*\? "\/api\/operations\/permanent-replacement"[\s\S]*: "\/api\/operations\/confirm"/,
+  );
   assert.match(client, /bookingsShared\.applyRemote\(body\.bookingRow/);
   assert.match(client, /operationsShared\.applyRemote\(body\.operationRow/);
   const finalConfirm = client.slice(client.indexOf('title: "确认异常处理已完成"'), client.indexOf("const renderRenewals"));

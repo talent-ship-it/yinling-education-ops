@@ -50,6 +50,10 @@ test("partitions browser display preferences by login account", () => {
   assert.ok(displayTimezoneOptions.some((option) => option.id === "Pacific/Auckland"));
   assert.ok(displayTimezoneOptions.some((option) => option.id === "America/Argentina/Buenos_Aires"));
   assert.ok(displayTimezoneOptions.some((option) => option.id === "Europe/Sarajevo"));
+  assert.equal(new Set(displayTimezoneOptions.map((option) => option.id)).size, displayTimezoneOptions.length);
+  assert.equal(timezoneLabelFor("Asia/Shanghai", "zh-CN"), "北京时间（中国）");
+  assert.equal(timezoneLabelFor("Australia/Sydney", "zh-CN"), "悉尼 / 堪培拉");
+  assert.equal(timezoneLabelFor("Australia/Sydney", "en-AU"), "Sydney / Canberra");
   assert.equal(displayTerm("在读 + 加课待排", "en-AU"), "Active · additional lessons pending");
 });
 

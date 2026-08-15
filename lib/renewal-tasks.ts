@@ -32,6 +32,8 @@ export interface RenewalPackageProjection {
   studentId: string;
   packageId: string;
   packageName?: string;
+  /** Human-readable evidence explaining which lesson consumes the shared package. */
+  renewalDateNote?: string;
   owner: string;
   /** Projected instant at which this package is exhausted. */
   depletionAt: Date | string;
@@ -79,9 +81,28 @@ function projectionState(status: RenewalProjectionStatus | undefined): Projectio
   throw new TypeError("status must be an active, renewed, or inactive renewal status");
 }
 
+/**
+ * Student activity is authoritative for automatic task lifecycle. A renewed
+ * package remains terminal; every other package closes while the student is
+ * inactive and becomes eligible for the same stable task again on reactivation.
+ */
+export function renewalProjectionStateForStudent(
+  status: RenewalProjectionStatus | undefined,
+  studentActive: boolean,
+): ProjectionState {
+  if (typeof studentActive !== "boolean") throw new TypeError("studentActive must be boolean");
+  return projectionState(status) === "renewed"
+    ? "renewed"
+    : studentActive
+      ? "active"
+      : "inactive";
+}
+
 export type RenewalStatusRecord = Readonly<{
   studentId: string;
   packageId?: string;
+  /** Legacy subject-level rows are display/history evidence, never package state. */
+  subjectId?: string;
   status?: RenewalProjectionStatus;
 }>;
 
@@ -99,22 +120,63 @@ export function renewalStatusForPackage(
   if (!Number.isSafeInteger(input.packageCount) || input.packageCount < 1) {
     throw new RangeError("packageCount must be a positive integer");
   }
-  const exact = records.find((record) => record.studentId === input.studentId && record.packageId === input.packageId);
+  const exact = records.find((record) => record.studentId === input.studentId
+    && record.packageId === input.packageId
+    && !record.subjectId);
   if (exact) {
     projectionState(exact.status);
     return exact.status;
   }
   if (input.packageCount !== 1) return undefined;
-  const legacy = records.find((record) => record.studentId === input.studentId && !record.packageId);
+  const legacy = records.find((record) => record.studentId === input.studentId
+    && !record.packageId
+    && !record.subjectId);
   if (legacy) projectionState(legacy.status);
   return legacy?.status;
 }
 
-/** Stable task anchor for one student's package; escaped components prevent collisions. */
+/** Stable task anchor for one student's package. Shared-package subjects never fork the task. */
 export function renewalTaskAnchor(studentId: string, packageId: string) {
   requireIdentifier(studentId, "studentId");
   requireIdentifier(packageId, "packageId");
   return `renewal:${encodeURIComponent(studentId.trim())}:${encodeURIComponent(packageId.trim())}`;
+}
+
+export type RenewalDateNoteInput = Readonly<{
+  depletionSubjectId?: string | null;
+  remainingHours?: number;
+  depletionLessonHours?: number;
+  nextScheduledLesson?: Readonly<{ subjectId: string; date: string; start: string; hours: number }> | null;
+  nextLessonAfterDepletion?: Readonly<{ subjectId: string; date: string; start: string; withinSevenDays: boolean }> | null;
+}>;
+
+function compactHours(value: number) {
+  return Number(value.toFixed(6)).toString();
+}
+
+/** Builds the approved automatic note without inventing subject-level package balances. */
+export function buildRenewalDateNote(input: RenewalDateNoteInput) {
+  const notes: string[] = [];
+  const depletionSubject = input.depletionSubjectId?.trim();
+  if (depletionSubject) notes.push(`预计由 ${depletionSubject} 课耗尽`);
+  const remaining = input.remainingHours;
+  const depletionHours = input.depletionLessonHours;
+  if (Number.isFinite(remaining) && Number.isFinite(depletionHours)
+    && remaining! >= 0 && depletionHours! > 0 && remaining! < depletionHours!) {
+    notes.push(`当前余额 ${compactHours(remaining!)} 小时，不足耗尽课次 ${compactHours(depletionHours!)} 小时`);
+  } else if (input.nextScheduledLesson
+    && Number.isFinite(remaining)
+    && Number.isFinite(input.nextScheduledLesson.hours)
+    && remaining! >= 0
+    && input.nextScheduledLesson.hours > 0
+    && remaining! < input.nextScheduledLesson.hours) {
+    notes.push(`当前余额 ${compactHours(remaining!)} 小时，不足下一节 ${input.nextScheduledLesson.subjectId} 课 ${compactHours(input.nextScheduledLesson.hours)} 小时`);
+  }
+  const next = input.nextLessonAfterDepletion;
+  if (next?.withinSevenDays) {
+    notes.push(`耗尽后下一节 ${next.subjectId} 课：${next.date} ${next.start}（不足 7 天）`);
+  }
+  return notes.join("；");
 }
 
 /**
@@ -157,6 +219,9 @@ function validateProjection(projection: RenewalPackageProjection) {
   requireIdentifier(projection.studentId, "studentId");
   requireIdentifier(projection.packageId, "packageId");
   requireIdentifier(projection.owner, "owner");
+  if (projection.renewalDateNote !== undefined && !projection.renewalDateNote.trim()) {
+    throw new TypeError("renewalDateNote must not be empty");
+  }
   asDate(projection.depletionAt, "depletionAt");
   return projectionState(projection.status);
 }
@@ -191,7 +256,7 @@ export function generateRenewalTask(
     status: statusForDueAt(dueAt, now, timeZone),
     tone: "amber",
     category: "续课",
-    trigger: "课包预计耗尽",
+    trigger: projection.renewalDateNote?.trim() || "课包预计耗尽",
     ruleKey: RENEWAL_TASK_RULE_KEY,
     anchorBookingId,
   };
