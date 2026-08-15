@@ -160,6 +160,27 @@ export type StudentImportIdentityClearResult = StudentImportIdentityLinkSaveResu
   reviewEpoch: number;
 }>;
 
+export type StudentImportIdentityBulkReviewPreview = Readonly<{
+  confirmationKey: string;
+  mergeCandidateCount: number;
+  pendingMergeCount: number;
+  alreadyLinkedMergeCount: number;
+  currentLinkCount: number;
+  resultingLinkCount: number;
+  canSubmit: boolean;
+}>;
+
+export type StudentImportIdentityBulkReviewResult = Readonly<{
+  confirmationKey: string;
+  fingerprint: string;
+  count: number;
+  requestedCount: number;
+  newlyAppliedCount: number;
+  alreadyAppliedCount: number;
+  finalCount: number;
+  unchanged: boolean;
+}>;
+
 export type StudentImportMasterDuplicateResolutionSaveResult = Readonly<{
   resolutionKey: string;
   decision: "select" | "ignore";
@@ -206,6 +227,8 @@ export const STUDENT_IMPORT_IDENTITY_REVIEW_PUT_RPC = "put_student_import_identi
 export const STUDENT_IMPORT_IDENTITY_REVIEW_PAIR_RPC = "put_student_import_identity_review_pair";
 export const STUDENT_IMPORT_IDENTITY_CLEAR_RPC = "clear_student_import_identity_links";
 export const STUDENT_IMPORT_IDENTITY_REVIEW_CONTRACT_RPC = "get_student_import_identity_review_contract";
+export const STUDENT_IMPORT_IDENTITY_BULK_PREVIEW_RPC = "get_student_import_identity_bulk_review_preview";
+export const STUDENT_IMPORT_IDENTITY_BULK_PUT_RPC = "put_student_import_identity_bulk_review";
 export const STUDENT_IMPORT_MASTER_DUPLICATE_RESOLUTION_PUT_RPC = "put_student_import_master_duplicate_resolution";
 export const TEACHER_IMPORT_SOURCE_RPC = "get_latest_teacher_import_sources";
 export const TEACHER_IMPORT_SOURCE_INGEST_RPC = "put_teacher_import_source";
@@ -458,6 +481,32 @@ export function clearStudentImportIdentityLinks(input: {
   return rpc<StudentImportIdentityClearResult>(STUDENT_IMPORT_IDENTITY_CLEAR_RPC, {
     p_secret: secret,
     p_resolution_key: input.resolutionKey,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Returns counts and one opaque CAS key for the complete current set of
+ * exact, unique-Han, existing-student merge candidates. No row reference,
+ * name, student ID or revision crosses this server-only boundary.
+ */
+export function getStudentImportIdentityBulkReviewPreview() {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityBulkReviewPreview>(
+    STUDENT_IMPORT_IDENTITY_BULK_PREVIEW_RPC,
+    { p_secret: secret },
+  );
+}
+
+/** Atomically persists the DB-recomputed merge-only candidate set. */
+export function putStudentImportIdentityBulkReview(input: {
+  confirmationKey: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityBulkReviewResult>(STUDENT_IMPORT_IDENTITY_BULK_PUT_RPC, {
+    p_secret: secret,
+    p_confirmation_key: input.confirmationKey,
     p_actor: input.actor,
   });
 }
