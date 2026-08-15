@@ -59,3 +59,10 @@ test("canonical and forward SQL lock bookings, students and teachers in the glob
     assert.match(definition, /elsif p_actor not in \('Nixon', 'Ops Admin'\) then/);
   }
 });
+
+test("scope version bounds use parenthesized CASE expressions accepted by PL/pgSQL", () => {
+  for (const source of [canonical, forward]) {
+    assert.doesNotMatch(source, /\bor\s+case\b/i);
+    assert.equal((source.match(/\bor\s*\(\s*case\b/gi) ?? []).length, 2);
+  }
+});

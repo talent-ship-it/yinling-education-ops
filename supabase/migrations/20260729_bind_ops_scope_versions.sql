@@ -34,20 +34,24 @@ begin
     if jsonb_typeof(p_scope_versions) <> 'object'
        or jsonb_typeof(p_scope_versions -> 'students') <> 'number'
        or (p_scope_versions ->> 'students') !~ '^[1-9][0-9]*$'
-       or case
+       or (
+         case
          when jsonb_typeof(p_scope_versions -> 'students') = 'number'
           and (p_scope_versions ->> 'students') ~ '^[1-9][0-9]*$'
          then (p_scope_versions ->> 'students')::numeric > 9223372036854775807
          else false
-       end
+         end
+       )
        or jsonb_typeof(p_scope_versions -> 'teachers') <> 'number'
        or (p_scope_versions ->> 'teachers') !~ '^[1-9][0-9]*$'
-       or case
+       or (
+         case
          when jsonb_typeof(p_scope_versions -> 'teachers') = 'number'
           and (p_scope_versions ->> 'teachers') ~ '^[1-9][0-9]*$'
          then (p_scope_versions ->> 'teachers')::numeric > 9223372036854775807
          else false
-       end then
+         end
+       ) then
       raise exception using errcode = '40001', message = 'access_scope_changed';
     end if;
 
