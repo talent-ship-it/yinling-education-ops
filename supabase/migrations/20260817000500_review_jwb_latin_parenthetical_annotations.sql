@@ -181,7 +181,7 @@ revoke all on function internal.student_import_identity_link_names_mismatch(json
 -- current target row yet.
 create or replace function internal.student_import_identity_link_existing_names_mismatch(
   p_master_rows jsonb,
-  p_students jsonb,
+  p_current_students jsonb,
   p_links jsonb
 )
 returns boolean
@@ -191,7 +191,7 @@ set search_path = ''
 as $$
   select case
     when jsonb_typeof(p_master_rows) <> 'array'
-      or jsonb_typeof(p_students) <> 'array'
+      or jsonb_typeof(p_current_students) <> 'array'
       or jsonb_typeof(p_links) <> 'array'
     then true
     else exists (
@@ -205,7 +205,7 @@ as $$
       ) master_match on true
       left join lateral (
         select current_student.value as row_value
-        from jsonb_array_elements(p_students) current_student(value)
+        from jsonb_array_elements(p_current_students) current_student(value)
         where jsonb_typeof(current_student.value -> 'id') = 'string'
           and internal.student_import_js_trim(current_student.value ->> 'id') =
             internal.student_import_js_trim(link.value ->> 'studentId')
@@ -222,7 +222,7 @@ as $$
             'jwb_latin_parenthetical_annotation_v1'
           and exists (
             select 1
-            from jsonb_array_elements(p_students) candidate(value)
+            from jsonb_array_elements(p_current_students) candidate(value)
             where jsonb_typeof(candidate.value -> 'id') = 'string'
               and internal.student_import_js_trim(candidate.value ->> 'id') <>
                 internal.student_import_js_trim(link.value ->> 'studentId')

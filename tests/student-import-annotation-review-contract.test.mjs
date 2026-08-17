@@ -50,6 +50,10 @@ test("the JWB annotation exception is closed, one-way and source-wide unique", (
 
 test("the exception is durable at both the link-set trigger and final projection", () => {
   assert.match(migration, /create or replace function internal\.student_import_identity_link_names_mismatch/i);
+  assert.match(
+    migration,
+    /create or replace function internal\.student_import_identity_link_existing_names_mismatch\(\s*p_master_rows jsonb,\s*p_current_students jsonb,\s*p_links jsonb\s*\)/i,
+  );
   assert.match(migration, /create or replace function internal\.enforce_student_import_identity_link_exact_names/i);
   assert.match(migration, /create or replace function internal\.enforce_student_import_identity_link_exact_names/i);
   assert.match(migration, /new\.links/i);
