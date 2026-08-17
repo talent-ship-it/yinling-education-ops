@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, optimizationMigration, route, store, ui, domain] = await Promise.all([
+const [migration, optimizationMigration, confirmationOptimizationMigration, route, store, ui, domain] = await Promise.all([
   readFile(
     new URL(
       "../supabase/migrations/20260817000500_review_jwb_latin_parenthetical_annotations.sql",
@@ -13,6 +13,13 @@ const [migration, optimizationMigration, route, store, ui, domain] = await Promi
   readFile(
     new URL(
       "../supabase/migrations/20260817000600_optimize_jwb_annotation_review_candidates.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260817000700_optimize_jwb_annotation_confirmation.sql",
       import.meta.url,
     ),
     "utf8",
@@ -134,6 +141,41 @@ test("the annotation candidate optimizer keeps the six-argument closed contract"
   assert.doesNotMatch(candidate, /student_import_name_key\(/);
   assert.doesNotMatch(candidate, /student_import_jwb_annotation_relaxed_name_key\(/);
   assert.doesNotMatch(candidate, /jwbMemId/);
+});
+
+test("confirmation validates one set-based source-wide map at the trigger boundary", () => {
+  assert.match(
+    confirmationOptimizationMigration,
+    /create or replace function internal\.student_import_identity_link_names_mismatch\(\s*p_master_rows jsonb,\s*p_jwb_rows jsonb,\s*p_links jsonb\s*\)/i,
+  );
+  assert.match(
+    confirmationOptimizationMigration,
+    /create or replace function internal\.student_import_identity_link_existing_names_mismatch\(\s*p_master_rows jsonb,\s*p_current_students jsonb,\s*p_links jsonb\s*\)/i,
+  );
+  assert.match(confirmationOptimizationMigration, /jsonb_array_length\(p_links\) = 0/);
+  assert.match(confirmationOptimizationMigration, /master_relaxed_counts as materialized/);
+  assert.match(confirmationOptimizationMigration, /jwb_relaxed_counts as materialized/);
+  assert.match(confirmationOptimizationMigration, /student_relaxed_ids as materialized/);
+  assert.match(confirmationOptimizationMigration, /student_import_annotation_name_key_from_display_name/);
+  assert.match(confirmationOptimizationMigration, /student_import_jwb_annotation_key_from_display/);
+  assert.match(confirmationOptimizationMigration, /master_collision\.relaxed_count/);
+  assert.match(confirmationOptimizationMigration, /jwb_collision\.relaxed_count/);
+  assert.match(confirmationOptimizationMigration, /current_collision\.ids - link\.student_id/);
+  assert.doesNotMatch(
+    confirmationOptimizationMigration,
+    /set statement_timeout\s*=\s*'(?:[1-9][0-9]*s)'/i,
+  );
+  assert.match(confirmationOptimizationMigration, /annotation_confirmation_preflight_patch/);
+  assert.match(confirmationOptimizationMigration, /student_import_annotation_confirmation_preflight_anchor_mismatch/);
+  assert.match(confirmationOptimizationMigration, /BEFORE trigger on internal\.student_import_identity_link_sets/i);
+  assert.doesNotMatch(
+    confirmationOptimizationMigration,
+    /drop trigger[\s\S]*enforce_student_import_identity_link_exact_names/i,
+  );
+  assert.doesNotMatch(
+    confirmationOptimizationMigration,
+    /delete\s+from\s+internal\.student_import_identity_link_sets/i,
+  );
 });
 
 test("the browser can only submit the opaque confirmation key", () => {
