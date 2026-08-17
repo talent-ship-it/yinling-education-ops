@@ -57,6 +57,12 @@ export type JwbStudentImportRow = Readonly<{
   contractHours?: number | string | null;
   contractEffectiveDate?: string | null;
   /**
+   * Earliest positive JWB contract date: `contract_dated`, falling back to
+   * `dated` and then `start`. It is a conservative, auditable approximation
+   * of when the learner entered the business, not a literal DB created_at.
+   */
+  firstJwbHourEntryDate?: string | null;
+  /**
    * Authoritative package-level data. Aggregate balances never create a
    * package because one balance may represent several subjects or contracts.
    */
@@ -83,6 +89,8 @@ export type JwbLessonPackageImportRow = Readonly<{
 
 export type ExistingStudentImportRecord = Readonly<Record<string, unknown> & {
   id: string;
+  /** Human-facing immutable number: YYYYMMDD plus a daily three-digit serial. */
+  studentNumber?: string;
   name: string;
   status?: string;
   segment?: string;
@@ -92,8 +100,20 @@ export type ExistingStudentImportRecord = Readonly<Record<string, unknown> & {
   lessonPackages?: readonly StudentLessonPackage[];
 }>;
 
+/**
+ * An immutable student-number reservation retained by the database even when
+ * a later formal roster no longer projects that student's record. Keeping the
+ * stable student ID here lets a returning formal row recover its original
+ * number instead of consuming a new one.
+ */
+export type StudentNumberReservation = Readonly<{
+  studentId: string;
+  studentNumber: string;
+}>;
+
 export type ImportedStudentRecord = Readonly<Record<string, unknown> & {
   id: string;
+  studentNumber?: string;
   name: string;
   status: string;
   sourceRow?: StudentImportSourceKey;
@@ -104,6 +124,7 @@ export type ImportedStudentRecord = Readonly<Record<string, unknown> & {
   remainingHours?: number;
   contractHours?: number;
   contractEffectiveDate?: string;
+  firstJwbHourEntryDate?: string;
   lessonPackages?: readonly StudentLessonPackage[];
   packageCoverage?: "complete" | "partial" | "none";
 }>;
@@ -179,6 +200,14 @@ export type BuildStudentImportPlanInput = Readonly<{
   allowLegacyIdentityFallback?: boolean;
   /** Defaults to true. A manual trial is a trial-segment record without a master source key. */
   preserveManualTrials?: boolean;
+  /** Formal JWB-backed imports allocate missing visible student numbers. */
+  assignStudentNumbers?: boolean;
+  /**
+   * Internal server snapshot of every historical student-number reservation.
+   * It is not accepted from a browser request. It keeps preview allocation in
+   * lockstep with the database's permanent non-reuse registry.
+   */
+  studentNumberReservations?: readonly StudentNumberReservation[];
   /** Server-derived canonical references; never accepted from the browser import request. */
   preserveReferencedStudentIds?: ReadonlySet<string> | readonly string[];
 }>;
@@ -221,6 +250,7 @@ const managedFields = new Set([
   "remainingHours",
   "contractHours",
   "contractEffectiveDate",
+  "firstJwbHourEntryDate",
   "lessonPackages",
   "packageCoverage",
   "importArchived",
@@ -835,6 +865,143 @@ function changedFields(before: ExistingStudentImportRecord, after: ImportedStude
     .sort(compareText);
 }
 
+const STUDENT_NUMBER_PATTERN = /^\d{11}$/;
+
+function dateKeyForStudentNumber(value: unknown, sourceRow: StudentImportSourceKey) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return undefined;
+  const date = value.slice(0, 10);
+  if (Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) {
+    throw new StudentImportError("invalid_hours", "firstJwbHourEntryDate is not a valid date", sourceRow);
+  }
+  return date.replaceAll("-", "");
+}
+
+/**
+ * A student number records the earliest positive JWB contract date, not when
+ * this application happened to import the record. Existing numbers are
+ * immutable; missing numbers are allocated deterministically by contract date
+ * then system ID so retrying an unchanged import cannot renumber anyone.
+ */
+function assignStudentNumbersFromJwb(
+  imported: readonly ImportedStudentRecord[],
+  existingStudents: readonly ExistingStudentImportRecord[],
+  reservations: readonly StudentNumberReservation[],
+) {
+  const usedNumbers = new Set<string>();
+  const reservedNumberByStudentId = new Map<string, string>();
+  const reservedStudentIdByNumber = new Map<string, string>();
+  for (const reservation of reservations) {
+    if (typeof reservation.studentId !== "string" || !reservation.studentId.trim()
+      || typeof reservation.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(reservation.studentNumber)) {
+      throw new StudentImportError("invalid_hours", "student number reservation is invalid", reservation.studentId);
+    }
+    const studentId = reservation.studentId.trim();
+    const priorNumber = reservedNumberByStudentId.get(studentId);
+    const priorStudentId = reservedStudentIdByNumber.get(reservation.studentNumber);
+    if ((priorNumber !== undefined && priorNumber !== reservation.studentNumber)
+      || (priorStudentId !== undefined && priorStudentId !== studentId)) {
+      throw new StudentImportError("duplicate_output_id", "student number reservations must be one-to-one", studentId);
+    }
+    reservedNumberByStudentId.set(studentId, reservation.studentNumber);
+    reservedStudentIdByNumber.set(reservation.studentNumber, studentId);
+    usedNumbers.add(reservation.studentNumber);
+  }
+  for (const student of existingStudents) {
+    if (student.studentNumber === undefined) continue;
+    if (typeof student.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(student.studentNumber)) {
+      throw new StudentImportError("invalid_hours", "existing studentNumber must be YYYYMMDD plus a three-digit serial", student.id);
+    }
+    const reservedNumber = reservedNumberByStudentId.get(student.id);
+    const reservedStudentId = reservedStudentIdByNumber.get(student.studentNumber);
+    if ((reservedNumber !== undefined && reservedNumber !== student.studentNumber)
+      || (reservedStudentId !== undefined && reservedStudentId !== student.id)) {
+      throw new StudentImportError("duplicate_output_id", "existing studentNumber conflicts with the historical reservation", student.id);
+    }
+    if (usedNumbers.has(student.studentNumber)) {
+      // A current record is expected to repeat its own permanent reservation.
+      if (reservedStudentId !== student.id) {
+        throw new StudentImportError("duplicate_output_id", "duplicate existing studentNumber", student.id);
+      }
+    }
+    usedNumbers.add(student.studentNumber);
+  }
+
+  const existingById = new Map(existingStudents.map((student) => [student.id, student]));
+  const importedStudentIdByNumber = new Map<string, string>();
+  for (const student of imported) {
+    if (student.studentNumber === undefined) continue;
+    if (typeof student.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(student.studentNumber)) {
+      throw new StudentImportError("invalid_hours", "imported studentNumber must be YYYYMMDD plus a three-digit serial", student.id);
+    }
+    const existingNumber = existingById.get(student.id)?.studentNumber;
+    const reservedNumber = reservedNumberByStudentId.get(student.id);
+    const reservedStudentId = reservedStudentIdByNumber.get(student.studentNumber);
+    const importedStudentId = importedStudentIdByNumber.get(student.studentNumber);
+    if ((existingNumber !== undefined && existingNumber !== student.studentNumber)
+      || (reservedNumber !== undefined && reservedNumber !== student.studentNumber)
+      || (reservedStudentId !== undefined && reservedStudentId !== student.id)
+      || (importedStudentId !== undefined && importedStudentId !== student.id)) {
+      throw new StudentImportError("duplicate_output_id", "imported studentNumber conflicts with the historical reservation", student.id);
+    }
+    importedStudentIdByNumber.set(student.studentNumber, student.id);
+    usedNumbers.add(student.studentNumber);
+  }
+  const pending = imported
+    .filter((student) => {
+      const existingNumber = existingById.get(student.id)?.studentNumber;
+      const reservedNumber = reservedNumberByStudentId.get(student.id);
+      if (existingNumber !== undefined && reservedNumber !== undefined && existingNumber !== reservedNumber) {
+        throw new StudentImportError("duplicate_output_id", "existing studentNumber conflicts with the historical reservation", student.id);
+      }
+      if (student.studentNumber !== undefined && reservedNumber !== undefined && student.studentNumber !== reservedNumber) {
+        throw new StudentImportError("duplicate_output_id", "imported studentNumber conflicts with the historical reservation", student.id);
+      }
+      return existingNumber === undefined && student.studentNumber === undefined && reservedNumber === undefined;
+    })
+    .map((student) => ({
+      student,
+      dateKey: dateKeyForStudentNumber(student.firstJwbHourEntryDate, student.sourceRow ?? student.id),
+    }))
+    .filter((entry): entry is { student: ImportedStudentRecord; dateKey: string } => Boolean(entry.dateKey))
+    .sort((left, right) => compareText(left.dateKey, right.dateKey) || compareText(left.student.id, right.student.id));
+
+  const nextSerialByDate = new Map<string, number>();
+  for (const number of usedNumbers) {
+    const dateKey = number.slice(0, 8);
+    const serial = Number(number.slice(8));
+    nextSerialByDate.set(dateKey, Math.max(nextSerialByDate.get(dateKey) ?? 0, serial));
+  }
+  const assigned = new Map<string, string>();
+  for (const { student, dateKey } of pending) {
+    const serial = (nextSerialByDate.get(dateKey) ?? 0) + 1;
+    if (serial > 999) {
+      throw new StudentImportError("invalid_hours", `student number daily sequence exceeds 999 for ${dateKey}`, student.sourceRow ?? student.id);
+    }
+    const studentNumber = `${dateKey}${String(serial).padStart(3, "0")}`;
+    if (usedNumbers.has(studentNumber)) {
+      throw new StudentImportError("duplicate_output_id", "generated duplicate studentNumber", student.sourceRow ?? student.id);
+    }
+    nextSerialByDate.set(dateKey, serial);
+    usedNumbers.add(studentNumber);
+    assigned.set(student.id, studentNumber);
+  }
+  return imported.map((student) => {
+    const existingNumber = existingById.get(student.id)?.studentNumber;
+    const reservedNumber = reservedNumberByStudentId.get(student.id);
+    const importedNumber = student.studentNumber;
+    if ((typeof existingNumber === "string" && reservedNumber !== undefined && existingNumber !== reservedNumber)
+      || (typeof importedNumber === "string" && reservedNumber !== undefined && importedNumber !== reservedNumber)) {
+      throw new StudentImportError("duplicate_output_id", "studentNumber conflicts with the historical reservation", student.id);
+    }
+    const studentNumber = typeof existingNumber === "string"
+      ? existingNumber
+      : typeof importedNumber === "string"
+        ? importedNumber
+        : reservedNumber ?? assigned.get(student.id);
+    return studentNumber === undefined ? student : { ...student, studentNumber };
+  });
+}
+
 function groupByName<Row extends { name: string }>(rows: readonly Row[]) {
   const groups = new Map<string, Row[]>();
   for (const row of rows) {
@@ -1229,6 +1396,9 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       ...(matchedJwb?.contractEffectiveDate?.trim()
         ? { contractEffectiveDate: matchedJwb.contractEffectiveDate.trim() }
         : {}),
+      ...(matchedJwb?.firstJwbHourEntryDate?.trim()
+        ? { firstJwbHourEntryDate: matchedJwb.firstJwbHourEntryDate.trim() }
+        : {}),
       ...(lessonPackages?.length ? { lessonPackages } : {}),
     };
 
@@ -1242,6 +1412,27 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     });
     if (existing) usedExistingIds.add(existing.id);
     imported.push(record);
+  }
+
+  // JWB's earliest positive contract date is the auditable proxy for the
+  // visible student-number date. Do this after every match is known, then recompute the
+  // corresponding action fields so the dry-run truthfully shows the backfill.
+  const numberedImported = input.assignStudentNumbers
+    ? assignStudentNumbersFromJwb(imported, existingStudents, input.studentNumberReservations ?? [])
+    : imported;
+  for (let index = 0; index < numberedImported.length; index += 1) {
+    const numbered = numberedImported[index];
+    imported[index] = numbered;
+    const existing = existingStudents.find((student) => student.id === numbered.id);
+    const previous = actions[index];
+    if (previous) {
+      const fields = existing ? changedFields(existing, numbered) : [];
+      actions[index] = {
+        ...previous,
+        kind: existing ? (fields.length ? "update" : "unchanged") : "insert",
+        changedFields: fields,
+      };
+    }
   }
 
   const manualTrialActions: StudentImportAction[] = [];

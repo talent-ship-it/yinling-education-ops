@@ -131,6 +131,70 @@ test("excludes inactive students without hours even if JWB contains a balance", 
   assert.equal(plan.students[0].remainingHours, 4);
 });
 
+test("assigns stable student numbers from the first JWB hour-entry date and preserves prior numbers", () => {
+  const plan = buildStudentImportPlan({
+    masterRows: [master(2, "Later Source"), master(1, "Earlier Source")],
+    jwbRows: [
+      { ...jwb(102, "Later Source", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+      { ...jwb(101, "Earlier Source", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+    ],
+    assignStudentNumbers: true,
+  });
+  const first = plan.students.find((student) => student.sourceRow === 1);
+  const second = plan.students.find((student) => student.sourceRow === 2);
+  assert.equal(first?.studentNumber, "20260817001");
+  assert.equal(second?.studentNumber, "20260817002");
+
+  const replay = buildStudentImportPlan({
+    masterRows: [master(2, "Later Source"), master(1, "Earlier Source")],
+    jwbRows: [
+      { ...jwb(102, "Later Source", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+      { ...jwb(101, "Earlier Source", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+    ],
+    existingStudents: plan.students,
+    assignStudentNumbers: true,
+  });
+  assert.equal(replay.students.find((student) => student.sourceRow === 1)?.studentNumber, "20260817001");
+  assert.equal(replay.students.find((student) => student.sourceRow === 2)?.studentNumber, "20260817002");
+});
+
+test("reserves numbers for removed historical IDs and uses JavaScript UTF-16 ordering", () => {
+  const returningId = studentIdForMasterSource(1, "student-number-reservation-fixture");
+  const reservationPlan = buildStudentImportPlan({
+    masterRows: [master(1, "Returning Learner"), master(2, "New Learner")],
+    jwbRows: [
+      { ...jwb(101, "Returning Learner", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+      { ...jwb(102, "New Learner", 4, 12), firstJwbHourEntryDate: "2026-08-17" },
+    ],
+    masterSourceNamespace: "student-number-reservation-fixture",
+    studentNumberReservations: [{ studentId: returningId, studentNumber: "20260817007" }],
+    assignStudentNumbers: true,
+  });
+  assert.equal(reservationPlan.students.find((student) => student.sourceRow === 1)?.studentNumber, "20260817007");
+  assert.equal(reservationPlan.students.find((student) => student.sourceRow === 2)?.studentNumber, "20260817008");
+
+  // JS compares UTF-16 code units: 😀 starts with D83D and therefore sorts
+  // before BMP private-use E000. PostgreSQL C collation would do the reverse.
+  const utf16Plan = buildStudentImportPlan({
+    masterRows: [master(11, "BMP Learner"), master(12, "Emoji Learner")],
+    jwbRows: [
+      { ...jwb(111, "BMP Learner", 4, 12), firstJwbHourEntryDate: "2026-08-18" },
+      { ...jwb(112, "Emoji Learner", 4, 12), firstJwbHourEntryDate: "2026-08-18" },
+    ],
+    existingStudents: [
+      { id: "STU-\uE000", name: "BMP Learner" },
+      { id: "STU-😀", name: "Emoji Learner" },
+    ],
+    identityLinks: [
+      { masterSourceRow: 11, jwbSourceRow: 111, studentId: "STU-\uE000" },
+      { masterSourceRow: 12, jwbSourceRow: 112, studentId: "STU-😀" },
+    ],
+    assignStudentNumbers: true,
+  });
+  assert.equal(utf16Plan.students.find((student) => student.id === "STU-😀")?.studentNumber, "20260818001");
+  assert.equal(utf16Plan.students.find((student) => student.id === "STU-\uE000")?.studentNumber, "20260818002");
+});
+
 test("normalises names conservatively, merges JWB balances and preserves manual trials", () => {
   const manualTrial: ExistingStudentImportRecord = {
     id: "STU-TRIAL-1",

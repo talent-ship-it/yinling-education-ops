@@ -83,6 +83,7 @@ test("uses current course balances and positive contracts for separate authorita
   assert.equal(row.remainingHours, 14);
   assert.equal(row.contractHours, 20);
   assert.equal(row.contractEffectiveDate, undefined);
+  assert.equal(row.firstJwbHourEntryDate, "2026-07-01");
   assert.equal(row.packageCoverage, "complete");
   assert.deepEqual(row.lessonPackages, [{
     sourcePackageId: "COURSE-ENGLISH",
@@ -105,6 +106,45 @@ test("uses current course balances and positive contracts for separate authorita
       adjustmentContracts: [],
     },
   });
+});
+
+test("uses the earliest positive contract date for a student number, not an earlier zero-hour administration record", () => {
+  const [row] = adaptJiaowubaoImportRows(input({
+    contracts: [
+      contract({
+        contract_id: "CONTRACT-ZERO",
+        contract_code: "CODE-ZERO",
+        ks: 0,
+        ks_use: 0,
+        ks_left: 0,
+        contract_dated: "2026-06-01",
+        dated: "2026-06-01 09:00:00",
+        detail_lists: [{
+          detail_id: "DETAIL-ZERO",
+          course_id: "COURSE-ENGLISH",
+          course_title: "English",
+          ks: 0,
+          ks_left: 0,
+          end: null,
+        }],
+      }),
+      contract({
+        contract_id: "CONTRACT-POSITIVE",
+        contract_code: "CODE-POSITIVE",
+        contract_dated: "2026-07-01",
+        dated: "2026-07-01 09:00:00",
+        detail_lists: [{
+          detail_id: "DETAIL-POSITIVE",
+          course_id: "COURSE-ENGLISH",
+          course_title: "English",
+          ks: 20,
+          ks_left: 3,
+          end: null,
+        }],
+      }),
+    ],
+  }));
+  assert.equal(row.firstJwbHourEntryDate, "2026-07-01");
 });
 
 test("does not use historical contract usage to calculate current consumption", () => {

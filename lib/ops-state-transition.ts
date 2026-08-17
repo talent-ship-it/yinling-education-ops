@@ -778,11 +778,41 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
   const next = records(nextPayload, "students");
   const currentById = byId(current);
   const nextById = byId(next);
+  const studentNumbers = new Set<string>();
   if ([...currentById.keys()].some((id) => !nextById.has(id))) {
     forbidden("学生档案不能通过通用保存删除。");
   }
   for (const student of next) {
     const existing = currentById.get(requiredText(student.id, "student.id"));
+    const studentNumber = student.studentNumber;
+    if (studentNumber !== undefined && (typeof studentNumber !== "string" || !/^\d{11}$/.test(studentNumber))) {
+      invalid("学生编号必须为 YYYYMMDD 加三位流水号。");
+    }
+    // The database owns allocation.  A browser must not pre-allocate a number
+    // from a stale local list: concurrent new students are serialized by the
+    // ops_state row lock and receive their number in the write trigger.
+    if (!existing && studentNumber !== undefined) {
+      forbidden("新建学生的学生编号由服务器自动分配。");
+    }
+    if (typeof studentNumber === "string") {
+      if (studentNumbers.has(studentNumber)) forbidden("学生编号不能重复。");
+      studentNumbers.add(studentNumber);
+    }
+    if (existing && existing.studentNumber === undefined && studentNumber !== undefined) {
+      forbidden("学生编号只能由服务器补发。");
+    }
+    if (existing && existing.studentNumber !== undefined && !same(existing.studentNumber, studentNumber)) {
+      forbidden("学生编号由系统分配后不可修改。");
+    }
+    // Import provenance is a server-owned boundary. In particular, a generic
+    // browser write cannot pretend to be a formal master import in order to
+    // obtain a historical JWB-dated student number.
+    if (!existing && Object.hasOwn(student, "importSource")) {
+      forbidden("正式导入标记只能由正式导入流程写入。");
+    }
+    if (existing && !same(existing.importSource, student.importSource)) {
+      forbidden("学生导入来源只能由正式导入流程修改。");
+    }
     if (existing?.importArchived === true && !same(existing, student)) {
       forbidden("已归档学生档案只能查看，不能通过通用保存修改。");
     }

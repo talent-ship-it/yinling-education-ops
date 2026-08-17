@@ -547,15 +547,30 @@ test("generic student writes cannot create or mutate managed exam history", () =
   }]), rejected);
   assert.throws(() => transition("students", [], [{
     id: "S-NEW",
+    studentNumber: "20260817001",
     name: "New Student",
     owner: "Abby",
     exams: [exam],
   }]), rejected);
   assert.throws(() => transition("students", [], [{
     id: "S-NEW",
+    studentNumber: "20260817001",
     name: "New Student",
     owner: "Abby",
     exams: { injected: true },
+  }]), rejected);
+  assert.throws(() => transition("students", [], [{
+    id: "S-NEW",
+    studentNumber: "20260817001",
+    name: "New Student",
+    owner: "Abby",
+    exams: [],
+  }]), rejected);
+  assert.throws(() => transition("students", [], [{
+    id: "S-NEW-FORGE-IMPORT",
+    name: "Forged import",
+    importSource: "master",
+    exams: [],
   }]), rejected);
   transition("students", [], [{ id: "S-NEW", name: "New Student", owner: "Abby", exams: [] }]);
 });

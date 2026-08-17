@@ -249,6 +249,8 @@ type AvailabilitySlot = {
 
 type Student = {
   id: string;
+  /** Human-facing immutable number: YYYYMMDD + same-day sequence. */
+  studentNumber?: string;
   name: string;
   initials: string;
   status: StudentStatus;
@@ -273,6 +275,7 @@ type Student = {
   remainingHours?: number;
   contractHours?: number;
   contractEffectiveDate?: string;
+  firstJwbHourEntryDate?: string;
   jwbSyncedAt?: string;
   jwbSyncStatus?: string;
   reportProgress?: string;
@@ -1066,10 +1069,27 @@ function useSharedState<T>(
 
         const row = body.row as RemoteStateRow<T>;
         if (row.version <= versionRef.current) return;
-        committedRef.current = payloadSerialized;
+        // The server may add or normalize fields while accepting this write
+        // (for example, it assigns a new student's immutable studentNumber).
+        // Keep that returned payload as the committed baseline. If the user
+        // changed something again while this request was in flight, preserve
+        // that later local delta against the server-authoritative response.
+        const localAfterSubmit = valueRef.current;
+        const hasNewerLocalChanges = JSON.stringify(localAfterSubmit) !== payloadSerialized;
+        const merged = hasNewerLocalChanges
+          ? mergeConcurrentPayload(payload, localAfterSubmit, row.payload)
+          : { value: row.payload, conflicts: 0 };
+        committedRef.current = JSON.stringify(row.payload);
+        valueRef.current = merged.value;
         versionRef.current = row.version;
         setVersion(row.version);
-        onSync("synced", `${entity} 已同步`);
+        setValue(merged.value);
+        onSync(
+          merged.conflicts ? "conflict" : "synced",
+          merged.conflicts
+            ? `${entity} 有 ${merged.conflicts} 条同一记录被服务器更新，请复核`
+            : `${entity} 已同步`,
+        );
       }).catch((error: unknown) => {
         onSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : `${entity} 保存失败`);
       });
@@ -2614,7 +2634,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const studentListSource = studentView === "archived" ? scopedArchivedStudents : scopedStudents;
   const filteredStudents = useMemo(() => studentListSource.filter((student) => {
-    const haystack = `${student.name} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
+    const haystack = `${student.name} ${student.studentNumber ?? ""} ${student.id} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
     const matchesSearch = haystack.includes(search.trim().toLowerCase());
     if (!matchesSearch || (studentOwner !== "all" && student.owner !== studentOwner)) return false;
     if (studentView === "mine") return isTeacherView || student.owner === currentOperator;
@@ -2660,7 +2680,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const pagedTeachers = filteredTeachers.slice((safeTeacherPage - 1) * teacherPageSize, safeTeacherPage * teacherPageSize);
 
   const globalResults = globalQuery.trim() ? [
-    ...readableScopedStudents.filter((student) => `${student.name} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: student.importArchived ? "历史归档" : "学生", title: student.name, detail: `${student.id} · ${student.course}${student.importArchived ? " · 只读" : ""}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
+    ...readableScopedStudents.filter((student) => `${student.name} ${student.studentNumber ?? ""} ${student.id} ${student.course}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 6).map((student) => ({ id: student.id, type: student.importArchived ? "历史归档" : "学生", title: student.name, detail: `${student.studentNumber ?? student.id} · ${student.course}${student.importArchived ? " · 只读" : ""}`, action: () => { goToStudent(student.id); setGlobalSearchOpen(false); } })),
     ...(!isTeacherView ? recordTeachers.filter((teacher) => `${teacher.name} ${teacher.id} ${teacher.subjects.join(" ")}`.toLowerCase().includes(globalQuery.trim().toLowerCase())).slice(0, 4).map((teacher) => ({ id: teacher.id, type: "老师", title: teacher.name, detail: `${teacher.id} · ${teacher.subjects.join("、")}`, action: () => { setSelectedTeacherId(teacher.id); setActive("teachers"); setGlobalSearchOpen(false); } })) : []),
   ] : [];
 
@@ -4382,7 +4402,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <article className="collection-main">
             <div className="collection-head student-grid"><input type="checkbox" disabled={!isAdminView || studentView === "archived"} checked={studentView === "archived" ? false : pageSelected} aria-label={english ? "Select students on this page" : "选择本页学生"} onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>{isTeacherView && english ? "Student / grade / course" : "学生 / 年级 / 课程"}</span><span>{isTeacherView && english ? "Status / teacher" : "学员状态 / 老师"}</span><span>{isTeacherView && english ? "Operations owner" : "负责教务"}</span><span>{isTeacherView && english ? "Next step" : "下一步"}</span></div>
             <div className="collection-viewport">
-              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""} ${student.importArchived ? "archived-row" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView || student.importArchived === true} checked={student.importArchived ? false : selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" title={`${student.name} · ${currentGrade(student)} · ${student.course}`} onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={student.importArchived ? "neutral" : statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" title={`${displayTerm(student.status, displayPreferences.language)} · ${student.teacher}`} onClick={() => openStudentPreview(student.id)}>{student.importArchived ? <StatusPill tone="neutral">历史归档 · 只读</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill>}<small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" title={student.next} onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.importArchived ? "保留历史记录" : student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={studentView === "archived" ? "没有当前身份可查看的历史归档学生。" : isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
+              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""} ${student.importArchived ? "archived-row" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView || student.importArchived === true} checked={student.importArchived ? false : selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" title={`${student.name} · ${currentGrade(student)} · ${student.course}`} onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={student.importArchived ? "neutral" : statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.studentNumber ?? student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" title={`${displayTerm(student.status, displayPreferences.language)} · ${student.teacher}`} onClick={() => openStudentPreview(student.id)}>{student.importArchived ? <StatusPill tone="neutral">历史归档 · 只读</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill>}<small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" title={student.next} onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.importArchived ? "保留历史记录" : student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={studentView === "archived" ? "没有当前身份可查看的历史归档学生。" : isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
@@ -9914,7 +9934,7 @@ function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals
   const lowHours = isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < lowHoursThreshold;
   return <aside className={`student-detail ${mobileOpen ? "mobile-detail-open" : ""}`}>
     <button className="mobile-preview-close" type="button" aria-label={english ? "Close student details" : "关闭学生详情"} onClick={onClose}><ChevronLeft size={20} /> {english ? "Back to students" : "返回学生列表"}</button>
-    <div className="detail-top"><Avatar initials={student.initials} tone={readOnly ? "neutral" : statusTone(student.status)} /><div><p>{student.id}</p><h2>{student.name}</h2>{readOnly ? <StatusPill tone="neutral">{english ? "Historical archive · read only" : "历史归档 · 只读"}</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill>}</div></div>
+    <div className="detail-top"><Avatar initials={student.initials} tone={readOnly ? "neutral" : statusTone(student.status)} /><div><p>{student.studentNumber ?? student.id}</p><h2>{student.name}</h2>{readOnly ? <StatusPill tone="neutral">{english ? "Historical archive · read only" : "历史归档 · 只读"}</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill>}</div></div>
     {readOnly && <div className="archive-detail-notice"><ShieldCheck size={16} /><span><strong>{english ? "Historical records are locked" : "历史记录已锁定"}</strong><small>{english ? "Lessons, documents and follow-up history remain available; new operations are disabled." : "仍可查看课次、资料和跟进历史；不能新增、编辑、上传或排课。"}</small></span></div>}
     <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Jiaowubao remaining / current total" : "教务宝剩余 / 当前总课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "hours" : "课时"}`}</strong><em>{student.packageCoverage === "partial" ? (english ? "Some package purchase histories still need review" : "部分课程购买历史待核对") : student.packageCoverage === "none" ? (english ? "No verified package ledger" : "尚无可核对课包账本") : student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "不活跃 + 有课时" || student.status === "不活跃 + 无课时" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? `Threshold: ${lowHoursThreshold} hours` : `阈值 ${lowHoursThreshold} 课时`)}</em></span></div>
     {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong></div>}

@@ -866,9 +866,20 @@ export function adaptJiaowubaoImportRows(input: JiaowubaoImportInput): readonly 
         : lessonPackages.length
           ? "partial" as const
           : "none" as const;
+      // Keep the existing contract-effective date separate from the date used
+      // for the human-facing student number. A course may start later than
+      // the moment its positive hours were first recorded in JWB.
       const effectiveDates = studentContracts
         .filter((contract) => contract.direction === "addition")
         .map((contract) => contract.effectiveDate)
+        .filter((value): value is string => Boolean(value))
+        .sort();
+      // `purchasedAt` is contract_dated, then dated, then start. This is the
+      // earliest positive JWB contract date, rather than a later start date;
+      // it is not asserted to be the database record's created_at timestamp.
+      const firstHourEntryDates = studentContracts
+        .filter((contract) => contract.direction === "addition" && contract.hours.total > 0)
+        .map((contract) => contract.purchasedAt)
         .filter((value): value is string => Boolean(value))
         .sort();
       const packagePurchaseHours = sumHours(
@@ -888,6 +899,7 @@ export function adaptJiaowubaoImportRows(input: JiaowubaoImportInput): readonly 
         contractHours: packageCoverage === "complete" ? packagePurchaseHours : student.hours.total,
         packageCoverage,
         ...(effectiveDates[0] ? { contractEffectiveDate: effectiveDates[0] } : {}),
+        ...(firstHourEntryDates[0] ? { firstJwbHourEntryDate: firstHourEntryDates[0] } : {}),
         ...(lessonPackages.length ? { lessonPackages } : {}),
         ...(packageCoverage !== "complete" ? {
           attributes: {

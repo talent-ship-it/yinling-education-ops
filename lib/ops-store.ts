@@ -5,6 +5,7 @@ import type {
   JwbStudentImportRow,
   MasterStudentDuplicateResolution,
   MasterStudentImportRow,
+  StudentNumberReservation,
 } from "@/lib/student-import";
 import type {
   ImportedTeacherRecord,
@@ -128,6 +129,8 @@ export type StudentImportSourceRowsSnapshot = Readonly<{
   masterDuplicateResolutions: readonly MasterStudentDuplicateResolution[];
   masterDuplicateResolutionFingerprint: string;
   fuAttachmentReferences: StudentFuAttachmentReferenceSnapshot;
+  /** Internal server snapshot of numbers permanently reserved for student IDs. */
+  studentNumberReservations: readonly StudentNumberReservation[];
 }>;
 
 export type StudentImportCommitResult = Readonly<{

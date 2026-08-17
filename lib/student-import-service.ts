@@ -73,6 +73,7 @@ const JWB_SOURCE_ROW_FIELDS = new Set([
   "remainingHours",
   "contractHours",
   "contractEffectiveDate",
+  "firstJwbHourEntryDate",
   "lessonPackages",
   "packageCoverage",
   "attributes",
@@ -526,6 +527,35 @@ function studentIdentityLinks(value: unknown) {
   });
 }
 
+function studentNumberReservations(value: unknown) {
+  if (!Array.isArray(value) || value.length > MAX_SOURCE_RECORDS) {
+    throw new StudentImportServiceError("invalid_source_snapshot", "Student number reservations are invalid.");
+  }
+  const studentIds = new Set<string>();
+  const studentNumbers = new Set<string>();
+  return value.map((reservation): StudentImportSourceRowsSnapshot["studentNumberReservations"][number] => {
+    if (!isRecord(reservation)
+      || Object.keys(reservation).some((field) => field !== "studentId" && field !== "studentNumber")
+      || Object.keys(reservation).length !== 2
+      || typeof reservation.studentId !== "string"
+      || !reservation.studentId.trim()
+      || reservation.studentId !== reservation.studentId.trim()
+      || reservation.studentId.length > 240
+      || typeof reservation.studentNumber !== "string"
+      || !/^\d{11}$/.test(reservation.studentNumber)
+      || studentIds.has(reservation.studentId)
+      || studentNumbers.has(reservation.studentNumber)) {
+      throw new StudentImportServiceError("invalid_source_snapshot", "Student number reservations are invalid.");
+    }
+    studentIds.add(reservation.studentId);
+    studentNumbers.add(reservation.studentNumber);
+    return {
+      studentId: reservation.studentId,
+      studentNumber: reservation.studentNumber,
+    };
+  });
+}
+
 function masterDuplicateResolutionSnapshot(value: unknown): readonly MasterStudentDuplicateResolution[] {
   if (!Array.isArray(value) || value.length > MAX_SOURCE_RECORDS) {
     throw new StudentImportServiceError("invalid_source_snapshot", "Student master duplicate resolutions are invalid.");
@@ -764,9 +794,12 @@ function jwbRows(value: unknown): readonly JwbStudentImportRow[] {
         && typeof parsed.contractHours !== "number")
       || (parsed.contractEffectiveDate !== undefined && parsed.contractEffectiveDate !== null
         && typeof parsed.contractEffectiveDate !== "string")
+      || (parsed.firstJwbHourEntryDate !== undefined && parsed.firstJwbHourEntryDate !== null
+        && typeof parsed.firstJwbHourEntryDate !== "string")
       || !isOptionalFiniteNumber(parsed.remainingHours)
       || !isOptionalNonNegativeNumber(parsed.contractHours)
       || !isOptionalIsoDate(parsed.contractEffectiveDate)
+      || !isOptionalIsoDate(parsed.firstJwbHourEntryDate)
       || (parsed.packageCoverage !== undefined
         && parsed.packageCoverage !== "complete"
         && parsed.packageCoverage !== "partial"
@@ -840,6 +873,7 @@ export function parseStudentImportSourceSnapshot(value: unknown): StudentImportS
   const master = sourceIdentity(value.master, "Master");
   const jwb = sourceIdentity(value.jwb, "JWB");
   const identityLinks = studentIdentityLinks(value.identityLinks ?? []);
+  const reservations = studentNumberReservations(value.studentNumberReservations);
   if (typeof value.identityLinkFingerprint !== "string"
     || !FINGERPRINT_PATTERN.test(value.identityLinkFingerprint)) {
     throw new StudentImportServiceError("invalid_source_snapshot", "Student identity links are invalid.");
@@ -884,6 +918,7 @@ export function parseStudentImportSourceSnapshot(value: unknown): StudentImportS
       studentIds: fuAttachmentReferences.studentIds as string[],
       fingerprint: fuAttachmentReferences.fingerprint,
     },
+    studentNumberReservations: reservations,
   };
 }
 
@@ -1913,6 +1948,11 @@ export function prepareStudentImport(input: {
     masterSourceNamespace: sources.master.sourceId,
     allowLegacyIdentityFallback: false,
     preserveManualTrials: true,
+    // The server-owned plan includes every historical number before it is
+    // fingerprinted. SQL reconstructs the exact same deterministic result
+    // from the locked JWB-backed positive-contract date at the commit boundary.
+    assignStudentNumbers: true,
+    studentNumberReservations: sources.studentNumberReservations,
     preserveReferencedStudentIds: allReferencedStudentIds(
       input.referenceRows,
       sources.fuAttachmentReferences.studentIds,

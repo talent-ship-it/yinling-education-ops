@@ -75,6 +75,7 @@ test("selected duplicate row binds only to its current reviewed identity link", 
 
   const snapshot = {
     identityLinks: [reviewedLink],
+    studentNumberReservations: [],
     identityLinkFingerprint: `sha256:${"a".repeat(64)}`,
     identityReviewEpoch: 0,
     masterDuplicateResolutions: [],
@@ -428,9 +429,12 @@ function sourceSnapshot(input?: Readonly<{
   masterRevision?: string;
   jwbRevision?: string;
   duplicate?: boolean;
+  firstJwbHourEntryDate?: string;
+  studentNumberReservations?: readonly Readonly<{ studentId: string; studentNumber: string }>[];
 }>) {
   return {
     identityLinks: [],
+    studentNumberReservations: input?.studentNumberReservations ?? [],
     identityLinkFingerprint: `sha256:${"0".repeat(64)}`,
     identityReviewEpoch: 0,
     masterDuplicateResolutions: [],
@@ -451,7 +455,13 @@ function sourceSnapshot(input?: Readonly<{
     jwb: {
       sourceId: "jwb-export",
       revision: input?.jwbRevision ?? "jwb-revision-a",
-      rows: [{ sourceRow: 101, name: "Sample Learner", remainingHours: 5, contractHours: 10 }],
+      rows: [{
+        sourceRow: 101,
+        name: "Sample Learner",
+        remainingHours: 5,
+        contractHours: 10,
+        ...(input?.firstJwbHourEntryDate ? { firstJwbHourEntryDate: input.firstJwbHourEntryDate } : {}),
+      }],
     },
   };
 }
@@ -959,6 +969,25 @@ test("invalid source rows and invalid current students fail closed", () => {
   assert.equal(droppedOrphan.plan.students.some((student) => student.id === "STU-DROPPED-BAD-PACKAGES"), false);
 });
 
+test("server preview consumes the durable student-number reservation snapshot", () => {
+  const returningId = studentIdForMasterSource(1, "master-list");
+  const prepared = prepareStudentImport({
+    sourceSnapshot: sourceSnapshot({
+      firstJwbHourEntryDate: "2026-08-17",
+      studentNumberReservations: [{ studentId: returningId, studentNumber: "20260817007" }],
+    }),
+    studentsRow: studentsRow(),
+  });
+  assert.equal(prepared.plan.students[0]?.studentNumber, "20260817007");
+
+  const snapshot = sourceSnapshot();
+  delete (snapshot as { studentNumberReservations?: unknown }).studentNumberReservations;
+  assert.throws(() => prepareStudentImport({
+    sourceSnapshot: snapshot,
+    studentsRow: studentsRow(),
+  }), serviceError("invalid_source_snapshot"));
+});
+
 test("preserves valid date-only purchases in current manual lesson packages", () => {
   const prepared = prepareStudentImport({
     sourceSnapshot: sourceSnapshot(),
@@ -1105,6 +1134,7 @@ test("raw JWB ingest adapts strict API rows before returning the normalized stor
     contractHours: 20,
     packageCoverage: "complete",
     contractEffectiveDate: "2026-08-03",
+    firstJwbHourEntryDate: "2026-08-01",
     lessonPackages: [{
       sourcePackageId: "COURSE-1",
       name: "English",
