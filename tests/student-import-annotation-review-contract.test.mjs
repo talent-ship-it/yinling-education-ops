@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, route, store, ui, domain] = await Promise.all([
+const [migration, optimizationMigration, route, store, ui, domain] = await Promise.all([
   readFile(
     new URL(
       "../supabase/migrations/20260817000500_review_jwb_latin_parenthetical_annotations.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260817000600_optimize_jwb_annotation_review_candidates.sql",
       import.meta.url,
     ),
     "utf8",
@@ -95,6 +102,38 @@ test("bulk preview and confirmation are state-bound, auditable and replay-safe",
   assert.match(migration, /student_import_identity_annotation_review_timeout_guard_missing/i);
   assert.match(migration, /revoke all on function public\.put_student_import_identity_annotation_review/i);
   assert.match(migration, /grant execute on function public\.put_student_import_identity_annotation_review/i);
+});
+
+test("the annotation candidate optimizer keeps the six-argument closed contract", () => {
+  const candidateStart = optimizationMigration.indexOf(
+    "create or replace function internal.student_import_identity_annotation_candidates",
+  );
+  const candidate = optimizationMigration.slice(candidateStart);
+  assert.ok(candidateStart >= 0, "missing forward annotation candidate optimizer");
+  assert.match(
+    candidate,
+    /p_master_source_id text,[\s\S]*p_master_rows jsonb,[\s\S]*p_resolved_master_rows jsonb,[\s\S]*p_jwb_rows jsonb,[\s\S]*p_students jsonb,[\s\S]*p_active_links jsonb/,
+  );
+  assert.match(candidate, /resolved_status_lookup/);
+  assert.match(candidate, /master_display as materialized/);
+  assert.match(candidate, /jwb_display as materialized/);
+  assert.match(candidate, /student_display as materialized/);
+  assert.match(candidate, /jwb_lookup/);
+  assert.match(candidate, /student_name_lookup/);
+  assert.match(candidate, /student_id_lookup/);
+  assert.match(candidate, /owner_lookup/);
+  assert.match(candidate, /student_collision_lookup/);
+  assert.match(candidate, /active_link_lookup/);
+  assert.match(candidate, /derived_owner_count = 1/);
+  assert.match(candidate, /active_master_keys[\s\S]*active_jwb_keys[\s\S]*active_student_ids/);
+  assert.match(candidate, /jsonb_object_agg\(\s*annotation_key/);
+  assert.match(candidate, /not \(active_links\.active_master_keys \? selected\.master_source_key\)/);
+  assert.match(candidate, /not \(active_links\.active_jwb_keys \? selected\.jwb_source_key\)/);
+  assert.match(candidate, /not \(active_links\.active_student_ids \? selected\.target_student_id\)/);
+  assert.match(candidate, /student_import_identity_annotation_review_candidate_conflict/);
+  assert.doesNotMatch(candidate, /student_import_name_key\(/);
+  assert.doesNotMatch(candidate, /student_import_jwb_annotation_relaxed_name_key\(/);
+  assert.doesNotMatch(candidate, /jwbMemId/);
 });
 
 test("the browser can only submit the opaque confirmation key", () => {
