@@ -36,6 +36,19 @@ test("student numbers are allocated by internal database functions, not the brow
   assert.match(migration, /internal\.student_import_utf16_sort_key\(student\.value ->> 'id'\)/);
   assert.match(migration, /revoke all on function internal\.student_import_assign_student_numbers\(jsonb\)[\s\S]*from public, anon, authenticated/i);
   assert.match(migration, /revoke all on function internal\.assign_new_student_numbers\(\)[\s\S]*from public, anon, authenticated/i);
+  assert.match(migration, /lock table public\.ops_state in access exclusive mode nowait/i);
+  assert.match(migration, /student_number_migration_ops_state_busy/);
+  assert.match(migration, /student_number_trigger_already_exists/);
+  assert.match(migration, /ops_state_assign_student_numbers_from_jwb/);
+  assert.doesNotMatch(migration, /drop\s+trigger/i);
+  const lockGate = migration.indexOf("do $student_number_ops_state_lock$");
+  const triggerPreflight = migration.indexOf("do $student_number_trigger_preflight$");
+  const triggerCreate = migration.indexOf("create trigger ops_state_assign_new_student_numbers");
+  const backfill = migration.indexOf("do $student_number_reservation_backfill$");
+  assert.ok(
+    lockGate >= 0 && triggerPreflight > lockGate && triggerCreate > triggerPreflight && backfill > triggerCreate,
+    "the no-wait table lock and trigger must be installed before the initial students row lock",
+  );
   assert.doesNotMatch(client, /function nextStudentNumber\b/);
   assert.doesNotMatch(client, /studentNumber:\s*nextStudentNumber/);
 });

@@ -18,66 +18,6 @@ create table internal.student_number_reservations (
 alter table internal.student_number_reservations enable row level security;
 revoke all on table internal.student_number_reservations from public, anon, authenticated;
 
--- Lock the live students row while taking the initial reservation snapshot.
--- After this migration commits the trigger below is active, so no issued
--- number can fall through the interval between backfill and enforcement.
-do $student_number_reservation_backfill$
-declare
-  students_payload jsonb;
-begin
-  select state_row.payload into students_payload
-  from public.ops_state state_row
-  where state_row.entity = 'students'
-  for update;
-
-  if students_payload is null then
-    return;
-  end if;
-  if jsonb_typeof(students_payload) <> 'array' then
-    raise exception using errcode = '22023', message = 'student_number_backfill_students_payload_invalid';
-  end if;
-  if exists (
-    select 1
-    from jsonb_array_elements(students_payload) student(value)
-    where student.value ? 'studentNumber'
-      and (
-        jsonb_typeof(student.value) <> 'object'
-        or jsonb_typeof(student.value -> 'id') <> 'string'
-        or nullif(btrim(student.value ->> 'id'), '') is null
-        or char_length(student.value ->> 'id') > 240
-        or jsonb_typeof(student.value -> 'studentNumber') <> 'string'
-        or student.value ->> 'studentNumber' !~ '^[0-9]{11}$'
-      )
-  ) then
-    raise exception using errcode = '22023', message = 'student_number_backfill_record_invalid';
-  end if;
-  if (
-    select count(*)
-    from jsonb_array_elements(students_payload) student(value)
-    where student.value ? 'studentNumber'
-  ) <> (
-    select count(distinct student.value ->> 'studentNumber')
-    from jsonb_array_elements(students_payload) student(value)
-    where student.value ? 'studentNumber'
-  ) or (
-    select count(*)
-    from jsonb_array_elements(students_payload) student(value)
-    where student.value ? 'studentNumber'
-  ) <> (
-    select count(distinct student.value ->> 'id')
-    from jsonb_array_elements(students_payload) student(value)
-    where student.value ? 'studentNumber'
-  ) then
-    raise exception using errcode = '23505', message = 'student_number_backfill_not_one_to_one';
-  end if;
-
-  insert into internal.student_number_reservations(student_number, student_id)
-  select student.value ->> 'studentNumber', student.value ->> 'id'
-  from jsonb_array_elements(students_payload) student(value)
-  where student.value ? 'studentNumber';
-end;
-$student_number_reservation_backfill$;
-
 create or replace function internal.student_number_reservation_snapshot()
 returns jsonb
 language sql
@@ -503,11 +443,120 @@ $new_student_numbers$;
 revoke all on function internal.assign_new_student_numbers()
   from public, anon, authenticated;
 
-drop trigger if exists ops_state_assign_student_numbers_from_jwb on public.ops_state;
-drop trigger if exists ops_state_assign_new_student_numbers on public.ops_state;
+-- Install the trigger before taking the `students` row lock for the initial
+-- reservation snapshot below. CREATE TRIGGER takes a table-level DDL lock
+-- that conflicts with normal writers. Acquiring it first prevents the
+-- deadlock where a writer holds RowExclusiveLock and waits for the row while
+-- this migration holds the row and waits for the DDL lock. Do not use DROP
+-- TRIGGER here: it requests an unnecessary AccessExclusiveLock even when the
+-- named trigger is absent.
+--
+-- This migration is unapplied and transactional, so either trigger name
+-- already existing means an unexpected/manual partial installation. Abort
+-- rather than silently replacing or running both trigger implementations.
+--
+-- Acquire the relation lock as a no-wait deployment gate before inspecting
+-- triggers or locking the students row. AccessExclusive also rejects a
+-- pre-existing SELECT FOR UPDATE (which ShareRowExclusive would allow), so
+-- a concurrent PostgREST request cannot create a later lock-upgrade cycle.
+-- A busy system gets 55P03 immediately and the deployment can retry; a
+-- successful migration holds this short read/write freeze through commit.
+do $student_number_ops_state_lock$
+begin
+  lock table public.ops_state in access exclusive mode nowait;
+exception when lock_not_available then
+  raise exception using
+    errcode = '55P03',
+    message = 'student_number_migration_ops_state_busy',
+    hint = 'Retry this migration after active ops_state requests finish.';
+end;
+$student_number_ops_state_lock$;
+
+do $student_number_trigger_preflight$
+declare
+  existing_trigger_names text;
+begin
+  select string_agg(trigger_row.tgname, ', ' order by trigger_row.tgname)
+  into existing_trigger_names
+  from pg_catalog.pg_trigger trigger_row
+  where trigger_row.tgrelid = 'public.ops_state'::pg_catalog.regclass
+    and trigger_row.tgname in (
+      'ops_state_assign_student_numbers_from_jwb',
+      'ops_state_assign_new_student_numbers'
+    )
+    and not trigger_row.tgisinternal;
+
+  if existing_trigger_names is not null then
+    raise exception using
+      errcode = '42710',
+      message = 'student_number_trigger_already_exists',
+      detail = 'Existing trigger(s): ' || existing_trigger_names;
+  end if;
+end;
+$student_number_trigger_preflight$;
+
 create trigger ops_state_assign_new_student_numbers
 before insert or update of payload on public.ops_state
 for each row execute function internal.assign_new_student_numbers();
+
+-- The CREATE TRIGGER lock above is held until this migration commits, so no
+-- students write can enter between this backfill snapshot and enforcement.
+do $student_number_reservation_backfill$
+declare
+  students_payload jsonb;
+begin
+  select state_row.payload into students_payload
+  from public.ops_state state_row
+  where state_row.entity = 'students'
+  for update;
+
+  if students_payload is null then
+    return;
+  end if;
+  if jsonb_typeof(students_payload) <> 'array' then
+    raise exception using errcode = '22023', message = 'student_number_backfill_students_payload_invalid';
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements(students_payload) student(value)
+    where student.value ? 'studentNumber'
+      and (
+        jsonb_typeof(student.value) <> 'object'
+        or jsonb_typeof(student.value -> 'id') <> 'string'
+        or nullif(btrim(student.value ->> 'id'), '') is null
+        or char_length(student.value ->> 'id') > 240
+        or jsonb_typeof(student.value -> 'studentNumber') <> 'string'
+        or student.value ->> 'studentNumber' !~ '^[0-9]{11}$'
+      )
+  ) then
+    raise exception using errcode = '22023', message = 'student_number_backfill_record_invalid';
+  end if;
+  if (
+    select count(*)
+    from jsonb_array_elements(students_payload) student(value)
+    where student.value ? 'studentNumber'
+  ) <> (
+    select count(distinct student.value ->> 'studentNumber')
+    from jsonb_array_elements(students_payload) student(value)
+    where student.value ? 'studentNumber'
+  ) or (
+    select count(*)
+    from jsonb_array_elements(students_payload) student(value)
+    where student.value ? 'studentNumber'
+  ) <> (
+    select count(distinct student.value ->> 'id')
+    from jsonb_array_elements(students_payload) student(value)
+    where student.value ? 'studentNumber'
+  ) then
+    raise exception using errcode = '23505', message = 'student_number_backfill_not_one_to_one';
+  end if;
+
+  insert into internal.student_number_reservations(student_number, student_id)
+  select student.value ->> 'studentNumber', student.value ->> 'id'
+  from jsonb_array_elements(students_payload) student(value)
+  where student.value ? 'studentNumber';
+end;
+$student_number_reservation_backfill$;
 
 -- Migration-time behavior fixtures run only against a temporary table. They
 -- prove permanent reservation, returning-ID restoration, UTF-16 ordering,
