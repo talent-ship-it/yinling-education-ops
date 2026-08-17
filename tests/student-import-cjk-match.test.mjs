@@ -4,7 +4,7 @@ import test from "node:test";
 
 const migration = await readFile(
   new URL(
-    "../supabase/migrations/20260815013000_unique_cjk_student_name_match.sql",
+    "../supabase/migrations/20260817000300_enforce_exact_student_jwb_name_match.sql",
     import.meta.url,
   ),
   "utf8",
@@ -18,25 +18,28 @@ const baseMigration = await readFile(
 );
 const service = await readFile(new URL("../lib/student-import-service.ts", import.meta.url), "utf8");
 
-test("SQL canonical projection uses the same closed Chinese-name key contract", () => {
-  assert.match(migration, /create or replace function internal\.student_import_cjk_name_key\(p_name text\)/i);
-  assert.match(migration, /display_name text := internal\.student_import_display_name\(p_name\)/i);
+test("SQL automatic matching uses only the exact full-name key", () => {
   assert.match(baseMigration, /student_import_display_name\(p_name text\)[\s\S]*normalize\(coalesce\(p_name, ''\), NFKC\)/i);
-  assert.match(migration, /code_point between 13312 and 19903/i);
-  assert.match(migration, /code_point between 19968 and 40959/i);
-  assert.match(migration, /code_point between 131072 and 195103/i);
-  assert.match(migration, /else\s+return ''/i);
-  assert.match(migration, /char_length\(result\) >= 2/i);
-  assert.match(migration, /student_import_name_key\(p_name text\)[\s\S]*student_import_cjk_name_key/i);
-  assert.match(migration, /revoke all on function internal\.student_import_cjk_name_key\(text\)/i);
+  assert.match(migration, /create or replace function internal\.student_import_name_key\(p_name text\)/i);
+  assert.match(migration, /internal\.student_import_display_name\(p_name\)/i);
+  assert.match(migration, /'ABCDEFGHIJKLMNOPQRSTUVWXYZ',[\s\S]*'abcdefghijklmnopqrstuvwxyz'/i);
+  const nameKey = migration.match(/create or replace function internal\.student_import_name_key\(p_name text\)[\s\S]*?\n\$\$;/i)?.[0] ?? "";
+  assert.doesNotMatch(nameKey, /student_import_cjk_name_key/i);
+  assert.match(migration, /create or replace function internal\.student_import_master_review_name_key\(p_name text\)[\s\S]*select internal\.student_import_name_key\(p_name\)/i);
+  assert.match(migration, /create or replace function internal\.student_import_cjk_name_key\(p_name text\)[\s\S]*select ''::text/i);
+  assert.match(migration, /student_import_name_key\('张·三'\) =[\s\S]*student_import_name_key\('张（三）'\)/i);
+  assert.match(service, /student-import-plan-v7-exact-full-name-match/);
 });
 
-test("migration fixtures prove unique match and fail closed for mixed, duplicate and short names", () => {
-  assert.match(migration, /student_import_cjk_name_key\('Alice 张三'\) <> ''/);
-  assert.match(migration, /student_import_cjk_projection_match_fixture_mismatch/);
-  assert.match(migration, /student_import_cjk_projection_duplicate_fixture_mismatch/);
-  assert.match(migration, /student_import_cjk_projection_short_fixture_mismatch/);
-  assert.match(migration, /\(duplicate_projection -> 0\) \? 'jwbSourceRow'/);
-  assert.match(migration, /\(short_projection -> 0\) \? 'jwbSourceRow'/);
-  assert.match(service, /student-import-plan-v6-unique-cjk-name-match/);
+test("the forward migration preserves old reviews but blocks non-exact links at every write and projection boundary", () => {
+  assert.match(migration, /create or replace function internal\.student_import_identity_link_names_mismatch/i);
+  assert.match(migration, /create trigger enforce_student_import_identity_link_exact_names/i);
+  assert.match(migration, /before insert or update on internal\.student_import_identity_link_sets/i);
+  assert.match(migration, /student_import_identity_link_name_mismatch/i);
+  assert.match(migration, /pg_get_functiondef[\s\S]*student_import_canonical_projection/i);
+  assert.match(migration, /student_import_exact_name_projection_match_fixture_mismatch/i);
+  assert.match(migration, /student_import_exact_name_projection_mismatch_fixture_mismatch/i);
+  assert.match(migration, /student_import_exact_name_projection_review_fixture_missing/i);
+  assert.match(migration, /student_import_exact_name_projection_existing_fixture_missing/i);
+  assert.doesNotMatch(migration, /delete\s+from\s+internal\.student_import_identity_link_sets/i);
 });

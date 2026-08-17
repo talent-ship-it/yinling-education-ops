@@ -21,7 +21,7 @@ import {
   resolveMasterDuplicateCandidate,
   StudentImportServiceError,
 } from "../lib/student-import-service.ts";
-import { MASTER_STUDENT_STATUSES, studentIdForMasterSource } from "../lib/student-import.ts";
+import { MASTER_STUDENT_STATUSES, StudentImportError, studentIdForMasterSource } from "../lib/student-import.ts";
 
 test("master duplicate hard options are opaque, revision-bound and contain only non-PII evidence", () => {
   const snapshot = sourceSnapshot({ duplicate: true });
@@ -190,23 +190,23 @@ test("identity review exposes only evidence plus opaque closed merge/create opti
     master: {
       sourceId: "master-private",
       revision: "master-r1",
-      rows: [{ sourceRow: "M-7", name: "William 王小明", status: "在读" }],
+      rows: [{ sourceRow: "M-7", name: " Ａvery   Example ", status: "在读" }],
     },
     jwb: {
       sourceId: "jwb-private",
       revision: "jwb-r1",
-      rows: [{ sourceRow: "J-9", name: "JWB 王小明 Account", remainingHours: 3, contractHours: 5 }],
+      rows: [{ sourceRow: "J-9", name: "avery example", remainingHours: 3, contractHours: 5 }],
     },
     studentsVersion: 4,
-    existingStudents: [{ id: "STU-PRIVATE-7", name: "王小明 Student", status: "在读" }],
+    existingStudents: [{ id: "STU-PRIVATE-7", name: "AVERY EXAMPLE", status: "在读" }],
   } as const;
   const merge = buildStudentIdentityReviewCandidates(base);
   assert.equal(merge.length, 1);
   assert.deepEqual(merge[0].options.map((option) => option.decision), ["merge", "create"]);
   assert.match(merge[0].options[0].resolutionKey, /^sha256:[a-f0-9]{64}$/);
-  assert.deepEqual(merge[0].master, { name: "William 王小明", sourceRow: "M-7" });
-  assert.deepEqual(merge[0].jwb, { name: "JWB 王小明 Account", sourceRow: "J-9" });
-  assert.deepEqual(merge[0].existing, { name: "王小明 Student" });
+  assert.deepEqual(merge[0].master, { name: "Avery Example", sourceRow: "M-7" });
+  assert.deepEqual(merge[0].jwb, { name: "avery example", sourceRow: "J-9" });
+  assert.deepEqual(merge[0].existing, { name: "AVERY EXAMPLE" });
   assert.equal(merge[0].existingMatchCount, 1);
   const serialized = JSON.stringify(merge);
   assert.doesNotMatch(serialized, /STU-PRIVATE-7|reviewKey|normalized/i);
@@ -231,17 +231,17 @@ test("identity review is globally unique, fail-closed and never trusts browser r
     master: {
       sourceId: "master",
       revision: "m1",
-      rows: [{ sourceRow: 1, name: "Alice 张三", status: "在读" }],
+      rows: [{ sourceRow: 1, name: "Alice Example", status: "在读" }],
     },
     jwb: {
       sourceId: "jwb",
       revision: "j1",
-      rows: [{ sourceRow: 2, name: "张三" }],
+      rows: [{ sourceRow: 2, name: "alice example" }],
     },
     studentsVersion: 1,
     existingStudents: [
-      { id: "S-1", name: "张三 Current" },
-      { id: "S-2", name: "Current 张三" },
+      { id: "S-1", name: "ALICE EXAMPLE" },
+      { id: "S-2", name: "Alice   Example" },
     ],
   } as const;
   const ambiguousExisting = buildStudentIdentityReviewCandidates(input);
@@ -251,19 +251,19 @@ test("identity review is globally unique, fail-closed and never trusts browser r
   assert.equal(ambiguousExisting[0].blockedReason, undefined);
   assert.deepEqual(buildStudentIdentityReviewCandidates({
     ...input,
-    master: { ...input.master, rows: [...input.master.rows, { sourceRow: 3, name: "张三 Bob", status: "在读" }] },
+    master: { ...input.master, rows: [...input.master.rows, { sourceRow: 3, name: "Alice Example", status: "在读" }] },
   }), []);
   assert.deepEqual(buildStudentIdentityReviewCandidates({
     ...input,
     master: {
       ...input.master,
-      rows: [...input.master.rows, { sourceRow: 3, name: "张三 Bob", status: "不活跃 + 无课时" }],
+      rows: [...input.master.rows, { sourceRow: 3, name: "Alice Example", status: "不活跃 + 无课时" }],
     },
   }), []);
   assert.deepEqual(buildStudentIdentityReviewCandidates({
     ...input,
     existingStudents: [],
-    jwb: { ...input.jwb, rows: [...input.jwb.rows, { sourceRow: 4, name: "JWB 张三 Account" }] },
+    jwb: { ...input.jwb, rows: [...input.jwb.rows, { sourceRow: 4, name: "Alice Example" }] },
   }), []);
 
   const available = buildStudentIdentityReviewCandidates({ ...input, existingStudents: [] });
@@ -287,8 +287,8 @@ test("identity review is globally unique, fail-closed and never trusts browser r
 
 test("prepared identity review uses the parsed current link set and students version", () => {
   const snapshot = sourceSnapshot();
-  snapshot.master.rows[0].name = "Sample 张三";
-  snapshot.jwb.rows[0].name = "张三";
+  snapshot.master.rows[0].name = " Ｓample   Learner ";
+  snapshot.jwb.rows[0].name = "sample learner";
   const first = prepareStudentIdentityReview({
     sourceSnapshot: snapshot,
     studentsRow: studentsRow(7, []),
@@ -347,7 +347,7 @@ test("prepared identity review uses the parsed current link set and students ver
   }];
   const merged = prepareStudentIdentityReview({
     sourceSnapshot: snapshot,
-    studentsRow: studentsRow(7, [{ id: "STU-EXISTING", name: "Existing 张三" }]),
+    studentsRow: studentsRow(7, [{ id: "STU-EXISTING", name: "SAMPLE LEARNER" }]),
     manualTokenSecret: "test-secret",
   });
   assert.deepEqual(merged.candidates, []);
@@ -358,10 +358,10 @@ test("prepared identity review uses the parsed current link set and students ver
 test("prepared identity review opens only after an explicit duplicate-row decision", () => {
   const snapshot = sourceSnapshot();
   snapshot.master.rows = [
-    { sourceRow: 1, name: "Sample 张三", status: "在读" },
-    { sourceRow: 2, name: "Sample 张三", status: "在读" },
+    { sourceRow: 1, name: "Sample Learner", status: "在读" },
+    { sourceRow: 2, name: "Sample Learner", status: "在读" },
   ];
-  snapshot.jwb.rows = [{ sourceRow: 101, name: "张三" }];
+  snapshot.jwb.rows = [{ sourceRow: 101, name: "sample learner" }];
   const pending = prepareStudentIdentityReview({
     sourceSnapshot: snapshot,
     studentsRow: studentsRow(7, []),
@@ -412,12 +412,11 @@ test("manual review tokens are HMAC-bound to secret, source/student CAS and epoc
     studentId: studentIdForMasterSource(1, snapshot.master.sourceId),
   }];
   linkedSnapshot.identityLinkFingerprint = `sha256:${"c".repeat(64)}`;
-  const closedPlan = prepareStudentImport({
+  assert.throws(() => prepareStudentImport({
     sourceSnapshot: linkedSnapshot,
     studentsRow: studentsRow(7, [{ id: "PRIVATE-CURRENT-ID", name: "Current Evidence" }]),
-  });
-  assert.equal(closedPlan.response.identityCoverage.ready, true);
-  assert.equal(closedPlan.response.canCommit, true);
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
 
   snapshot.identityReviewEpoch = 1;
   const changedEpoch = prepare("secret-a");
@@ -774,10 +773,10 @@ test("binds the fingerprint to both source revisions, exact plan and students ve
   assert.notEqual(base.response.planFingerprint, changedVersion.response.planFingerprint);
 });
 
-test("binds a unique Chinese-name fallback plan to the reviewed JWB revision", () => {
+test("binds an exact full-name plan to the reviewed JWB revision", () => {
   const firstSnapshot = sourceSnapshot();
-  firstSnapshot.master.rows[0].name = "张·三";
-  firstSnapshot.jwb.rows[0].name = "张（三）";
+  firstSnapshot.master.rows[0].name = " Ａvery   Example ";
+  firstSnapshot.jwb.rows[0].name = "avery example";
   const secondSnapshot = structuredClone(firstSnapshot);
   secondSnapshot.jwb.revision = "jwb-revision-b";
 
@@ -1039,6 +1038,52 @@ test("source ingest accepts an identified master snapshot and rejects normalized
     rows: [{ sourceRow: "\tROW-1\u00A0", name: "Sample Learner", status: "在读" }],
   });
   assert.equal(canonical.rows[0].sourceRow, "ROW-1");
+});
+
+test("master ingest recognizes the authoritative 教务宝学员编号 header and drops blanks", () => {
+  const withMemberId = parseStudentImportSourceIngestRequest({
+    sourceKind: "master",
+    sourceId: "student-master-list",
+    revision: "jwb-member-id-header",
+    rows: [{
+      sourceRow: 1,
+      name: "Sample Learner",
+      status: "在读",
+      "教务宝学员编号": "  MEM-101  ",
+    }],
+  });
+  assert.deepEqual(withMemberId.rows, [{
+    sourceRow: 1,
+    name: "Sample Learner",
+    status: "在读",
+    jwbMemId: "MEM-101",
+  }]);
+
+  const blank = parseStudentImportSourceIngestRequest({
+    sourceKind: "master",
+    sourceId: "student-master-list",
+    revision: "blank-jwb-member-id-header",
+    rows: [{
+      sourceRow: 2,
+      name: "Another Learner",
+      status: "在读",
+      "教务宝学员编号": "  ",
+    }],
+  });
+  assert.deepEqual(blank.rows, [{ sourceRow: 2, name: "Another Learner", status: "在读" }]);
+
+  assert.throws(() => parseStudentImportSourceIngestRequest({
+    sourceKind: "master",
+    sourceId: "student-master-list",
+    revision: "ambiguous-jwb-member-id-header",
+    rows: [{
+      sourceRow: 3,
+      name: "Ambiguous Learner",
+      status: "在读",
+      jwbMemId: "MEM-103",
+      "教务宝学员编号": "MEM-103",
+    }],
+  }), serviceError("invalid_source_ingest_request"));
 });
 
 test("master ingest accepts only its four trimmed non-PII attributes", () => {
@@ -1316,13 +1361,13 @@ test("dry run reports authoritative packages and missing package-level source da
 test("dry run binds the stable master namespace and revision-bound identity links", () => {
   const existing = {
     id: "STU-EXISTING-STABLE",
-    name: "Old Name",
+    name: "RENAMED LEARNER",
     status: "在读",
   };
   const snapshot = sourceSnapshot();
   snapshot.master.sourceId = "stable-master-source";
   snapshot.master.rows[0].name = "Renamed Learner";
-  snapshot.jwb.rows[0].name = "Different JWB Name";
+  snapshot.jwb.rows[0].name = "renamed learner";
   snapshot.identityLinks = [{ masterSourceRow: 1, jwbSourceRow: 101, studentId: existing.id }];
   snapshot.identityLinkFingerprint = `sha256:${"a".repeat(64)}`;
   const prepared = prepareStudentImport({

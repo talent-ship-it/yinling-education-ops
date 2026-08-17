@@ -18,9 +18,9 @@ import {
   importLessonPackagesForStudent,
   isMasterStudentStatus,
   MASTER_STUDENT_STATUSES,
+  normalizeStudentImportName,
   StudentImportError,
   studentIdForMasterSource,
-  studentImportReviewCjkKey,
   type ExistingStudentImportRecord,
   type JwbStudentImportRow,
   type MasterStudentImportRow,
@@ -32,7 +32,7 @@ import {
 } from "@/lib/student-import";
 import type { OpsStateRow, StudentImportSourceRowsSnapshot } from "@/lib/ops-store";
 
-const FINGERPRINT_CONTRACT = "student-import-plan-v6-unique-cjk-name-match";
+const FINGERPRINT_CONTRACT = "student-import-plan-v7-exact-full-name-match";
 const FORMAL_IDENTITY_STRATEGY = "current-revision-reviewed-link-or-namespaced-id-v1";
 const MASTER_DUPLICATE_RESOLUTION_CONTRACT = "student-import-master-duplicate-resolution-v1";
 const IDENTITY_REVIEW_CANDIDATE_CONTRACT = "student-import-identity-review-candidate-v1";
@@ -64,7 +64,18 @@ const RAW_JWB_SOURCE_INGEST_REQUEST_FIELDS = new Set([
   "courseBalances",
   "courses",
 ]);
-const MASTER_SOURCE_ROW_FIELDS = new Set(["sourceRow", "name", "status", "attributes"]);
+// `教务宝学员编号` is the exact header in the authoritative Tencent master
+// sheet. The normalized import contract persists it as `jwbMemId` so the
+// database and plan can share a stable, language-neutral field name.
+const MASTER_JWB_MEMBER_ID_HEADER = "教务宝学员编号";
+const MASTER_SOURCE_ROW_FIELDS = new Set([
+  "sourceRow",
+  "name",
+  "status",
+  "jwbMemId",
+  MASTER_JWB_MEMBER_ID_HEADER,
+  "attributes",
+]);
 const MASTER_ATTRIBUTE_FIELDS = new Set(["location", "year", "owner", "planner"]);
 const MASTER_ATTRIBUTE_TEXT_LIMIT = 120;
 const JWB_SOURCE_ROW_FIELDS = new Set([
@@ -646,6 +657,35 @@ function masterAttributes(value: unknown) {
   return Object.keys(result).length ? result : undefined;
 }
 
+function optionalMasterJwbMemberId(value: unknown, field: string) {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+    return undefined;
+  }
+  const memberId = canonicalSourceKey(value);
+  if (memberId === undefined) {
+    throw new StudentImportServiceError(
+      "invalid_source_snapshot",
+      `${field} must be a stable string or integer when supplied.`,
+    );
+  }
+  return memberId;
+}
+
+function masterJwbMemberId(row: RecordValue) {
+  const canonical = optionalMasterJwbMemberId(row.jwbMemId, "Master jwbMemId");
+  const tencentHeader = optionalMasterJwbMemberId(
+    row[MASTER_JWB_MEMBER_ID_HEADER],
+    `Master ${MASTER_JWB_MEMBER_ID_HEADER}`,
+  );
+  if (canonical !== undefined && tencentHeader !== undefined) {
+    throw new StudentImportServiceError(
+      "invalid_source_snapshot",
+      "Master rows may supply either jwbMemId or 教务宝学员编号, not both.",
+    );
+  }
+  return canonical ?? tencentHeader;
+}
+
 function masterRows(value: unknown, options?: { allowBlankDuplicateStatus?: boolean }): readonly MasterStudentImportRow[] {
   const source = sourceIdentity(value, "Master");
   return source.rows.map((row) => {
@@ -662,10 +702,12 @@ function masterRows(value: unknown, options?: { allowBlankDuplicateStatus?: bool
       throw new StudentImportServiceError("invalid_source_snapshot", "Master source rows do not match the import contract.");
     }
     const attributes = masterAttributes(row.attributes);
+    const jwbMemId = masterJwbMemberId(row);
     return {
       sourceRow: canonicalSourceKey(row.sourceRow)!,
       name,
       status,
+      ...(jwbMemId !== undefined ? { jwbMemId } : {}),
       ...(attributes ? { attributes } : {}),
     };
   });
@@ -1355,23 +1397,23 @@ export function buildStudentIdentityReviewCandidates(input: {
 
   const masterGroups = new Map<string, MasterStudentImportRow[]>();
   for (const row of input.master.rows) {
-    const key = studentImportReviewCjkKey(row.name);
+    const key = normalizeStudentImportName(row.name);
     if (key) masterGroups.set(key, [...(masterGroups.get(key) ?? []), row]);
   }
   const jwbGroups = new Map<string, JwbStudentImportRow[]>();
   for (const row of input.jwb.rows) {
-    // Manual review may bridge the common "English + Chinese" display-name
-    // difference between the two authoritative sources. Keep this distinct
-    // from the automatic Chinese-only fallback: exactly one contiguous Han
-    // run is evidence for a human decision, never an automatic link.
-    const key = studentImportReviewCjkKey(row.name);
+    // The reviewer may choose an existing system identity, but the master and
+    // JWB source records themselves must still have the same full name under
+    // the exact source contract. A human review cannot waive a source-name
+    // discrepancy; teaching administration must correct the master sheet.
+    const key = normalizeStudentImportName(row.name);
     if (key) jwbGroups.set(key, [...(jwbGroups.get(key) ?? []), row]);
   }
   const existingGroups = new Map<string, ExistingStudentImportRecord[]>();
   const existingById = new Map<string, ExistingStudentImportRecord[]>();
   for (const student of input.existingStudents) {
     existingById.set(student.id, [...(existingById.get(student.id) ?? []), student]);
-    const key = studentImportReviewCjkKey(student.name);
+    const key = normalizeStudentImportName(student.name);
     if (key) existingGroups.set(key, [...(existingGroups.get(key) ?? []), student]);
   }
 
@@ -1724,10 +1766,10 @@ export function prepareStudentIdentityReview(input: {
       const master = resolvedMasterRows.find((row) =>
         String(row.sourceRow).trim() === masterSourceKey);
       if (!master) return false;
-      const reviewKey = studentImportReviewCjkKey(master.name);
-      return Boolean(reviewKey) && current.students.some((student) =>
+      const exactNameKey = normalizeStudentImportName(master.name);
+      return Boolean(exactNameKey) && current.students.some((student) =>
         student.id === link.studentId
-        && studentImportReviewCjkKey(student.name) === reviewKey);
+        && normalizeStudentImportName(student.name) === exactNameKey);
     });
     return matchingOptions.length === 1 ? [{ ...candidate, options: matchingOptions }] : [];
   });

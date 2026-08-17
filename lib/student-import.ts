@@ -4,11 +4,12 @@ import type { StudentLessonPackage } from "./student-records";
  * Pure domain logic for replacing the system student list from the latest
  * master sheet and enriching it with JWB balances.
  *
- * Matching is intentionally conservative. Chinese-only names with at least
- * two Han code points may ignore whitespace and a closed punctuation set.
- * Mixed-script names never use that fallback. Every key must still be unique
- * on both sides; duplicates are ambiguous and never attach JWB data. Other
- * names are normalised only for whitespace, Unicode width and ASCII case.
+ * Matching is intentionally conservative. A master-sheet name and a JWB name
+ * match only when their complete display names are equal after the shared
+ * safe cleanup: NFKC, invisible-character removal, whitespace collapsing and
+ * ASCII-only case folding. Punctuation and Chinese characters are never
+ * discarded. Every key must still be unique on both sides; duplicates are
+ * ambiguous and never attach JWB data.
  */
 
 export const MASTER_STUDENT_STATUSES = [
@@ -37,6 +38,12 @@ export type MasterStudentImportRow = Readonly<{
   sourceRow: StudentImportSourceKey;
   name: string;
   status: string;
+  /**
+   * Optional authoritative Jiaowubao `mem_id` supplied by the master sheet.
+   * It only chooses between JWB rows whose full normalized name already
+   * matches this master row; it never authorizes a cross-name match.
+   */
+  jwbMemId?: StudentImportSourceKey;
   attributes?: StudentImportAttributes;
 }>;
 
@@ -222,7 +229,12 @@ export type StudentImportErrorCode =
   | "duplicate_purchase_source_key"
   | "package_balance_mismatch"
   | "invalid_identity_link"
+  | "identity_link_name_mismatch"
   | "duplicate_identity_link"
+  | "invalid_master_jwb_member_id"
+  | "duplicate_master_jwb_member_id"
+  | "master_jwb_member_id_name_mismatch"
+  | "master_jwb_member_id_identity_link_conflict"
   | "invalid_master_source_namespace"
   | "invalid_master_duplicate_resolution"
   | "duplicate_output_id";
@@ -319,86 +331,20 @@ function importedStudentDefaults(name: string, attributes: StudentImportAttribut
   };
 }
 
-function isStudentImportHanCodePoint(codePoint: number) {
-  return (codePoint >= 0x3400 && codePoint <= 0x4dbf)
-    || (codePoint >= 0x4e00 && codePoint <= 0x9fff)
-    || (codePoint >= 0xf900 && codePoint <= 0xfaff)
-    || (codePoint >= 0x20000 && codePoint <= 0x2fa1f)
-    || (codePoint >= 0x30000 && codePoint <= 0x3134f);
-}
-
-// This deliberately closed set is duplicated by the SQL write-boundary
-// helper. It covers the separators found in the two reviewed source files,
-// without treating arbitrary symbols or letters as disposable decoration.
-function isStudentImportCjkNamePunctuation(codePoint: number) {
-  return (codePoint >= 0x21 && codePoint <= 0x2f)
-    || (codePoint >= 0x3a && codePoint <= 0x40)
-    || (codePoint >= 0x5b && codePoint <= 0x60)
-    || (codePoint >= 0x7b && codePoint <= 0x7e)
-    || codePoint === 0xb7
-    || (codePoint >= 0x2010 && codePoint <= 0x2027)
-    || (codePoint >= 0x2030 && codePoint <= 0x205e)
-    || (codePoint >= 0x3001 && codePoint <= 0x3003)
-    || (codePoint >= 0x3008 && codePoint <= 0x3011)
-    || (codePoint >= 0x3014 && codePoint <= 0x301f)
-    || codePoint === 0x3030
-    || codePoint === 0x303d
-    || codePoint === 0x30fb
-    || (codePoint >= 0xfe10 && codePoint <= 0xfe19)
-    || (codePoint >= 0xfe30 && codePoint <= 0xfe52)
-    || (codePoint >= 0xfe54 && codePoint <= 0xfe61)
-    || codePoint === 0xfe63
-    || codePoint === 0xfe68;
-}
-
 /**
- * Exact cross-runtime fallback key for Chinese-only names. NFKC is applied by
- * cleanDisplayName; spaces and the closed punctuation set above are ignored.
- * Any other character (including a Latin alias) fails closed.
+ * The only automatic identity comparison key. It preserves every visible
+ * punctuation and every Chinese character, so a non-identical full name can
+ * never inherit a JWB account merely because a punctuation-free alias happens
+ * to look similar. NFKC/whitespace/ASCII-case are the deliberately narrow,
+ * cross-runtime safe normalisations shared with the SQL write boundary.
  */
-export function studentImportCjkNameKey(value: string) {
-  let key = "";
-  for (const character of cleanDisplayName(value)) {
-    const codePoint = character.codePointAt(0)!;
-    if (isStudentImportHanCodePoint(codePoint)) {
-      key += character;
-    } else if (codePoint !== 0x20 && !isStudentImportCjkNamePunctuation(codePoint)) {
-      return "";
-    }
-  }
-  return [...key].length >= 2 ? key : "";
-}
-
-/**
- * Evidence-only key for the reviewed identity workflow.  A mixed display name
- * is eligible only when it contains exactly one contiguous Han run of at
- * least two code points.  The key is never returned to the browser and never
- * performs an automatic match.
- */
-export function studentImportReviewCjkKey(value: string) {
-  const runs: string[] = [];
-  let current = "";
-  for (const character of cleanDisplayName(value)) {
-    if (isStudentImportHanCodePoint(character.codePointAt(0)!)) {
-      current += character;
-      continue;
-    }
-    if ([...current].length >= 2) runs.push(current);
-    current = "";
-  }
-  if ([...current].length >= 2) runs.push(current);
-  return runs.length === 1 ? runs[0] : "";
-}
-
-/** Conservative comparison key; it never transliterates Latin-only names. */
 export function normalizeStudentImportName(value: string) {
   // Keep identity grouping deterministic across JavaScript and PostgreSQL.
   // NFKC already folds width/compatibility variants; only ASCII case folding
   // is required for the current roster contract and avoids locale-dependent
   // Unicode case mappings diverging between runtimes.
   const displayName = cleanDisplayName(value);
-  return studentImportCjkNameKey(displayName)
-    || displayName.replace(/[A-Z]/g, (character) => character.toLowerCase());
+  return displayName.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
 /**
@@ -544,6 +490,29 @@ function sourceKey(value: unknown, field: string) {
   const key = String(value).trim();
   if (!key || key.length > 240) {
     throw new StudentImportError("missing_source_key", `${field} must contain 1 to 240 characters`, value);
+  }
+  return key;
+}
+
+function optionalMasterJwbMemberKey(value: unknown, sourceRow: StudentImportSourceKey) {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+    return undefined;
+  }
+  if ((typeof value !== "string" && typeof value !== "number")
+    || (typeof value === "number" && !Number.isSafeInteger(value))) {
+    throw new StudentImportError(
+      "invalid_master_jwb_member_id",
+      "Master Jiaowubao member ID must be a stable string or integer",
+      sourceRow,
+    );
+  }
+  const key = String(value).trim();
+  if (!key || key.length > 240) {
+    throw new StudentImportError(
+      "invalid_master_jwb_member_id",
+      "Master Jiaowubao member ID must contain 1 to 240 characters",
+      sourceRow,
+    );
   }
   return key;
 }
@@ -1063,22 +1032,42 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   const ambiguous: StudentImportAmbiguity[] = [];
 
   const masterKeys = new Set<string>();
-  const eligibleMasterRows = [...input.masterRows]
+  const masterJwbMemberKeys = new Set<string>();
+  const masterJwbMemberOwnerByKey = new Map<string, string>();
+  // Validate every authoritative master row before excluding inactive/blank
+  // rows. A populated JWB member ID is source identity evidence, so an
+  // unknown, duplicate, or cross-name ID must never be hidden in a row that
+  // happens not to produce a current student record.
+  const masterEntries = [...input.masterRows]
     .map((row) => {
       const rawKey = sourceKey(row.sourceRow, "master source row");
       if (masterKeys.has(rawKey)) {
         throw new StudentImportError("duplicate_master_source_key", `Duplicate master source row: ${rawKey}`, row.sourceRow);
       }
       masterKeys.add(rawKey);
+      const jwbMemberKey = optionalMasterJwbMemberKey(row.jwbMemId, row.sourceRow);
+      if (jwbMemberKey !== undefined && masterJwbMemberKeys.has(jwbMemberKey)) {
+        throw new StudentImportError(
+          "duplicate_master_jwb_member_id",
+          `Duplicate master Jiaowubao member ID: ${jwbMemberKey}`,
+          row.sourceRow,
+        );
+      }
+      if (jwbMemberKey !== undefined) {
+        masterJwbMemberKeys.add(jwbMemberKey);
+        masterJwbMemberOwnerByKey.set(jwbMemberKey, rawKey);
+      }
       return {
         row,
         rawKey,
         key: masterSourceKeyForSource(row.sourceRow, namespace),
         status: parseMasterStudentStatus(row.status, row.sourceRow),
         name: cleanDisplayName(row.name),
+        ...(jwbMemberKey !== undefined ? { jwbMemberKey } : {}),
       };
     })
-    .sort((left, right) => compareText(left.rawKey, right.rawKey))
+    .sort((left, right) => compareText(left.rawKey, right.rawKey));
+  const eligibleMasterRows = masterEntries
     .filter(({ row, status, name }) => {
       if (!name) {
         excluded.push({ sourceRow: row.sourceRow, name: "", status, reason: "empty_name" });
@@ -1102,6 +1091,35 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   const jwbByKey = new Map<string, typeof cleanJwbRows>();
   for (const entry of cleanJwbRows) {
     jwbByKey.set(entry.key, [...(jwbByKey.get(entry.key) ?? []), entry]);
+  }
+  // A master-provided JWB member ID is evidence for choosing one otherwise
+  // exact-name JWB row. It is deliberately not a name override: wrong,
+  // missing or duplicate IDs stop the import instead of silently attaching
+  // someone else's account.
+  const explicitJwbByMasterKey = new Map<string, typeof cleanJwbRows[number]>();
+  for (const masterEntry of masterEntries) {
+    if (masterEntry.jwbMemberKey === undefined) continue;
+    const matches = jwbByKey.get(masterEntry.jwbMemberKey) ?? [];
+    if (matches.length !== 1) {
+      throw new StudentImportError(
+        "invalid_master_jwb_member_id",
+        `Master Jiaowubao member ID ${masterEntry.jwbMemberKey} must identify exactly one current JWB row`,
+        masterEntry.row.sourceRow,
+      );
+    }
+    const jwbEntry = matches[0];
+    const masterName = normalizeStudentImportName(masterEntry.name);
+    const jwbName = normalizeStudentImportName(jwbEntry.name);
+    if (!masterName || masterName !== jwbName) {
+      throw new StudentImportError(
+        "master_jwb_member_id_name_mismatch",
+        "Master Jiaowubao member ID may only disambiguate an exact full-name match; correct the master name first",
+        masterEntry.row.sourceRow,
+      );
+    }
+    if (eligibleMasterByRawKey.has(masterEntry.rawKey)) {
+      explicitJwbByMasterKey.set(masterEntry.rawKey, jwbEntry);
+    }
   }
   const existingById = new Map<string, ExistingStudentImportRecord[]>();
   for (const student of existingStudents) {
@@ -1153,6 +1171,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     }
     const existingMatches = existingById.get(studentId) ?? [];
     const masterEntry = eligibleMasterByRawKey.get(masterKey)!;
+    const explicitJwb = explicitJwbByMasterKey.get(masterKey);
     const exactDerivedCreateId = studentIdForMasterSource(
       masterEntry.row.sourceRow,
       namespace,
@@ -1165,6 +1184,17 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         linkValue.masterSourceRow,
       );
     }
+    if (existingMatches[0]) {
+      const masterName = normalizeStudentImportName(masterEntry.name);
+      const existingName = normalizeStudentImportName(existingMatches[0].name);
+      if (!masterName || masterName !== existingName) {
+        throw new StudentImportError(
+          "identity_link_name_mismatch",
+          `Identity link ${index + 1} does not satisfy the exact master/current-student full-name contract; correct the master source and review it again`,
+          linkValue.masterSourceRow,
+        );
+      }
+    }
     const jwbMatches = jwbKey === undefined ? [] : (jwbByKey.get(jwbKey) ?? []);
     if (jwbKey !== undefined && jwbMatches.length !== 1) {
       throw new StudentImportError(
@@ -1172,6 +1202,35 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         `Identity link ${index + 1} must reference exactly one JWB row`,
         linkValue.masterSourceRow,
       );
+    }
+    if (explicitJwb !== undefined && jwbKey !== undefined && jwbKey !== explicitJwb.key) {
+      throw new StudentImportError(
+        "master_jwb_member_id_identity_link_conflict",
+        "The reviewed JWB row conflicts with the authoritative master Jiaowubao member ID",
+        linkValue.masterSourceRow,
+      );
+    }
+    const explicitOwner = jwbKey === undefined ? undefined : masterJwbMemberOwnerByKey.get(jwbKey);
+    if (explicitOwner !== undefined && explicitOwner !== masterKey) {
+      throw new StudentImportError(
+        "master_jwb_member_id_identity_link_conflict",
+        "The reviewed JWB row is reserved by another master Jiaowubao member ID",
+        linkValue.masterSourceRow,
+      );
+    }
+    if (jwbMatches[0]) {
+      const masterName = normalizeStudentImportName(masterEntry.name);
+      const jwbName = normalizeStudentImportName(jwbMatches[0].name);
+      // Reviewed rows are never an exception to the source-name contract.
+      // Keep the stored review set untouched, but refuse to project it until
+      // teaching administration corrects the master source and re-reviews it.
+      if (!masterName || masterName !== jwbName) {
+        throw new StudentImportError(
+          "identity_link_name_mismatch",
+          `Identity link ${index + 1} does not satisfy the exact master/JWB full-name contract; correct the master source and review it again`,
+          linkValue.masterSourceRow,
+        );
+      }
     }
     linkedMasterKeys.add(masterKey);
     linkedStudentIds.add(studentId);
@@ -1182,8 +1241,12 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     });
   }
 
-  const unlinkedMasterRows = eligibleMasterRows.filter(({ rawKey }) => !linkedMasterKeys.has(rawKey));
-  const unlinkedJwbRows = cleanJwbRows.filter(({ key }) => !linkedJwbKeys.has(key));
+  const explicitMasterKeys = new Set(explicitJwbByMasterKey.keys());
+  const declaredJwbMemberKeys = new Set(masterJwbMemberOwnerByKey.keys());
+  const unlinkedMasterRows = eligibleMasterRows.filter(({ rawKey }) =>
+    !linkedMasterKeys.has(rawKey) && !explicitMasterKeys.has(rawKey));
+  const unlinkedJwbRows = cleanJwbRows.filter(({ key }) =>
+    !linkedJwbKeys.has(key) && !declaredJwbMemberKeys.has(key));
   for (const { row, name } of unlinkedJwbRows) {
     if (!name) unmatched.push({ source: "jwb", sourceRow: row.sourceRow, name: "", reason: "empty_name" });
   }
@@ -1195,8 +1258,21 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   );
   const allNames = [...new Set([...masterNameGroups.keys(), ...jwbNameGroups.keys()])].sort(compareText);
   const matchedJwbByMasterKey = new Map<string, JwbStudentImportRow>();
+  for (const [masterKey, jwb] of explicitJwbByMasterKey) {
+    matchedJwbByMasterKey.set(masterKey, jwb.row);
+  }
   for (const [masterKey, identity] of identityByMasterKey) {
-    if (identity.jwb) matchedJwbByMasterKey.set(masterKey, identity.jwb);
+    if (identity.jwb) {
+      const explicitJwb = explicitJwbByMasterKey.get(masterKey);
+      if (explicitJwb !== undefined && sourceKey(identity.jwb.sourceRow, "reviewed JWB source row") !== explicitJwb.key) {
+        throw new StudentImportError(
+          "master_jwb_member_id_identity_link_conflict",
+          "The reviewed JWB row conflicts with the authoritative master Jiaowubao member ID",
+          identity.jwb.sourceRow,
+        );
+      }
+      matchedJwbByMasterKey.set(masterKey, identity.jwb);
+    }
   }
   const ambiguousNames = new Set<string>();
 

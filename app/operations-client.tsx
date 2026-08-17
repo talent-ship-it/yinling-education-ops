@@ -6434,7 +6434,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <div className="student-identity-link-bar">
             <div>
               <strong>人工审核身份链接</strong>
-              <small>{studentIdentityLinkStatus ? `当前已保存 ${studentIdentityLinkStatus.count} 条` : "只根据当前服务器来源生成候选，不会自动关联"}</small>
+              <small>{studentIdentityLinkStatus ? `当前已保存 ${studentIdentityLinkStatus.count} 条；总表与教务宝须全名一致` : "只根据当前服务器来源生成全名一致候选，不会自动关联"}</small>
             </div>
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy} onClick={() => void refreshStudentIdentityReview()}>{studentIdentityLinkBusy ? "正在读取…" : "读取人工审核候选"}</button>
@@ -6444,7 +6444,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {studentIdentityReviewCandidates?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-review-title">
             <div>
               <h3 id="student-identity-review-title">学生身份逐条人工确认</h3>
-              <small>候选仅作为人工证据。每次确认都会由服务器和数据库重新核对当前来源版本、来源行及学生版本。</small>
+              <small>候选仅作为人工证据。总表与教务宝必须在安全规范化后全名一致；姓名不一致请先由教务修正总表。每次确认都会由服务器和数据库重新核对当前来源版本、来源行及学生版本。</small>
             </div>
             {studentIdentityReviewCandidates.map((candidate) => <article key={candidate.candidateKey}>
               <div>
@@ -6476,7 +6476,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {studentIdentityManualReview ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-manual-title">
             <div>
               <h3 id="student-identity-manual-title">剩余学生手工配对</h3>
-              <small>姓名候选之外的必要学生在这里逐条选择。提交到服务器的只有当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
+              <small>这里只能确认总表与教务宝已全名一致的记录；姓名不一致必须先由教务修正总表，不能用手工配对绕过。提交到服务器的只有当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
             </div>
             <article>
               <div>

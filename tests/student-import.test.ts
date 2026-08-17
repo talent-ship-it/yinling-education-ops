@@ -12,8 +12,6 @@ import {
   masterSourceKeyForSource,
   normalizeStudentImportName,
   parseMasterStudentStatus,
-  studentImportCjkNameKey,
-  studentImportReviewCjkKey,
   studentIdForMasterSource,
   type ExistingStudentImportRecord,
   type JwbStudentImportRow,
@@ -260,45 +258,28 @@ test("normalises names conservatively, merges JWB balances and preserves manual 
   });
 });
 
-test("uses a Chinese-only punctuation fallback and rejects mixed or short keys", () => {
-  assert.equal(studentImportCjkNameKey(" 张 · 三 "), "张三");
-  assert.equal(studentImportCjkNameKey("张（三）"), "张三");
-  assert.equal(studentImportCjkNameKey("Alice 张三"), "");
-  assert.equal(studentImportCjkNameKey("张三 2"), "");
-  assert.equal(studentImportCjkNameKey("张"), "");
-  assert.equal(studentImportCjkNameKey("𠀀·𠀁"), "𠀀𠀁");
-  assert.equal(normalizeStudentImportName("张·三"), normalizeStudentImportName("张（三）"));
+test("the sole identity key preserves Chinese punctuation and mixed-script order", () => {
+  assert.notEqual(normalizeStudentImportName("张·三"), normalizeStudentImportName("张（三）"));
   assert.notEqual(normalizeStudentImportName("Alice 张三"), normalizeStudentImportName("张三 Alice"));
+  assert.equal(normalizeStudentImportName("  Ａvery   Example  "), "avery example");
 });
 
-test("review evidence requires exactly one qualifying contiguous Han run", () => {
-  assert.equal(studentImportReviewCjkKey("Alice 张三"), "张三");
-  assert.equal(studentImportReviewCjkKey("Alice 张三 王"), "张三");
-  assert.equal(studentImportReviewCjkKey("张三 / 李四"), "");
-  assert.equal(studentImportReviewCjkKey("Alice 张"), "");
-  assert.equal(studentImportReviewCjkKey("Alice Smith"), "");
-});
-
-test("matches only a unique Chinese fallback key and fails closed on duplicates", () => {
-  const matched = buildStudentImportPlan({
+test("matches only exact full names after safe normalization", () => {
+  const punctuationMismatch = buildStudentImportPlan({
     masterRows: [master(201, "张·三", "活跃 + 有课时")],
     jwbRows: [jwb(301, "张（三）", 5, 10)],
   });
-  assert.equal(matched.students[0].jwbMatchStatus, "matched");
-  assert.equal(matched.students[0].jwbSourceRow, 301);
-  assert.equal(matched.students[0].remainingHours, 5);
+  assert.equal(punctuationMismatch.students[0].jwbMatchStatus, "unmatched");
+  assert.equal(punctuationMismatch.students[0].jwbSourceRow, undefined);
+  assert.equal(punctuationMismatch.students[0].remainingHours, undefined);
 
-  const duplicateJwb = buildStudentImportPlan({
-    masterRows: [master(202, "张三", "活跃 + 有课时")],
-    jwbRows: [
-      jwb(302, "张·三", 5, 10),
-      jwb(303, "张（三）", 7, 12),
-    ],
+  const safeExact = buildStudentImportPlan({
+    masterRows: [master(202, " Ａvery   Example ", "活跃 + 有课时")],
+    jwbRows: [jwb(302, "avery example", 5, 10)],
   });
-  assert.equal(duplicateJwb.summary.ambiguous, 1);
-  assert.equal(duplicateJwb.students[0].jwbMatchStatus, "ambiguous");
-  assert.equal(duplicateJwb.students[0].jwbSourceRow, undefined);
-  assert.equal(duplicateJwb.students[0].remainingHours, undefined);
+  assert.equal(safeExact.students[0].jwbMatchStatus, "matched");
+  assert.equal(safeExact.students[0].jwbSourceRow, 302);
+  assert.equal(safeExact.students[0].remainingHours, 5);
 
   const mixedAliases = buildStudentImportPlan({
     masterRows: [master(203, "Alice 张三", "在读")],
@@ -307,6 +288,85 @@ test("matches only a unique Chinese fallback key and fails closed on duplicates"
   assert.equal(mixedAliases.students[0].jwbMatchStatus, "unmatched");
   assert.equal(mixedAliases.summary.ambiguous, 0);
   assert.equal(mixedAliases.students[0].jwbSourceRow, undefined);
+});
+
+test("master JWB member IDs only disambiguate otherwise exact full-name JWB rows", () => {
+  const plan = buildStudentImportPlan({
+    masterRows: [{
+      sourceRow: "master-with-jwb-id",
+      name: " Ａvery   Example ",
+      status: "在读",
+      jwbMemId: "  JWB-SECOND  ",
+    }],
+    jwbRows: [
+      { sourceRow: "JWB-FIRST", name: "avery example", remainingHours: 3, contractHours: 6 },
+      { sourceRow: "JWB-SECOND", name: "avery example", remainingHours: 7, contractHours: 12 },
+    ],
+  });
+
+  assert.equal(plan.students[0].jwbMatchStatus, "matched");
+  assert.equal(plan.students[0].jwbSourceRow, "JWB-SECOND");
+  assert.equal(plan.students[0].remainingHours, 7);
+  assert.equal(plan.summary.ambiguous, 0);
+  assert.deepEqual(plan.unmatched, [{
+    source: "jwb",
+    sourceRow: "JWB-FIRST",
+    name: "avery example",
+    reason: "not_in_master",
+  }]);
+});
+
+test("master JWB member IDs fail closed on unknown, duplicate, cross-name, or reviewed-link conflicts", () => {
+  const base = {
+    masterRows: [{ sourceRow: "M-1", name: "Exact Learner", status: "在读", jwbMemId: "J-1" }],
+    jwbRows: [{ sourceRow: "J-1", name: "exact learner", remainingHours: 2, contractHours: 4 }],
+  } as const;
+
+  assert.throws(() => buildStudentImportPlan({
+    ...base,
+    masterRows: [{ ...base.masterRows[0], jwbMemId: "MISSING" }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "invalid_master_jwb_member_id");
+
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [{
+      sourceRow: "M-EXCLUDED",
+      name: "Excluded Learner",
+      status: "不活跃 + 无课时",
+      jwbMemId: "MISSING",
+    }],
+    jwbRows: base.jwbRows,
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "invalid_master_jwb_member_id");
+
+  assert.throws(() => buildStudentImportPlan({
+    ...base,
+    jwbRows: [{ ...base.jwbRows[0], name: "Different Learner" }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "master_jwb_member_id_name_mismatch");
+
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [
+      { sourceRow: "M-1", name: "Exact Learner", status: "在读", jwbMemId: "J-1" },
+      { sourceRow: "M-2", name: "Another Learner", status: "在读", jwbMemId: "J-1" },
+    ],
+    jwbRows: [{ sourceRow: "J-1", name: "Exact Learner", remainingHours: 2, contractHours: 4 }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "duplicate_master_jwb_member_id");
+
+  assert.throws(() => buildStudentImportPlan({
+    ...base,
+    jwbRows: [
+      ...base.jwbRows,
+      { sourceRow: "J-2", name: "exact learner", remainingHours: 5, contractHours: 8 },
+    ],
+    identityLinks: [{
+      masterSourceRow: "M-1",
+      jwbSourceRow: "J-2",
+      studentId: studentIdForMasterSource("M-1"),
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "master_jwb_member_id_identity_link_conflict");
 });
 
 test("student initials never split Unicode characters and use cross-runtime ASCII case folding", () => {
@@ -1027,7 +1087,7 @@ test("uses the stable master source row for a rename and excludes an empty maste
   assert.equal(plan.excluded[0].reason, "empty_name");
 });
 
-test("server identity links map differently named master, existing and JWB records while preserving the student ID", () => {
+test("a historical reviewed link with non-exact JWB name fails closed without changing the record", () => {
   const existing: ExistingStudentImportRecord = {
     id: "STU-STABLE-LINK",
     name: "Previous CRM Display Name",
@@ -1037,7 +1097,7 @@ test("server identity links map differently named master, existing and JWB recor
     importSource: "master",
     remainingHours: 1,
   };
-  const plan = buildStudentImportPlan({
+  assert.throws(() => buildStudentImportPlan({
     masterRows: [{ sourceRow: "master-2026-17", name: "Current Master Display Name", status: "活跃 + 有课时" }],
     jwbRows: [{
       sourceRow: "jwb-member-501",
@@ -1053,22 +1113,22 @@ test("server identity links map differently named master, existing and JWB recor
       studentId: "STU-STABLE-LINK",
       jwbSourceRow: "jwb-member-501",
     }],
-  });
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
+});
 
-  assert.equal(plan.students.length, 1);
-  assert.equal(plan.students[0].id, "STU-STABLE-LINK");
-  assert.equal(plan.students[0].name, "Current Master Display Name");
-  assert.equal(plan.students[0].jwbMatchStatus, "matched");
-  assert.equal(plan.students[0].jwbSourceRow, "jwb-member-501");
-  assert.equal(plan.students[0].remainingHours, 9);
-  assert.equal(plan.students[0].contractHours, 15);
-  assert.equal(
-    plan.students[0].masterSourceKey,
-    masterSourceKeyForSource("master-2026-17", "master-sheet:students:v2"),
-  );
-  assert.deepEqual(plan.unmatched, []);
-  assert.deepEqual(plan.ambiguous, []);
-  assert.equal(plan.summary.update, 1);
+test("a historical reviewed merge with a non-exact current name fails closed", () => {
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [{ sourceRow: "master-current-name", name: "Exact Learner", status: "在读" }],
+    jwbRows: [{ sourceRow: "jwb-current-name", name: "exact learner", remainingHours: 2, contractHours: 4 }],
+    existingStudents: [{ id: "STU-OLD-NAME", name: "Legacy Alias", status: "在读" }],
+    identityLinks: [{
+      masterSourceRow: "master-current-name",
+      jwbSourceRow: "jwb-current-name",
+      studentId: "STU-OLD-NAME",
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
 });
 
 test("a reviewed create link may use only the exact namespaced derived identity", () => {
@@ -1077,7 +1137,7 @@ test("a reviewed create link may use only the exact namespaced derived identity"
   const derivedId = studentIdForMasterSource(sourceRow, namespace);
   const input = {
     masterRows: [{ sourceRow, name: "Alice 张三", status: "在读" }],
-    jwbRows: [{ sourceRow: "J-CREATE-1", name: "张三", remainingHours: 2, contractHours: 4 }],
+    jwbRows: [{ sourceRow: "J-CREATE-1", name: "alice 张三", remainingHours: 2, contractHours: 4 }],
     existingStudents: [],
     masterSourceNamespace: namespace,
     allowLegacyIdentityFallback: false,
@@ -1108,7 +1168,7 @@ test("a reviewed create link may use only the exact namespaced derived identity"
 test("linked rows are consumed before conservative name ambiguity and unmatched reporting", () => {
   const existing: ExistingStudentImportRecord = {
     id: "STU-LINKED-DUPLICATE-NAME",
-    name: "Old Linked Name",
+    name: "Shared Source Name",
     status: "在读",
   };
   const plan = buildStudentImportPlan({
@@ -1132,12 +1192,12 @@ test("linked rows are consumed before conservative name ambiguity and unmatched 
 
 test("rejects duplicate and unknown server identity links", () => {
   const existing = [
-    { id: "STU-LINK-A", name: "Existing A", status: "在读" },
-    { id: "STU-LINK-B", name: "Existing B", status: "在读" },
+    { id: "STU-LINK-A", name: "Master A", status: "在读" },
+    { id: "STU-LINK-B", name: "Master B", status: "在读" },
   ] satisfies ExistingStudentImportRecord[];
   const base = {
     masterRows: [master(71, "Master A"), master(72, "Master B")],
-    jwbRows: [jwb(710, "JWB A", 1, 2), jwb(720, "JWB B", 2, 3)],
+    jwbRows: [jwb(710, "master a", 1, 2), jwb(720, "master b", 2, 3)],
     existingStudents: existing,
   };
   const duplicateCases = [
