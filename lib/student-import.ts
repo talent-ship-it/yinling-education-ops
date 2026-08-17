@@ -28,10 +28,28 @@ export const EXCLUDED_MASTER_STUDENT_STATUS: MasterStudentStatus = "不活跃 + 
 export type StudentImportSourceKey = string | number;
 export type StudentImportAttributes = Readonly<Record<string, unknown>>;
 
+/**
+ * A deliberately narrow, reviewed exception to strict full-name matching.
+ * It is not a fuzzy-name mode: the only permitted difference is one complete
+ * Latin-letter annotation in the Jiaowubao display name, for example
+ * `张三（VIC）` versus the master-sheet `张三`.
+ */
+export const STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1 =
+  "jwb_latin_parenthetical_annotation_v1" as const;
+
+export type StudentImportIdentityMatchStrategy =
+  | typeof STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1;
+
 export type StudentImportIdentityLink = Readonly<{
   masterSourceRow: StudentImportSourceKey;
   studentId: string;
   jwbSourceRow?: StudentImportSourceKey;
+  /**
+   * Omitted means the strict complete-display-name rule. A supplied strategy
+   * is durable review evidence and is revalidated at every write, preview and
+   * canonical-projection boundary.
+   */
+  matchStrategy?: StudentImportIdentityMatchStrategy;
 }>;
 
 export type MasterStudentImportRow = Readonly<{
@@ -229,6 +247,7 @@ export type StudentImportErrorCode =
   | "duplicate_purchase_source_key"
   | "package_balance_mismatch"
   | "invalid_identity_link"
+  | "invalid_identity_link_match_strategy"
   | "identity_link_name_mismatch"
   | "duplicate_identity_link"
   | "invalid_master_jwb_member_id"
@@ -345,6 +364,49 @@ export function normalizeStudentImportName(value: string) {
   // Unicode case mappings diverging between runtimes.
   const displayName = cleanDisplayName(value);
   return displayName.replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
+
+// This closed alphabet intentionally excludes digits, whitespace, punctuation
+// and every non-Latin script. It is for a single trailing display annotation
+// such as `(VIC)` or `(Mia)`, not a general "ignore brackets" rule.
+// `cleanDisplayName` has already applied NFKC, so full-width parentheses and
+// letters are represented consistently.
+const JWB_LATIN_PARENTHETICAL_ANNOTATION = /^[A-Za-z]+$/;
+
+/**
+ * Returns the strict comparison key after removing exactly one complete,
+ * trailing ASCII-letter parenthetical annotation from a Jiaowubao display
+ * name. Any prefix/middle annotation, second segment, digit, whitespace,
+ * punctuation, non-Latin script, nesting, blank annotation or empty body
+ * fails closed and returns an empty key.
+ */
+export function studentImportJwbLatinParentheticalAnnotationKey(value: string) {
+  const displayName = cleanDisplayName(value);
+  const match = /^([^()]+)\(([A-Za-z]+)\)$/.exec(displayName);
+  if (!match) return "";
+  const [, body, annotation] = match;
+  if (!JWB_LATIN_PARENTHETICAL_ANNOTATION.test(annotation)) {
+    return "";
+  }
+  const cleanBody = cleanDisplayName(body);
+  return cleanBody ? normalizeStudentImportName(cleanBody) : "";
+}
+
+/**
+ * The high-confidence annotation strategy is intentionally one-way. The
+ * master name itself may not contain a parenthetical segment; only JWB can
+ * contain the sole removable annotation. Global source uniqueness is checked
+ * by the caller because that needs both source arrays.
+ */
+export function isStudentImportJwbLatinParentheticalAnnotationMatch(
+  masterName: string,
+  jwbName: string,
+) {
+  const masterDisplayName = cleanDisplayName(masterName);
+  if (!masterDisplayName || /[()]/.test(masterDisplayName)) return false;
+  const masterKey = normalizeStudentImportName(masterDisplayName);
+  const jwbKey = studentImportJwbLatinParentheticalAnnotationKey(jwbName);
+  return Boolean(masterKey) && masterKey === jwbKey;
 }
 
 /**
@@ -1084,10 +1146,49 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     .map((row) => ({ row, key: sourceKey(row.sourceRow, "JWB source row"), name: cleanDisplayName(row.name) }))
     .sort((left, right) => compareText(left.key, right.key));
 
+  // The annotation exception is not a second automatic matching key. These
+  // source-wide indexes are used only to revalidate a link that was explicitly
+  // confirmed through the dedicated high-confidence review flow. Every raw
+  // master/JWB/current-student display name participates in its relaxed-body
+  // collision key, even if it cannot be the candidate itself. Thus `张三` and
+  // `张三（VIC）` can never be mistaken for one unique account on any side.
+  const annotationMasterRowsByKey = new Map<string, string[]>();
+  for (const entry of masterEntries) {
+    const key = studentImportJwbLatinParentheticalAnnotationKey(entry.name)
+      || normalizeStudentImportName(entry.name);
+    if (key) annotationMasterRowsByKey.set(key, [
+      ...(annotationMasterRowsByKey.get(key) ?? []),
+      entry.rawKey,
+    ]);
+  }
+  const annotationJwbRowsByKey = new Map<string, string[]>();
+  for (const entry of cleanJwbRows) {
+    const key = studentImportJwbLatinParentheticalAnnotationKey(entry.name)
+      || normalizeStudentImportName(entry.name);
+    if (key) annotationJwbRowsByKey.set(key, [
+      ...(annotationJwbRowsByKey.get(key) ?? []),
+      entry.key,
+    ]);
+  }
+
   if (input.identityLinks !== undefined && !Array.isArray(input.identityLinks)) {
     throw new StudentImportError("invalid_identity_link", "identityLinks must be an array");
   }
   const eligibleMasterByRawKey = new Map(eligibleMasterRows.map((entry) => [entry.rawKey, entry]));
+  // A deterministic master identity belongs to its active master source row,
+  // even when that row cannot itself qualify for the narrow annotation
+  // exception (for example, its display name contains parentheses).  Without
+  // this ownership check, a reviewed link could point another master row at
+  // an existing student whose ID is reserved by such a row, then later make
+  // the canonical output contain that ID twice.
+  const derivedMasterOwnersByStudentId = new Map<string, string[]>();
+  for (const entry of eligibleMasterRows) {
+    const derivedStudentId = studentIdForMasterSource(entry.row.sourceRow, namespace);
+    derivedMasterOwnersByStudentId.set(derivedStudentId, [
+      ...(derivedMasterOwnersByStudentId.get(derivedStudentId) ?? []),
+      entry.rawKey,
+    ]);
+  }
   const jwbByKey = new Map<string, typeof cleanJwbRows>();
   for (const entry of cleanJwbRows) {
     jwbByKey.set(entry.key, [...(jwbByKey.get(entry.key) ?? []), entry]);
@@ -1122,9 +1223,16 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     }
   }
   const existingById = new Map<string, ExistingStudentImportRecord[]>();
+  const annotationExistingIdsByKey = new Map<string, string[]>();
   for (const student of existingStudents) {
     const id = sourceKey(student.id, "existing student id");
     existingById.set(id, [...(existingById.get(id) ?? []), student]);
+    const annotationKey = studentImportJwbLatinParentheticalAnnotationKey(student.name)
+      || normalizeStudentImportName(student.name);
+    if (annotationKey) annotationExistingIdsByKey.set(annotationKey, [
+      ...(annotationExistingIdsByKey.get(annotationKey) ?? []),
+      id,
+    ]);
   }
 
   const linkedMasterKeys = new Set<string>();
@@ -1137,7 +1245,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   for (const [index, linkValue] of (input.identityLinks ?? []).entries()) {
     if (!linkValue || typeof linkValue !== "object" || Array.isArray(linkValue)
       || !exactObjectFields(linkValue as unknown as Record<string, unknown>, [
-        "masterSourceRow", "studentId", "jwbSourceRow",
+        "masterSourceRow", "studentId", "jwbSourceRow", "matchStrategy",
       ])) {
       throw new StudentImportError("invalid_identity_link", `Identity link ${index + 1} is invalid`);
     }
@@ -1153,6 +1261,22 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     const jwbKey = linkValue.jwbSourceRow === undefined
       ? undefined
       : sourceKey(linkValue.jwbSourceRow, "identity link JWB source row");
+    const matchStrategy = linkValue.matchStrategy;
+    if (matchStrategy !== undefined
+      && matchStrategy !== STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1) {
+      throw new StudentImportError(
+        "invalid_identity_link_match_strategy",
+        `Identity link ${index + 1} has an unsupported match strategy`,
+        linkValue.masterSourceRow,
+      );
+    }
+    if (matchStrategy !== undefined && jwbKey === undefined) {
+      throw new StudentImportError(
+        "invalid_identity_link_match_strategy",
+        `Identity link ${index + 1} needs a JWB row for its match strategy`,
+        linkValue.masterSourceRow,
+      );
+    }
     if (linkedMasterKeys.has(masterKey)
       || linkedStudentIds.has(studentId)
       || (jwbKey !== undefined && linkedJwbKeys.has(jwbKey))) {
@@ -1171,6 +1295,15 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     }
     const existingMatches = existingById.get(studentId) ?? [];
     const masterEntry = eligibleMasterByRawKey.get(masterKey)!;
+    const conflictingDerivedOwner = (derivedMasterOwnersByStudentId.get(studentId) ?? [])
+      .find((ownerKey) => ownerKey !== masterKey);
+    if (conflictingDerivedOwner !== undefined) {
+      throw new StudentImportError(
+        "invalid_identity_link",
+        `Identity link ${index + 1} targets the deterministic identity owned by another active master row`,
+        linkValue.masterSourceRow,
+      );
+    }
     const explicitJwb = explicitJwbByMasterKey.get(masterKey);
     const exactDerivedCreateId = studentIdForMasterSource(
       masterEntry.row.sourceRow,
@@ -1221,13 +1354,32 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     if (jwbMatches[0]) {
       const masterName = normalizeStudentImportName(masterEntry.name);
       const jwbName = normalizeStudentImportName(jwbMatches[0].name);
-      // Reviewed rows are never an exception to the source-name contract.
-      // Keep the stored review set untouched, but refuse to project it until
-      // teaching administration corrects the master source and re-reviews it.
-      if (!masterName || masterName !== jwbName) {
+      const exactNameMatch = Boolean(masterName) && masterName === jwbName;
+      const annotationExistingConflict = (annotationExistingIdsByKey.get(masterName) ?? [])
+        .some((existingId) => existingId !== studentId);
+      const annotationMatch = matchStrategy === STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1
+        && !exactNameMatch
+        && isStudentImportJwbLatinParentheticalAnnotationMatch(masterEntry.name, jwbMatches[0].name)
+        && annotationMasterRowsByKey.get(masterName)?.length === 1
+        && annotationMasterRowsByKey.get(masterName)?.[0] === masterKey
+        && annotationJwbRowsByKey.get(masterName)?.length === 1
+        && annotationJwbRowsByKey.get(masterName)?.[0] === jwbKey
+        && !annotationExistingConflict;
+      // A cross-name link is valid only when it carries the narrow durable
+      // annotation strategy and its source-wide one-to-one proof still holds.
+      // A strategy on an already exact pair is rejected instead of becoming a
+      // meaningless escape hatch for future broader matching rules.
+      if (!exactNameMatch && !annotationMatch) {
         throw new StudentImportError(
           "identity_link_name_mismatch",
-          `Identity link ${index + 1} does not satisfy the exact master/JWB full-name contract; correct the master source and review it again`,
+          `Identity link ${index + 1} does not satisfy the strict or reviewed JWB annotation identity contract`,
+          linkValue.masterSourceRow,
+        );
+      }
+      if (exactNameMatch && matchStrategy !== undefined) {
+        throw new StudentImportError(
+          "invalid_identity_link_match_strategy",
+          `Identity link ${index + 1} must not label an exact full-name match as an annotation exception`,
           linkValue.masterSourceRow,
         );
       }

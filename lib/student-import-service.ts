@@ -19,6 +19,7 @@ import {
   isMasterStudentStatus,
   MASTER_STUDENT_STATUSES,
   normalizeStudentImportName,
+  STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
   StudentImportError,
   studentIdForMasterSource,
   type ExistingStudentImportRecord,
@@ -32,7 +33,7 @@ import {
 } from "@/lib/student-import";
 import type { OpsStateRow, StudentImportSourceRowsSnapshot } from "@/lib/ops-store";
 
-const FINGERPRINT_CONTRACT = "student-import-plan-v7-exact-full-name-match";
+const FINGERPRINT_CONTRACT = "student-import-plan-v8-strict-or-reviewed-jwb-annotation-match";
 const FORMAL_IDENTITY_STRATEGY = "current-revision-reviewed-link-or-namespaced-id-v1";
 const MASTER_DUPLICATE_RESOLUTION_CONTRACT = "student-import-master-duplicate-resolution-v1";
 const IDENTITY_REVIEW_CANDIDATE_CONTRACT = "student-import-identity-review-candidate-v1";
@@ -505,9 +506,13 @@ function studentIdentityLinks(value: unknown) {
   const studentIdsSeen = new Set<string>();
   return value.map((link): StudentImportSourceRowsSnapshot["identityLinks"][number] => {
     if (!isRecord(link)
-      || Object.keys(link).some((field) => !["masterSourceRow", "jwbSourceRow", "studentId"].includes(field))
+      || Object.keys(link).some((field) => ![
+        "masterSourceRow", "jwbSourceRow", "studentId", "matchStrategy",
+      ].includes(field))
       || !sourceKey(link.masterSourceRow)
       || (link.jwbSourceRow !== undefined && link.jwbSourceRow !== null && !sourceKey(link.jwbSourceRow))
+      || (link.matchStrategy !== undefined
+        && link.matchStrategy !== STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1)
       || typeof link.studentId !== "string"
       || !link.studentId.trim()
       || link.studentId.length > 240) {
@@ -520,6 +525,12 @@ function studentIdentityLinks(value: unknown) {
     const masterKey = String(masterSourceRow);
     const jwbKey = jwbSourceRow === undefined ? undefined : String(jwbSourceRow);
     const studentId = link.studentId.trim();
+    const matchStrategy = link.matchStrategy === undefined
+      ? undefined
+      : STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1;
+    if (matchStrategy !== undefined && jwbSourceRow === undefined) {
+      throw new StudentImportServiceError("invalid_source_snapshot", "Student identity link strategy requires a JWB source row.");
+    }
     if (masterRowsSeen.has(masterKey)
       || (jwbKey !== undefined && jwbRowsSeen.has(jwbKey))
       || studentIdsSeen.has(studentId)) {
@@ -534,6 +545,7 @@ function studentIdentityLinks(value: unknown) {
         jwbSourceRow,
       } : {}),
       studentId,
+      ...(matchStrategy !== undefined ? { matchStrategy } : {}),
     };
   });
 }

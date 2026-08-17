@@ -665,6 +665,16 @@ type StudentIdentityManualReview = {
   }>;
 };
 
+type StudentIdentityAnnotationReviewPreview = {
+  confirmationKey: string;
+  candidateCount: number;
+  pendingCount: number;
+  alreadyLinkedCount: number;
+  currentLinkCount: number;
+  resultingLinkCount: number;
+  canSubmit: boolean;
+};
+
 type StudentImportSourceIngestResult = {
   sourceKind: StudentImportSourceKind;
   sourceId: string;
@@ -1690,6 +1700,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [studentIdentityManualJwbToken, setStudentIdentityManualJwbToken] = useState("");
   const [studentIdentityManualExistingToken, setStudentIdentityManualExistingToken] = useState("");
   const [studentIdentityManualDecision, setStudentIdentityManualDecision] = useState<"create" | "merge">("create");
+  const [studentIdentityAnnotationBusy, setStudentIdentityAnnotationBusy] = useState(false);
+  const [studentIdentityAnnotationPreview, setStudentIdentityAnnotationPreview] = useState<StudentIdentityAnnotationReviewPreview | null>(null);
   const [studentMasterResolutionBusy, setStudentMasterResolutionBusy] = useState<string | null>(null);
   const [studentJwbNegativePolicy, setStudentJwbNegativePolicy] = useState<"reject" | "aggregate-only">("reject");
   const [teacherImportBusy, setTeacherImportBusy] = useState(false);
@@ -3560,6 +3572,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       setStudentIdentityReviewCandidates(null);
       setStudentIdentityManualReview(null);
       setStudentIdentityReviewClearKey(null);
+      setStudentIdentityAnnotationPreview(null);
       notify(source.unchanged ? "该 revision 内容未变化" : "来源已保存，请继续录入另一来源或重新预检");
     } catch (error) {
       notify(error instanceof Error ? error.message : "学生来源录入失败");
@@ -3617,6 +3630,80 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     } finally {
       if (!alreadyBusy) setStudentIdentityLinkBusy(false);
     }
+  };
+
+  const refreshStudentIdentityAnnotationReview = async (announce = true) => {
+    if (studentIdentityAnnotationBusy) return;
+    setStudentIdentityAnnotationBusy(true);
+    try {
+      const response = await fetch("/api/student-import/identity-links/annotation", { cache: "no-store" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok
+        || typeof body.confirmationKey !== "string"
+        || !Number.isSafeInteger(body.candidateCount)
+        || !Number.isSafeInteger(body.pendingCount)
+        || !Number.isSafeInteger(body.alreadyLinkedCount)
+        || !Number.isSafeInteger(body.currentLinkCount)
+        || !Number.isSafeInteger(body.resultingLinkCount)
+        || typeof body.canSubmit !== "boolean") {
+        throw new Error(body.error || "教务宝括号备注身份预检失败");
+      }
+      const preview = body as StudentIdentityAnnotationReviewPreview;
+      setStudentIdentityAnnotationPreview(preview);
+      if (announce) {
+        notify(preview.candidateCount
+          ? `已找到 ${preview.candidateCount} 条严格一对一的教务宝括号备注候选`
+          : "当前没有可安全确认的教务宝括号备注候选");
+      }
+    } catch (error) {
+      if (announce) notify(error instanceof Error ? error.message : "教务宝括号备注身份预检失败");
+    } finally {
+      setStudentIdentityAnnotationBusy(false);
+    }
+  };
+
+  const confirmStudentIdentityAnnotationReview = async () => {
+    const preview = studentIdentityAnnotationPreview;
+    if (studentIdentityAnnotationBusy || studentImportBusy || !preview?.canSubmit) return;
+    setStudentIdentityAnnotationBusy(true);
+    try {
+      const response = await fetch("/api/student-import/identity-links/annotation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmationKey: preview.confirmationKey }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !Number.isSafeInteger(body.count)) {
+        throw new Error(body.error || "教务宝括号备注身份审核保存失败");
+      }
+      setStudentIdentityLinkStatus({ count: body.count, unchanged: body.unchanged === true });
+      setStudentImportPreview(null);
+      setStudentIdentityAnnotationPreview(null);
+      await refreshStudentIdentityReview(false);
+      notify(body.unchanged
+        ? "该批括号备注身份关联已保存"
+        : `已保存 ${body.newlyAppliedCount} 条高置信身份关联，请重新预检正式导入`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "教务宝括号备注身份审核保存失败");
+    } finally {
+      setStudentIdentityAnnotationBusy(false);
+    }
+  };
+
+  const requestStudentIdentityAnnotationReview = () => {
+    const preview = studentIdentityAnnotationPreview;
+    if (!preview?.canSubmit || studentIdentityAnnotationBusy) return;
+    requestConfirmation({
+      title: "确认保存教务宝括号备注身份关联",
+      detail: `将保存 ${preview.pendingCount} 条严格一对一候选。`,
+      items: [
+        "仅接受教务宝姓名末尾一个纯英文括号备注，例如（VIC）",
+        "总表姓名不能含括号；去掉备注后必须与总表完整姓名一致",
+        "总表、教务宝及现有学生的去备注姓名都必须全局唯一；其余记录不会被本操作关联",
+      ],
+      confirmLabel: "确认保存高置信关联",
+      onConfirm: confirmStudentIdentityAnnotationReview,
+    });
   };
 
   const previewStudentImport = async () => {
@@ -6439,6 +6526,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy} onClick={() => void refreshStudentIdentityReview()}>{studentIdentityLinkBusy ? "正在读取…" : "读取人工审核候选"}</button>
               <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy || !studentIdentityReviewClearKey} onClick={requestClearStudentIdentityLinks}>{studentIdentityLinkBusy ? "正在处理…" : "清空全部身份链接"}</button>
+            </div>
+          </div>
+          <div className="student-identity-link-bar">
+            <div>
+              <strong>教务宝英文括号备注高置信关联</strong>
+              <small>{studentIdentityAnnotationPreview
+                ? `候选 ${studentIdentityAnnotationPreview.candidateCount} 条；待保存 ${studentIdentityAnnotationPreview.pendingCount} 条`
+                : "只处理教务宝姓名末尾单个纯英文括号备注，且去除后与总表完整姓名一对一相同"}</small>
+            </div>
+            <div className="toolbar-actions">
+              <button className="secondary-button" type="button" disabled={studentIdentityAnnotationBusy} onClick={() => void refreshStudentIdentityAnnotationReview()}>{studentIdentityAnnotationBusy ? "正在预检…" : "预检高置信候选"}</button>
+              <button className="primary-button" type="button" disabled={studentIdentityAnnotationBusy || studentImportBusy || !studentIdentityAnnotationPreview?.canSubmit} onClick={requestStudentIdentityAnnotationReview}>{studentIdentityAnnotationBusy ? "正在保存…" : "确认保存候选"}</button>
             </div>
           </div>
           {studentIdentityReviewCandidates?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-review-title">

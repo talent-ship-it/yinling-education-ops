@@ -9,10 +9,13 @@ import {
   findMasterStudentDuplicateGroups,
   lessonPackageIdForSource,
   isMasterStudentStatus,
+  isStudentImportJwbLatinParentheticalAnnotationMatch,
   masterSourceKeyForSource,
   normalizeStudentImportName,
   parseMasterStudentStatus,
+  studentImportJwbLatinParentheticalAnnotationKey,
   studentIdForMasterSource,
+  STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
   type ExistingStudentImportRecord,
   type JwbStudentImportRow,
   type MasterStudentImportRow,
@@ -288,6 +291,139 @@ test("matches only exact full names after safe normalization", () => {
   assert.equal(mixedAliases.students[0].jwbMatchStatus, "unmatched");
   assert.equal(mixedAliases.summary.ambiguous, 0);
   assert.equal(mixedAliases.students[0].jwbSourceRow, undefined);
+});
+
+test("replays only the reviewed one-way JWB trailing-Latin annotation exception", () => {
+  assert.equal(studentImportJwbLatinParentheticalAnnotationKey("Learner(VIC)"), "learner");
+  assert.equal(studentImportJwbLatinParentheticalAnnotationKey("Learner（VIC）"), "learner");
+  for (const unsafe of [
+    "Learner(G10)",
+    "Learner(É)",
+    "Learner(AB CD)",
+    "Learner(VIC)(NSW)",
+    "(VIC)Learner",
+    "Learner(中文)",
+    "Learner(VIC) suffix",
+    "Learner",
+  ]) {
+    assert.equal(studentImportJwbLatinParentheticalAnnotationKey(unsafe), "");
+  }
+  assert.equal(isStudentImportJwbLatinParentheticalAnnotationMatch("Learner", "Learner(VIC)"), true);
+  assert.equal(isStudentImportJwbLatinParentheticalAnnotationMatch("Learner(VIC)", "Learner(VIC)"), false);
+
+  const linked = buildStudentImportPlan({
+    masterRows: [master(210, "Learner")],
+    jwbRows: [jwb(310, "Learner(VIC)", 5, 10)],
+    identityLinks: [{
+      masterSourceRow: 210,
+      jwbSourceRow: 310,
+      studentId: studentIdForMasterSource(210),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  });
+  assert.equal(linked.students[0].jwbMatchStatus, "matched");
+  assert.equal(linked.students[0].jwbSourceRow, 310);
+
+  for (const jwbName of ["Learner(G10)", "Learner(中文)"]) {
+    assert.throws(() => buildStudentImportPlan({
+      masterRows: [master(211, "Learner")],
+      jwbRows: [jwb(311, jwbName, 5, 10)],
+      identityLinks: [{
+        masterSourceRow: 211,
+        jwbSourceRow: 311,
+        studentId: studentIdForMasterSource(211),
+        matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+      }],
+    }), (error: unknown) => error instanceof StudentImportError
+      && error.code === "identity_link_name_mismatch");
+  }
+
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [master(212, "Learner")],
+    jwbRows: [jwb(312, "Learner(VIC)", 5, 10), jwb(313, "Learner", 5, 10)],
+    identityLinks: [{
+      masterSourceRow: 212,
+      jwbSourceRow: 312,
+      studentId: studentIdForMasterSource(212),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
+
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [master(213, "Learner(VIC)")],
+    jwbRows: [jwb(314, "Learner(VIC)", 5, 10)],
+    identityLinks: [{
+      masterSourceRow: 213,
+      jwbSourceRow: 314,
+      studentId: studentIdForMasterSource(213),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "invalid_identity_link_match_strategy");
+
+  // A supplied master JWB member ID remains strict full-name evidence; this
+  // exception never writes or broadens it to cover an annotated JWB name.
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [{ sourceRow: 219, name: "Learner", status: "在读", jwbMemId: 319 }],
+    jwbRows: [jwb(319, "Learner(VIC)", 5, 10)],
+    identityLinks: [{
+      masterSourceRow: 219,
+      jwbSourceRow: 319,
+      studentId: studentIdForMasterSource(219),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "master_jwb_member_id_name_mismatch");
+
+  // A strict master owner of the literal annotated display name shadows the
+  // relaxed body. It must be resolved by data correction, never by this rule.
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [master(214, "Learner"), master(215, "Learner(VIC)")],
+    jwbRows: [jwb(315, "Learner(VIC)", 5, 10)],
+    identityLinks: [{
+      masterSourceRow: 214,
+      jwbSourceRow: 315,
+      studentId: studentIdForMasterSource(214),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
+
+  // An existing record with the literal annotated display name likewise owns
+  // that relaxed body. It must not be silently folded into the master body.
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [master(216, "Learner")],
+    jwbRows: [jwb(316, "Learner(VIC)", 5, 10)],
+    existingStudents: [{ id: "STU-ANNOTATED-LEARNER", name: "Learner(VIC)", status: "在读" }],
+    identityLinks: [{
+      masterSourceRow: 216,
+      jwbSourceRow: 316,
+      studentId: studentIdForMasterSource(216),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "identity_link_name_mismatch");
+
+  // A parenthesized master row is not eligible for the annotation exception,
+  // but its deterministic system ID is still reserved. A link must not borrow
+  // that ID through an otherwise exact current-student name match.
+  assert.throws(() => buildStudentImportPlan({
+    masterRows: [master(217, "Learner"), master(218, "Other(VIC)")],
+    jwbRows: [jwb(317, "Learner(VIC)", 5, 10)],
+    existingStudents: [{
+      id: studentIdForMasterSource(218),
+      name: "Learner",
+      status: "在读",
+    }],
+    identityLinks: [{
+      masterSourceRow: 217,
+      jwbSourceRow: 317,
+      studentId: studentIdForMasterSource(218),
+      matchStrategy: STUDENT_IMPORT_JWB_LATIN_PARENTHETICAL_ANNOTATION_V1,
+    }],
+  }), (error: unknown) => error instanceof StudentImportError
+    && error.code === "invalid_identity_link");
 });
 
 test("master JWB member IDs only disambiguate otherwise exact full-name JWB rows", () => {

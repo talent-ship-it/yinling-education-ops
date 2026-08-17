@@ -5,6 +5,7 @@ import type {
   JwbStudentImportRow,
   MasterStudentDuplicateResolution,
   MasterStudentImportRow,
+  StudentImportIdentityMatchStrategy,
   StudentNumberReservation,
 } from "@/lib/student-import";
 import type {
@@ -122,6 +123,7 @@ export type StudentImportSourceRowsSnapshot = Readonly<{
     masterSourceRow: string | number;
     jwbSourceRow?: string | number;
     studentId: string;
+    matchStrategy?: StudentImportIdentityMatchStrategy;
   }>[];
   identityLinkFingerprint: string;
   /** Monotonic revocation generation for opaque identity-review options. */
@@ -205,6 +207,32 @@ export type StudentImportIdentityBulkCreateReviewResult = Readonly<{
   unchanged: boolean;
 }>;
 
+/**
+ * A source-wide one-to-one review of JWB names whose only difference is one
+ * pure Latin-letter parenthetical annotation. The confirmation key is opaque;
+ * the browser never submits source rows, names, IDs, or a matching rule.
+ */
+export type StudentImportIdentityAnnotationReviewPreview = Readonly<{
+  confirmationKey: string;
+  candidateCount: number;
+  pendingCount: number;
+  alreadyLinkedCount: number;
+  currentLinkCount: number;
+  resultingLinkCount: number;
+  canSubmit: boolean;
+}>;
+
+export type StudentImportIdentityAnnotationReviewResult = Readonly<{
+  confirmationKey: string;
+  fingerprint: string;
+  count: number;
+  requestedCount: number;
+  newlyAppliedCount: number;
+  alreadyAppliedCount: number;
+  finalCount: number;
+  unchanged: boolean;
+}>;
+
 export type StudentImportMasterDuplicateResolutionSaveResult = Readonly<{
   resolutionKey: string;
   decision: "select" | "ignore";
@@ -255,6 +283,8 @@ export const STUDENT_IMPORT_IDENTITY_BULK_PREVIEW_RPC = "get_student_import_iden
 export const STUDENT_IMPORT_IDENTITY_BULK_PUT_RPC = "put_student_import_identity_bulk_review";
 export const STUDENT_IMPORT_IDENTITY_BULK_CREATE_PREVIEW_RPC = "get_student_import_identity_bulk_create_review_preview";
 export const STUDENT_IMPORT_IDENTITY_BULK_CREATE_PUT_RPC = "put_student_import_identity_bulk_create_review";
+export const STUDENT_IMPORT_IDENTITY_ANNOTATION_PREVIEW_RPC = "get_student_import_identity_annotation_review_preview";
+export const STUDENT_IMPORT_IDENTITY_ANNOTATION_PUT_RPC = "put_student_import_identity_annotation_review";
 export const STUDENT_IMPORT_MASTER_DUPLICATE_RESOLUTION_PUT_RPC = "put_student_import_master_duplicate_resolution";
 export const TEACHER_IMPORT_SOURCE_RPC = "get_latest_teacher_import_sources";
 export const TEACHER_IMPORT_SOURCE_INGEST_RPC = "put_teacher_import_source";
@@ -558,6 +588,35 @@ export function putStudentImportIdentityBulkCreateReview(input: {
   const { secret } = configuration();
   return rpc<StudentImportIdentityBulkCreateReviewResult>(
     STUDENT_IMPORT_IDENTITY_BULK_CREATE_PUT_RPC,
+    {
+      p_secret: secret,
+      p_confirmation_key: input.confirmationKey,
+      p_actor: input.actor,
+    },
+  );
+}
+
+/**
+ * Previews only the closed, one-to-one Latin-parenthetical JWB annotation
+ * exception. The database binds the returned opaque key to both source
+ * hashes, student version, review epoch, duplicate decisions and link set.
+ */
+export function getStudentImportIdentityAnnotationReviewPreview() {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityAnnotationReviewPreview>(
+    STUDENT_IMPORT_IDENTITY_ANNOTATION_PREVIEW_RPC,
+    { p_secret: secret },
+  );
+}
+
+/** Persists only the DB-recomputed annotation candidate set behind a CAS key. */
+export function putStudentImportIdentityAnnotationReview(input: {
+  confirmationKey: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentImportIdentityAnnotationReviewResult>(
+    STUDENT_IMPORT_IDENTITY_ANNOTATION_PUT_RPC,
     {
       p_secret: secret,
       p_confirmation_key: input.confirmationKey,
