@@ -23,7 +23,14 @@ export const MASTER_STUDENT_STATUSES = [
 
 export type MasterStudentStatus = (typeof MASTER_STUDENT_STATUSES)[number];
 
-export const EXCLUDED_MASTER_STUDENT_STATUS: MasterStudentStatus = "不活跃 + 无课时";
+/**
+ * A retained historical/archive status. It is deliberately not an import
+ * exclusion: every non-empty Tencent master-roster row is a formal student,
+ * including people currently marked inactive without hours.
+ */
+export const ARCHIVED_STUDENT_STATUS: MasterStudentStatus = "不活跃 + 无课时";
+/** @deprecated Use ARCHIVED_STUDENT_STATUS. Master rows are no longer excluded by status. */
+export const EXCLUDED_MASTER_STUDENT_STATUS = ARCHIVED_STUDENT_STATUS;
 
 export type StudentImportSourceKey = string | number;
 export type StudentImportAttributes = Readonly<Record<string, unknown>>;
@@ -116,6 +123,10 @@ export type ExistingStudentImportRecord = Readonly<Record<string, unknown> & {
   id: string;
   /** Human-facing immutable number: YYYYMMDD plus a daily three-digit serial. */
   studentNumber?: string;
+  /** The fact behind the date encoded in studentNumber; never inferred later. */
+  studentNumberDateSource?: StudentNumberDateSource;
+  /** Historical, non-billable JWB facts displaced from the active ledger. */
+  historicalJwbSnapshot?: HistoricalJwbSnapshot;
   name: string;
   status?: string;
   segment?: string;
@@ -134,11 +145,51 @@ export type ExistingStudentImportRecord = Readonly<Record<string, unknown> & {
 export type StudentNumberReservation = Readonly<{
   studentId: string;
   studentNumber: string;
+  /** Null/omitted is a pre-provenance legacy reservation. */
+  studentNumberDateSource?: StudentNumberDateSource;
+}>;
+
+/**
+ * JWB-backed numbers encode the earliest positive contract date. A Tencent
+ * master record with no safe JWB identity instead uses the formal import day;
+ * this is intentionally labelled so it can never be mistaken for enrolment
+ * evidence from Jiaowubao.
+ */
+export const STUDENT_NUMBER_DATE_SOURCES = [
+  "jwb_first_positive_contract",
+  "formal_import_date",
+  "system_entry_date",
+] as const;
+
+export type StudentNumberDateSource = (typeof STUDENT_NUMBER_DATE_SOURCES)[number];
+
+/**
+ * Read-only JWB facts displaced from the active lesson ledger when the latest
+ * source cannot safely verify them. These facts are retained for audit/UI
+ * review only and are never used to book or settle lessons.
+ */
+export type HistoricalJwbFacts = Readonly<{
+  lessonPackages?: readonly StudentLessonPackage[];
+  remainingHours?: number;
+  contractHours?: number;
+  contractEffectiveDate?: string;
+  firstJwbHourEntryDate?: string;
+  packageCoverage?: "complete" | "partial" | "none";
+  jwbSourceRow?: StudentImportSourceKey;
+}>;
+
+export type HistoricalJwbSnapshot = Readonly<{
+  /** Former active JWB data moved out of the billable lesson ledger. */
+  retained?: HistoricalJwbFacts;
+  /** A current aggregate-only JWB response; display-only, never billable. */
+  currentAggregate?: HistoricalJwbFacts;
 }>;
 
 export type ImportedStudentRecord = Readonly<Record<string, unknown> & {
   id: string;
   studentNumber?: string;
+  studentNumberDateSource?: StudentNumberDateSource;
+  historicalJwbSnapshot?: HistoricalJwbSnapshot;
   name: string;
   status: string;
   sourceRow?: StudentImportSourceKey;
@@ -150,6 +201,8 @@ export type ImportedStudentRecord = Readonly<Record<string, unknown> & {
   contractHours?: number;
   contractEffectiveDate?: string;
   firstJwbHourEntryDate?: string;
+  /** Internal formal-import allocator input; stripped before any persisted plan. */
+  studentNumberJwbDateCandidate?: string;
   lessonPackages?: readonly StudentLessonPackage[];
   packageCoverage?: "complete" | "partial" | "none";
 }>;
@@ -158,14 +211,14 @@ export type StudentImportExcluded = Readonly<{
   sourceRow: StudentImportSourceKey;
   name: string;
   status: MasterStudentStatus;
-  reason: "inactive_without_hours" | "empty_name";
+  reason: "empty_name";
 }>;
 
 export type StudentImportUnmatched = Readonly<{
   source: "master" | "jwb";
   sourceRow: StudentImportSourceKey;
   name: string;
-  reason: "missing_jwb" | "not_in_master" | "empty_name";
+  reason: "missing_jwb" | "ambiguous_jwb" | "invalid_jwb_member_id" | "not_in_master" | "empty_name";
 }>;
 
 export type StudentImportAmbiguity = Readonly<{
@@ -228,6 +281,12 @@ export type BuildStudentImportPlanInput = Readonly<{
   /** Formal JWB-backed imports allocate missing visible student numbers. */
   assignStudentNumbers?: boolean;
   /**
+   * Melbourne calendar day fixed into a formal import preview. It is used
+   * only when no valid JWB first-positive-contract date exists and is bound
+   * into the server plan fingerprint/commit contract.
+   */
+  formalImportDate?: string;
+  /**
    * Internal server snapshot of every historical student-number reservation.
    * It is not accepted from a browser request. It keeps preview allocation in
    * lockstep with the database's permanent non-reuse registry.
@@ -241,6 +300,7 @@ export type StudentImportErrorCode =
   | "invalid_status"
   | "missing_source_key"
   | "duplicate_master_source_key"
+  | "duplicate_jwb_source_key"
   | "invalid_hours"
   | "invalid_lesson_package"
   | "duplicate_package_source_key"
@@ -271,6 +331,8 @@ export class StudentImportError extends Error {
 
 const managedFields = new Set([
   "id",
+  "studentNumber",
+  "studentNumberDateSource",
   "name",
   "status",
   "sourceRow",
@@ -282,6 +344,8 @@ const managedFields = new Set([
   "contractHours",
   "contractEffectiveDate",
   "firstJwbHourEntryDate",
+  "historicalJwbSnapshot",
+  "studentNumberJwbDateCandidate",
   "lessonPackages",
   "packageCoverage",
   "importArchived",
@@ -410,8 +474,11 @@ export function isStudentImportJwbLatinParentheticalAnnotationMatch(
 }
 
 /**
- * Returns only duplicate, import-eligible master groups. The normalized name
- * is an internal comparison key and must not be sent to the browser.
+ * Returns duplicate named master groups. Every non-empty Tencent roster row
+ * is import-eligible regardless of its current activity status, so an
+ * inactive row participates in the same hard duplicate-resolution contract.
+ * The normalized name is an internal comparison key and must not be sent to
+ * the browser.
  */
 export function findMasterStudentDuplicateGroups(
   rows: readonly MasterStudentImportRow[],
@@ -433,7 +500,7 @@ export function findMasterStudentDuplicateGroups(
     sourceRows.add(key);
     const normalizedName = normalizeStudentImportName(row.name);
     const status = typeof row.status === "string" ? row.status.trim() : "";
-    if (!normalizedName || status === EXCLUDED_MASTER_STUDENT_STATUS) continue;
+    if (!normalizedName) continue;
     if (status && !isMasterStudentStatus(status)) {
       throw new StudentImportError("invalid_status", `Unsupported master student status: ${String(row.status)}`, row.sourceRow);
     }
@@ -499,8 +566,7 @@ export function applyMasterStudentDuplicateResolutions(
         sourceKey(row.sourceRow, "master source row") === selected)!;
       const sourceStatus = String(selectedRow.status ?? "").trim();
       if (!sourceStatus) {
-        if (!isMasterStudentStatus(resolution.selectedStatus)
-          || resolution.selectedStatus === EXCLUDED_MASTER_STUDENT_STATUS) {
+        if (!isMasterStudentStatus(resolution.selectedStatus)) {
           throw new StudentImportError(
             "invalid_master_duplicate_resolution",
             "A selected blank-status master row requires one fixed master status",
@@ -871,6 +937,208 @@ function isManagedJwbPackage(lessonPackage: StudentLessonPackage) {
   return lessonPackage.id.startsWith("PKG-JWB-");
 }
 
+const JWB_PACKAGE_COVERAGES = new Set(["complete", "partial", "none"] as const);
+
+function historicalJwbText(
+  value: unknown,
+  field: "contractEffectiveDate" | "firstJwbHourEntryDate",
+  sourceRow: StudentImportSourceKey,
+) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 240) {
+    throw new StudentImportError("invalid_hours", `${field} in historicalJwbSnapshot is invalid`, sourceRow);
+  }
+  return value.trim();
+}
+
+/**
+ * Historical snapshots are persisted JSON evidence. Unlike matching keys,
+ * their JWB source-row value must retain the original JSON scalar type: an
+ * older numeric source row must not become a string in the TypeScript plan
+ * while PostgreSQL leaves it numeric. We still apply the same safe-key
+ * validation and whitespace trimming used by the source contract.
+ */
+function historicalJwbSourceRow(value: unknown, sourceRow: StudentImportSourceKey): StudentImportSourceKey {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new StudentImportError("missing_source_key", "historical JWB source row must be a stable string or integer", sourceRow);
+    }
+    return value;
+  }
+  if (typeof value === "string") {
+    const clean = value.trim();
+    if (clean && clean.length <= 240) return clean;
+  }
+  throw new StudentImportError("missing_source_key", "historical JWB source row must contain 1 to 240 characters", sourceRow);
+}
+
+function copyHistoricalJwbFacts(
+  value: unknown,
+  sourceRow: StudentImportSourceKey,
+): HistoricalJwbFacts | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new StudentImportError("invalid_hours", "historicalJwbSnapshot facts are invalid", sourceRow);
+  }
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set([
+    "lessonPackages",
+    "remainingHours",
+    "contractHours",
+    "contractEffectiveDate",
+    "firstJwbHourEntryDate",
+    "packageCoverage",
+    "jwbSourceRow",
+  ]);
+  if (Object.keys(raw).some((key) => !allowed.has(key))) {
+    throw new StudentImportError("invalid_hours", "historicalJwbSnapshot has unsupported fields", sourceRow);
+  }
+  const copiedPackages = raw.lessonPackages === undefined
+    ? undefined
+    : (() => {
+      if (!Array.isArray(raw.lessonPackages)) {
+        throw new StudentImportError("invalid_lesson_package", "historical JWB lessonPackages are invalid", sourceRow);
+      }
+      const packages = copyLessonPackages(raw.lessonPackages as readonly StudentLessonPackage[]);
+      if (packages.some((lessonPackage) => !isManagedJwbPackage(lessonPackage))) {
+        throw new StudentImportError("invalid_lesson_package", "historicalJwbSnapshot may contain only JWB-managed packages", sourceRow);
+      }
+      return packages;
+    })();
+  const packageCoverage = raw.packageCoverage === undefined
+    ? undefined
+    : typeof raw.packageCoverage === "string" && JWB_PACKAGE_COVERAGES.has(raw.packageCoverage as "complete" | "partial" | "none")
+      ? raw.packageCoverage as HistoricalJwbFacts["packageCoverage"]
+      : (() => { throw new StudentImportError("invalid_hours", "historical JWB packageCoverage is invalid", sourceRow); })();
+  const result: HistoricalJwbFacts = {
+    ...(copiedPackages?.length ? { lessonPackages: copiedPackages } : {}),
+    ...(optionalSignedHours(raw.remainingHours as number | string | null | undefined, "historical remainingHours", sourceRow) !== undefined
+      ? { remainingHours: optionalSignedHours(raw.remainingHours as number | string | null | undefined, "historical remainingHours", sourceRow)! }
+      : {}),
+    ...(optionalHours(raw.contractHours as number | string | null | undefined, "historical contractHours", sourceRow) !== undefined
+      ? { contractHours: optionalHours(raw.contractHours as number | string | null | undefined, "historical contractHours", sourceRow)! }
+      : {}),
+    ...(historicalJwbText(raw.contractEffectiveDate, "contractEffectiveDate", sourceRow)
+      ? { contractEffectiveDate: historicalJwbText(raw.contractEffectiveDate, "contractEffectiveDate", sourceRow)! }
+      : {}),
+    ...(historicalJwbText(raw.firstJwbHourEntryDate, "firstJwbHourEntryDate", sourceRow)
+      ? { firstJwbHourEntryDate: historicalJwbText(raw.firstJwbHourEntryDate, "firstJwbHourEntryDate", sourceRow)! }
+      : {}),
+    ...(packageCoverage ? { packageCoverage } : {}),
+    ...(raw.jwbSourceRow !== undefined ? { jwbSourceRow: historicalJwbSourceRow(raw.jwbSourceRow, sourceRow) } : {}),
+  };
+  return Object.keys(result).length ? result : undefined;
+}
+
+function copyHistoricalJwbSnapshot(
+  value: unknown,
+  sourceRow: StudentImportSourceKey,
+): HistoricalJwbSnapshot | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new StudentImportError("invalid_hours", "historicalJwbSnapshot is invalid", sourceRow);
+  }
+  const raw = value as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => key !== "retained" && key !== "currentAggregate")) {
+    throw new StudentImportError("invalid_hours", "historicalJwbSnapshot has unsupported fields", sourceRow);
+  }
+  const retained = copyHistoricalJwbFacts(raw.retained, sourceRow);
+  const currentAggregate = copyHistoricalJwbFacts(raw.currentAggregate, sourceRow);
+  if (currentAggregate?.lessonPackages?.length) {
+    throw new StudentImportError("invalid_lesson_package", "historical JWB currentAggregate cannot contain lessonPackages", sourceRow);
+  }
+  return retained || currentAggregate
+    ? {
+      ...(retained ? { retained } : {}),
+      ...(currentAggregate ? { currentAggregate } : {}),
+    }
+    : undefined;
+}
+
+function mergeHistoricalJwbFacts(
+  historical: HistoricalJwbFacts | undefined,
+  displaced: HistoricalJwbFacts | undefined,
+): HistoricalJwbFacts | undefined {
+  if (!historical) return displaced;
+  if (!displaced) return historical;
+  const packageById = new Map<string, StudentLessonPackage>();
+  for (const lessonPackage of [...(historical.lessonPackages ?? []), ...(displaced.lessonPackages ?? [])]) {
+    packageById.set(lessonPackage.id, lessonPackage);
+  }
+  const lessonPackages = [...packageById.values()];
+  return {
+    ...historical,
+    ...displaced,
+    ...(lessonPackages.length ? { lessonPackages } : {}),
+  };
+}
+
+function activeJwbFactsFromExisting(
+  existing: ExistingStudentImportRecord | undefined,
+  existingJwbPackages: readonly StudentLessonPackage[],
+  existingPackageCoverage: "complete" | "partial" | "none" | undefined,
+): HistoricalJwbFacts | undefined {
+  if (!existing) return undefined;
+  const sourceRow = existing.sourceRow ?? existing.id;
+  const remainingHours = optionalSignedHours(
+    existing.remainingHours as number | string | null | undefined,
+    "historical remainingHours",
+    sourceRow,
+  );
+  const contractHours = optionalHours(
+    existing.contractHours as number | string | null | undefined,
+    "historical contractHours",
+    sourceRow,
+  );
+  const jwbSourceRow = typeof existing.jwbSourceRow === "string" || typeof existing.jwbSourceRow === "number"
+    ? existing.jwbSourceRow
+    : undefined;
+  const contractEffectiveDate = historicalJwbText(existing.contractEffectiveDate, "contractEffectiveDate", sourceRow);
+  const firstJwbHourEntryDate = historicalJwbText(existing.firstJwbHourEntryDate, "firstJwbHourEntryDate", sourceRow);
+  return existingJwbPackages.length || remainingHours !== undefined || contractHours !== undefined
+    || contractEffectiveDate || firstJwbHourEntryDate || existingPackageCoverage
+    ? {
+      ...(existingJwbPackages.length ? { lessonPackages: copyLessonPackages(existingJwbPackages) } : {}),
+      ...(remainingHours !== undefined ? { remainingHours } : {}),
+      ...(contractHours !== undefined ? { contractHours } : {}),
+      ...(contractEffectiveDate ? { contractEffectiveDate } : {}),
+      ...(firstJwbHourEntryDate ? { firstJwbHourEntryDate } : {}),
+      ...(existingPackageCoverage ? { packageCoverage: existingPackageCoverage } : {}),
+      ...(jwbSourceRow !== undefined ? { jwbSourceRow } : {}),
+    }
+    : undefined;
+}
+
+function currentJwbAggregateFacts(
+  matchedJwb: JwbStudentImportRow | undefined,
+  packageCoverage: "complete" | "partial" | "none" | undefined,
+  sourceRemainingHours: number | undefined,
+  sourceContractHours: number | undefined,
+): HistoricalJwbFacts | undefined {
+  if (!matchedJwb) return undefined;
+  const contractEffectiveDate = historicalJwbText(
+    matchedJwb.contractEffectiveDate,
+    "contractEffectiveDate",
+    matchedJwb.sourceRow,
+  );
+  const firstJwbHourEntryDate = historicalJwbText(
+    matchedJwb.firstJwbHourEntryDate,
+    "firstJwbHourEntryDate",
+    matchedJwb.sourceRow,
+  );
+  return sourceRemainingHours !== undefined || sourceContractHours !== undefined
+    || contractEffectiveDate || firstJwbHourEntryDate || packageCoverage
+    ? {
+      ...(sourceRemainingHours !== undefined ? { remainingHours: sourceRemainingHours } : {}),
+      ...(sourceContractHours !== undefined ? { contractHours: sourceContractHours } : {}),
+      ...(contractEffectiveDate ? { contractEffectiveDate } : {}),
+      ...(firstJwbHourEntryDate ? { firstJwbHourEntryDate } : {}),
+      ...(packageCoverage ? { packageCoverage } : {}),
+      jwbSourceRow: matchedJwb.sourceRow,
+    }
+    : undefined;
+}
+
 function copyUnmanaged(attributes: StudentImportAttributes | ExistingStudentImportRecord | undefined) {
   const result: Record<string, unknown> = {};
   if (!attributes) return result;
@@ -897,34 +1165,62 @@ function changedFields(before: ExistingStudentImportRecord, after: ImportedStude
 }
 
 const STUDENT_NUMBER_PATTERN = /^\d{11}$/;
+const FORMAL_IMPORT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function dateKeyForStudentNumber(value: unknown, sourceRow: StudentImportSourceKey) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return undefined;
+function isStudentNumberDateSource(value: unknown): value is StudentNumberDateSource {
+  return typeof value === "string"
+    && (STUDENT_NUMBER_DATE_SOURCES as readonly string[]).includes(value);
+}
+
+function dateKeyForStudentNumber(
+  value: unknown,
+  sourceRow: StudentImportSourceKey,
+  field: "firstJwbHourEntryDate" | "studentNumberJwbDateCandidate" | "formalImportDate",
+) {
+  // Presence is meaningful: SQL rejects a malformed JWB candidate instead of
+  // silently allocating a formal-import-date number. Keep the preview equally
+  // fail-closed so the browser can never show a plan that commit will reject.
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    throw new StudentImportError("invalid_hours", `${field} is not a valid date`, sourceRow);
+  }
   const date = value.slice(0, 10);
-  if (Number.isNaN(Date.parse(`${date}T00:00:00.000Z`))) {
-    throw new StudentImportError("invalid_hours", "firstJwbHourEntryDate is not a valid date", sourceRow);
+  const timestamp = Date.parse(`${date}T00:00:00.000Z`);
+  if (!FORMAL_IMPORT_DATE_PATTERN.test(date)
+    || Number.isNaN(timestamp)
+    || new Date(timestamp).toISOString().slice(0, 10) !== date) {
+    throw new StudentImportError("invalid_hours", `${field} is not a valid date`, sourceRow);
   }
   return date.replaceAll("-", "");
 }
 
 /**
- * A student number records the earliest positive JWB contract date, not when
- * this application happened to import the record. Existing numbers are
- * immutable; missing numbers are allocated deterministically by contract date
- * then system ID so retrying an unchanged import cannot renumber anyone.
+ * A formal student number prefers the earliest positive JWB contract date.
+ * If there is no safe JWB identity/date, it uses the server-fixed Melbourne
+ * formal-import date and records that distinct origin. Existing numbers and
+ * origins are immutable; the permanent reservation registry prevents reuse.
  */
-function assignStudentNumbersFromJwb(
+function assignStudentNumbers(
   imported: readonly ImportedStudentRecord[],
   existingStudents: readonly ExistingStudentImportRecord[],
   reservations: readonly StudentNumberReservation[],
+  formalImportDate: string | undefined,
 ) {
+  const formalImportDateKey = formalImportDate === undefined
+    ? undefined
+    : dateKeyForStudentNumber(formalImportDate, "formal import", "formalImportDate");
   const usedNumbers = new Set<string>();
   const reservedNumberByStudentId = new Map<string, string>();
   const reservedStudentIdByNumber = new Map<string, string>();
+  const reservedDateSourceByStudentId = new Map<string, StudentNumberDateSource | undefined>();
   for (const reservation of reservations) {
     if (typeof reservation.studentId !== "string" || !reservation.studentId.trim()
       || typeof reservation.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(reservation.studentNumber)) {
       throw new StudentImportError("invalid_hours", "student number reservation is invalid", reservation.studentId);
+    }
+    if (reservation.studentNumberDateSource !== undefined
+      && !isStudentNumberDateSource(reservation.studentNumberDateSource)) {
+      throw new StudentImportError("invalid_hours", "student number reservation date source is invalid", reservation.studentId);
     }
     const studentId = reservation.studentId.trim();
     const priorNumber = reservedNumberByStudentId.get(studentId);
@@ -935,17 +1231,28 @@ function assignStudentNumbersFromJwb(
     }
     reservedNumberByStudentId.set(studentId, reservation.studentNumber);
     reservedStudentIdByNumber.set(reservation.studentNumber, studentId);
+    reservedDateSourceByStudentId.set(studentId, reservation.studentNumberDateSource);
     usedNumbers.add(reservation.studentNumber);
   }
   for (const student of existingStudents) {
+    if (student.studentNumber === undefined && student.studentNumberDateSource !== undefined) {
+      throw new StudentImportError("invalid_hours", "existing studentNumberDateSource requires a studentNumber", student.id);
+    }
     if (student.studentNumber === undefined) continue;
     if (typeof student.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(student.studentNumber)) {
       throw new StudentImportError("invalid_hours", "existing studentNumber must be YYYYMMDD plus a three-digit serial", student.id);
     }
+    if (student.studentNumberDateSource !== undefined && !isStudentNumberDateSource(student.studentNumberDateSource)) {
+      throw new StudentImportError("invalid_hours", "existing studentNumberDateSource is invalid", student.id);
+    }
     const reservedNumber = reservedNumberByStudentId.get(student.id);
     const reservedStudentId = reservedStudentIdByNumber.get(student.studentNumber);
+    const reservedDateSource = reservedDateSourceByStudentId.get(student.id);
     if ((reservedNumber !== undefined && reservedNumber !== student.studentNumber)
-      || (reservedStudentId !== undefined && reservedStudentId !== student.id)) {
+      || (reservedStudentId !== undefined && reservedStudentId !== student.id)
+      || (reservedDateSource !== undefined
+        && student.studentNumberDateSource !== undefined
+        && reservedDateSource !== student.studentNumberDateSource)) {
       throw new StudentImportError("duplicate_output_id", "existing studentNumber conflicts with the historical reservation", student.id);
     }
     if (usedNumbers.has(student.studentNumber)) {
@@ -960,6 +1267,9 @@ function assignStudentNumbersFromJwb(
   const existingById = new Map(existingStudents.map((student) => [student.id, student]));
   const importedStudentIdByNumber = new Map<string, string>();
   for (const student of imported) {
+    if (student.studentNumber === undefined && student.studentNumberDateSource !== undefined) {
+      throw new StudentImportError("invalid_hours", "studentNumberDateSource requires a studentNumber", student.id);
+    }
     if (student.studentNumber === undefined) continue;
     if (typeof student.studentNumber !== "string" || !STUDENT_NUMBER_PATTERN.test(student.studentNumber)) {
       throw new StudentImportError("invalid_hours", "imported studentNumber must be YYYYMMDD plus a three-digit serial", student.id);
@@ -967,6 +1277,9 @@ function assignStudentNumbersFromJwb(
     const existingNumber = existingById.get(student.id)?.studentNumber;
     const reservedNumber = reservedNumberByStudentId.get(student.id);
     const reservedStudentId = reservedStudentIdByNumber.get(student.studentNumber);
+    if (student.studentNumberDateSource !== undefined && !isStudentNumberDateSource(student.studentNumberDateSource)) {
+      throw new StudentImportError("invalid_hours", "studentNumberDateSource is invalid", student.id);
+    }
     const importedStudentId = importedStudentIdByNumber.get(student.studentNumber);
     if ((existingNumber !== undefined && existingNumber !== student.studentNumber)
       || (reservedNumber !== undefined && reservedNumber !== student.studentNumber)
@@ -989,11 +1302,34 @@ function assignStudentNumbersFromJwb(
       }
       return existingNumber === undefined && student.studentNumber === undefined && reservedNumber === undefined;
     })
-    .map((student) => ({
-      student,
-      dateKey: dateKeyForStudentNumber(student.firstJwbHourEntryDate, student.sourceRow ?? student.id),
-    }))
-    .filter((entry): entry is { student: ImportedStudentRecord; dateKey: string } => Boolean(entry.dateKey))
+    .map((student) => {
+      const jwbDateKey = dateKeyForStudentNumber(
+        student.studentNumberJwbDateCandidate ?? student.firstJwbHourEntryDate,
+        student.sourceRow ?? student.id,
+        student.studentNumberJwbDateCandidate !== undefined
+          ? "studentNumberJwbDateCandidate"
+          : "firstJwbHourEntryDate",
+      );
+      if (jwbDateKey) {
+        return {
+          student,
+          dateKey: jwbDateKey,
+          dateSource: "jwb_first_positive_contract" as const,
+        };
+      }
+      if (formalImportDateKey === undefined) {
+        throw new StudentImportError(
+          "invalid_hours",
+          "formalImportDate is required to number a master student without a JWB first-positive-contract date",
+          student.sourceRow ?? student.id,
+        );
+      }
+      return {
+        student,
+        dateKey: formalImportDateKey,
+        dateSource: "formal_import_date" as const,
+      };
+    })
     .sort((left, right) => compareText(left.dateKey, right.dateKey) || compareText(left.student.id, right.student.id));
 
   const nextSerialByDate = new Map<string, number>();
@@ -1002,8 +1338,8 @@ function assignStudentNumbersFromJwb(
     const serial = Number(number.slice(8));
     nextSerialByDate.set(dateKey, Math.max(nextSerialByDate.get(dateKey) ?? 0, serial));
   }
-  const assigned = new Map<string, string>();
-  for (const { student, dateKey } of pending) {
+  const assigned = new Map<string, Readonly<{ studentNumber: string; dateSource: StudentNumberDateSource }>>();
+  for (const { student, dateKey, dateSource } of pending) {
     const serial = (nextSerialByDate.get(dateKey) ?? 0) + 1;
     if (serial > 999) {
       throw new StudentImportError("invalid_hours", `student number daily sequence exceeds 999 for ${dateKey}`, student.sourceRow ?? student.id);
@@ -1014,22 +1350,41 @@ function assignStudentNumbersFromJwb(
     }
     nextSerialByDate.set(dateKey, serial);
     usedNumbers.add(studentNumber);
-    assigned.set(student.id, studentNumber);
+    assigned.set(student.id, { studentNumber, dateSource });
   }
   return imported.map((student) => {
+    const persistedStudent = { ...student };
+    delete persistedStudent.studentNumberJwbDateCandidate;
     const existingNumber = existingById.get(student.id)?.studentNumber;
+    const existingDateSource = existingById.get(student.id)?.studentNumberDateSource;
     const reservedNumber = reservedNumberByStudentId.get(student.id);
+    const reservedDateSource = reservedDateSourceByStudentId.get(student.id);
     const importedNumber = student.studentNumber;
+    const importedDateSource = student.studentNumberDateSource;
     if ((typeof existingNumber === "string" && reservedNumber !== undefined && existingNumber !== reservedNumber)
       || (typeof importedNumber === "string" && reservedNumber !== undefined && importedNumber !== reservedNumber)) {
       throw new StudentImportError("duplicate_output_id", "studentNumber conflicts with the historical reservation", student.id);
     }
+    const generated = assigned.get(student.id);
     const studentNumber = typeof existingNumber === "string"
       ? existingNumber
       : typeof importedNumber === "string"
         ? importedNumber
-        : reservedNumber ?? assigned.get(student.id);
-    return studentNumber === undefined ? student : { ...student, studentNumber };
+        : reservedNumber ?? generated?.studentNumber;
+    const studentNumberDateSource = typeof existingNumber === "string"
+      ? existingDateSource ?? reservedDateSource
+      : typeof importedNumber === "string"
+        ? importedDateSource
+        : reservedNumber !== undefined
+          ? reservedDateSource
+          : generated?.dateSource;
+    return studentNumber === undefined
+      ? persistedStudent
+      : {
+        ...persistedStudent,
+        studentNumber,
+        ...(studentNumberDateSource ? { studentNumberDateSource } : {}),
+      };
   });
 }
 
@@ -1129,21 +1484,36 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       };
     })
     .sort((left, right) => compareText(left.rawKey, right.rawKey));
+  // Tencent's hand-maintained master roster is authoritative for existence.
+  // A current status changes how the profile is shown, never whether this
+  // named learner receives a formal system record.
   const eligibleMasterRows = masterEntries
     .filter(({ row, status, name }) => {
       if (!name) {
         excluded.push({ sourceRow: row.sourceRow, name: "", status, reason: "empty_name" });
         return false;
       }
-      if (status === EXCLUDED_MASTER_STUDENT_STATUS) {
-        excluded.push({ sourceRow: row.sourceRow, name, status, reason: "inactive_without_hours" });
-        return false;
-      }
       return true;
     });
 
+  // The database canonical projection rejects duplicate JWB source keys. Do
+  // the same before matching so a preview never says it is committable only
+  // for the RPC to fail later. This is identity safety, not a reason to
+  // discard either JWB row or fall back to a name match.
+  const jwbSourceKeys = new Set<string>();
   const cleanJwbRows = [...input.jwbRows]
-    .map((row) => ({ row, key: sourceKey(row.sourceRow, "JWB source row"), name: cleanDisplayName(row.name) }))
+    .map((row) => {
+      const key = sourceKey(row.sourceRow, "JWB source row");
+      if (jwbSourceKeys.has(key)) {
+        throw new StudentImportError(
+          "duplicate_jwb_source_key",
+          `Duplicate JWB source row: ${key}`,
+          row.sourceRow,
+        );
+      }
+      jwbSourceKeys.add(key);
+      return { row, key, name: cleanDisplayName(row.name) };
+    })
     .sort((left, right) => compareText(left.key, right.key));
 
   // The annotation exception is not a second automatic matching key. These
@@ -1174,6 +1544,23 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   if (input.identityLinks !== undefined && !Array.isArray(input.identityLinks)) {
     throw new StudentImportError("invalid_identity_link", "identityLinks must be an array");
   }
+  // JWB is optional enrichment, but it is never shareable.  Count every
+  // syntactically shaped JWB leg before processing any individual link so two
+  // competing links are both downgraded.  Processing in array order must not
+  // decide which master gets the account; SQL canonical projection applies the
+  // same global one-to-one rule.
+  const identityLinkJwbCounts = new Map<string, number>();
+  for (const linkValue of input.identityLinks ?? []) {
+    if (!linkValue || typeof linkValue !== "object" || Array.isArray(linkValue)
+      || !exactObjectFields(linkValue as unknown as Record<string, unknown>, [
+        "masterSourceRow", "studentId", "jwbSourceRow", "matchStrategy",
+      ])
+      || linkValue.jwbSourceRow === undefined) {
+      continue;
+    }
+    const jwbKey = sourceKey(linkValue.jwbSourceRow, "identity link JWB source row");
+    identityLinkJwbCounts.set(jwbKey, (identityLinkJwbCounts.get(jwbKey) ?? 0) + 1);
+  }
   const eligibleMasterByRawKey = new Map(eligibleMasterRows.map((entry) => [entry.rawKey, entry]));
   // A deterministic master identity belongs to its active master source row,
   // even when that row cannot itself qualify for the narrow annotation
@@ -1194,29 +1581,24 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     jwbByKey.set(entry.key, [...(jwbByKey.get(entry.key) ?? []), entry]);
   }
   // A master-provided JWB member ID is evidence for choosing one otherwise
-  // exact-name JWB row. It is deliberately not a name override: wrong,
-  // missing or duplicate IDs stop the import instead of silently attaching
-  // someone else's account.
+  // exact-name JWB row. It is deliberately not a name override. An unknown
+  // or cross-name ID becomes an unmatched-data diagnostic, not a reason to
+  // drop the authoritative Tencent student from the formal roster.
   const explicitJwbByMasterKey = new Map<string, typeof cleanJwbRows[number]>();
+  const invalidJwbMemberMasterKeys = new Set<string>();
   for (const masterEntry of masterEntries) {
     if (masterEntry.jwbMemberKey === undefined) continue;
     const matches = jwbByKey.get(masterEntry.jwbMemberKey) ?? [];
     if (matches.length !== 1) {
-      throw new StudentImportError(
-        "invalid_master_jwb_member_id",
-        `Master Jiaowubao member ID ${masterEntry.jwbMemberKey} must identify exactly one current JWB row`,
-        masterEntry.row.sourceRow,
-      );
+      invalidJwbMemberMasterKeys.add(masterEntry.rawKey);
+      continue;
     }
     const jwbEntry = matches[0];
     const masterName = normalizeStudentImportName(masterEntry.name);
     const jwbName = normalizeStudentImportName(jwbEntry.name);
     if (!masterName || masterName !== jwbName) {
-      throw new StudentImportError(
-        "master_jwb_member_id_name_mismatch",
-        "Master Jiaowubao member ID may only disambiguate an exact full-name match; correct the master name first",
-        masterEntry.row.sourceRow,
-      );
+      invalidJwbMemberMasterKeys.add(masterEntry.rawKey);
+      continue;
     }
     if (eligibleMasterByRawKey.has(masterEntry.rawKey)) {
       explicitJwbByMasterKey.set(masterEntry.rawKey, jwbEntry);
@@ -1238,6 +1620,12 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   const linkedMasterKeys = new Set<string>();
   const linkedJwbKeys = new Set<string>();
   const linkedStudentIds = new Set<string>();
+  const reviewedAnnotationMemberMasterKeys = new Set<string>();
+  // A durable review can still preserve a safe master→existing profile
+  // relationship after its optional JWB leg becomes stale or invalid.  Keep
+  // a narrow diagnostic so the master record is visible as formally imported
+  // without ever falling back to a name-based JWB attachment.
+  const downgradedJwbMasterKeys = new Set<string>();
   const identityByMasterKey = new Map<string, Readonly<{
     existing?: ExistingStudentImportRecord;
     jwb?: JwbStudentImportRow;
@@ -1277,12 +1665,10 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         linkValue.masterSourceRow,
       );
     }
-    if (linkedMasterKeys.has(masterKey)
-      || linkedStudentIds.has(studentId)
-      || (jwbKey !== undefined && linkedJwbKeys.has(jwbKey))) {
+    if (linkedMasterKeys.has(masterKey) || linkedStudentIds.has(studentId)) {
       throw new StudentImportError(
         "duplicate_identity_link",
-        `Identity link ${index + 1} reuses a master row, student or JWB row`,
+        `Identity link ${index + 1} reuses a master row or student`,
         linkValue.masterSourceRow,
       );
     }
@@ -1329,29 +1715,19 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       }
     }
     const jwbMatches = jwbKey === undefined ? [] : (jwbByKey.get(jwbKey) ?? []);
-    if (jwbKey !== undefined && jwbMatches.length !== 1) {
-      throw new StudentImportError(
-        "invalid_identity_link",
-        `Identity link ${index + 1} must reference exactly one JWB row`,
-        linkValue.masterSourceRow,
-      );
-    }
-    if (explicitJwb !== undefined && jwbKey !== undefined && jwbKey !== explicitJwb.key) {
-      throw new StudentImportError(
-        "master_jwb_member_id_identity_link_conflict",
-        "The reviewed JWB row conflicts with the authoritative master Jiaowubao member ID",
-        linkValue.masterSourceRow,
-      );
-    }
+    let reviewedJwb: typeof jwbMatches[number] | undefined;
+    let downgradeJwbLeg = jwbKey !== undefined;
     const explicitOwner = jwbKey === undefined ? undefined : masterJwbMemberOwnerByKey.get(jwbKey);
-    if (explicitOwner !== undefined && explicitOwner !== masterKey) {
-      throw new StudentImportError(
-        "master_jwb_member_id_identity_link_conflict",
-        "The reviewed JWB row is reserved by another master Jiaowubao member ID",
-        linkValue.masterSourceRow,
-      );
-    }
-    if (jwbMatches[0]) {
+    // JWB is supplementary evidence.  Once the master→existing leg itself
+    // has passed the hard identity checks above, a missing, wrong, duplicate,
+    // member-ID-conflicting, or cross-name JWB leg must be ignored rather
+    // than stopping the authoritative Tencent record from importing.
+    if (jwbKey !== undefined
+      && jwbMatches.length === 1
+      && (explicitJwb === undefined || jwbKey === explicitJwb.key)
+      && (explicitOwner === undefined || explicitOwner === masterKey)
+      && identityLinkJwbCounts.get(jwbKey) === 1
+      && !linkedJwbKeys.has(jwbKey)) {
       const masterName = normalizeStudentImportName(masterEntry.name);
       const jwbName = normalizeStudentImportName(jwbMatches[0].name);
       const exactNameMatch = Boolean(masterName) && masterName === jwbName;
@@ -1365,38 +1741,50 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         && annotationJwbRowsByKey.get(masterName)?.length === 1
         && annotationJwbRowsByKey.get(masterName)?.[0] === jwbKey
         && !annotationExistingConflict;
-      // A cross-name link is valid only when it carries the narrow durable
-      // annotation strategy and its source-wide one-to-one proof still holds.
-      // A strategy on an already exact pair is rejected instead of becoming a
-      // meaningless escape hatch for future broader matching rules.
-      if (!exactNameMatch && !annotationMatch) {
-        throw new StudentImportError(
-          "identity_link_name_mismatch",
-          `Identity link ${index + 1} does not satisfy the strict or reviewed JWB annotation identity contract`,
-          linkValue.masterSourceRow,
-        );
-      }
-      if (exactNameMatch && matchStrategy !== undefined) {
-        throw new StudentImportError(
-          "invalid_identity_link_match_strategy",
-          `Identity link ${index + 1} must not label an exact full-name match as an annotation exception`,
-          linkValue.masterSourceRow,
-        );
+      // A cross-name link is retained only for the narrowly reviewed
+      // annotation exception.  Otherwise it is an optional JWB leg that is
+      // safely downgraded below; it never becomes a fuzzy rematch.
+      const memberIdAllowsReviewedJwb = !invalidJwbMemberMasterKeys.has(masterKey)
+        || (annotationMatch && masterEntry.jwbMemberKey === jwbKey);
+      if (memberIdAllowsReviewedJwb
+        && ((exactNameMatch && matchStrategy === undefined) || annotationMatch)) {
+        reviewedJwb = jwbMatches[0];
+        downgradeJwbLeg = false;
+        if (annotationMatch && invalidJwbMemberMasterKeys.has(masterKey)) {
+          // The sole exception to the otherwise strict member-ID/name rule:
+          // a reviewed source-wide v1 annotation for that exact declared ID.
+          // The durable strategy and collision proof are checked above, so it
+          // is not a generic relaxed-name fallback.
+          reviewedAnnotationMemberMasterKeys.add(masterKey);
+        }
       }
     }
     linkedMasterKeys.add(masterKey);
     linkedStudentIds.add(studentId);
-    if (jwbKey !== undefined) linkedJwbKeys.add(jwbKey);
+    if (reviewedJwb !== undefined && jwbKey !== undefined) linkedJwbKeys.add(jwbKey);
+    if (downgradeJwbLeg) downgradedJwbMasterKeys.add(masterKey);
+    // A malformed/unknown/cross-name master JWB member ID is not a reason to
+    // abandon the Tencent master identity (or its reviewed existing-profile
+    // link), but it is never safe to enrich that student with a JWB account.
+    // In particular, a historical annotation review must not bypass a newly
+    // incorrect member ID and silently attach cross-name JWB data.
     identityByMasterKey.set(masterKey, {
       ...(existingMatches[0] ? { existing: existingMatches[0] } : {}),
-      ...(jwbMatches[0] ? { jwb: jwbMatches[0].row } : {}),
+      ...(reviewedJwb
+        ? { jwb: reviewedJwb.row }
+        : {}),
     });
   }
 
   const explicitMasterKeys = new Set(explicitJwbByMasterKey.keys());
   const declaredJwbMemberKeys = new Set(masterJwbMemberOwnerByKey.keys());
   const unlinkedMasterRows = eligibleMasterRows.filter(({ rawKey }) =>
-    !linkedMasterKeys.has(rawKey) && !explicitMasterKeys.has(rawKey));
+    !linkedMasterKeys.has(rawKey)
+      && !explicitMasterKeys.has(rawKey)
+      // A populated-but-invalid JWB member ID is an explicit source signal
+      // that must suppress every automatic name/annotation rematch. The
+      // Tencent record still imports, but receives no JWB enrichment.
+      && !invalidJwbMemberMasterKeys.has(rawKey));
   const unlinkedJwbRows = cleanJwbRows.filter(({ key }) =>
     !linkedJwbKeys.has(key) && !declaredJwbMemberKeys.has(key));
   for (const { row, name } of unlinkedJwbRows) {
@@ -1405,9 +1793,6 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
 
   const masterNameGroups = groupByName(unlinkedMasterRows.map(({ row, name }) => ({ ...row, name })));
   const jwbNameGroups = groupByName(unlinkedJwbRows.filter(({ name }) => name).map(({ row, name }) => ({ ...row, name })));
-  const intentionallyExcludedNames = new Set(
-    excluded.map((entry) => normalizeStudentImportName(entry.name)).filter(Boolean),
-  );
   const allNames = [...new Set([...masterNameGroups.keys(), ...jwbNameGroups.keys()])].sort(compareText);
   const matchedJwbByMasterKey = new Map<string, JwbStudentImportRow>();
   for (const [masterKey, jwb] of explicitJwbByMasterKey) {
@@ -1426,29 +1811,64 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       matchedJwbByMasterKey.set(masterKey, identity.jwb);
     }
   }
+  for (const masterKey of invalidJwbMemberMasterKeys) {
+    if (reviewedAnnotationMemberMasterKeys.has(masterKey)
+      || !eligibleMasterByRawKey.has(masterKey)) continue;
+    const master = eligibleMasterByRawKey.get(masterKey)!;
+    unmatched.push({
+      source: "master",
+      sourceRow: master.row.sourceRow,
+      name: cleanDisplayName(master.name),
+      reason: "invalid_jwb_member_id",
+    });
+  }
+  for (const masterKey of downgradedJwbMasterKeys) {
+    if (invalidJwbMemberMasterKeys.has(masterKey) || !eligibleMasterByRawKey.has(masterKey)) continue;
+    const master = eligibleMasterByRawKey.get(masterKey)!;
+    unmatched.push({
+      source: "master",
+      sourceRow: master.row.sourceRow,
+      name: cleanDisplayName(master.name),
+      reason: "missing_jwb",
+    });
+  }
   const ambiguousNames = new Set<string>();
+  const ambiguousJwbMasterKeys = new Set<string>();
 
   for (const name of allNames) {
     const masters = masterNameGroups.get(name) ?? [];
     const jwb = jwbNameGroups.get(name) ?? [];
-    if (masters.length > 1 || jwb.length > 1) {
-      // Duplicate JWB-only rows are outside the authoritative master scope.
-      // Keep them visible as unmatched source data, but do not block an import
-      // that cannot attach them to any formal student record.
-      if (masters.length === 0 && jwb.length > 1) {
-        if (!intentionallyExcludedNames.has(name)) {
-          for (const row of jwb) {
-            unmatched.push({
-              source: "jwb",
-              sourceRow: row.sourceRow,
-              name: cleanDisplayName(row.name),
-              reason: "not_in_master",
-            });
-          }
-        }
+    if (masters.length > 1) {
+      // A duplicate Tencent roster identity must still be resolved explicitly:
+      // otherwise the same hand-maintained source could create two records for
+      // one visible person. JWB is optional enrichment, not a way to choose
+      // between master rows.
+      ambiguousNames.add(name);
+      ambiguous.push(makeAmbiguity("name", name, masters, jwb));
+      continue;
+    }
+    if (jwb.length > 1) {
+      // Multiple JWB accounts are never guessed. The sole master record still
+      // imports, but carries an explicit non-enriched JWB status and no JWB
+      // totals/packages. JWB-only duplicates remain diagnostic-only.
+      if (masters.length === 1) {
+        const master = masters[0];
+        ambiguousJwbMasterKeys.add(sourceKey(master.sourceRow, "master source row"));
+        unmatched.push({
+          source: "master",
+          sourceRow: master.sourceRow,
+          name: cleanDisplayName(master.name),
+          reason: "ambiguous_jwb",
+        });
       } else {
-        ambiguousNames.add(name);
-        ambiguous.push(makeAmbiguity("name", name, masters, jwb));
+        for (const row of jwb) {
+          unmatched.push({
+            source: "jwb",
+            sourceRow: row.sourceRow,
+            name: cleanDisplayName(row.name),
+            reason: "not_in_master",
+          });
+        }
       }
       continue;
     }
@@ -1458,8 +1878,16 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         jwb[0],
       );
     } else if (masters.length === 1) {
-      unmatched.push({ source: "master", sourceRow: masters[0].sourceRow, name: cleanDisplayName(masters[0].name), reason: "missing_jwb" });
-    } else if (jwb.length === 1 && !intentionallyExcludedNames.has(name)) {
+      const master = masters[0];
+      unmatched.push({
+        source: "master",
+        sourceRow: master.sourceRow,
+        name: cleanDisplayName(master.name),
+        reason: invalidJwbMemberMasterKeys.has(sourceKey(master.sourceRow, "master source row"))
+          ? "invalid_jwb_member_id"
+          : "missing_jwb",
+      });
+    } else if (jwb.length === 1) {
       unmatched.push({ source: "jwb", sourceRow: jwb[0].sourceRow, name: cleanDisplayName(jwb[0].name), reason: "not_in_master" });
     }
   }
@@ -1514,6 +1942,8 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       ? "ambiguous"
       : matchedJwb
         ? "matched"
+        : ambiguousJwbMasterKeys.has(rawKey)
+          ? "ambiguous"
         : "unmatched";
     const id = existing?.id ?? studentIdForMasterSource(row.sourceRow, namespace);
     const sourceRemainingHours = matchedJwb
@@ -1535,47 +1965,73 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       || existing?.packageCoverage === "none"
       ? existing.packageCoverage
       : undefined;
-    const preserveExistingAggregate = matchedJwb === undefined
-      && (existingPackageCoverage === "partial" || existingPackageCoverage === "none");
-    const existingRemainingHours = preserveExistingAggregate
-      ? optionalSignedHours(
-        existing?.remainingHours as number | string | null | undefined,
-        "remainingHours",
-        existing?.sourceRow ?? existing?.id ?? row.sourceRow,
-      )
+    const existingHistoricalSnapshot = copyHistoricalJwbSnapshot(
+      existing?.historicalJwbSnapshot,
+      existing?.sourceRow ?? existing?.id ?? row.sourceRow,
+    );
+    const currentPackageCoverage = matchedJwb?.packageCoverage
+      ?? (authoritativeJwbPackages !== undefined ? "complete" : undefined);
+    const isCurrentCompleteLedger = authoritativeJwbPackages !== undefined
+      && currentPackageCoverage === "complete";
+    const isCurrentPartialLedger = authoritativeJwbPackages !== undefined
+      && currentPackageCoverage === "partial";
+    const activeJwbPackages = isCurrentCompleteLedger || isCurrentPartialLedger
+      ? authoritativeJwbPackages
+      : [];
+    const activeJwbPackageIds = new Set(activeJwbPackages.map((lessonPackage) => lessonPackage.id));
+    // A partial current ledger may safely activate only its source-validated
+    // package rows. Every older JWB row not represented there remains visible
+    // as read-only historical evidence. With none/unmatched, all prior JWB
+    // facts leave the active ledger; manual packages never move.
+    const displacedExistingJwbPackages = isCurrentCompleteLedger
+      ? []
+      : isCurrentPartialLedger
+        ? existingJwbPackages.filter((lessonPackage) => !activeJwbPackageIds.has(lessonPackage.id))
+        : existingJwbPackages;
+    const displacedExistingFacts = activeJwbFactsFromExisting(
+      existing,
+      displacedExistingJwbPackages,
+      existingPackageCoverage,
+    );
+    const retainedHistoricalFacts = mergeHistoricalJwbFacts(
+      existingHistoricalSnapshot?.retained,
+      isCurrentCompleteLedger ? undefined : displacedExistingFacts,
+    );
+    // A newly supplied aggregate supersedes the prior current snapshot, but
+    // an unmatched/sparse current JWB row is not authority to erase historic
+    // evidence.  In that case preserve the last snapshot verbatim.
+    const currentAggregate = !isCurrentCompleteLedger
+      ? currentJwbAggregateFacts(
+        matchedJwb,
+        currentPackageCoverage,
+        sourceRemainingHours,
+        sourceContractHours,
+      ) ?? existingHistoricalSnapshot?.currentAggregate
+      : existingHistoricalSnapshot?.currentAggregate;
+    const historicalJwbSnapshot = retainedHistoricalFacts || currentAggregate
+      ? {
+        ...(retainedHistoricalFacts ? { retained: retainedHistoricalFacts } : {}),
+        ...(currentAggregate ? { currentAggregate } : {}),
+      }
       : undefined;
-    const existingContractHours = preserveExistingAggregate
-      ? optionalHours(
-        existing?.contractHours as number | string | null | undefined,
-        "contractHours",
-        existing?.sourceRow ?? existing?.id ?? row.sourceRow,
-      )
-      : undefined;
-    const packageCoverage = matchedJwb?.packageCoverage
-      ?? (matchedJwb?.lessonPackages?.length
-        ? "complete"
-        : existingJwbPackages.length
-          ? existingPackageCoverage ?? "partial"
-          : "none");
-    if (sourceRemainingHours !== undefined && sourceRemainingHours < 0 && packageCoverage !== "none") {
+    const activePackageCoverage = isCurrentCompleteLedger
+      ? "complete"
+      : isCurrentPartialLedger
+        ? "partial"
+        : undefined;
+    if (sourceRemainingHours !== undefined && sourceRemainingHours < 0 && currentPackageCoverage !== "none") {
       throw new StudentImportError(
         "package_balance_mismatch",
         "Negative JWB aggregate balances must use none package coverage",
         matchedJwb!.sourceRow,
       );
     }
-    const shouldReplaceManagedJwbPackages = matchedJwb?.packageCoverage !== undefined
-      || authoritativeJwbPackages !== undefined;
-    const jwbPackages = authoritativeJwbPackages
-      ?? (shouldReplaceManagedJwbPackages ? [] : existingJwbPackages);
-    const lessonPackages = [...existingManualPackages, ...jwbPackages];
+    const lessonPackages = [...existingManualPackages, ...activeJwbPackages];
     const authoritativeTotals = authoritativeJwbPackages?.length
       ? packageTotals(authoritativeJwbPackages)
       : undefined;
-    // The top-level totals are the Jiaowubao aggregate. Manual packages remain
-    // visible in the package list, but must never inflate that source balance.
-    const fallbackTotals = jwbPackages.length ? packageTotals(jwbPackages) : undefined;
-    if (packageCoverage === "complete" && authoritativeJwbPackages && sourceRemainingHours !== undefined
+    const activeTotals = activeJwbPackages.length ? packageTotals(activeJwbPackages) : undefined;
+    if (isCurrentCompleteLedger && authoritativeJwbPackages && sourceRemainingHours !== undefined
       && !hoursMatch(sourceRemainingHours, authoritativeTotals!.remainingHours)) {
       throw new StudentImportError(
         "package_balance_mismatch",
@@ -1583,7 +2039,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         matchedJwb!.sourceRow,
       );
     }
-    if (packageCoverage === "complete" && authoritativeJwbPackages && sourceContractHours !== undefined
+    if (isCurrentCompleteLedger && authoritativeJwbPackages && sourceContractHours !== undefined
       && !hoursMatch(sourceContractHours, authoritativeTotals!.contractHours)) {
       throw new StudentImportError(
         "package_balance_mismatch",
@@ -1602,31 +2058,43 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       sourceRow: row.sourceRow,
       masterSourceKey: key,
       importSource: "master",
+      ...(typeof existing?.studentNumber === "string"
+        ? {
+          studentNumber: existing.studentNumber,
+          ...(existing.studentNumberDateSource
+            ? { studentNumberDateSource: existing.studentNumberDateSource }
+            : {}),
+        }
+        : {}),
       jwbMatchStatus: jwbStatus,
-      ...(matchedJwb ? { jwbSourceRow: matchedJwb.sourceRow } : {}),
-      ...(matchedJwb?.packageCoverage || jwbPackages.length || existingPackageCoverage
-        ? { packageCoverage }
+      ...(isCurrentCompleteLedger || isCurrentPartialLedger
+        ? { jwbSourceRow: matchedJwb!.sourceRow }
         : {}),
-      ...(sourceRemainingHours !== undefined
+      ...(activePackageCoverage
+        ? { packageCoverage: activePackageCoverage }
+        : {}),
+      ...(isCurrentCompleteLedger && sourceRemainingHours !== undefined
         ? { remainingHours: sourceRemainingHours }
-        : existingRemainingHours !== undefined
-        ? { remainingHours: existingRemainingHours }
-        : fallbackTotals
-        ? { remainingHours: fallbackTotals.remainingHours }
+        : activeTotals
+        ? { remainingHours: activeTotals.remainingHours }
         : {}),
-      ...(sourceContractHours !== undefined
+      ...(isCurrentCompleteLedger && sourceContractHours !== undefined
         ? { contractHours: sourceContractHours }
-        : existingContractHours !== undefined
-        ? { contractHours: existingContractHours }
-        : fallbackTotals
-        ? { contractHours: fallbackTotals.contractHours }
+        : activeTotals
+        ? { contractHours: activeTotals.contractHours }
         : {}),
-      ...(matchedJwb?.contractEffectiveDate?.trim()
+      ...((isCurrentCompleteLedger || isCurrentPartialLedger)
+        && matchedJwb?.contractEffectiveDate?.trim()
         ? { contractEffectiveDate: matchedJwb.contractEffectiveDate.trim() }
         : {}),
-      ...(matchedJwb?.firstJwbHourEntryDate?.trim()
+      ...((isCurrentCompleteLedger || isCurrentPartialLedger)
+        && matchedJwb?.firstJwbHourEntryDate?.trim()
         ? { firstJwbHourEntryDate: matchedJwb.firstJwbHourEntryDate.trim() }
         : {}),
+      ...(matchedJwb?.firstJwbHourEntryDate?.trim()
+        ? { studentNumberJwbDateCandidate: matchedJwb.firstJwbHourEntryDate.trim() }
+        : {}),
+      ...(historicalJwbSnapshot ? { historicalJwbSnapshot } : {}),
       ...(lessonPackages?.length ? { lessonPackages } : {}),
     };
 
@@ -1642,11 +2110,17 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     imported.push(record);
   }
 
-  // JWB's earliest positive contract date is the auditable proxy for the
-  // visible student-number date. Do this after every match is known, then recompute the
-  // corresponding action fields so the dry-run truthfully shows the backfill.
+  // JWB's earliest positive contract date is preferred for the visible number.
+  // A master-only record instead uses the server-fixed formal import date and
+  // receives explicit provenance. Do this after every match is known, then
+  // recompute action fields so the dry-run truthfully shows the backfill.
   const numberedImported = input.assignStudentNumbers
-    ? assignStudentNumbersFromJwb(imported, existingStudents, input.studentNumberReservations ?? [])
+    ? assignStudentNumbers(
+      imported,
+      existingStudents,
+      input.studentNumberReservations ?? [],
+      input.formalImportDate,
+    )
     : imported;
   for (let index = 0; index < numberedImported.length; index += 1) {
     const numbered = numberedImported[index];
@@ -1750,9 +2224,17 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
         0,
       ),
       studentsMissingPackageData: imported.filter((student) => {
-        return !student.lessonPackages?.length
-          || student.packageCoverage === "partial"
-          || student.packageCoverage === "none";
+        const currentCoverage = student.packageCoverage
+          ?? student.historicalJwbSnapshot?.currentAggregate?.packageCoverage;
+        const hasActiveManagedJwbPackage = student.lessonPackages?.some(isManagedJwbPackage) ?? false;
+        // A manual package must never make a JWB aggregate-only/partial/none
+        // record look like a safely reconstructable current ledger.  The
+        // snapshot is evidence only; it is not billable and therefore cannot
+        // satisfy the package-data completeness indicator.
+        return student.jwbMatchStatus !== "matched"
+          || currentCoverage === "partial"
+          || currentCoverage === "none"
+          || !hasActiveManagedJwbPackage;
       }).length,
     },
   };

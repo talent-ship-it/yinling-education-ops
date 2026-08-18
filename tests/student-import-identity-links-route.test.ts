@@ -52,7 +52,7 @@ test("student identity route accepts only opaque reviewed decisions, row tokens 
   assert.match(ui, /jwbToken: studentIdentityManualJwbToken/);
   assert.match(ui, /existingToken: studentIdentityManualExistingToken/);
   assert.match(ui, /学生身份逐条人工确认/);
-  assert.match(ui, /剩余学生手工配对/);
+  assert.match(ui, /待配对：学生总表/);
   assert.match(ui, /清空全部身份链接/);
   assert.match(ui, /学生总表来源行/);
   assert.match(ui, /教务宝来源行/);

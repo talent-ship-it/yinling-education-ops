@@ -98,8 +98,10 @@ test("the generic client applies server-assigned student fields after a successf
 
 test("the import domain derives a historical number date from the first positive JWB contract", () => {
   assert.match(importDomain, /earliest positive JWB contract date/);
-  assert.match(importDomain, /assignStudentNumbersFromJwb/);
+  assert.match(importDomain, /assignStudentNumbers/);
   assert.match(importDomain, /firstJwbHourEntryDate/);
   assert.match(importDomain, /dateKeyForStudentNumber/);
   assert.match(importDomain, /studentNumberReservations/);
+  assert.match(importDomain, /formalImportDate is required to number a master student/);
+  assert.match(importDomain, /studentNumberDateSource/);
 });

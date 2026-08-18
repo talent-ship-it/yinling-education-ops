@@ -21,7 +21,7 @@ import {
   resolveMasterDuplicateCandidate,
   StudentImportServiceError,
 } from "../lib/student-import-service.ts";
-import { MASTER_STUDENT_STATUSES, StudentImportError, studentIdForMasterSource } from "../lib/student-import.ts";
+import { MASTER_STUDENT_STATUSES, studentIdForMasterSource } from "../lib/student-import.ts";
 
 test("master duplicate hard options are opaque, revision-bound and contain only non-PII evidence", () => {
   const snapshot = sourceSnapshot({ duplicate: true });
@@ -108,7 +108,10 @@ test("selected duplicate row binds only to its current reviewed identity link", 
   });
   assert.equal(prepared.response.masterDuplicateResolutions.length, 0);
   assert.equal(prepared.plan.students[0].id, "STU-OLD-69");
-  assert.equal(prepared.plan.students[0].jwbSourceRow, 101);
+  // The reviewed JWB identity is still used, but a sparse JWB row must not
+  // become an active ledger just because the identity link is valid.
+  assert.equal(prepared.plan.students[0].jwbMatchStatus, "matched");
+  assert.equal(prepared.plan.students[0].jwbSourceRow, undefined);
 });
 
 test("formal prepare never reuses legacy row or name identity and its namespaced replay is unchanged", () => {
@@ -155,10 +158,10 @@ test("blank-status duplicate exposes only opaque fixed-status choices and saved 
   snapshot.jwb.rows = [{ sourceRow: 101, name: "Blank Duplicate" }];
   const pending = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
   const candidate = pending.response.masterDuplicateResolutions[0];
-  assert.equal(candidate.options.filter((option) => option.selectedSourceRow === 32).length, 5);
+  assert.equal(candidate.options.filter((option) => option.selectedSourceRow === 32).length, 6);
   assert.deepEqual(
     candidate.options.filter((option) => option.selectedSourceRow === 32).map((option) => option.selectedStatus),
-    MASTER_STUDENT_STATUSES.filter((status) => status !== "不活跃 + 无课时"),
+    MASTER_STUDENT_STATUSES,
   );
   const option = candidate.options.find((item) =>
     item.selectedSourceRow === 32 && item.selectedStatus === "活跃 + 有课时")!;
@@ -287,6 +290,9 @@ test("identity review is globally unique, fail-closed and never trusts browser r
 
 test("prepared identity review uses the parsed current link set and students version", () => {
   const snapshot = sourceSnapshot();
+  // Keep this review fixture focused on its one deliberate master/JWB pair;
+  // the default inactive roster row is now correctly importable too.
+  snapshot.master.rows = [snapshot.master.rows[0]];
   snapshot.master.rows[0].name = " Ｓample   Learner ";
   snapshot.jwb.rows[0].name = "sample learner";
   const first = prepareStudentIdentityReview({
@@ -389,6 +395,7 @@ test("prepared identity review opens only after an explicit duplicate-row decisi
 
 test("manual review tokens are HMAC-bound to secret, source/student CAS and epoch", () => {
   const snapshot = sourceSnapshot();
+  snapshot.master.rows = [snapshot.master.rows[0]];
   snapshot.master.rows[0].name = "No automatic evidence";
   snapshot.jwb.rows[0].name = "Different JWB evidence";
   const prepare = (manualTokenSecret: string) => prepareStudentIdentityReview({
@@ -412,11 +419,17 @@ test("manual review tokens are HMAC-bound to secret, source/student CAS and epoc
     studentId: studentIdForMasterSource(1, snapshot.master.sourceId),
   }];
   linkedSnapshot.identityLinkFingerprint = `sha256:${"c".repeat(64)}`;
-  assert.throws(() => prepareStudentImport({
+  // A stale/cross-name reviewed JWB leg is optional enrichment, not a reason
+  // to suppress the Tencent master record or attach the wrong JWB account.
+  const downgraded = prepareStudentImport({
     sourceSnapshot: linkedSnapshot,
     studentsRow: studentsRow(7, [{ id: "PRIVATE-CURRENT-ID", name: "Current Evidence" }]),
-  }), (error: unknown) => error instanceof StudentImportError
-    && error.code === "identity_link_name_mismatch");
+  });
+  const imported = downgraded.plan.students.find((student) =>
+    student.id === studentIdForMasterSource(1, snapshot.master.sourceId));
+  assert.equal(imported?.jwbMatchStatus, "unmatched");
+  assert.equal(imported?.jwbSourceRow, undefined);
+  assert.equal(imported?.historicalJwbSnapshot, undefined);
 
   snapshot.identityReviewEpoch = 1;
   const changedEpoch = prepare("secret-a");
@@ -429,7 +442,11 @@ function sourceSnapshot(input?: Readonly<{
   jwbRevision?: string;
   duplicate?: boolean;
   firstJwbHourEntryDate?: string;
-  studentNumberReservations?: readonly Readonly<{ studentId: string; studentNumber: string }>[];
+  studentNumberReservations?: readonly Readonly<{
+    studentId: string;
+    studentNumber: string;
+    studentNumberDateSource?: "jwb_first_positive_contract" | "formal_import_date" | "system_entry_date";
+  }>[];
 }>) {
   return {
     identityLinks: [],
@@ -465,6 +482,24 @@ function sourceSnapshot(input?: Readonly<{
   };
 }
 
+test("rejects duplicate canonical JWB source rows before a formal preview", () => {
+  const source = sourceSnapshot();
+  const snapshot = {
+    ...source,
+    jwb: {
+      ...source.jwb,
+      rows: [
+        { sourceRow: " 101 ", name: "Sample Learner", remainingHours: 5, contractHours: 10 },
+        { sourceRow: 101, name: "Different Learner", remainingHours: 8, contractHours: 12 },
+      ],
+    },
+  };
+  assert.throws(
+    () => prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() }),
+    serviceError("invalid_source_snapshot"),
+  );
+});
+
 function studentsRow(version = 7, payload: unknown[] = []): OpsStateRow {
   return {
     entity: "students",
@@ -493,6 +528,8 @@ function prepareStudentImport(input: PrepareFixtureInput) {
   return prepareStudentImportStrict({
     ...input,
     referenceRows: input.referenceRows ?? referenceRows(),
+    // Keep all fixtures deterministic across an Australia/Melbourne midnight.
+    formalImportDate: input.formalImportDate ?? "2026-08-18",
   });
 }
 
@@ -598,11 +635,11 @@ test("builds a deterministic server-side dry run without exposing replacement st
   assert.match(first.response.planFingerprint, /^sha256:[a-f0-9]{64}$/);
   assert.equal(first.response.expectedStudentVersion, 7);
   assert.equal(first.response.canCommit, true);
-  assert.equal(first.response.summary.insert, 1);
-  assert.equal(first.response.summary.excluded, 1);
+  assert.equal(first.response.summary.insert, 2);
+  assert.equal(first.response.summary.excluded, 0);
   assert.equal("students" in first.response, false);
-  assert.deepEqual(first.response.excluded.map((entry) => entry.name), ["Excluded Learner"]);
-  assert.deepEqual(first.response.unmatched, []);
+  assert.deepEqual(first.response.excluded, []);
+  assert.deepEqual(first.response.unmatched.map((entry) => entry.sourceRow), [3]);
   assert.deepEqual(first.response.ambiguous, []);
 });
 
@@ -784,7 +821,8 @@ test("binds an exact full-name plan to the reviewed JWB revision", () => {
   const second = prepareStudentImport({ sourceSnapshot: secondSnapshot, studentsRow: studentsRow() });
 
   assert.equal(first.plan.students[0].jwbMatchStatus, "matched");
-  assert.equal(first.plan.students[0].jwbSourceRow, 101);
+  assert.equal(first.plan.students[0].jwbSourceRow, undefined);
+  assert.equal(first.plan.students[0].historicalJwbSnapshot?.currentAggregate?.jwbSourceRow, 101);
   assert.deepEqual(first.plan.students, second.plan.students);
   assert.notEqual(first.response.planFingerprint, second.response.planFingerprint);
   assert.equal(second.sourceRevisions.jwb, "jwb-revision-b");
@@ -874,22 +912,26 @@ test("ambiguity blocks commit by default and is still returned in the dry run", 
   }, prepared), serviceError("ambiguous_plan"));
 });
 
-test("an empty replacement plan is visible but cannot be committed", () => {
+test("a named inactive Tencent roster row still creates a formal fallback student", () => {
   const snapshot = sourceSnapshot();
   snapshot.master.rows = [{ sourceRow: 1, name: "Excluded Learner", status: "不活跃 + 无课时" }];
   snapshot.jwb.rows = [];
   const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
 
-  assert.equal(prepared.plan.students.length, 0);
-  assert.equal(prepared.response.canCommit, false);
-  assert.equal(prepared.response.summary.excluded, 1);
-  assert.throws(() => assertStudentImportCommit({
+  assert.equal(prepared.plan.students.length, 1);
+  assert.equal(prepared.plan.students[0].status, "不活跃 + 无课时");
+  assert.equal(prepared.plan.students[0].jwbMatchStatus, "unmatched");
+  assert.equal(prepared.plan.students[0].studentNumber, "20260818001");
+  assert.equal(prepared.plan.students[0].studentNumberDateSource, "formal_import_date");
+  assert.equal(prepared.response.canCommit, true);
+  assert.equal(prepared.response.summary.excluded, 0);
+  assert.doesNotThrow(() => assertStudentImportCommit({
     planFingerprint: prepared.response.planFingerprint,
     expectedStudentVersion: prepared.response.expectedStudentVersion,
-  }, prepared), serviceError("empty_plan"));
+  }, prepared));
 });
 
-test("fails closed when studying or hour-bearing master identities are not matched to JWB", () => {
+test("JWB identity coverage remains diagnostic and never blocks named Tencent master rows", () => {
   const snapshot = sourceSnapshot();
   snapshot.master.rows = [
     { sourceRow: 1, name: "Unmatched Studying Learner", status: "在读" },
@@ -899,16 +941,18 @@ test("fails closed when studying or hour-bearing master identities are not match
   const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
 
   assert.deepEqual(prepared.response.identityCoverage, {
-    requiredMasterRows: 1,
+    requiredMasterRows: 2,
     matchedRequiredMasterRows: 0,
-    missingRequiredMasterRows: 1,
-    ready: false,
+    missingRequiredMasterRows: 2,
+    ready: true,
   });
-  assert.equal(prepared.response.canCommit, false);
-  assert.throws(() => assertStudentImportCommit({
+  assert.equal(prepared.response.canCommit, true);
+  assert.doesNotThrow(() => assertStudentImportCommit({
     planFingerprint: prepared.response.planFingerprint,
     expectedStudentVersion: prepared.response.expectedStudentVersion,
-  }, prepared), serviceError("insufficient_identity_coverage"));
+  }, prepared));
+  assert.equal(prepared.plan.students.every((student) =>
+    student.jwbMatchStatus === "unmatched" && student.studentNumberDateSource === "formal_import_date"), true);
 });
 
 test("allows a master row explicitly marked active without hours to omit a JWB identity", () => {
@@ -918,9 +962,9 @@ test("allows a master row explicitly marked active without hours to omit a JWB i
   const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
 
   assert.deepEqual(prepared.response.identityCoverage, {
-    requiredMasterRows: 0,
+    requiredMasterRows: 1,
     matchedRequiredMasterRows: 0,
-    missingRequiredMasterRows: 0,
+    missingRequiredMasterRows: 1,
     ready: true,
   });
   assert.equal(prepared.response.canCommit, true);
@@ -985,6 +1029,37 @@ test("server preview consumes the durable student-number reservation snapshot", 
     sourceSnapshot: snapshot,
     studentsRow: studentsRow(),
   }), serviceError("invalid_source_snapshot"));
+});
+
+test("number provenance is fingerprinted and distinguishes JWB history from the formal import day", () => {
+  const jwbDated = prepareStudentImport({
+    sourceSnapshot: sourceSnapshot({ firstJwbHourEntryDate: "2024-02-03" }),
+    studentsRow: studentsRow(),
+  });
+  const fallbackSnapshot = sourceSnapshot();
+  fallbackSnapshot.master.rows = [fallbackSnapshot.master.rows[1]];
+  fallbackSnapshot.jwb.rows = [];
+  const fallback = prepareStudentImport({
+    sourceSnapshot: fallbackSnapshot,
+    studentsRow: studentsRow(),
+  });
+  const nextDay = prepareStudentImport({
+    sourceSnapshot: fallbackSnapshot,
+    studentsRow: studentsRow(),
+    formalImportDate: "2026-08-19",
+  });
+
+  assert.equal(jwbDated.plan.students[0]?.studentNumber, "20240203001");
+  assert.equal(jwbDated.plan.students[0]?.studentNumberDateSource, "jwb_first_positive_contract");
+  // Aggregate-only JWB facts stay read-only, even while their verified first
+  // positive contract date supplies the immutable student-number origin.
+  assert.equal(jwbDated.plan.students[0]?.firstJwbHourEntryDate, undefined);
+  assert.equal(jwbDated.plan.students[0]?.historicalJwbSnapshot?.currentAggregate?.firstJwbHourEntryDate, "2024-02-03");
+  assert.equal(fallback.plan.students[0]?.studentNumber, "20260818001");
+  assert.equal(fallback.plan.students[0]?.studentNumberDateSource, "formal_import_date");
+  assert.equal(fallback.sourceRevisions.formalImportDate, "2026-08-18");
+  assert.equal(nextDay.plan.students[0]?.studentNumber, "20260819001");
+  assert.notEqual(fallback.response.planFingerprint, nextDay.response.planFingerprint);
 });
 
 test("preserves valid date-only purchases in current manual lesson packages", () => {
@@ -1346,6 +1421,7 @@ test("source ingest rejects mixed, inferred or weakly typed uploads", () => {
 
 test("dry run reports authoritative packages and missing package-level source data", () => {
   const snapshot = sourceSnapshot();
+  snapshot.master.rows = [snapshot.master.rows[0]];
   snapshot.jwb.rows[0].lessonPackages = [{
     sourcePackageId: "pkg-101",
     name: "English",

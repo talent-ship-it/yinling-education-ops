@@ -575,6 +575,65 @@ test("generic student writes cannot create or mutate managed exam history", () =
   transition("students", [], [{ id: "S-NEW", name: "New Student", owner: "Abby", exams: [] }]);
 });
 
+test("generic student writes cannot add, change, or delete server-owned import provenance", () => {
+  const legacyNumberedStudent = {
+    ...student,
+    studentNumber: "20260817001",
+  };
+  const historicalJwbSnapshot = {
+    retained: {
+      lessonPackages: [{ id: "JWB-PKG-1", name: "English", source: "jwb" }],
+      remainingHours: 8,
+      contractHours: 20,
+      firstJwbHourEntryDate: "2026-08-01",
+      packageCoverage: "partial",
+      jwbSourceRow: 12,
+    },
+    currentAggregate: {
+      remainingHours: 8,
+      contractHours: 20,
+      firstJwbHourEntryDate: "2026-08-01",
+      packageCoverage: "partial",
+      jwbSourceRow: 12,
+    },
+  };
+  const importedStudent = {
+    ...legacyNumberedStudent,
+    studentNumberDateSource: "formal_import_date",
+    historicalJwbSnapshot,
+  };
+
+  // A legacy number without provenance cannot be claimed by a browser write.
+  assert.throws(() => transition("students", [legacyNumberedStudent], [{
+    ...legacyNumberedStudent,
+    studentNumberDateSource: "formal_import_date",
+  }]), rejected);
+  assert.throws(() => transition("students", [importedStudent], [{
+    ...importedStudent,
+    studentNumberDateSource: "system_entry_date",
+  }]), rejected);
+  const withoutDateSource = { ...importedStudent };
+  Reflect.deleteProperty(withoutDateSource, "studentNumberDateSource");
+  assert.throws(() => transition("students", [importedStudent], [withoutDateSource]), rejected);
+
+  // Historical JWB evidence is append/replace-only through the formal import,
+  // never through the generic browser state-save endpoint.
+  assert.throws(() => transition("students", [legacyNumberedStudent], [{
+    ...legacyNumberedStudent,
+    historicalJwbSnapshot,
+  }]), rejected);
+  assert.throws(() => transition("students", [importedStudent], [{
+    ...importedStudent,
+    historicalJwbSnapshot: {
+      ...historicalJwbSnapshot,
+      currentAggregate: { ...historicalJwbSnapshot.currentAggregate, remainingHours: 9 },
+    },
+  }]), rejected);
+  const withoutSnapshot = { ...importedStudent };
+  Reflect.deleteProperty(withoutSnapshot, "historicalJwbSnapshot");
+  assert.throws(() => transition("students", [importedStudent], [withoutSnapshot]), rejected);
+});
+
 test("generic task writes cannot bypass managed exam completion", () => {
   const managed = {
     id: "TSK-EXAM-1",

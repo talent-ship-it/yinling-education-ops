@@ -53,7 +53,7 @@ const GOLDEN_PROJECTION = [
     files: 7, segment: "VIP", followUp: "old-follow", location: "Perth", id: "STU-M-19XT7ZV1HRLNSV",
     name: "Carol", status: "活跃 + 有课时", sourceRow: "20", masterSourceKey: "MSK-N-049X92G1N8CFQQ",
     importSource: "master", jwbMatchStatus: "matched", jwbSourceRow: "J-C", packageCoverage: "partial",
-    remainingHours: 5, contractHours: 8,
+    remainingHours: 4, contractHours: 6,
     jiaowubaoPackageImport: {
       status: "partial_packages_unresolved_course_balances",
       currentTotalHours: 8,
@@ -63,6 +63,24 @@ const GOLDEN_PROJECTION = [
         courseId: "C-unresolved", title: "Unresolved", totalHours: 2, usedHours: 1, remainingHours: 1,
       }],
       adjustmentContracts: [],
+    },
+    historicalJwbSnapshot: {
+      retained: {
+        lessonPackages: [{
+          id: "PKG-JWB-PRESERVE", name: "Preserved managed", subjectIds: ["SCI"],
+          purchaseRecords: [{ id: "BUY-JWB-PRESERVE", purchasedAt: "2025-02-02T00:00:00.000Z", hours: 6 }],
+          consumedHours: 2,
+        }],
+        remainingHours: 4,
+        contractHours: 6,
+        packageCoverage: "partial",
+      },
+      currentAggregate: {
+        remainingHours: 5,
+        contractHours: 8,
+        packageCoverage: "partial",
+        jwbSourceRow: "J-C",
+      },
     },
     lessonPackages: [
       {
@@ -89,14 +107,21 @@ const GOLDEN_PROJECTION = [
     timezone: "Australia/Brisbane", teacher: "待匹配", next: "核对课程、课包与老师", nextTone: "amber",
     files: 0, segment: "已报名", followUp: "未记录", location: "Brisbane", id: "STU-M-0HUB6NB0OW7P1N",
     name: "Dave", status: "活跃 + 无课时", sourceRow: "50", masterSourceKey: "MSK-N-1QE0DTR0UMDLLP",
-    importSource: "master", jwbMatchStatus: "matched", jwbSourceRow: "J-D", packageCoverage: "none",
-    remainingHours: -2, contractHours: 0,
+    importSource: "master", jwbMatchStatus: "matched",
     jiaowubaoPackageImport: {
       status: "aggregate_only_negative_balance",
       currentTotalHours: 0,
       currentUsedHours: 2,
       currentRemainingHours: -2,
       adjustmentContracts: [],
+    },
+    historicalJwbSnapshot: {
+      currentAggregate: {
+        remainingHours: -2,
+        contractHours: 0,
+        packageCoverage: "none",
+        jwbSourceRow: "J-D",
+      },
     },
   },
   {
@@ -118,6 +143,22 @@ const GOLDEN_PROJECTION = [
     status: "不活跃 + 无课时", importArchived: true, importArchivedReason: "referenced_history",
   },
 ];
+
+// The earlier base migration remains immutable and carries its own fixture.
+// Reconstruct its legacy active-ledger expectation only for that historical
+// fixture; the primary golden above is the current master-authoritative TS
+// projection contract.
+const BASE_GOLDEN_PROJECTION = structuredClone(GOLDEN_PROJECTION);
+const baseCarol = BASE_GOLDEN_PROJECTION.find((student) => student.id === "STU-M-19XT7ZV1HRLNSV");
+delete baseCarol.historicalJwbSnapshot;
+baseCarol.remainingHours = 5;
+baseCarol.contractHours = 8;
+const baseDave = BASE_GOLDEN_PROJECTION.find((student) => student.id === "STU-M-0HUB6NB0OW7P1N");
+delete baseDave.historicalJwbSnapshot;
+baseDave.jwbSourceRow = "J-D";
+baseDave.packageCoverage = "none";
+baseDave.remainingHours = -2;
+baseDave.contractHours = 0;
 
 const GOLDEN_PROJECTION_JSON = JSON.stringify(GOLDEN_PROJECTION);
 
@@ -337,13 +378,10 @@ test("TypeScript golden fixture covers every projection precedence branch", () =
   });
 
   assert.deepEqual(plan.students, GOLDEN_PROJECTION);
-  assert.deepEqual(plan.ambiguous, [{
-    kind: "name",
-    normalizedName: "bob",
-    masterSourceRows: ["30"],
-    jwbSourceRows: ["J-B1", "J-B2"],
-    existingStudentIds: [],
-  }]);
+  // Optional JWB ambiguity is displayed on the master record but no longer
+  // prevents the authoritative Tencent roster from producing a formal plan.
+  assert.deepEqual(plan.ambiguous, []);
+  assert.equal(plan.students.find((student) => student.name === "Bob")?.jwbMatchStatus, "ambiguous");
   assert.ok(!GOLDEN_PROJECTION_JSON.includes("DROP-ME"));
   assert.ok(!GOLDEN_PROJECTION_JSON.includes("PKG-JWB-OLD"));
 });
@@ -586,5 +624,5 @@ test("canonical projection helpers are private and carry a fixed SQL fixture", (
 
   const expected = fixture.match(/expected_projection\s*:=\s*'([^']*)'::jsonb/i);
   assert.ok(expected, "projection fixture expected value must be literal and inspectable");
-  assert.deepEqual(JSON.parse(expected[1]), GOLDEN_PROJECTION);
+  assert.deepEqual(JSON.parse(expected[1]), BASE_GOLDEN_PROJECTION);
 });

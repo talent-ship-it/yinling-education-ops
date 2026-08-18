@@ -28,7 +28,7 @@ test("SQL automatic matching uses only the exact full-name key", () => {
   assert.match(migration, /create or replace function internal\.student_import_master_review_name_key\(p_name text\)[\s\S]*select internal\.student_import_name_key\(p_name\)/i);
   assert.match(migration, /create or replace function internal\.student_import_cjk_name_key\(p_name text\)[\s\S]*select ''::text/i);
   assert.match(migration, /student_import_name_key\('张·三'\) =[\s\S]*student_import_name_key\('张（三）'\)/i);
-  assert.match(service, /student-import-plan-v8-strict-or-reviewed-jwb-annotation-match/);
+  assert.match(service, /student-import-plan-v9-master-authoritative-jwb-supplemental/);
 });
 
 test("the forward migration preserves old reviews but blocks non-exact links at every write and projection boundary", () => {

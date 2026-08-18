@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, domain, service] = await Promise.all([
+const [migration, masterAuthoritativeMigration, domain, service] = await Promise.all([
   readFile(
     new URL(
       "../supabase/migrations/20260817000400_support_authoritative_master_jwb_member_id.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFile(
+    new URL(
+      "../supabase/migrations/20260817000800_tencent_master_roster_authoritative.sql",
       import.meta.url,
     ),
     "utf8",
@@ -22,20 +29,22 @@ test("the Tencent 教务宝学员编号 header is normalized and blank cells are
   assert.match(domain, /jwbMemId\?: StudentImportSourceKey/);
 });
 
-test("an authoritative JWB ID is constrained to strict full-name, one-to-one disambiguation", () => {
-  assert.match(domain, /master_jwb_member_id_name_mismatch/);
+test("a master JWB ID is strict enrichment evidence, never a master-import admission gate", () => {
+  assert.match(domain, /invalidJwbMemberMasterKeys/);
+  assert.match(domain, /invalid_jwb_member_id/);
   assert.match(domain, /duplicate_master_jwb_member_id/);
   assert.match(domain, /master_jwb_member_id_identity_link_conflict/);
-  assert.match(domain, /Master Jiaowubao member ID may only disambiguate an exact full-name match/);
-  assert.match(migration, /student_import_master_jwb_member_id_error/i);
-  assert.match(migration, /duplicate_student_import_master_jwb_member_id/i);
-  assert.match(migration, /student_import_master_jwb_member_id_name_mismatch/i);
-  assert.match(migration, /student_import_master_jwb_member_id_identity_link_conflict/i);
-  assert.match(migration, /internal\.student_import_name_key\(master_row ->> 'name'\)[\s\S]*internal\.student_import_name_key\(matched_jwb ->> 'name'\)/i);
-  assert.match(migration, /nullif\(internal\.student_import_source_key\(master\.value -> 'jwbMemId'\), ''\) is not null/i);
+  assert.match(domain, /reviewedAnnotationMemberMasterKeys/);
+  assert.match(domain, /memberIdAllowsReviewedJwb/);
+  assert.match(masterAuthoritativeMigration, /A member ID is a strict enrichment selector, not an import-existence gate/i);
+  assert.match(masterAuthoritativeMigration, /unknown\/cross-name IDs merely cause the JWB leg to be ignored/i);
+  assert.match(masterAuthoritativeMigration, /student_import_master_jwb_member_id_error/i);
+  assert.match(masterAuthoritativeMigration, /duplicate_student_import_master_jwb_member_id/i);
+  assert.match(masterAuthoritativeMigration, /declared_member_ids/i);
+  assert.match(masterAuthoritativeMigration, /nullif\(internal\.student_import_source_key\([^)]*jwbMemId[^)]*\), ''\)/i);
 });
 
-test("source ingest, reviewed-link writes, canonical commit, and replay share the new guard", () => {
+test("source ingest keeps malformed/duplicate IDs fail-closed while final projection downgrades stale JWB legs", () => {
   assert.match(migration, /put_student_import_source_rows\(text,text,text,text,jsonb,text\)/i);
   assert.match(migration, /student_import_master_jwb_member_id_allowed_fields_anchor_mismatch/i);
   assert.match(migration, /student_import_master_jwb_member_id_validation_anchor_mismatch/i);
@@ -49,5 +58,7 @@ test("source ingest, reviewed-link writes, canonical commit, and replay share th
   assert.match(migration, /student_import_master_jwb_member_id_name_fixture_missing/i);
   assert.match(migration, /student_import_master_jwb_member_id_duplicate_fixture_missing/i);
   assert.match(migration, /student_import_master_jwb_member_id_excluded_fixture_missing/i);
+  assert.match(masterAuthoritativeMigration, /when downgradeable then raw_link - 'jwbSourceRow' - 'matchStrategy'/i);
+  assert.match(masterAuthoritativeMigration, /optional-enrichment ambiguity/i);
   assert.doesNotMatch(migration, /delete\s+from\s+internal\.student_import_identity_link_sets/i);
 });

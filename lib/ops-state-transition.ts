@@ -804,6 +804,21 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
     if (existing && existing.studentNumber !== undefined && !same(existing.studentNumber, studentNumber)) {
       forbidden("学生编号由系统分配后不可修改。");
     }
+    const studentNumberDateSource = student.studentNumberDateSource;
+    if (studentNumberDateSource !== undefined && studentNumberDateSource !== "jwb_first_positive_contract"
+      && studentNumberDateSource !== "formal_import_date"
+      && studentNumberDateSource !== "system_entry_date") {
+      invalid("学生编号日期来源格式不正确。");
+    }
+    if (studentNumberDateSource !== undefined && studentNumber === undefined) {
+      invalid("学生编号日期来源必须与学生编号一起保存。");
+    }
+    if (!existing && studentNumberDateSource !== undefined) {
+      forbidden("新建学生的学生编号日期来源由服务器自动分配。");
+    }
+    if (existing && !same(existing.studentNumberDateSource, studentNumberDateSource)) {
+      forbidden("学生编号日期来源只能由正式导入或服务器分配流程修改。");
+    }
     // Import provenance is a server-owned boundary. In particular, a generic
     // browser write cannot pretend to be a formal master import in order to
     // obtain a historical JWB-dated student number.
@@ -812,6 +827,12 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
     }
     if (existing && !same(existing.importSource, student.importSource)) {
       forbidden("学生导入来源只能由正式导入流程修改。");
+    }
+    if (
+      (!existing && Object.hasOwn(student, "historicalJwbSnapshot"))
+      || (existing && !same(existing.historicalJwbSnapshot, student.historicalJwbSnapshot))
+    ) {
+      forbidden("教务宝历史快照只能由正式导入流程写入或修改。");
     }
     if (existing?.importArchived === true && !same(existing, student)) {
       forbidden("已归档学生档案只能查看，不能通过通用保存修改。");

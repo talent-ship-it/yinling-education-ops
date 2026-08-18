@@ -677,6 +677,7 @@ export function commitStudentImportPlanAtomic(input: {
     masterDuplicateResolutions: string;
     fuAttachments: string;
     bookingsVersion: number;
+    formalImportDate: string;
   }>;
   students: readonly ImportedStudentRecord[];
   actor: string;

@@ -602,3 +602,33 @@ test("wires controlled raw JWB and two-workbook teacher imports into the sync wo
   assert.match(teacherIdentityRoute, /putTeacherImportIdentityLink/);
   assert.match(teacherService, /prepareTeacherImport/);
 });
+
+test("presents master-authoritative students without JWB separately from unresolved JWB ledgers", async () => {
+  const [client, recordsPanel] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/student-records-panel.tsx"),
+  ]);
+
+  assert.match(client, /jwbMatchStatus\?: "matched" \| "unmatched" \| "ambiguous"/);
+  assert.match(client, /腾讯总表已建档；课时和课包暂为空/);
+  assert.match(client, /腾讯总表有效档案 · 未关联教务宝资料/);
+  assert.match(client, /腾讯总表有效档案 · 多个教务宝候选待核对/);
+  assert.match(client, /historicalJwbSnapshot\?: StudentHistoricalJwbSnapshot/);
+  assert.match(client, /仅作为只读历史证据，不能用于排课或扣课/);
+  assert.match(client, /hasActiveLessonPackages/);
+  assert.match(client, /现有可用课包已单独保留，仍可用于排课或扣课/);
+  assert.match(client, /hasVerifiedActiveJwbPackages/);
+  assert.match(client, /当前可核对课包仍可使用；历史快照仅独立保留供核验/);
+  assert.match(client, /学号日期：系统建档日期/);
+  assert.match(client, /腾讯学生总表是唯一学生档案来源/);
+  assert.match(client, /formalImportDate: string/);
+  assert.match(client, /学号使用正式导入日期/);
+  assert.match(client, /仅在教务宝、未出现在总表的旧账号不会自动建档/);
+  assert.match(recordsPanel, /腾讯总表已建档，暂未关联教务宝资料；课时和课包暂为空/);
+  assert.match(recordsPanel, /腾讯总表已建档，教务宝有多个候选待核对；当前不采用任何候选，课时和课包暂为空/);
+  assert.match(recordsPanel, /历史待核验 · 不可用于排课或扣课/);
+  assert.match(recordsPanel, /studentHistoricalJwbSnapshotEvidence/);
+  assert.match(recordsPanel, /hasHistoricalJwbFacts/);
+  assert.match(recordsPanel, /教务宝当前余额已保留，但缺少可核对的逐课程购买历史，尚未建立课包/);
+  assert.match(recordsPanel, /当前仅显示有购买历史可核对的课包；其余课程余额仍保留在教务宝汇总中/);
+});

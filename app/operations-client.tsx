@@ -133,7 +133,7 @@ import {
 } from "@/lib/student-records";
 import { LpRevisionHistory, LpWorkflowDetails, LpWorkflowFields, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
 import { ToDoList, type ToDoFilter } from "@/app/to-do-list";
-import { StudentRecordsPanel, type StudentRecordPanelSection } from "@/app/student-records-panel";
+import { StudentRecordsPanel, type StudentHistoricalJwbSnapshot, type StudentRecordPanelSection } from "@/app/student-records-panel";
 import { ScheduleMonthView, type ScheduleMonthAvailability, type ScheduleMonthLesson } from "@/app/schedule-month-view";
 import { ExamForm, FollowUpForm, LessonPackageForm, parseExamFormData, parseFollowUpFormData, parseLessonPackageFormData } from "@/app/student-record-forms";
 import {
@@ -276,6 +276,9 @@ type Student = {
   contractHours?: number;
   contractEffectiveDate?: string;
   firstJwbHourEntryDate?: string;
+  /** Jiaowubao enriches a Tencent-master student but never determines whether the student is valid. */
+  jwbMatchStatus?: "matched" | "unmatched" | "ambiguous";
+  studentNumberDateSource?: "jwb_first_positive_contract" | "formal_import_date" | "system_entry_date";
   jwbSyncedAt?: string;
   jwbSyncStatus?: string;
   reportProgress?: string;
@@ -284,6 +287,8 @@ type Student = {
   exams?: StudentExamRecord[];
   lessonPackages?: StudentLessonPackage[];
   packageCoverage?: "complete" | "partial" | "none";
+  /** Read-only retained JWB evidence; never an active lesson package ledger. */
+  historicalJwbSnapshot?: StudentHistoricalJwbSnapshot;
   lessonLedger?: LessonHourLedgerEntry[];
   notes?: string;
   lpNeed?: LpNeed;
@@ -589,6 +594,8 @@ type ConfirmRequest = {
 type StudentImportPreview = {
   planFingerprint: string;
   expectedStudentVersion: number;
+  /** Melbourne day used only when a new Tencent-master student lacks a safe JWB first-positive-contract date. */
+  formalImportDate: string;
   canCommit: boolean;
   sources: {
     master: { sourceId: string; revision: string; rowCount: number };
@@ -3715,7 +3722,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       if (!response.ok) throw new Error(body.error || "学生导入预检失败");
       setStudentImportPreview(body as StudentImportPreview);
       const summary = (body as StudentImportPreview).summary;
-      addAudit("预检学生正式导入", `新增 ${summary.insert} · 更新 ${summary.update} · 课包 ${summary.importedPackages} · 缺逐课包 ${summary.studentsMissingPackageData}`, summary.ambiguous || summary.studentsMissingPackageData ? "amber" : "blue");
+      addAudit("预检学生正式导入", `新增 ${summary.insert} · 更新 ${summary.update} · 逐课包 ${summary.importedPackages} · 暂无可核对课包账本 ${summary.studentsMissingPackageData}`, summary.ambiguous || summary.studentsMissingPackageData ? "amber" : "blue");
       await refreshStudentIdentityReview(false);
     } catch (error) {
       notify(error instanceof Error ? error.message : "学生导入预检失败");
@@ -3760,7 +3767,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     requestConfirmation({
       title: "确认清空全部学生身份链接",
       detail: `当前已保存 ${studentIdentityLinkStatus?.count ?? 0} 条人工审核链接。`,
-      items: ["清空后正式导入会重新变为身份覆盖不足", "需要逐条重新人工确认才能恢复"],
+      items: ["清空后仅失去教务宝资料补充关联", "腾讯总表学生仍可建档；未关联的课时和课包保持为空"],
       confirmLabel: "确认清空全部链接",
       tone: "danger",
       onConfirm: clearStudentIdentityLinks,
@@ -3858,13 +3865,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     requestConfirmation({
       title: "确认正式导入学生资料",
-      detail: `总表 ${preview.sources.master.rowCount} 行 · 教务宝 ${preview.sources.jwb.rowCount} 行`,
+      detail: `腾讯学生总表 ${preview.sources.master.rowCount} 行为唯一建档来源 · 教务宝 ${preview.sources.jwb.rowCount} 行仅补充课时、课包和首笔课时日期`,
       items: [
         `新增 ${preview.summary.insert} · 更新 ${preview.summary.update} · 保留 ${preview.summary.unchanged}`,
-        `排除不活跃且无课时 ${preview.summary.excluded} · 保留手工试听 ${preview.summary.preservedManualTrials}`,
+        `来源处理后不纳入 ${preview.summary.excluded} · 保留手工试听 ${preview.summary.preservedManualTrials}`,
         `历史引用只读归档 ${preview.summary.preservedReferencedArchived}`,
-        `未匹配 ${preview.summary.unmatched} · 歧义 ${preview.summary.ambiguous}`,
-        `逐课包 ${preview.summary.importedPackages} · 缺逐课包权威数据 ${preview.summary.studentsMissingPackageData}`,
+        `未安全关联教务宝补充资料 ${preview.summary.unmatched} · 总表学生仍会建档 · 歧义 ${preview.summary.ambiguous}`,
+        `逐课包 ${preview.summary.importedPackages} · ${preview.summary.studentsMissingPackageData} 位暂无可核对课包账本`,
+        `未安全关联教务宝的新学生，学号使用正式导入日期 ${preview.formalImportDate}`,
       ],
       confirmLabel: "原子提交导入",
       tone: "danger",
@@ -6485,7 +6493,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <section className="sync-workspace">
         {canUseAdminScope ? <section className="panel import-preview-panel">
           <div className="panel-header">
-            <div><h2>学生正式导入</h2></div>
+            <div><h2>学生正式导入</h2><small>腾讯学生总表是唯一学生档案来源；教务宝只补充课时、课包和首笔课时日期。</small></div>
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentImportBusy} onClick={() => void previewStudentImport()}>{studentImportBusy ? "正在预检…" : "读取最新总表与教务宝"}</button>
               <button className="primary-button" type="button" disabled={studentImportBusy || !studentImportPreview?.canCommit} onClick={commitStudentImport}>确认正式导入</button>
@@ -6497,8 +6505,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               const status = studentImportSourceStatus[sourceKind];
               return <article className="student-source-ingest-card" key={sourceKind}>
                 <div><strong>{sourceLabel} JSON</strong>{status ? <StatusPill tone="green">{status.rowCount} 行已保存</StatusPill> : <StatusPill tone="amber">待选择文件</StatusPill>}</div>
+                {sourceKind === "master" ? <div className="fixed-source-format"><small>唯一权威来源</small><strong>有姓名的总表学生都会建立档案</strong></div> : null}
                 {sourceKind === "jwb" ? <>
-                  <div className="fixed-source-format"><small>固定格式</small><strong>教务宝安全字段（学生 + 合同 + 逐课程余额）</strong></div>
+                  <div className="fixed-source-format"><small>补充来源</small><strong>教务宝安全字段（学生 + 合同 + 逐课程余额）</strong></div>
                   <label>退费 / 转出处理
                     <select value={studentJwbNegativePolicy} onChange={(event) => setStudentJwbNegativePolicy(event.target.value as "reject" | "aggregate-only")}>
                       <option value="reject">发现后阻止导入</option>
@@ -6520,8 +6529,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </div>
           <div className="student-identity-link-bar">
             <div>
-              <strong>人工审核身份链接</strong>
-              <small>{studentIdentityLinkStatus ? `当前已保存 ${studentIdentityLinkStatus.count} 条；总表与教务宝须全名一致` : "只根据当前服务器来源生成全名一致候选，不会自动关联"}</small>
+              <strong>教务宝资料人工关联（可选补充）</strong>
+              <small>{studentIdentityLinkStatus ? `当前已保存 ${studentIdentityLinkStatus.count} 条；仅用于补充课时、课包和首笔课时日期，不影响总表学生建档` : "可为总表学生补充教务宝资料；未关联教务宝的总表学生仍会建档"}</small>
             </div>
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentIdentityLinkBusy} onClick={() => void refreshStudentIdentityReview()}>{studentIdentityLinkBusy ? "正在读取…" : "读取人工审核候选"}</button>
@@ -6530,10 +6539,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </div>
           <div className="student-identity-link-bar">
             <div>
-              <strong>教务宝英文括号备注高置信关联</strong>
+              <strong>教务宝英文括号备注高置信关联（可选补充）</strong>
               <small>{studentIdentityAnnotationPreview
                 ? `候选 ${studentIdentityAnnotationPreview.candidateCount} 条；待保存 ${studentIdentityAnnotationPreview.pendingCount} 条`
-                : "只处理教务宝姓名末尾单个纯英文括号备注，且去除后与总表完整姓名一对一相同"}</small>
+                : "只处理教务宝姓名末尾单个纯英文括号备注；关联仅补充教务宝资料，不影响总表学生建档"}</small>
             </div>
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentIdentityAnnotationBusy} onClick={() => void refreshStudentIdentityAnnotationReview()}>{studentIdentityAnnotationBusy ? "正在预检…" : "预检高置信候选"}</button>
@@ -6543,7 +6552,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {studentIdentityReviewCandidates?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-review-title">
             <div>
               <h3 id="student-identity-review-title">学生身份逐条人工确认</h3>
-              <small>候选仅作为人工证据。总表与教务宝必须在安全规范化后全名一致；姓名不一致请先由教务修正总表。每次确认都会由服务器和数据库重新核对当前来源版本、来源行及学生版本。</small>
+              <small>候选只用于补充教务宝资料；腾讯总表学生无需关联即可导入。当前确认仍由服务器和数据库按严格规则重新核对来源版本、来源行及学生版本。</small>
             </div>
             {studentIdentityReviewCandidates.map((candidate) => <article key={candidate.candidateKey}>
               <div>
@@ -6574,8 +6583,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </section> : studentIdentityReviewCandidates ? <div className="form-notice"><Link2 size={16} /> 当前没有可提交的人工身份审核候选。</div> : null}
           {studentIdentityManualReview ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-manual-title">
             <div>
-              <h3 id="student-identity-manual-title">剩余学生手工配对</h3>
-              <small>这里只能确认总表与教务宝已全名一致的记录；姓名不一致必须先由教务修正总表，不能用手工配对绕过。提交到服务器的只有当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
+              <h3 id="student-identity-manual-title">剩余教务宝资料手工配对（可选）</h3>
+              <small>这里只用于为总表学生补充教务宝资料，不影响学生建档。提交时仍会按服务器当前审核规则核对；只提交当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
             </div>
             <article>
               <div>
@@ -6626,9 +6635,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <section className="sync-summary">
               <SummaryCard icon={<UserPlus size={19} />} tone="green" title={`${studentImportPreview.summary.insert} 新增 · ${studentImportPreview.summary.update} 更新`} text={`${studentImportPreview.summary.unchanged} 位无需修改`} />
               <SummaryCard icon={<UserRoundX size={19} />} tone="amber" title={`${studentImportPreview.summary.excluded} 位按规则排除`} text={`${studentImportPreview.summary.preservedManualTrials} 位手工试听保留 · ${studentImportPreview.summary.preservedReferencedArchived} 位历史归档`} />
-              <SummaryCard icon={<CircleAlert size={19} />} tone={studentImportPreview.summary.ambiguous ? "red" : "blue"} title={`${studentImportPreview.summary.ambiguous} 个歧义`} text={`${studentImportPreview.summary.unmatched} 个未匹配`} />
-              <SummaryCard icon={<BookOpen size={19} />} tone={studentImportPreview.summary.studentsMissingPackageData ? "amber" : "green"} title={`${studentImportPreview.summary.importedPackages} 个逐课包`} text={`${studentImportPreview.summary.studentsMissingPackageData} 位缺逐课包数据`} />
-              <SummaryCard icon={<Link2 size={19} />} tone={studentImportPreview.identityCoverage.ready ? "green" : "red"} title={`${studentImportPreview.identityCoverage.matchedRequiredMasterRows}/${studentImportPreview.identityCoverage.requiredMasterRows} 个必要身份已关联`} text={studentImportPreview.identityCoverage.ready ? "教务宝身份覆盖已就绪" : `${studentImportPreview.identityCoverage.missingRequiredMasterRows} 位仍需审核身份对应`} />
+              <SummaryCard icon={<CircleAlert size={19} />} tone={studentImportPreview.summary.ambiguous ? "red" : "blue"} title={`${studentImportPreview.summary.ambiguous} 个歧义`} text={`${studentImportPreview.summary.unmatched} 条教务宝补充资料未安全关联`} />
+              <SummaryCard icon={<BookOpen size={19} />} tone={studentImportPreview.summary.studentsMissingPackageData ? "amber" : "green"} title={`${studentImportPreview.summary.importedPackages} 个逐课包`} text={`${studentImportPreview.summary.studentsMissingPackageData} 位暂无可核对课包账本`} />
+              <SummaryCard icon={<Link2 size={19} />} tone="blue" title="腾讯总表学生独立建档" text={studentImportPreview.unmatched.filter((item) => item.source === "master").length ? `${studentImportPreview.unmatched.filter((item) => item.source === "master").length} 位总表学生未安全关联教务宝，仍会导入` : "教务宝仅作补充，不影响学生建档"} />
             </section>
             {studentImportPreview.masterDuplicateResolutions?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-master-resolution-title">
               <div>
@@ -6663,8 +6672,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 </div>
               </article>)}
             </section> : null}
-            {studentImportPreview.ambiguous.length ? <div className="form-notice"><CircleAlert size={16} /> 有歧义的姓名必须先在来源中处理，系统不会猜测关联。</div> : null}
-            {!studentImportPreview.identityCoverage.ready ? <div className="form-notice"><CircleAlert size={16} /> 在读、有课时或加课待排学生必须先与教务宝身份完成审核对应；系统不会按相似姓名猜测，也不会允许提交低覆盖计划。</div> : null}
+            {studentImportPreview.ambiguous.length ? <div className="form-notice"><CircleAlert size={16} /> 有歧义的总表来源记录仍需先在来源中处理；教务宝资料关联不会阻止其他总表学生建档。</div> : null}
+            <div className="form-notice"><Link2 size={16} /> 腾讯学生总表是唯一学生档案来源：有姓名的总表学生都会导入。未安全关联教务宝（包括多个候选待核对）且没有历史资料时，学生档案有效、课时和课包为空；已有历史资料时保留待核验。已关联但课包无法安全还原时，保留教务宝余额并显示“暂无可核对课包账本”。未安全关联教务宝的新学生，学号使用本次正式导入日期 {studentImportPreview.formalImportDate}，并在档案中注明来源。仅在教务宝、未出现在总表的旧账号不会自动建档。</div>
           </> : <EmptyState title="尚未预检" detail="" />}
         </section> : null}
         {canUseAdminScope ? <section className="panel import-preview-panel">
@@ -10031,12 +10040,76 @@ function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals
   const historicalLpItems = readOnly ? lpItems.filter((item) => item.studentId === student.id) : [];
   const historicalMessages = readOnly ? messages.filter((message) => message.studentId === student.id) : [];
   const lowHours = isActiveStudent(student) && student.remainingHours !== undefined && student.remainingHours < lowHoursThreshold;
+  const jwbNeedsReview = student.jwbMatchStatus === "ambiguous";
+  const hasNoSafeJwb = student.jwbMatchStatus === "unmatched" || jwbNeedsReview;
+  const hasHistoricalJwbSnapshot = student.historicalJwbSnapshot !== undefined;
+  const hasActiveLessonPackages = Boolean(student.lessonPackages?.length);
+  const hasVerifiedActiveJwbPackages = student.jwbMatchStatus === "matched"
+    && (student.packageCoverage === "complete" || student.packageCoverage === "partial")
+    && hasActiveLessonPackages;
+  const hasNoActiveJwbLedger = hasNoSafeJwb || (hasHistoricalJwbSnapshot && !hasVerifiedActiveJwbPackages);
+  const jwbHoursLabel = hasNoActiveJwbLedger && hasHistoricalJwbSnapshot
+    ? (english ? "Jiaowubao historical evidence" : "教务宝历史资料")
+    : hasNoSafeJwb
+    ? (english ? "Jiaowubao data" : "教务宝资料")
+    : (english ? "Jiaowubao remaining / current total" : "教务宝剩余 / 当前总课时");
+  const jwbHoursValue = hasNoActiveJwbLedger && hasHistoricalJwbSnapshot
+    ? (english ? "Historical evidence pending verification" : "历史待核验")
+    : hasNoSafeJwb
+      ? jwbNeedsReview
+        ? (english ? "Multiple Jiaowubao candidates need review" : "多个教务宝候选待核对")
+        : (english ? "No linked Jiaowubao data" : "暂无教务宝资料")
+      : student.remainingHours === undefined
+        ? (english ? "Pending import" : "待导入")
+        : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "hours" : "课时"}`;
+  const jwbHoursDetail = hasNoActiveJwbLedger && hasHistoricalJwbSnapshot
+    ? hasActiveLessonPackages
+      ? (english ? "Historical Jiaowubao evidence is read-only and cannot be used to schedule or deduct lessons; existing active packages remain usable" : "教务宝历史资料仅作为只读证据，不能用于排课或扣课；现有可用课包仍可使用")
+      : (english ? "Read-only historical evidence only; it cannot be used to schedule or deduct lessons" : "仅作为只读历史证据，不能用于排课或扣课")
+    : hasNoSafeJwb
+      ? jwbNeedsReview
+        ? hasActiveLessonPackages
+          ? (english ? "Valid Tencent master record; no Jiaowubao candidate is currently used, while existing active packages remain usable" : "腾讯总表已建档；当前不采用任何教务宝候选，现有可用课包仍可使用")
+          : (english ? "Valid Tencent master record; no candidate is currently used, so lesson hours and packages are empty" : "腾讯总表已建档；当前不采用任何教务宝候选，课时和课包暂为空")
+        : hasActiveLessonPackages
+          ? (english ? "Valid Tencent master record; no Jiaowubao data is linked, while existing active packages remain usable" : "腾讯总表已建档；暂未关联教务宝资料，现有可用课包仍可使用")
+          : (english ? "Valid Tencent master record; lesson hours and packages are currently empty" : "腾讯总表已建档；课时和课包暂为空")
+      : student.packageCoverage === "partial"
+        ? (english ? "Verified current packages remain usable; some purchase histories still need review" : "当前可核对课包仍可使用；部分课程购买历史待核对")
+        : student.packageCoverage === "none"
+          ? (english ? "No verified package ledger" : "尚无可核对课包账本")
+          : student.contractEffectiveDate
+            ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`)
+            : lowHours
+              ? (english ? "High-priority reminder active" : "已进入强提醒")
+              : student.status === "不活跃 + 有课时" || student.status === "不活跃 + 无课时"
+                ? (english ? "No reminder for this status" : "当前状态不提醒")
+                : (english ? `Threshold: ${lowHoursThreshold} hours` : `阈值 ${lowHoursThreshold} 课时`);
+  const studentNumberDateSource = student.studentNumberDateSource === "jwb_first_positive_contract"
+    ? (english ? "Student number date: first positive Jiaowubao contract" : "学号日期：教务宝首笔正向合同")
+    : student.studentNumberDateSource === "formal_import_date"
+      ? (english ? "Student number date: formal import date" : "学号日期：正式导入日期")
+      : student.studentNumberDateSource === "system_entry_date"
+        ? (english ? "Student number date: system entry date" : "学号日期：系统建档日期")
+      : null;
+  const studentRecordSourceDetail = hasHistoricalJwbSnapshot
+    ? hasActiveLessonPackages
+      ? (english ? "The student remains valid in this system. Historical Jiaowubao evidence is read-only and cannot be used to schedule or deduct lessons; existing active packages remain usable separately." : "该学生已在本系统有效建档；历史教务宝资料仅供核验，不能用于排课或扣课；现有可用课包已单独保留，仍可用于排课或扣课。")
+      : (english ? "The student remains valid in this system. Historical Jiaowubao evidence is read-only and cannot be used to schedule or deduct lessons." : "该学生已在本系统有效建档；历史教务宝资料仅供核验，不能用于排课或扣课。")
+    : jwbNeedsReview
+      ? hasActiveLessonPackages
+        ? (english ? "The student remains valid in this system. No Jiaowubao candidate is currently used; existing active packages remain usable separately." : "该学生已在本系统有效建档；当前不采用任何教务宝候选；现有可用课包已单独保留，仍可用于排课或扣课。")
+        : (english ? "The student remains valid in this system. No Jiaowubao candidate is currently used, so lesson hours and packages remain empty." : "该学生已在本系统有效建档；当前不采用任何教务宝候选，课时和课包保持为空。")
+      : hasActiveLessonPackages
+        ? (english ? "The student remains valid in this system. No Jiaowubao data is linked; existing active packages remain usable separately." : "该学生已在本系统有效建档；暂未关联教务宝资料；现有可用课包已单独保留，仍可用于排课或扣课。")
+        : (english ? "The student remains valid in this system. Lesson hours and packages will remain empty until Jiaowubao data is linked." : "该学生已在本系统有效建档；关联教务宝资料前，课时和课包保持为空。");
   return <aside className={`student-detail ${mobileOpen ? "mobile-detail-open" : ""}`}>
     <button className="mobile-preview-close" type="button" aria-label={english ? "Close student details" : "关闭学生详情"} onClick={onClose}><ChevronLeft size={20} /> {english ? "Back to students" : "返回学生列表"}</button>
-    <div className="detail-top"><Avatar initials={student.initials} tone={readOnly ? "neutral" : statusTone(student.status)} /><div><p>{student.studentNumber ?? student.id}</p><h2>{student.name}</h2>{readOnly ? <StatusPill tone="neutral">{english ? "Historical archive · read only" : "历史归档 · 只读"}</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill>}</div></div>
+    <div className="detail-top"><Avatar initials={student.initials} tone={readOnly ? "neutral" : statusTone(student.status)} /><div><p>{student.studentNumber ?? student.id}</p>{studentNumberDateSource ? <small>{studentNumberDateSource}</small> : null}<h2>{student.name}</h2>{readOnly ? <StatusPill tone="neutral">{english ? "Historical archive · read only" : "历史归档 · 只读"}</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill>}</div></div>
     {readOnly && <div className="archive-detail-notice"><ShieldCheck size={16} /><span><strong>{english ? "Historical records are locked" : "历史记录已锁定"}</strong><small>{english ? "Lessons, documents and follow-up history remain available; new operations are disabled." : "仍可查看课次、资料和跟进历史；不能新增、编辑、上传或排课。"}</small></span></div>}
-    <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Jiaowubao remaining / current total" : "教务宝剩余 / 当前总课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "hours" : "课时"}`}</strong><em>{student.packageCoverage === "partial" ? (english ? "Some package purchase histories still need review" : "部分课程购买历史待核对") : student.packageCoverage === "none" ? (english ? "No verified package ledger" : "尚无可核对课包账本") : student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "不活跃 + 有课时" || student.status === "不活跃 + 无课时" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? `Threshold: ${lowHoursThreshold} hours` : `阈值 ${lowHoursThreshold} 课时`)}</em></span></div>
-    {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong></div>}
+    <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{jwbHoursLabel}</small><strong className={lowHours && !hasNoActiveJwbLedger ? "low-hours" : ""}>{jwbHoursValue}</strong><em>{jwbHoursDetail}</em></span></div>
+    {hasNoActiveJwbLedger ? <div className="detail-section source-detail"><span>{english ? "Student record source" : "档案来源"}</span><strong>{hasHistoricalJwbSnapshot ? jwbNeedsReview ? (english ? "Tencent master record · historical Jiaowubao evidence and multiple candidates need review" : "腾讯总表有效档案 · 历史教务宝资料待核验，多个候选待核对") : (english ? "Tencent master record · Jiaowubao historical evidence pending verification" : "腾讯总表有效档案 · 教务宝历史资料待核验") : jwbNeedsReview ? (english ? "Tencent master record · multiple Jiaowubao candidates need review" : "腾讯总表有效档案 · 多个教务宝候选待核对") : (english ? "Tencent master record · no linked Jiaowubao data" : "腾讯总表有效档案 · 未关联教务宝资料")}</strong><p>{studentRecordSourceDetail}</p></div> : student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong></div>}
+    {hasHistoricalJwbSnapshot && hasVerifiedActiveJwbPackages ? <div className="detail-section source-detail"><span>{english ? "Jiaowubao historical evidence" : "教务宝历史资料"}</span><strong>{english ? "Historical evidence pending verification · not schedulable or deductible" : "历史待核验 · 不可用于排课或扣课"}</strong><p>{english ? "Verified current lesson packages remain usable. The historical snapshot is shown separately for review only." : "当前可核对课包仍可使用；历史快照仅独立保留供核验。"}</p></div> : null}
     <div className="detail-section"><span>{english ? "Course and teacher" : "课程与老师"}</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
     <div className="detail-section student-record-entry-grid"><button type="button" onClick={() => onRecord("lp")}><strong>LP / 学校资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Learning Plan" || file.type === "学校资料")).length}</span></button><button type="button" onClick={() => onRecord("report")}><strong>Report 资料</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "Report 资料" || file.type === "成绩单")).length}</span></button><button type="button" onClick={() => onRecord("fu")}><strong>FU</strong><span>{files.filter((file) => file.studentId === student.id && (file.type === "FU" || file.type === "续课 FU" || file.type === "课堂反馈")).length}</span></button><button type="button" onClick={() => onRecord("followUp")}><strong>最近跟进</strong><span>{student.followUpHistory?.length ?? (student.followUp ? 1 : 0)}</span></button></div>
     <div className="detail-section split"><button className="inline-link" type="button" onClick={() => onRecord("lessonPackages")}>{readOnly ? "查看课时 / 课包" : "录入课时 / 课包"} {student.lessonPackages?.length ?? 0}</button><button className="inline-link" type="button" onClick={() => onRecord("exams")}>考试 {student.exams?.length ?? (student.examDate || student.examSubject ? 1 : 0)}</button></div>

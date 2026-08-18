@@ -29,13 +29,39 @@ export const STUDENT_RECORD_PANEL_SECTIONS = [
 export type StudentRecordPanelSection = (typeof STUDENT_RECORD_PANEL_SECTIONS)[number];
 export type StudentRecordFileSection = Extract<StudentRecordPanelSection, "lp" | "report" | "fu">;
 
+export type StudentHistoricalJwbSnapshotFacts = Readonly<{
+  lessonPackages?: readonly StudentLessonPackage[];
+  remainingHours?: number;
+  contractHours?: number;
+  contractEffectiveDate?: string;
+  firstJwbHourEntryDate?: string;
+  packageCoverage?: "complete" | "partial" | "none";
+  jwbSourceRow?: string | number;
+}>;
+
+/**
+ * Evidence retained from an unverified Jiaowubao mapping. It is deliberately
+ * separate from the active hours and lesson packages that scheduling may use.
+ */
+export type StudentHistoricalJwbSnapshot = Readonly<{
+  retained?: StudentHistoricalJwbSnapshotFacts;
+  currentAggregate?: Omit<StudentHistoricalJwbSnapshotFacts, "lessonPackages">;
+}>;
+
 export type StudentRecordsPanelStudent = Readonly<{
   id: string;
   name: string;
   followUp?: string;
   followUpHistory?: readonly StudentFollowUp[];
   lessonPackages?: readonly StudentLessonPackage[];
+  /** A master-authoritative student may validly have no Jiaowubao supplement. */
+  jwbMatchStatus?: "matched" | "unmatched" | "ambiguous";
+  /** Active JWB facts only; unsafe former facts live in historicalJwbSnapshot. */
+  remainingHours?: number;
+  contractHours?: number;
+  firstJwbHourEntryDate?: string;
   packageCoverage?: "complete" | "partial" | "none";
+  historicalJwbSnapshot?: StudentHistoricalJwbSnapshot;
   examSubject?: string;
   examDate?: string;
   exams?: readonly StudentExamRecord[];
@@ -80,6 +106,9 @@ export type StudentRecordsPanelProps = Readonly<{
 }>;
 
 export type StudentRecordsPanelData = Readonly<{
+  jwbMatchStatus?: "matched" | "unmatched" | "ambiguous";
+  hasHistoricalJwbFacts: boolean;
+  historicalJwbSnapshot?: StudentHistoricalJwbSnapshot;
   packageCoverage: "complete" | "partial" | "none";
   files: Readonly<Record<StudentRecordFileSection, readonly StudentRecordsPanelFile[]>>;
   followUps: readonly StudentFollowUp[];
@@ -174,6 +203,9 @@ export function buildStudentRecordsPanelData(
   const structuredExams = student.exams ?? [];
   const fallbackExam = structuredExams.length ? null : legacyExam(student);
   return {
+    jwbMatchStatus: student.jwbMatchStatus,
+    hasHistoricalJwbFacts: student.historicalJwbSnapshot !== undefined,
+    historicalJwbSnapshot: student.historicalJwbSnapshot,
     packageCoverage: student.packageCoverage ?? (student.lessonPackages?.length ? "complete" : "none"),
     files: {
       lp: sortFileHistory(groupedFiles.lp),
@@ -271,14 +303,92 @@ function FollowUpHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) 
   );
 }
 
+export function studentJwbPackageNotice(data: StudentRecordsPanelData): string | null {
+  const hasNoSafeJwb = data.jwbMatchStatus === "unmatched" || data.jwbMatchStatus === "ambiguous";
+  const noSafeJwbEmptyNotice = data.jwbMatchStatus === "ambiguous"
+    ? "腾讯总表已建档，教务宝有多个候选待核对；当前不采用任何候选，课时和课包暂为空。"
+    : "腾讯总表已建档，暂未关联教务宝资料；课时和课包暂为空。";
+  const historicalEvidenceOnlyNotice = "历史教务宝资料已作为只读快照保留待核验，不可用于排课或扣课。";
+  const historicalSnapshotNotice = `${data.jwbMatchStatus === "ambiguous"
+    ? "腾讯总表已建档，教务宝有多个候选待核对。"
+    : data.jwbMatchStatus === "unmatched"
+      ? "腾讯总表已建档，暂未关联教务宝资料。"
+      : "当前教务宝资料无法安全建立可用课包。"}${historicalEvidenceOnlyNotice}`;
+  if (data.historicalJwbSnapshot) {
+    const hasVerifiedCurrentPackages = data.jwbMatchStatus === "matched"
+      && (data.packageCoverage === "complete" || data.packageCoverage === "partial")
+      && data.lessonPackages.length > 0;
+    return data.lessonPackages.length
+      ? hasVerifiedCurrentPackages
+        ? `下方仅显示当前可用课包。当前可核对课包仍可使用；${historicalEvidenceOnlyNotice}`
+        : `下方仅显示当前可用课包。${historicalSnapshotNotice}`
+      : historicalSnapshotNotice;
+  }
+  if (!data.lessonPackages.length) {
+    if (hasNoSafeJwb) return noSafeJwbEmptyNotice;
+    return data.packageCoverage === "none"
+      ? "教务宝当前余额已保留，但缺少可核对的逐课程购买历史，尚未建立课包。"
+      : null;
+  }
+  if (hasNoSafeJwb) {
+    return data.jwbMatchStatus === "ambiguous"
+      ? "教务宝有多个候选待核对；当前未采用教务宝补充。下方仅显示现有可用课包。"
+      : "暂未关联教务宝资料；当前未采用教务宝补充。下方仅显示现有可用课包。";
+  }
+  return data.packageCoverage === "partial"
+    ? "当前仅显示有购买历史可核对的课包；其余课程余额仍保留在教务宝汇总中，需人工补齐购买记录。"
+    : null;
+}
+
+function snapshotHoursSummary(label: string, facts: StudentHistoricalJwbSnapshotFacts) {
+  const values: string[] = [];
+  if (facts.remainingHours !== undefined) values.push(`余额 ${facts.remainingHours}`);
+  if (facts.contractHours !== undefined) values.push(`总 ${facts.contractHours}`);
+  if (facts.contractEffectiveDate) values.push(`生效 ${facts.contractEffectiveDate}`);
+  if (facts.firstJwbHourEntryDate) values.push(`首笔正向合同 ${facts.firstJwbHourEntryDate}`);
+  return values.length ? `${label}：${values.join(" · ")}` : null;
+}
+
+/** Compact read-only evidence only; snapshot packages are never returned as active lesson packages. */
+export function studentHistoricalJwbSnapshotEvidence(snapshot?: StudentHistoricalJwbSnapshot): readonly string[] {
+  if (!snapshot) return [];
+  const evidence: string[] = [];
+  const retained = snapshot.retained;
+  if (retained) {
+    if (retained.lessonPackages?.length) evidence.push(`历史保留课包 ${retained.lessonPackages.length} 个`);
+    const retainedHours = snapshotHoursSummary("历史保留汇总", retained);
+    if (retainedHours) evidence.push(retainedHours);
+  }
+  const currentAggregate = snapshot.currentAggregate;
+  if (currentAggregate) {
+    const aggregateHours = snapshotHoursSummary("当前教务宝汇总（只读）", currentAggregate);
+    if (aggregateHours) evidence.push(aggregateHours);
+  }
+  return evidence;
+}
+
+function HistoricalJwbSnapshotEvidence({ snapshot }: Readonly<{ snapshot: StudentHistoricalJwbSnapshot }>) {
+  const evidence = studentHistoricalJwbSnapshotEvidence(snapshot);
+  return <div className="detail-section">
+    <span>教务宝历史资料</span>
+    <strong>历史待核验 · 不可用于排课或扣课</strong>
+    {evidence.length
+      ? evidence.map((item) => <p key={item}>{item}</p>)
+      : <p>已保留只读历史快照，待人工核验。</p>}
+  </div>;
+}
+
 function LessonPackageHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) {
+  const notice = studentJwbPackageNotice(data);
   if (!data.lessonPackages.length) return <>
-    {data.packageCoverage === "none" ? <div className="form-notice">教务宝当前余额已保留，但缺少可核对的逐课程购买历史，尚未建立课包。</div> : null}
+    {notice ? <div className="form-notice">{notice}</div> : null}
+    {data.historicalJwbSnapshot ? <HistoricalJwbSnapshotEvidence snapshot={data.historicalJwbSnapshot} /> : null}
     <EmptyRecords />
   </>;
   return (
     <>
-      {data.packageCoverage === "partial" ? <div className="form-notice">当前仅显示有购买历史可核对的课包；其余课程余额仍保留在教务宝汇总中，需人工补齐购买记录。</div> : null}
+      {notice ? <div className="form-notice">{notice}</div> : null}
+      {data.historicalJwbSnapshot ? <HistoricalJwbSnapshotEvidence snapshot={data.historicalJwbSnapshot} /> : null}
       <div className="record-list">
       {data.lessonPackages.map(({ lessonPackage, balance }) => (
         <article className="detail-section" key={lessonPackage.id}>
