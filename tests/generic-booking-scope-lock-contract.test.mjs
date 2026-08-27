@@ -5,7 +5,7 @@ import test from "node:test";
 const [client, route, canonical, forward] = await Promise.all([
   readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/api/app-state/route.ts", import.meta.url), "utf8"),
-  readFile(new URL("../supabase/migrations/20260729_bind_ops_scope_versions.sql", import.meta.url), "utf8"),
+  readFile(new URL("../supabase/migrations/20260729031203_bind_ops_scope_versions.sql", import.meta.url), "utf8"),
   readFile(new URL("../supabase/migrations/20260815035000_lock_generic_booking_scope.sql", import.meta.url), "utf8"),
 ]);
 

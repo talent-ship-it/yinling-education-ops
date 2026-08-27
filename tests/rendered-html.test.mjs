@@ -71,8 +71,8 @@ test("limits staff and teacher views and keeps external source status read-only"
   assert.match(client, /new Set\(\[task\.owner, \.\.\.\(task\.assignees \?\? \[\]\), \.\.\.\(task\.watchers \?\? \[\]\)\]\)\.has\(currentOperator\)/);
   assert.match(client, /const teamOwnerOptions/);
   assert.match(client, /teamOwnerOptions\.map/);
-  assert.match(client, /腾讯文档来源/);
-  assert.match(client, /最近读取状态/);
+  assert.match(client, /外部来源/);
+  assert.match(client, /当前管线与历史记录/);
   assert.match(client, /sourceFreshnessLabel/);
   assert.doesNotMatch(client, /采用腾讯值：Tiffany/);
   assert.doesNotMatch(client, /actor: "当前操作员"/);
