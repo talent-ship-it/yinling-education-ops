@@ -1,3 +1,4 @@
+-- Version aligned with the migration recorded by the linked production project.
 create table if not exists internal.student_fu_attachments (
   id uuid primary key default gen_random_uuid(),
   student_id text not null check (length(student_id) between 1 and 120),

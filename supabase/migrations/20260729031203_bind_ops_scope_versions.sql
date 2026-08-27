@@ -1,3 +1,4 @@
+-- Version aligned with the migration recorded by the linked production project.
 -- Prevent a scoped user from saving data after their student/teacher assignment
 -- changed between the initial read and the write request.
 create or replace function public.put_scoped_ops_state(
