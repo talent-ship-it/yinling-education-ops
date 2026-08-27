@@ -5031,3 +5031,58 @@ body { background:var(--canvas); font-size:14px; line-height:1.45; }
     scroll-behavior:auto !important;
   }
 }
+
+/* Trial handbook workflow: dense data stays inside its own scroll surface. */
+.trial-ledger-panel { margin-bottom:16px; min-width:0; overflow:hidden; }
+.trial-ledger-header { align-items:flex-start; border-bottom:1px solid var(--line); display:flex; gap:16px; justify-content:space-between; padding:16px 18px; }
+.trial-ledger-header h2 { font-size:16px; margin:2px 0 0; }
+.trial-ledger-status { align-items:center; display:flex; gap:10px; }
+.trial-ledger-status > span { color:var(--muted); font-size:11px; white-space:nowrap; }
+.trial-ledger-scroll { max-width:100%; overflow:auto; overscroll-behavior-inline:contain; }
+.trial-ledger-table { border-collapse:separate; border-spacing:0; min-width:1780px; width:100%; }
+.trial-ledger-table th { background:#f6f9f7; border-bottom:1px solid var(--line); color:#65736a; font-size:10px; font-weight:800; padding:10px 12px; position:sticky; text-align:left; top:0; white-space:nowrap; z-index:1; }
+.trial-ledger-table td { border-bottom:1px solid #edf1ee; color:#435148; font-size:11px; max-width:220px; padding:10px 12px; vertical-align:middle; }
+.trial-ledger-table tbody tr:hover td { background:#fbfdfc; }
+.table-link { background:transparent; border:0; color:#176d63; cursor:pointer; font:inherit; font-weight:800; padding:0; text-align:left; }
+.trial-schedule-cell { display:grid; gap:3px; }
+.trial-schedule-cell strong { font-size:11px; }
+.trial-schedule-cell small,.ledger-waiting { color:var(--muted); font-size:9px; }
+.ledger-waiting { color:#a16b18; }
+.ledger-select,.ledger-note-input { background:#fff; border:1px solid #d8e1db; border-radius:5px; font:inherit; min-height:34px; padding:6px 8px; width:100%; }
+.ledger-note-input { min-width:160px; }
+.ledger-checkbox { align-items:center; cursor:pointer; display:flex; gap:6px; white-space:nowrap; }
+.ledger-checkbox input { height:16px; margin:0; width:16px; }
+.lp-inline-options { border:1px solid #dfe7e1; border-radius:6px; display:flex; gap:18px; margin:0; padding:10px 12px; }
+.lp-inline-options legend { color:#56665c; font-size:10px; font-weight:800; padding:0 5px; }
+.trial-intake-details { border-top:1px solid #e8eeea; margin-top:9px; padding-top:8px; }
+.trial-intake-details summary { color:#176d63; cursor:pointer; font-size:10px; font-weight:800; }
+.trial-intake-details .lp-workflow-details { margin-top:8px; }
+.trial-intake-details dl { display:grid; gap:6px; margin:8px 0 0; }
+.trial-intake-details dl > div { display:grid; gap:2px; }
+.trial-intake-details dt { color:#78867d; font-size:9px; }
+.trial-intake-details dd { color:#435148; font-size:10px; line-height:1.45; margin:0; }
+.trial-intake-details > p { color:var(--muted); font-size:9px; margin:8px 0 0; }
+
+.to-do-header-actions { flex-wrap:wrap; }
+.task-state-tabs { flex:0 0 auto; }
+.task-state-tabs button { gap:5px; }
+.task-state-tabs button strong { align-items:center; background:rgba(23,109,99,.1); border-radius:999px; display:inline-flex; font-size:9px; justify-content:center; min-width:19px; padding:1px 5px; }
+.task-note-button,.cannot-do-button,.reopen-task-button { align-items:center; background:#fff; border:1px solid #d8e1db; border-radius:50%; color:#6f7e75; cursor:pointer; display:inline-flex; height:32px; justify-content:center; width:32px; }
+.task-note-button:hover { background:#eef7f4; border-color:#9ac9bf; color:#176d63; }
+.cannot-do-button:hover { background:#fff2f1; border-color:#efb4ae; color:#b63c32; }
+.reopen-task-button { border-radius:5px; gap:5px; padding:0 9px; width:auto; }
+.reopen-task-button span { font-size:10px; font-weight:800; }
+.task-row.cannot_do { background:#fff8f7; }
+.task-inline-editor { align-items:end; background:#f8faf9; border:1px solid #dfe7e1; border-radius:6px; display:grid; gap:10px; grid-column:2 / -1; grid-template-columns:minmax(0,1fr) auto; padding:10px; }
+.task-inline-editor label { color:#536259; display:grid; font-size:10px; font-weight:800; gap:5px; }
+.task-inline-editor textarea { border:1px solid #cad6cf; border-radius:5px; font:inherit; min-height:58px; padding:8px; resize:vertical; width:100%; }
+.task-inline-editor > div { display:flex; gap:6px; }
+.task-inline-editor .primary-button,.task-inline-editor .secondary-button { min-height:34px; padding:7px 10px; }
+
+@media (max-width:760px) {
+  .trial-ledger-header { align-items:stretch; flex-direction:column; }
+  .trial-ledger-status { justify-content:space-between; }
+  .task-state-tabs { max-width:100%; overflow:auto; }
+  .task-inline-editor { grid-column:1 / -1; grid-template-columns:1fr; }
+  .task-inline-editor > div { justify-content:flex-end; }
+}

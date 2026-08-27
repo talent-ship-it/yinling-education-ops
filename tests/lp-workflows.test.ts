@@ -48,14 +48,14 @@ test("defines exactly the seven LP workflow types requested in the feedback", ()
   assert.deepEqual(Object.keys(LP_WORKFLOW_SCHEMAS), LP_WORKFLOW_TYPES);
 });
 
-test("uses the confirmed common fields and normalises the specified-content typo", () => {
+test("uses the confirmed common fields and retains the historical specified-content value", () => {
   for (const type of LP_WORKFLOW_TYPES) {
     assert.deepEqual(fieldKeys(type).slice(0, commonKeys.length), commonKeys);
 
     const specifiedContent = getLpWorkflowSchema(type).fields.find((field) => field.key === "specifiedContentStatus");
     const preparation = getLpWorkflowSchema(type).fields.find((field) => field.key === "preparationFollowUp");
     assert.deepEqual(specifiedContent?.options, SPECIFIED_CONTENT_STATUSES);
-    assert.deepEqual(specifiedContent?.options, ["已指定", "无需指定", "需要跟进"]);
+    assert.deepEqual(specifiedContent?.options, ["已指定", "无需指定", "需教务跟进", "需要跟进"]);
     assert.deepEqual(preparation?.options, PREPARATION_FOLLOW_UP_OPTIONS);
   }
 });

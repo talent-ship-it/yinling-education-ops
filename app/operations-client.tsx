@@ -331,6 +331,18 @@ import {
   SHARED_STATE_REQUEST_TIMEOUT_MS,
   type SharedStateRow,
 } from "@/lib/shared-state-recovery";
+import {
+  TRIAL_JWB_RULE_PREFIX,
+  TRIAL_MANUAL_REQUEST_RULE_PREFIX,
+  generateJiaowubaoTrialTasks,
+  generateTrialManualRequestTasks,
+  matchTrialScheduleEvents,
+  replaceRuleTasks,
+  trialAtomicFields,
+  trialIntakeFromFields,
+  type TrialIntake,
+  type TrialScheduleLink,
+} from "@/lib/trial-operations";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
@@ -598,6 +610,12 @@ type LpItem = {
     revisions?: LpRevision[];
   stageAudit?: LpStageAuditEntry[];
   resultAudit?: LpResultAuditEntry[];
+  /** Manual intake fields from the trial handbook; kept separate from legacy LP RPC fields. */
+  trialIntake?: TrialIntake;
+  /** Immutable source evidence selected from the latest completed 教务宝 snapshot. */
+  trialSchedule?: TrialScheduleLink;
+  trialPaid?: boolean;
+  trialLedgerNote?: string;
 };
 
 type Operation = {
@@ -1413,6 +1431,7 @@ function useSharedState<T>(
     const hasPendingLocalChanges = JSON.stringify(local) !== committedRef.current;
     const merged = hasPendingLocalChanges ? mergeConcurrentPayload(committed, local, row.payload) : { value: row.payload, conflicts: 0 };
     committedRef.current = JSON.stringify(row.payload);
+    valueRef.current = merged.value;
     versionRef.current = row.version;
     setVersion(row.version);
     setValue(merged.value);
@@ -2752,6 +2771,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoImportedScheduleError, setJiaowubaoImportedScheduleError] = useState(false);
   const [jiaowubaoImportedScheduleErrorCode, setJiaowubaoImportedScheduleErrorCode] = useState<JiaowubaoImportedScheduleReadError | null>(null);
   const [jiaowubaoImportedScheduleLoadedKey, setJiaowubaoImportedScheduleLoadedKey] = useState<string | null>(null);
+  const [trialScheduleSyncing, setTrialScheduleSyncing] = useState(false);
+  const trialScheduleAutoSyncRef = useRef("");
   const [teacherAvailabilityCompletion, setTeacherAvailabilityCompletion] = useState<TeacherAvailabilityCompletionInbox | null>(null);
   const [teacherAvailabilityCompletionLoading, setTeacherAvailabilityCompletionLoading] = useState(false);
   const [teacherAvailabilityCompletionError, setTeacherAvailabilityCompletionError] = useState(false);
@@ -3170,13 +3191,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       endsAt: zonedDateTimeToUtc(shiftIsoDate(week.at(-1)!.date, 1), "00:00", scheduleTimezone).toISOString(),
     };
   }, [scheduleMode, scheduleMonth, scheduleTimezone]);
-  const jiaowubaoScheduleRequestKey = `${jiaowubaoScheduleWindow.startsAt}|${jiaowubaoScheduleWindow.endsAt}|${scheduleTeacherFilter}`;
+  const trialScheduleWindow = useMemo(() => {
+    const now = new Date();
+    const melbourneDate = isoDateInTimezone(now, "Australia/Melbourne");
+    return {
+      startsAt: zonedDateTimeToUtc(melbourneDate, "00:00", "Australia/Melbourne").toISOString(),
+      endsAt: zonedDateTimeToUtc(shiftIsoDate(melbourneDate, 31), "00:00", "Australia/Melbourne").toISOString(),
+    };
+  }, []);
+  const activeJiaowubaoScheduleWindow = active === "lp" ? trialScheduleWindow : jiaowubaoScheduleWindow;
+  const activeJiaowubaoTeacherFilter = active === "lp" ? "all" : scheduleTeacherFilter;
+  const jiaowubaoScheduleRequestKey = `${active}|${activeJiaowubaoScheduleWindow.startsAt}|${activeJiaowubaoScheduleWindow.endsAt}|${activeJiaowubaoTeacherFilter}`;
   const currentJiaowubaoImportedSchedule = jiaowubaoImportedScheduleLoadedKey === jiaowubaoScheduleRequestKey
     ? jiaowubaoImportedSchedule
     : null;
 
   useEffect(() => {
-    if (active !== "schedule") return;
+    if (active !== "schedule" && active !== "lp") return;
     const controller = new AbortController();
     const loadAllJiaowubaoSchedulePages = async (): Promise<JiaowubaoImportedScheduleFeed> => {
       const pages: JiaowubaoImportedSchedulePage[] = [];
@@ -3189,10 +3220,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       // subtracting a partial imported schedule from teacher AVA.
       for (let pageIndex = 0; pageIndex < 800; pageIndex += 1) {
         const query = new URLSearchParams({
-          windowStart: jiaowubaoScheduleWindow.startsAt,
-          windowEnd: jiaowubaoScheduleWindow.endsAt,
+          windowStart: activeJiaowubaoScheduleWindow.startsAt,
+          windowEnd: activeJiaowubaoScheduleWindow.endsAt,
         });
-        if (scheduleTeacherFilter !== "all") query.set("teacherId", scheduleTeacherFilter);
+        if (active === "lp") query.set("trialOnly", "1");
+        if (activeJiaowubaoTeacherFilter !== "all") query.set("teacherId", activeJiaowubaoTeacherFilter);
         if (cursorToken) query.set("cursor", cursorToken);
 
         const response = await fetch(`/api/jiaowubao-open-api/schedule?${query.toString()}`, {
@@ -3246,7 +3278,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       });
 
     return () => controller.abort();
-  }, [active, jiaowubaoScheduleRequestKey, jiaowubaoScheduleWindow, scheduleTeacherFilter]);
+  }, [active, activeJiaowubaoScheduleWindow, activeJiaowubaoTeacherFilter, jiaowubaoScheduleRequestKey]);
 
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
   const studentById = (studentId: string) => students.find((student) => student.id === studentId);
@@ -3495,6 +3527,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }), [currentOperator, initialRole, isAdminView, managedExamTaskIdentities, managedTrialPaymentStudentIds, scopedStudentIds, sessionOperator, tasks]);
   const scopedBookings = useMemo(() => isAdminView ? bookings : isTeacherView ? bookings.filter((booking) => bookingHasEffectiveTeacher(booking, currentTeacherIds)) : bookings.filter((booking) => scopedStudentIds.has(booking.studentId)), [bookings, currentTeacherIds, isAdminView, isTeacherView, scopedStudentIds]);
   const scopedLpItems = useMemo(() => isAdminView ? lpItems : lpItems.filter((item) => item.owner === currentOperator || scopedStudentIds.has(item.studentId)), [currentOperator, isAdminView, lpItems, scopedStudentIds]);
+  const trialScheduleMatches = useMemo(() => matchTrialScheduleEvents({
+    lpItems: scopedLpItems,
+    students: recordStudents,
+    teachers: recordTeachers,
+    events: currentJiaowubaoImportedSchedule?.events ?? [],
+    matchedAt: new Date(),
+  }), [currentJiaowubaoImportedSchedule, recordStudents, recordTeachers, scopedLpItems]);
+  const trialScheduleMatchByLpId = useMemo(
+    () => new Map(trialScheduleMatches.map((match) => [match.lpItemId, match])),
+    [trialScheduleMatches],
+  );
   const scopedOperations = useMemo(() => isAdminView ? operations : operations.filter((operation) => scopedStudentIds.has(operation.studentId)), [isAdminView, operations, scopedStudentIds]);
   const scopedRenewals = useMemo(() => isAdminView ? renewals : renewals.filter((renewal) => renewal.owner === currentOperator || scopedStudentIds.has(renewal.studentId)), [currentOperator, isAdminView, renewals, scopedStudentIds]);
   const scopedMessages = useMemo(() => isAdminView ? messages : messages.filter((message) => scopedStudentIds.has(message.studentId)), [isAdminView, messages, scopedStudentIds]);
@@ -3796,6 +3839,73 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       undo ? 12000 : 4200,
     );
   }, [displayPreferences.language]);
+
+  const syncTrialSchedulesFromJiaowubao = async () => {
+    if (trialScheduleSyncing) return;
+    if (!currentJiaowubaoImportedSchedule || currentJiaowubaoImportedSchedule.state !== "complete") {
+      notify(currentJiaowubaoImportedSchedule?.state === "stale" ? "教务宝课表快照已过期，暂不写入试听任务" : "教务宝真实课表尚未读取完成");
+      return;
+    }
+    if (!trialScheduleMatches.length) {
+      notify("当前没有可无歧义匹配的试听排课；请核对学生姓名和 A/B/C 规划老师");
+      return;
+    }
+    setTrialScheduleSyncing(true);
+    const syncedAt = new Date();
+    try {
+      await lpShared.mutateAndCommit((current) => current.map((item) => {
+        const match = trialScheduleMatches.find((candidate) => candidate.lpItemId === item.id);
+        return match ? { ...item, trialSchedule: { ...match.link, matchedAt: syncedAt.toISOString() } } : item;
+      }));
+      await tasksShared.mutateAndCommit((current) => {
+        let next = [...current];
+        for (const match of trialScheduleMatches) {
+          const generated = generateJiaowubaoTrialTasks({ ...match, now: syncedAt });
+          next = replaceRuleTasks(next, generated, {
+            anchor: `JWB:${match.link.eventId}`,
+            rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
+          });
+          next = next.map((task) => task.anchorBookingId === match.lpItemId
+            && task.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`
+            && task.status !== "done"
+            ? {
+                ...task,
+                status: "done" as const,
+                tone: "green" as const,
+                completionOutcome: "done" as const,
+                result: `教务宝真实排课已匹配：${match.link.eventId}`,
+                closedAt: syncedAt.toISOString(),
+              }
+            : task);
+        }
+        return sortTasksByDueAt(next);
+      });
+      addAudit("同步教务宝试听排课", `${trialScheduleMatches.length} 条试听排课与任务已更新`, "green");
+      notify(`已从教务宝真实快照匹配 ${trialScheduleMatches.length} 条试听，并生成 N-2 / N-1 / 当日任务`);
+    } catch (error) {
+      notify(error instanceof Error ? `试听排课同步失败：${error.message}` : "试听排课同步失败，可安全重试");
+    } finally {
+      setTrialScheduleSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (active !== "lp" || trialScheduleSyncing
+      || currentJiaowubaoImportedSchedule?.state !== "complete"
+      || !trialScheduleMatches.length) return;
+    const fingerprint = trialScheduleMatches
+      .map((match) => `${match.lpItemId}:${match.link.eventId}`)
+      .sort()
+      .join("|");
+    const alreadyLinked = trialScheduleMatches.every((match) =>
+      scopedLpItems.find((item) => item.id === match.lpItemId)?.trialSchedule?.eventId === match.link.eventId);
+    if (alreadyLinked || trialScheduleAutoSyncRef.current === fingerprint) return;
+    trialScheduleAutoSyncRef.current = fingerprint;
+    void syncTrialSchedulesFromJiaowubao();
+    // The fingerprint owns this one idempotent external-snapshot projection;
+    // adding the function object would re-run it on every shared-state render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, currentJiaowubaoImportedSchedule?.state, scopedLpItems, trialScheduleMatches, trialScheduleSyncing]);
 
   const refreshJiaowubaoScheduleMappingReview = async () => {
     const review = await readJiaowubaoScheduleMappingReview();
@@ -4467,7 +4577,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const before = { ...task };
     const completedAt = new Date();
     void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId
-      ? { ...item, status: "done" as const, tone: "green" as const, closedAt: completedAt.toISOString(), result: "已由当前操作员确认完成" }
+      ? { ...item, status: "done" as const, tone: "green" as const, closedAt: completedAt.toISOString(), result: "已由当前操作员确认完成", completionOutcome: "done" as const }
       : item))
       .then(() => {
         addAudit("完成强提醒任务", `${task.title} · ${studentById(task.studentId)?.name ?? "未关联学生"}`, "green");
@@ -4478,6 +4588,74 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         });
       })
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "任务完成保存失败"));
+  };
+
+  const taskUsesDedicatedCompletion = (task: Task) => Boolean(
+    task.category === "考试" && task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/)
+      || task.category === "试听" && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent"),
+  );
+
+  const cannotDoTask = (taskId: string, reason: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    const note = reason.trim();
+    if (!task || task.status === "done" || !note) return;
+    if (taskUsesDedicatedCompletion(task)) {
+      notify("该任务由专用业务流程管理，不能直接标记为无法完成");
+      return;
+    }
+    const closedAt = new Date().toISOString();
+    void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId ? {
+      ...item,
+      status: "done" as const,
+      tone: "red" as const,
+      closedAt,
+      result: `无法完成：${note}`,
+      completionOutcome: "cannot_do" as const,
+      completionNote: note,
+    } : item)).then(() => {
+      addAudit("记录任务无法完成", `${task.title} · ${note}`, "red");
+      notify("已移入 Can’t Do，并保留原因");
+    }).catch((error: unknown) => notify(error instanceof Error ? error.message : "无法完成原因保存失败"));
+  };
+
+  const reopenTask = (taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task || task.status !== "done") return;
+    if (taskUsesDedicatedCompletion(task)) {
+      notify("该任务需要从对应业务流程撤销，不能直接恢复");
+      return;
+    }
+    if (!task.dueAt) {
+      notify("该历史任务没有准确截止时间，不能恢复为可执行任务");
+      return;
+    }
+    const status = statusForDueAt(task.dueAt, new Date());
+    const tone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
+    void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId ? {
+      ...item,
+      status,
+      tone,
+      result: undefined,
+      closedAt: undefined,
+      completionOutcome: undefined,
+    } : item)).then(() => {
+      addAudit("恢复任务到 To Do", task.title, "amber");
+      notify("任务已恢复到 To Do");
+    }).catch((error: unknown) => notify(error instanceof Error ? error.message : "任务恢复失败"));
+  };
+
+  const updateTaskNote = (taskId: string, note: string) => {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    if (taskUsesDedicatedCompletion(task)) {
+      notify("该任务由专用业务流程管理，暂不能直接修改备注");
+      return;
+    }
+    const trimmed = note.trim();
+    void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId
+      ? { ...item, completionNote: trimmed || undefined }
+      : item)).then(() => notify(trimmed ? "任务备注已保存" : "任务备注已清除"))
+      .catch((error: unknown) => notify(error instanceof Error ? error.message : "任务备注保存失败"));
   };
 
   const recordTrialParentReply = (task: Task) => {
@@ -4506,7 +4684,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const visibleTasks = useMemo(() => {
     const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
-    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now)).filter((task) => task.status !== "done"));
+    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now)));
   }, [scopedTasks, taskRefreshKey]);
 
   const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
@@ -7093,7 +7271,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
@@ -7658,9 +7836,61 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const options = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
       return options.length ? <select className="lp-result-select" value={item.resultStatus ?? ""} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}><option value="">业务结果</option>{options.map((status) => <option value={status} key={status}>{status}</option>)}</select> : null;
     };
+    const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType === "试听 LP" || item.workflowType === "换老师试听");
+    const saveTrialLedgerField = (item: LpItem, patch: Pick<LpItem, "trialPaid" | "trialLedgerNote">) => {
+      void lpShared.mutateAndCommit((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, ...patch } : candidate))
+        .then(() => notify("试听台账已保存"))
+        .catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败"));
+    };
+    const trialIntakeDetails = (item: LpItem) => item.workflowType === "试听 LP" ? <details className="trial-intake-details">
+      <summary>查看试听交接详情</summary>
+      <LpWorkflowDetails type="试听 LP" fields={item.fields ?? {}} />
+      {item.trialIntake ? <dl>
+        <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
+        <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), displayPreferences.timezone, displayPreferences)}</dd></div>
+        <div><dt>对接对象</dt><dd>{[item.trialIntake.contactParents ? "家长" : "", item.trialIntake.contactStudent ? "学生本人" : ""].filter(Boolean).join("、")}{item.trialIntake.contactNote ? ` · ${item.trialIntake.contactNote}` : ""}</dd></div>
+        <div><dt>写作</dt><dd>{item.trialIntake.writingRequired ? "需要" : "不需要"}{item.trialIntake.writingNote ? ` · ${item.trialIntake.writingNote}` : ""}</dd></div>
+        <div><dt>试卷</dt><dd>{item.trialIntake.paperRequired ? "需要发卷并收卷" : "不需要"}{item.trialIntake.paperNote ? ` · ${item.trialIntake.paperNote}` : ""}</dd></div>
+        <div><dt>试听时长</dt><dd>{item.trialIntake.trialDurationMinutes} 分钟{item.trialIntake.trialDurationNote ? ` · ${item.trialIntake.trialDurationNote}` : ""}</dd></div>
+      </dl> : <p>历史试听 LP 未包含新版手册字段。</p>}
+    </details> : null;
 
     return <>
-      <ViewHeading eyebrow="试听与 LP" title="试听与 LP" actions={<button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>} />
+      <ViewHeading eyebrow="试听与 LP" title="试听与 LP" actions={<>
+        <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在生成任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `同步教务宝真实排课${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
+        <button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>
+      </>} />
+      <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
+        <header className="panel-header trial-ledger-header"><div><p className="eyebrow">【吟领教育】学员信息管理（LP）</p><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerItems.length} 条试听</span></div></header>
+        {trialLedgerItems.length ? <div className="trial-ledger-scroll">
+          <table className="trial-ledger-table">
+            <thead><tr><th>学生姓名</th><th>家长微信名</th><th>LP 类型</th><th>试听月份</th><th>请求日期/时间</th><th>试听日期/时间（墨尔本）</th><th>教务</th><th>课程规划老师</th><th>科目</th><th>老师</th><th>试听状态</th><th>已付费</th><th>备注</th></tr></thead>
+            <tbody>{trialLedgerItems.map((item) => {
+              const student = studentById(item.studentId);
+              const liveMatch = trialScheduleMatchByLpId.get(item.id);
+              const schedule = liveMatch?.link ?? item.trialSchedule;
+              const requestAt = item.trialIntake?.requestSentAt ?? item.requestedAt;
+              const resultOptions = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
+              const paid = item.trialPaid ?? ["付费试听（已付费）", "免费试听"].includes(String(item.fields?.trialPaymentMethod ?? ""));
+              return <tr key={item.id}>
+                <td><button className="table-link" type="button" onClick={() => goToStudent(item.studentId)}>{item.trialIntake?.studentName || student?.name || "未提到"}</button></td>
+                <td>{student?.guardianWechat || student?.guardian || "—"}</td>
+                <td>{item.workflowType}</td>
+                <td>{schedule ? isoDateInTimezone(new Date(schedule.startsAt), "Australia/Melbourne").slice(0, 7) : "待排课"}</td>
+                <td>{requestAt ? formatInstant(new Date(requestAt), displayPreferences.timezone, displayPreferences) : "—"}</td>
+                <td>{schedule ? <span className="trial-schedule-cell"><strong>{formatInstant(new Date(schedule.startsAt), "Australia/Melbourne", displayPreferences)}</strong><small>{schedule.source === "jiaowubao-open-api" ? "教务宝真实数据" : "已记录"}</small></span> : <span className="ledger-waiting">等待教务宝匹配</span>}</td>
+                <td>{item.owner}</td>
+                <td>{item.trialIntake?.planner || student?.planner || "待分配"}</td>
+                <td>{String(item.fields?.subject ?? student?.course ?? "—")}</td>
+                <td>{schedule?.teacherName || String(item.fields?.assignedTeacher ?? student?.teacher ?? "待匹配")}</td>
+                <td><select className="ledger-select" value={item.resultStatus ?? ""} aria-label={`${student?.name ?? item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}><option value="">待填写</option>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select></td>
+                <td><label className="ledger-checkbox"><input type="checkbox" checked={paid} onChange={(event) => saveTrialLedgerField(item, { trialPaid: event.target.checked, trialLedgerNote: item.trialLedgerNote })} /><span>{paid ? "是" : "否"}</span></label></td>
+                <td><input className="ledger-note-input" defaultValue={item.trialLedgerNote} aria-label={`${student?.name ?? item.id} 试听备注`} placeholder="补充备注" onBlur={(event) => { if (event.target.value.trim() !== (item.trialLedgerNote ?? "")) saveTrialLedgerField(item, { trialPaid: item.trialPaid, trialLedgerNote: event.target.value.trim() }); }} /></td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div> : <div className="empty-inline">还没有试听 LP；创建后会自动进入 13 列台账。</div>}
+      </section>
       <section className="panel collection-shell">
         <div className="view-bar">
           <ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" />
@@ -7679,6 +7909,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     <h3>{item.title}</h3>
                     <span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span>
                     <div className="card-tags"><StatusPill tone={stageTone(item.stage)}>{item.stage}</StatusPill>{item.resultStatus && <StatusPill tone={item.resultStatus.includes("成功") ? "green" : item.resultStatus.includes("失败") ? "red" : "amber"}>{item.resultStatus}</StatusPill>}{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>
+                    {trialIntakeDetails(item)}
                     {resultControl(item)}
                     {stageControls(item)}
                   </div>;
@@ -11451,6 +11682,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const provisional = data.get("provisional") === "on";
     let studentId = String(data.get("studentId") ?? lpDraftStudentId).trim();
     const workflowType = parsedLp.workflowType;
+    let trialIntake: TrialIntake | undefined;
+    if (workflowType === "试听 LP") {
+      try {
+        trialIntake = trialIntakeFromFields(parsedLp.fields as LpFieldValues);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "试听信息交接字段无效");
+        return;
+      }
+    }
     const existingStudent = studentById(studentId);
     if (provisional && workflowType !== "试听 LP") {
       notify("只有试听 LP 可以创建无姓名临时档案");
@@ -11458,7 +11698,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
     const owner = isAdminView ? parsedLp.fields.responsibleOperations : existingStudent?.owner ?? "";
     const planner = String(
-      data.get("provisionalPlanner") ?? existingStudent?.planner ?? "Tara",
+      trialIntake?.planner ?? data.get("provisionalPlanner") ?? existingStudent?.planner ?? "Tara",
     );
     let provisionalIntake: { course: string; guardianWechat: string; owner: string; planner: string } | undefined;
     const workflowStudent: Student | undefined = existingStudent;
@@ -11598,7 +11838,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
       if (lpAtomicBusyRef.current) return;
-      const fields = parsedLp.fields as LpFieldValues;
+      const fields = workflowType === "试听 LP"
+        ? trialAtomicFields(parsedLp.fields as LpFieldValues)
+        : parsedLp.fields as LpFieldValues;
       const expectedVersions = {
         students: studentsShared.version,
         lpItems: lpShared.version,
@@ -11639,14 +11881,46 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
         tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
         filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+        const committedStudentId = typeof body.studentId === "string" ? body.studentId : studentId;
+        if (workflowType === "试听 LP" && trialIntake && typeof body.lpItemId === "string") {
+          const lpItemId = body.lpItemId;
+          await lpShared.mutateAndCommit((current) => current.map((item) => item.id === lpItemId ? {
+            ...item,
+            requestedAt: trialIntake!.requestSentAt,
+            trialIntake,
+          } : item));
+          const studentName = trialIntake.studentName || workflowStudent?.name || "试听学员（姓名未提到）";
+          const generated = generateTrialManualRequestTasks({
+            lpItemId,
+            studentId: committedStudentId,
+            studentName,
+            owner,
+            specifiedContentStatus: String(fields.specifiedContentStatus ?? ""),
+            intake: trialIntake,
+            now: new Date(),
+          });
+          const legacyRequestRules = new Set([
+            "trial.parent-follow-up",
+            "trial.scheduling",
+            "trial.parent-no-reply-follow-up",
+            "trial.teaching-control-escalation",
+            "trial.parent-progress-sync.1",
+          ]);
+          await tasksShared.mutateAndCommit((current) => {
+            const withoutLegacy = current.filter((task) => !(task.anchorBookingId === lpItemId && legacyRequestRules.has(task.ruleKey ?? "")));
+            return sortTasksByDueAt(replaceRuleTasks(withoutLegacy, generated, {
+              anchor: lpItemId,
+              rulePrefixes: [TRIAL_MANUAL_REQUEST_RULE_PREFIX],
+            }));
+          });
+        }
         lpAtomicCommandKeysRef.current = removeLpAtomicPendingCommand(lpAtomicCommandKeysRef.current.values(), intent);
         persistLpAtomicPendingCommands(directEnrollmentStorage, sessionOperator, lpAtomicCommandKeysRef.current.values());
-        const committedStudentId = typeof body.studentId === "string" ? body.studentId : studentId;
         setSelectedStudentId(committedStudentId);
         setModal(null);
         setActive("lp");
         addAudit("创建 LP 工作流", `${workflowStudent?.name ?? provisionalIntake?.guardianWechat ?? committedStudentId} · ${workflowType}`, "green");
-        notify(body.applied === false ? "LP 已确认，系统没有重复保存" : "已原子创建 LP 和对应强提醒");
+        notify(body.applied === false ? "LP 已确认，系统没有重复保存" : workflowType === "试听 LP" ? "试听 LP、二要一发与 24/36/48 小时任务已保存" : "已原子创建 LP 和对应强提醒");
       } catch (error) {
         notify(error instanceof Error ? error.message : "LP 保存失败；可安全重试");
       } finally { lpAtomicBusyRef.current = false; }
@@ -12973,7 +13247,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>学员类型<select name="segment"><option>试听</option><option>已报名</option></select></label>
           <label>当前年级<input name="grade" placeholder="例如 Year 8" /></label>
           <label>负责人<select name="owner" defaultValue={isAdminView ? teamOwnerOptions[0] ?? currentOperator : currentOperator}>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select></label>
-          <label>规划老师<select name="planner"><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option></select></label>
+          <label>规划老师<select name="planner"><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label>
           <label>所在地<select name="location"><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>LP 类型<select name="lpNeed"><option>试听LP</option><option>新生LP</option><option>老生新LP</option><option>代课LP</option><option>LP修改</option><option>无需LP</option></select></label>
@@ -12990,7 +13264,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>课程 / 年级<input name="course" defaultValue={studentModalTargetStudent.course} required /></label>
           <label>当前年级<input name="grade" defaultValue={studentModalTargetStudent.grade ?? ""} /></label>
           <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
-          <label>规划老师<select name="planner" defaultValue={studentModalTargetStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option></select></label>
+          <label>规划老师<select name="planner" defaultValue={studentModalTargetStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label>
           <label>所在地<select name="location" defaultValue={studentModalTargetStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(studentModalTargetStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label>家长微信名<input name="guardianWechat" defaultValue={studentModalTargetStudent.guardianWechat ?? ""} /></label>
@@ -13091,13 +13365,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "lp" && <Dialog title="创建 LP 工作流" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitLp}>
           <label>关联学生<input name="studentId" list="lp-student-options" value={lpDraftStudentId} onChange={(event) => setLpDraftStudentId(event.currentTarget.value.trim())} placeholder="输入学生姓名搜索" aria-describedby="lp-student-selection" /><datalist id="lp-student-options">{readableScopedStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist><small id="lp-student-selection">{lpDraftStudent ? `${lpDraftStudent.name} · ${lpDraftStudent.course}` : "请选择学生"}</small></label>
-          {isAdminView && lpDraftType === "试听 LP" && <><label>临时档案规划老师<select key={lpDraftStudentId} name="provisionalPlanner" defaultValue={lpDraftStudent?.planner ?? "Tara"}><option value="Tara">龙老师</option><option>Eileen</option></select></label><label className="checkbox-field span-2"><input name="provisional" type="checkbox" /> 暂未有学生姓名，先按科目创建临时档案</label>
+          {isAdminView && lpDraftType === "试听 LP" && <><label>临时档案规划老师<select key={lpDraftStudentId} name="provisionalPlanner" defaultValue={lpDraftStudent?.planner ?? "Tara"}><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label><label className="checkbox-field span-2"><input name="provisional" type="checkbox" /> 暂未有学生姓名，先按科目创建临时档案</label>
           <label>家长微信名<input name="provisionalGuardianWechat" placeholder="临时建档时必填，例如 Daisy" /></label>
           <label>科目 / 课程<input name="provisionalCourse" placeholder="临时建档时必填，例如 Year 9 English" /></label></>}
           <LpWorkflowFields
             key={lpDraftStudentId}
             initialType={lpDraftType}
-            initialValues={{ responsibleOperations: lpDraftStudent?.owner ?? "", planner: lpDraftStudent?.planner ?? "", assignedTeacher: lpDraftStudent?.teacher === "待匹配" ? "" : lpDraftStudent?.teacher, subject: lpDraftStudent?.course ?? "", locationTimezone: lpDraftStudent?.timezone ?? "" }}
+            initialValues={{ responsibleOperations: lpDraftStudent?.owner ?? "", planner: lpDraftStudent?.planner === "Tara" || lpDraftStudent?.planner === "Eileen" || lpDraftStudent?.planner === "Abby" ? lpDraftStudent.planner : "Tara", assignedTeacher: lpDraftStudent?.teacher === "待匹配" ? "" : lpDraftStudent?.teacher, subject: lpDraftStudent?.course ?? "", locationTimezone: lpDraftStudent?.timezone ?? "", studentNameKnown: Boolean(lpDraftStudent?.name), studentName: lpDraftStudent?.name ?? "", contactParents: true, trialDurationMinutes: 60 }}
             responsibleOperationsOptions={teamOwnerOptions.map((value) => ({ value }))}
             teacherOptions={recordTeachers.map((teacher) => ({ value: teacher.name, label: teacher.name }))}
             subjectOptions={(lpDraftType === "学生直报（无试听）"
@@ -13110,7 +13384,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               : Array.from(new Set([...courses.map((course) => course.name), ...(lpDraftStudent?.course ? [lpDraftStudent.course] : [])])))
               .map((value) => ({ value }))}
             timezoneOptions={timezoneOptions.map((option) => ({ value: option.id, label: option.label }))}
-            plannerOptions={[{ value: "Tara", label: "龙老师" }, { value: "Eileen" }]}
+            plannerOptions={[{ value: "Tara", label: "龙老师" }, { value: "Eileen" }, { value: "Abby" }]}
             coursePackageOptions={(lpDraftStudent?.lessonPackages ?? []).map((lessonPackage) => ({ value: lessonPackage.name }))}
             onTypeChange={setLpDraftType}
           />

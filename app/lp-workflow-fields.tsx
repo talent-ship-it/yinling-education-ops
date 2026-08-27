@@ -24,6 +24,7 @@ import {
   type TrialLpFields,
   validateCompleteLpWorkflowFields,
 } from "../lib/lp-workflows";
+import { TRIAL_DURATIONS, TRIAL_PLANNERS } from "../lib/trial-operations";
 
 export const LP_WORKFLOW_FORM_NAMES = Object.freeze({
   workflowType: "workflowType",
@@ -35,13 +36,25 @@ export const LP_WORKFLOW_FORM_NAMES = Object.freeze({
   universityMajor: "universityMajor",
   universityYear: "universityYear",
   assignedTeacher: "assignedTeacher",
+  requestSentAt: "requestSentAt",
   subject: "subject",
   oneSentenceDescription: "oneSentenceDescription",
   locationTimezone: "locationTimezone",
   contactPerson: "contactPerson",
+  contactParents: "contactParents",
+  contactStudent: "contactStudent",
+  contactNote: "contactNote",
+  writingRequired: "writingRequired",
+  writingNote: "writingNote",
+  paperRequired: "paperRequired",
+  paperNote: "paperNote",
   timeMentioned: "timeMentioned",
   preferredTime: "preferredTime",
   studentNameKnown: "studentNameKnown",
+  studentName: "studentName",
+  preparationNote: "preparationNote",
+  trialDurationMinutes: "trialDurationMinutes",
+  trialDurationNote: "trialDurationNote",
   trialPaymentMethod: "trialPaymentMethod",
   purchasedHours: "purchasedHours",
   bonusHours: "bonusHours",
@@ -140,6 +153,15 @@ function yesNoValue(formData: FormData, fieldName: LpWorkflowFormName) {
   return enumValue(formData, fieldName, ["是", "否"] as const) === "是";
 }
 
+function instantValue(formData: FormData, fieldName: LpWorkflowFormName) {
+  const source = requiredString(formData, fieldName);
+  const value = new Date(source);
+  if (Number.isNaN(value.valueOf())) {
+    throw new LpWorkflowFormDataError(fieldName, `${fieldName}时间无效`);
+  }
+  return value.toISOString();
+}
+
 function parseCommonFields(formData: FormData): LpCommonFields {
   const isUniversityStudent = checked(formData, LP_WORKFLOW_FORM_NAMES.isUniversityStudent);
   const specialNotes = stringValue(formData, LP_WORKFLOW_FORM_NAMES.specialNotes);
@@ -169,18 +191,49 @@ function parseCommonFields(formData: FormData): LpCommonFields {
 
 function parseTrialFields(formData: FormData, common: LpCommonFields): TrialLpFields {
   const timeMentioned = yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.timeMentioned);
+  const studentNameKnown = yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.studentNameKnown);
+  const contactParents = checked(formData, LP_WORKFLOW_FORM_NAMES.contactParents);
+  const contactStudent = checked(formData, LP_WORKFLOW_FORM_NAMES.contactStudent);
+  if (!contactParents && !contactStudent) {
+    throw new LpWorkflowFormDataError(LP_WORKFLOW_FORM_NAMES.contactParents, "请至少选择家长或学生本人作为对接对象");
+  }
+  const trialDurationMinutes = Number(requiredString(formData, LP_WORKFLOW_FORM_NAMES.trialDurationMinutes));
+  if (!TRIAL_DURATIONS.includes(trialDurationMinutes as 45 | 60)) {
+    throw new LpWorkflowFormDataError(LP_WORKFLOW_FORM_NAMES.trialDurationMinutes, "试听时长只能选择 45 或 60 分钟");
+  }
+  const optional = (fieldName: LpWorkflowFormName) => stringValue(formData, fieldName);
+  const contactNote = optional(LP_WORKFLOW_FORM_NAMES.contactNote);
+  const writingNote = optional(LP_WORKFLOW_FORM_NAMES.writingNote);
+  const paperNote = optional(LP_WORKFLOW_FORM_NAMES.paperNote);
+  const preparationNote = optional(LP_WORKFLOW_FORM_NAMES.preparationNote);
+  const trialDurationNote = optional(LP_WORKFLOW_FORM_NAMES.trialDurationNote);
   return {
     ...common,
+    planner: enumValue(formData, LP_WORKFLOW_FORM_NAMES.planner, TRIAL_PLANNERS),
+    requestSentAt: instantValue(formData, LP_WORKFLOW_FORM_NAMES.requestSentAt),
     assignedTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.assignedTeacher),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
     oneSentenceDescription: requiredString(formData, LP_WORKFLOW_FORM_NAMES.oneSentenceDescription),
     locationTimezone: requiredString(formData, LP_WORKFLOW_FORM_NAMES.locationTimezone),
-    contactPerson: enumValue(formData, LP_WORKFLOW_FORM_NAMES.contactPerson, LP_CONTACT_OPTIONS),
+    contactPerson: contactParents ? "家长" : "学生本人",
+    contactParents,
+    contactStudent,
+    ...(contactNote ? { contactNote } : {}),
+    writingRequired: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.writingRequired),
+    ...(writingNote ? { writingNote } : {}),
+    paperRequired: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.paperRequired),
+    ...(paperNote ? { paperNote } : {}),
     timeMentioned,
     ...(timeMentioned
       ? { preferredTime: requiredString(formData, LP_WORKFLOW_FORM_NAMES.preferredTime) }
       : {}),
-    studentNameKnown: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.studentNameKnown),
+    studentNameKnown,
+    ...(studentNameKnown
+      ? { studentName: requiredString(formData, LP_WORKFLOW_FORM_NAMES.studentName) }
+      : {}),
+    ...(preparationNote ? { preparationNote } : {}),
+    trialDurationMinutes: trialDurationMinutes as 45 | 60,
+    ...(trialDurationNote ? { trialDurationNote } : {}),
     trialPaymentMethod: enumValue(
       formData,
       LP_WORKFLOW_FORM_NAMES.trialPaymentMethod,
@@ -432,6 +485,36 @@ function SelectOrInput({
   </select>;
 }
 
+function DatalistInput({
+  name,
+  defaultValue,
+  options,
+  required = true,
+}: Readonly<{
+  name: LpWorkflowFormName;
+  defaultValue?: string;
+  options?: readonly LpFormOption[];
+  required?: boolean;
+}>) {
+  const listId = `lp-options-${name}`;
+  return <>
+    <input name={name} list={options?.length ? listId : undefined} defaultValue={defaultValue} required={required} />
+    {options?.length ? <datalist id={listId}>{options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</datalist> : null}
+  </>;
+}
+
+function localDateTimeDefault(value?: string) {
+  if (value) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.valueOf())) {
+      const local = new Date(parsed.valueOf() - parsed.getTimezoneOffset() * 60_000);
+      return local.toISOString().slice(0, 16);
+    }
+  }
+  const now = new Date();
+  return new Date(now.valueOf() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function TeacherField({
   label,
   name,
@@ -479,6 +562,7 @@ export function LpWorkflowFields({
   const [workflowType, setWorkflowType] = useState<LpWorkflowType>(initialType);
   const [isUniversityStudent, setIsUniversityStudent] = useState(Boolean(initialValues.isUniversityStudent));
   const [timeMentioned, setTimeMentioned] = useState(Boolean(initialValues.timeMentioned));
+  const [studentNameKnown, setStudentNameKnown] = useState(Boolean(initialValues.studentNameKnown));
   const showsTrialFields = workflowType === "试听 LP" || workflowType === "学生直报（无试听）";
   const showsHours = workflowType === "学生直报（无试听）";
   const showsTeacherLp = workflowType === "老师新 LP" || workflowType === "老师 LP 修改";
@@ -507,13 +591,22 @@ export function LpWorkflowFields({
     </label>
 
     {showsTrialFields ? <>
-      {workflowType === "试听 LP" ? <TeacherField
-          label="安排老师"
-          name={LP_WORKFLOW_FORM_NAMES.assignedTeacher}
-          defaultValue={initialValues.assignedTeacher}
-          teacherOptions={teacherOptions}
-        /> : null}
-      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
+      {workflowType === "试听 LP" ? <>
+        <label>课程规划老师
+          <select name={LP_WORKFLOW_FORM_NAMES.planner} defaultValue={initialValues.planner ?? TRIAL_PLANNERS[0]} required>
+            {TRIAL_PLANNERS.map((option) => <option value={option} key={option}>{option === "Tara" ? "Tara（试听学员 A）" : option === "Eileen" ? "Eileen（试听学员 B）" : "Abby（试听学员 C）"}</option>)}
+          </select>
+        </label>
+        <label>试听 LP 交接时间
+          <input name={LP_WORKFLOW_FORM_NAMES.requestSentAt} type="datetime-local" defaultValue={localDateTimeDefault(initialValues.requestSentAt)} required />
+        </label>
+        <label>安排老师（可自定义）
+          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.assignedTeacher} defaultValue={initialValues.assignedTeacher} options={teacherOptions} />
+        </label>
+        <label>科目（可自定义）
+          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.subject} defaultValue={initialValues.subject} options={subjectOptions} />
+        </label>
+      </> : <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />}
       <label className="span-2">一句话描述
         <textarea
           name={LP_WORKFLOW_FORM_NAMES.oneSentenceDescription}
@@ -523,17 +616,31 @@ export function LpWorkflowFields({
         />
       </label>
       <label>所在地（时区）
-        <SelectOrInput
+        <DatalistInput
           name={LP_WORKFLOW_FORM_NAMES.locationTimezone}
           defaultValue={initialValues.locationTimezone}
           options={timezoneOptions}
         />
       </label>
-      <label>对接对象
+      {workflowType === "试听 LP" ? <fieldset className="span-2 lp-inline-options"><legend>对接对象（可多选）</legend>
+        <label className="checkbox-field"><input name={LP_WORKFLOW_FORM_NAMES.contactParents} type="checkbox" defaultChecked={initialValues.contactParents ?? true} /> 家长</label>
+        <label className="checkbox-field"><input name={LP_WORKFLOW_FORM_NAMES.contactStudent} type="checkbox" defaultChecked={initialValues.contactStudent} /> 学生本人</label>
+      </fieldset> : <label>对接对象
         <select name={LP_WORKFLOW_FORM_NAMES.contactPerson} defaultValue={initialValues.contactPerson ?? LP_CONTACT_OPTIONS[0]}>
           {LP_CONTACT_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
         </select>
-      </label>
+      </label>}
+      {workflowType === "试听 LP" ? <>
+        <label className="span-2">对接备注<textarea name={LP_WORKFLOW_FORM_NAMES.contactNote} defaultValue={initialValues.contactNote} rows={2} /></label>
+        <label>需要写作
+          <select name={LP_WORKFLOW_FORM_NAMES.writingRequired} defaultValue={initialValues.writingRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
+        </label>
+        <label>写作备注<input name={LP_WORKFLOW_FORM_NAMES.writingNote} defaultValue={initialValues.writingNote} /></label>
+        <label>需要发、收试卷
+          <select name={LP_WORKFLOW_FORM_NAMES.paperRequired} defaultValue={initialValues.paperRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
+        </label>
+        <label>试卷备注<input name={LP_WORKFLOW_FORM_NAMES.paperNote} defaultValue={initialValues.paperNote} /></label>
+      </> : null}
       <label>是否提到时间
         <select
           name={LP_WORKFLOW_FORM_NAMES.timeMentioned}
@@ -548,10 +655,17 @@ export function LpWorkflowFields({
       </label> : null}
       {workflowType === "试听 LP" ? <>
         <label>是否知道学生姓名
-          <select name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} defaultValue={initialValues.studentNameKnown ? "是" : "否"}>
+          <select name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} value={studentNameKnown ? "是" : "否"} onChange={(event) => setStudentNameKnown(event.target.value === "是")}>
             <option value="否">否</option><option value="是">是</option>
           </select>
         </label>
+        {studentNameKnown ? <label>学生姓名<input name={LP_WORKFLOW_FORM_NAMES.studentName} defaultValue={initialValues.studentName} required /></label> : null}
+        <label>试听时长
+          <select name={LP_WORKFLOW_FORM_NAMES.trialDurationMinutes} defaultValue={initialValues.trialDurationMinutes ?? 60}>
+            <option value="60">1 小时</option><option value="45">45 分钟</option>
+          </select>
+        </label>
+        <label>时长备注<input name={LP_WORKFLOW_FORM_NAMES.trialDurationNote} defaultValue={initialValues.trialDurationNote} /></label>
         <label>试听付费方式
           <select name={LP_WORKFLOW_FORM_NAMES.trialPaymentMethod} defaultValue={initialValues.trialPaymentMethod ?? TRIAL_PAYMENT_METHODS[0]}>
             {TRIAL_PAYMENT_METHODS.map((option) => <option value={option} key={option}>{option}</option>)}
@@ -729,7 +843,7 @@ export function LpWorkflowFields({
         name={LP_WORKFLOW_FORM_NAMES.specifiedContentStatus}
         defaultValue={initialValues.specifiedContentStatus ?? SPECIFIED_CONTENT_STATUSES[2]}
       >
-        {SPECIFIED_CONTENT_STATUSES.map((option) => <option value={option} key={option}>{option}</option>)}
+        {SPECIFIED_CONTENT_STATUSES.filter((option) => option !== "需要跟进").map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
     <label>备课跟进
@@ -740,6 +854,9 @@ export function LpWorkflowFields({
         {PREPARATION_FOLLOW_UP_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
+    {workflowType === "试听 LP" ? <label className="span-2">备课跟进备注
+      <textarea name={LP_WORKFLOW_FORM_NAMES.preparationNote} defaultValue={initialValues.preparationNote} rows={2} />
+    </label> : null}
     <label className="span-2">指定内容备注 / 特殊情况
       <textarea name={LP_WORKFLOW_FORM_NAMES.specialNotes} defaultValue={initialValues.specialNotes} rows={3} />
     </label>

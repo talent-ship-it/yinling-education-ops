@@ -10,7 +10,7 @@ export const LP_WORKFLOW_TYPES = [
 
 export type LpWorkflowType = (typeof LP_WORKFLOW_TYPES)[number];
 
-export const SPECIFIED_CONTENT_STATUSES = ["已指定", "无需指定", "需要跟进"] as const;
+export const SPECIFIED_CONTENT_STATUSES = ["已指定", "无需指定", "需教务跟进", "需要跟进"] as const;
 export type SpecifiedContentStatus = (typeof SPECIFIED_CONTENT_STATUSES)[number];
 
 export const PREPARATION_FOLLOW_UP_OPTIONS = ["是", "否"] as const;
@@ -39,18 +39,49 @@ export type LpCommonFields = {
 };
 
 export type TrialLpFields = LpCommonFields & {
+  planner: "Tara" | "Eileen" | "Abby";
+  requestSentAt: string;
   assignedTeacher: string;
   subject: string;
   oneSentenceDescription: string;
   locationTimezone: string;
   contactPerson: LpContact;
+  contactParents: boolean;
+  contactStudent: boolean;
+  contactNote?: string;
+  writingRequired: boolean;
+  writingNote?: string;
+  paperRequired: boolean;
+  paperNote?: string;
   timeMentioned: boolean;
   preferredTime?: string;
   studentNameKnown: boolean;
+  studentName?: string;
+  preparationNote?: string;
+  trialDurationMinutes: 45 | 60;
+  trialDurationNote?: string;
   trialPaymentMethod: TrialPaymentMethod;
 };
 
-export type DirectEnrollmentLpFields = Omit<TrialLpFields, "assignedTeacher" | "studentNameKnown" | "trialPaymentMethod"> & {
+type TrialOnlyFieldKey =
+  | "assignedTeacher"
+  | "studentNameKnown"
+  | "trialPaymentMethod"
+  | "planner"
+  | "requestSentAt"
+  | "contactParents"
+  | "contactStudent"
+  | "contactNote"
+  | "writingRequired"
+  | "writingNote"
+  | "paperRequired"
+  | "paperNote"
+  | "studentName"
+  | "preparationNote"
+  | "trialDurationMinutes"
+  | "trialDurationNote";
+
+export type DirectEnrollmentLpFields = Omit<TrialLpFields, TrialOnlyFieldKey> & {
   purchasedHours: number;
   bonusHours: number;
   lessonFrequency: string;
@@ -142,7 +173,10 @@ type LpWorkflowFieldKey = keyof (
   & TeacherChangeTrialFields
   & SubstituteTeacherLpFields
   & EnrollmentHandoverLpFields
-) | "assignedTeacher" | "studentNameKnown" | "trialPaymentMethod";
+) | "assignedTeacher" | "studentNameKnown" | "trialPaymentMethod"
+  | "requestSentAt" | "contactParents" | "contactStudent" | "contactNote"
+  | "writingRequired" | "writingNote" | "paperRequired" | "paperNote"
+  | "studentName" | "preparationNote" | "trialDurationMinutes" | "trialDurationNote";
 
 export type LpFieldControl = "text" | "textarea" | "select" | "number" | "boolean" | "url" | "date";
 export type LpFieldRequirement = "required" | "optional" | "university-only";
@@ -201,6 +235,8 @@ const commonFieldSchema: readonly LpFieldSchema[] = Object.freeze([
 ]);
 
 const trialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
+  Object.freeze({ key: "planner", label: "课程规划老师", control: "select", requirement: "required", options: ["Tara", "Eileen", "Abby"] }),
+  Object.freeze({ key: "requestSentAt", label: "试听 LP 交接时间", control: "text", requirement: "required" }),
   Object.freeze({ key: "assignedTeacher", label: "安排老师", control: "text", requirement: "required" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "oneSentenceDescription", label: "一句话描述", control: "textarea", requirement: "required" }),
@@ -215,6 +251,17 @@ const trialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
   Object.freeze({ key: "timeMentioned", label: "是否提到时间", control: "boolean", requirement: "required" }),
   Object.freeze({ key: "preferredTime", label: "偏好时间", control: "text", requirement: "optional" }),
   Object.freeze({ key: "studentNameKnown", label: "是否知道学生姓名", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "studentName", label: "学生姓名", control: "text", requirement: "optional" }),
+  Object.freeze({ key: "contactParents", label: "对接家长", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "contactStudent", label: "对接学生本人", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "contactNote", label: "对接备注", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "writingRequired", label: "需要写作", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "writingNote", label: "写作备注", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "paperRequired", label: "需要发收试卷", control: "boolean", requirement: "required" }),
+  Object.freeze({ key: "paperNote", label: "试卷备注", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "preparationNote", label: "备课跟进备注", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "trialDurationMinutes", label: "试听时长（分钟）", control: "number", requirement: "required", min: 45 }),
+  Object.freeze({ key: "trialDurationNote", label: "时长备注", control: "textarea", requirement: "optional" }),
   Object.freeze({
     key: "trialPaymentMethod",
     label: "试听付费方式",
@@ -232,7 +279,12 @@ const directEnrollmentHoursSchema: readonly LpFieldSchema[] = Object.freeze([
 ]);
 
 const directEnrollmentTrialSchema = Object.freeze(
-  trialFieldSchema.filter((field) => !["assignedTeacher", "studentNameKnown", "trialPaymentMethod"].includes(field.key)),
+  trialFieldSchema.filter((field) => ![
+    "assignedTeacher", "studentNameKnown", "trialPaymentMethod", "planner", "requestSentAt",
+    "contactParents", "contactStudent", "contactNote", "writingRequired", "writingNote",
+    "paperRequired", "paperNote", "studentName", "preparationNote", "trialDurationMinutes",
+    "trialDurationNote",
+  ].includes(field.key)),
 );
 
 const teacherLpFieldSchema: readonly LpFieldSchema[] = Object.freeze([

@@ -8,6 +8,7 @@ import { mapJiaowubaoSnapshotParticipants } from "@/lib/jiaowubao-open-api-sched
 import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "@/lib/student-import";
+import { trialPlannerHintFromParticipants } from "@/lib/trial-operations";
 import {
   getJiaowubaoOpenApiScheduleSnapshotWindow,
   getOpsState,
@@ -26,7 +27,8 @@ const SNAPSHOT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const SCHEDULE_PAGE_LIMIT = 250;
 const CURSOR_TTL_SECONDS = 10 * 60;
 
-type Scope = "all" | "teacher" | "student" | "availability";
+type Scope = "all" | "teacher" | "student" | "availability" | "trial";
+type SourceScope = Exclude<Scope, "trial">;
 type RecordValue = Record<string, unknown>;
 
 type ReaderContext = Readonly<{
@@ -243,11 +245,20 @@ type StudentLookup = Readonly<{
   nameCandidates: Map<string, readonly string[]>;
   memberIds: readonly string[];
   nameKeys: readonly string[];
+  trialCourseCandidates: ReadonlyMap<string, readonly string[]>;
+  trialCourseVisible: ReadonlyMap<string, string>;
 }>;
+
+function trialCourseKey(value: unknown) {
+  return typeof value === "string"
+    ? value.normalize("NFKC").toLocaleLowerCase("en-AU").replace(/[^\p{L}\p{N}]+/gu, "")
+    : "";
+}
 
 function studentLookup(rows: OpsStateRow[], allowedStudentIds: ReadonlySet<string>): StudentLookup {
   const candidates = new Map<string, string[]>();
   const nameCandidates = new Map<string, string[]>();
+  const trialCourseCandidates = new Map<string, string[]>();
   for (const item of entityRecords(rows, "students")) {
     const id = text(item.id, 240);
     const memberId = safeSourceKey(item.jwbSourceRow);
@@ -261,6 +272,12 @@ function studentLookup(rows: OpsStateRow[], allowedStudentIds: ReadonlySet<strin
     }
     const name = text(item.name, 240);
     if (name) {
+      const courseKey = trialCourseKey(name);
+      if (courseKey.length >= 4) {
+        const current = trialCourseCandidates.get(courseKey) ?? [];
+        if (!current.includes(id)) current.push(id);
+        trialCourseCandidates.set(courseKey, current);
+      }
       const keys = new Set([normalizeStudentImportName(name), studentImportAutomaticJwbNameKey(name)]);
       for (const key of keys) {
         if (!key) continue;
@@ -278,6 +295,10 @@ function studentLookup(rows: OpsStateRow[], allowedStudentIds: ReadonlySet<strin
   for (const [nameKey, ids] of nameCandidates) {
     if (ids.length === 1 && allowedStudentIds.has(ids[0]!)) internalByNameKey.set(nameKey, ids[0]!);
   }
+  const trialCourseVisible = new Map<string, string>();
+  for (const [courseKey, ids] of trialCourseCandidates) {
+    if (ids.length === 1 && allowedStudentIds.has(ids[0]!)) trialCourseVisible.set(courseKey, ids[0]!);
+  }
   return {
     internalByMember,
     internalByNameKey,
@@ -285,7 +306,26 @@ function studentLookup(rows: OpsStateRow[], allowedStudentIds: ReadonlySet<strin
     nameCandidates: new Map([...nameCandidates.entries()].map(([key, ids]) => [key, [...ids]])),
     memberIds: [...internalByMember.keys()].sort(),
     nameKeys: [...internalByNameKey.keys()].sort(),
+    trialCourseCandidates: new Map([...trialCourseCandidates.entries()].map(([key, ids]) => [key, [...ids]])),
+    trialCourseVisible,
   };
+}
+
+function trialCourseStudentIds(courseName: string | null, lookup: StudentLookup) {
+  const courseKey = trialCourseKey(courseName);
+  if (!courseKey) return [];
+  const candidateIds = new Set<string>();
+  const visibleIds = new Set<string>();
+  for (const [nameKey, ids] of lookup.trialCourseCandidates) {
+    if (!courseKey.includes(nameKey)) continue;
+    ids.forEach((id) => candidateIds.add(id));
+    const visible = lookup.trialCourseVisible.get(nameKey);
+    if (visible) visibleIds.add(visible);
+  }
+  if (candidateIds.size !== 1 || visibleIds.size !== 1) return [];
+  const candidate = [...candidateIds][0];
+  const visible = [...visibleIds][0];
+  return candidate === visible ? [visible] : [];
 }
 
 function emptyPage() {
@@ -405,11 +445,14 @@ function publicPage(
       ? teacherLookupValue.idsByLabel.get(normalise(event.sourceTeacherLabel)) ?? []
       : [];
     const teacherId = matchingTeacherIds.length === 1 ? matchingTeacherIds[0]! : null;
-    const visibleStudentIds = context.scope === "availability" ? [] : mapJiaowubaoSnapshotParticipants(
+    const participantStudentIds = context.scope === "availability" ? [] : mapJiaowubaoSnapshotParticipants(
       event.sourceParticipants,
       studentLookupValue,
     );
-    if (context.scope === "student" && !visibleStudentIds.length) return [];
+    const visibleStudentIds = context.scope === "trial"
+      ? [...new Set([...participantStudentIds, ...trialCourseStudentIds(event.courseName, studentLookupValue)])]
+      : participantStudentIds;
+    if ((context.scope === "student" || context.scope === "trial") && !visibleStudentIds.length) return [];
     return [{
       eventId: event.eventId,
       sourceDate: event.sourceDate,
@@ -417,6 +460,9 @@ function publicPage(
       endsAt: event.endsAt,
       courseName: context.scope === "availability" ? null : event.courseName,
       teacherId,
+      trialPlannerHint: context.scope === "availability"
+        ? null
+        : trialPlannerHintFromParticipants(event.sourceParticipants),
       availabilityEffect: teacherId ? "blocks_teacher_ava" as const : "display_only" as const,
       visibleStudentIds: [...new Set(visibleStudentIds)].slice(0, 100),
       visibleStudentsTruncated: event.sourceStudentsTruncated || visibleStudentIds.length > 100,
@@ -473,6 +519,10 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
+  const trialOnly = url.searchParams.get("trialOnly") === "1";
+  if (url.searchParams.has("trialOnly") && url.searchParams.get("trialOnly") !== "1") {
+    return noStore({ error: "trialOnly 参数无效。" }, 400);
+  }
   const windowStart = readInstant(url.searchParams.get("windowStart"), "windowStart");
   const windowEnd = readInstant(url.searchParams.get("windowEnd"), "windowEnd");
   const requestedTeacher = readId(url.searchParams.get("teacherId"), "teacherId");
@@ -481,6 +531,7 @@ export async function GET(request: Request) {
   if ("error" in windowEnd) return noStore({ error: windowEnd.error }, 400);
   if ("error" in requestedTeacher) return noStore({ error: requestedTeacher.error }, 400);
   if ("error" in cursorToken) return noStore({ error: cursorToken.error }, 400);
+  if (trialOnly && requestedTeacher.value) return noStore({ error: "试听 LP 投影不能同时筛选单一老师。" }, 400);
   if (new Date(windowEnd.value).getTime() <= new Date(windowStart.value).getTime()) return noStore({ error: "windowEnd 必须晚于 windowStart。" }, 400);
 
   const { session } = resolved;
@@ -502,7 +553,7 @@ export async function GET(request: Request) {
 
     if (unrestricted) {
       if (requestedTeacherId && !knownTeacherIds.has(requestedTeacherId)) return noStore({ error: "未找到该老师。" }, 404);
-      const scope = requestedTeacherId ? "teacher" : "all" as Scope;
+      const scope = trialOnly ? "trial" : requestedTeacherId ? "teacher" : "all" as Scope;
       const teacherLabels = requestedTeacherId ? labelsForTeacherIds(lookup, [requestedTeacherId]) : null;
       studentLookupValue = studentLookup(rows, new Set(entityRecords(rows, "students").flatMap((item) => {
         const id = text(item.id, 240);
@@ -517,6 +568,7 @@ export async function GET(request: Request) {
         studentNameKeys: null,
       };
     } else if (access.teacher) {
+      if (trialOnly) return noStore({ error: "老师账号不能读取试听 LP 投影。" }, 403);
       if (requestedTeacherId && !access.teacherIds.has(requestedTeacherId)) return noStore({ error: "未找到该老师。" }, 404);
       const teacherIds = requestedTeacherId ? [requestedTeacherId] : [...access.teacherIds].sort();
       if (!teacherIds.length) return noStore(emptyPage());
@@ -545,6 +597,17 @@ export async function GET(request: Request) {
         studentMemberIds: null,
         studentNameKeys: null,
       };
+    } else if (trialOnly) {
+      studentLookupValue = studentLookup(rows, access.studentIds);
+      if (!studentLookupValue.trialCourseVisible.size && !studentLookupValue.memberIds.length) return noStore(emptyPage());
+      context = {
+        windowStart: windowStart.value,
+        windowEnd: windowEnd.value,
+        scope: "trial",
+        teacherLabels: null,
+        studentMemberIds: null,
+        studentNameKeys: null,
+      };
     } else {
       studentLookupValue = studentLookup(rows, access.studentIds);
       if (!studentLookupValue.memberIds.length && !studentLookupValue.nameKeys.length) return noStore(emptyPage());
@@ -562,7 +625,7 @@ export async function GET(request: Request) {
     const page = await getJiaowubaoOpenApiScheduleSnapshotWindow({
       windowStart: context.windowStart,
       windowEnd: context.windowEnd,
-      scope: context.scope,
+      scope: (context.scope === "trial" ? "all" : context.scope) as SourceScope,
       teacherLabels: context.teacherLabels,
       studentMemberIds: context.studentMemberIds,
       studentNameKeys: context.studentNameKeys,

@@ -22,7 +22,7 @@ test("LP form student selection is an observable draft and remounts student-deri
   assert.match(dialog, /lpDraftStudent\?\.lessonPackages/);
   assert.match(dialog, /studentId: lpDraftStudentId/);
   assert.match(dialog, /name="provisionalPlanner"/);
-  assert.match(dialog, /planner: lpDraftStudent\?\.planner \?\? ""/);
+  assert.match(dialog, /planner: lpDraftStudent\?\.planner === "Tara" \|\| lpDraftStudent\?\.planner === "Eileen" \|\| lpDraftStudent\?\.planner === "Abby" \? lpDraftStudent\.planner : "Tara"/);
   assert.doesNotMatch(dialog, /name="planner"/);
   assert.doesNotMatch(dialog, /initialValues=\{\{[^}]*selectedStudent\./);
 });

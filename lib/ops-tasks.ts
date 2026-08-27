@@ -36,6 +36,10 @@ export interface OpsTask {
   category: TaskCategory;
   trigger: string;
   result?: string;
+  /** `cannot_do` remains a closed task but is shown separately from completed work. */
+  completionOutcome?: "done" | "cannot_do";
+  /** Operator note; required when completionOutcome is `cannot_do`. */
+  completionNote?: string;
   ruleKey?: string;
   dueAt?: string;
   /**

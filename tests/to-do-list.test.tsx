@@ -36,6 +36,9 @@ function render(tasks: OpsTask[], filter: ToDoFilter = "all") {
       filter={filter}
       onFilterChange={() => undefined}
       onComplete={() => undefined}
+      onCannotDo={() => undefined}
+      onReopen={() => undefined}
+      onUpdateNote={() => undefined}
       onOpen={() => undefined}
     />,
   );
@@ -49,6 +52,9 @@ function renderWithOpenPolicy(tasks: OpsTask[], canOpen: (task: OpsTask) => bool
       filter="all"
       onFilterChange={() => undefined}
       onComplete={() => undefined}
+      onCannotDo={() => undefined}
+      onReopen={() => undefined}
+      onUpdateNote={() => undefined}
       onOpen={() => undefined}
       canOpen={canOpen}
     />,
@@ -59,6 +65,8 @@ test("renders the today and category tabs, marks the controlled filter, and expo
   const html = render([], "考试");
   for (const label of ["全部", "今日", "LP", "考试", "续课", "请假代课"]) assert.match(html, new RegExp(`>${label}<`));
   assert.match(html, /aria-label="任务类别"/);
+  for (const label of ["To Do", "All Done", "Can’t Do"]) assert.match(html, new RegExp(label));
+  assert.match(html, /aria-label="任务状态"/);
   assert.match(html, /class="active" type="button" aria-pressed="true">考试</);
   assert.match(html, /aria-expanded="true" aria-controls="to-do-list-content">/);
   assert.match(html, />收起</);

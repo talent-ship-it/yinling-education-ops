@@ -591,7 +591,7 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /<LpWorkflowFields/);
   assert.match(client, /<LpWorkflowDetails/);
   assert.match(client, /<details className="span-2" open>/);
-  assert.match(client, /const fields = parsedLp\.fields as LpFieldValues/);
+  assert.match(client, /const fields = workflowType === "试听 LP"[\s\S]*?trialAtomicFields\(parsedLp\.fields as LpFieldValues\)[\s\S]*?: parsedLp\.fields as LpFieldValues/);
   assert.match(client, /const submitLpRevision = async/);
   assert.match(client, /operation: "revise" as const/);
   assert.match(client, /const changed = changeLpStage/);

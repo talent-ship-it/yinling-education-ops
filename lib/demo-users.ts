@@ -1,6 +1,6 @@
 export const DEMO_ADMIN_USER = "Nixon";
 export const DEMO_LIMITED_ADMIN_USER = "Ops Admin";
-export const DEMO_STAFF_USERS = ["Abby", "Ella", "Molly", "Thea", "Tiffany", "Tara", "Eileen", "思佳"] as const;
+export const DEMO_STAFF_USERS = ["Abby", "Ella", "Erin", "Molly", "Thea", "Tiffany", "Tara", "Eileen", "思佳"] as const;
 export const DEMO_TEACHER_USERS = ["Helen Ceperkovic", "Shirley Li", "Anna Zhang", "Nixon（测试）"] as const;
 
 export type DemoLimitedAdminUser = typeof DEMO_LIMITED_ADMIN_USER;
