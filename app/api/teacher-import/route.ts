@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   commitTeacherImportPlanAtomic,
@@ -34,7 +35,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-async function requireAdmin() {
+async function requireAdmin(permission: "operations.read" | "operations.write") {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) {
@@ -43,7 +44,9 @@ async function requireAdmin() {
   const { session } = resolved;
   const fullAdmin = session.user === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)) {
+  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, permission)
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有管理员可以执行老师正式导入。" }, 403) } as const;
   }
   return { actor: session.user } as const;
@@ -84,7 +87,7 @@ async function currentPlan() {
 
 /** Server-computed dry-run over the two latest server-owned workbooks. */
 export async function GET() {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.read");
   if ("response" in access) return access.response;
 
   try {
@@ -103,7 +106,7 @@ export async function GET() {
 
 /** Recomputes the plan and submits only that server-owned result atomically. */
 export async function POST(request: Request) {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.write");
   if ("response" in access) return access.response;
 
   try {

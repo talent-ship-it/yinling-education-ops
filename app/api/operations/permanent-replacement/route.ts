@@ -71,7 +71,7 @@ export async function POST(request: Request) {
   try {
     const command = parsePermanentTeacherReplacementCommand(await request.json().catch(() => null));
     const rows = await getOpsState(["bookings", "operations", "students", "teachers"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     const visibleRows = filterOpsStateRows(rows, access);
     const visibleOperations = visibleRows.find((row) => row.entity === "operations");
     const visibleOperation = Array.isArray(visibleOperations?.payload)
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       // commit can land between them, so a replay must never return those
       // pre-transaction rows. Re-read and re-authorize the current projection.
       const replayRows = await getOpsState(["bookings", "operations", "students", "teachers"]);
-      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
       const replayVisibleRows = filterOpsStateRows(replayRows, replayAccess);
       const replayOperations = replayVisibleRows.find((row) => row.entity === "operations");
       const replayOperation = Array.isArray(replayOperations?.payload)
@@ -133,6 +133,7 @@ export async function POST(request: Request) {
       actor,
       fullAdmin,
       role: session.role,
+      authorization: session,
     });
     const saved = await confirmPermanentTeacherReplacementAtomic({ ...prepared, actor });
     if (!saved[0]) throw new OpsStoreError("永久换师事务没有返回保存结果。", "invalid_commit_result");
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
           : row.entity === "students"
             ? saved[0].students_row
             : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const committedVisible = filterOpsStateRows(committedRows, committedAccess);
     return noStore({
       committed: true,

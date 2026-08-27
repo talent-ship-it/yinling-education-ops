@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
@@ -32,7 +33,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-async function requireAdmin() {
+async function requireAdmin(permission: "operations.read" | "operations.write") {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
@@ -40,7 +41,9 @@ async function requireAdmin() {
   const actor = session.user;
   const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasTeacherAvailabilityReviewAdminAccess(actor, fullAdmin)) {
+  if (!hasTeacherAvailabilityReviewAdminAccess(actor, fullAdmin)
+      || !hasDemoSessionPermission(session, permission)
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有管理员可以审核老师 AVA。" }, 403) } as const;
   }
   return { session: { actor, fullAdmin } } as const;
@@ -87,7 +90,7 @@ async function currentReviewRows() {
 }
 
 export async function GET() {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.read");
   if ("response" in access) return access.response;
 
   try {
@@ -110,7 +113,7 @@ export async function GET() {
  * approved windows on the server, then delegates exactly one atomic RPC.
  */
 export async function POST(request: Request) {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.write");
   if ("response" in access) return access.response;
 
   try {

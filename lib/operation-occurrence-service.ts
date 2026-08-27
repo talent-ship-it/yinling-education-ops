@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import {
   BookingCapacityServiceError,
@@ -393,6 +393,7 @@ export function prepareOperationConfirmation(input: {
   actor: string;
   fullAdmin: boolean;
   role?: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
 }): PreparedOperationConfirmation {
   const bookingRow = payloadRow(input.rows, "bookings");
   const operationRow = payloadRow(input.rows, "operations");
@@ -400,8 +401,9 @@ export function prepareOperationConfirmation(input: {
   const operation = operationRow.payload.find((candidate) => candidate.id === input.command.operationId);
   if (!operation) fail("operation_not_found", "异常记录不存在。");
 
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.authorization ?? input.role);
+  if (!canWriteOpsTransaction(access, "operations", ["bookings", "operations"])
+      || access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
     fail("teacher_forbidden", "老师账号不能最终确认教务异常。");
   }
   if (!canOperateStudent(access, stateText(operation, "studentId", "operation"))) {
@@ -585,6 +587,7 @@ export function preparePermanentTeacherReplacement(input: {
   actor: string;
   fullAdmin: boolean;
   role?: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   now?: Date;
 }): PreparedPermanentTeacherReplacement {
   const bookingRow = payloadRow(input.rows, "bookings");
@@ -619,8 +622,9 @@ export function preparePermanentTeacherReplacement(input: {
     || effectiveDateValue.toISOString().slice(0, 10) !== effectiveDate) {
     fail("range_invalid", "离职生效日期无效。");
   }
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.authorization ?? input.role);
+  if (!canWriteOpsTransaction(access, "operations", ["bookings", "operations", "teachers", "students"])
+      || access.teacher || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
     fail("teacher_forbidden", "老师账号不能最终确认永久换师。");
   }
   if (!canOperateStudent(access, studentId)) {

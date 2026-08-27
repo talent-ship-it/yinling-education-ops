@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   OpsStoreError,
@@ -39,7 +40,9 @@ async function requireAdmin() {
   const { session } = resolved;
   const fullAdmin = session.user === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)) {
+  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, "operations.write")
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有管理员可以录入正式老师来源。" }, 403) } as const;
   }
   return { actor: session.user } as const;

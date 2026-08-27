@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   commitStudentImportPlanAtomic,
@@ -40,12 +41,12 @@ function noStore(payload: unknown, status = 200) {
 async function adminSession() {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
-  if (!("session" in resolved)) return { actor: null, fullAdmin: false };
+  if (!("session" in resolved)) return { actor: null, fullAdmin: false, identity: null };
   const { session } = resolved;
   const actor = session.user;
   const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  return { actor, fullAdmin };
+  return { actor, fullAdmin, identity: session };
 }
 
 function missingRpc(error: unknown) {
@@ -106,10 +107,13 @@ async function currentPlan() {
   });
 }
 
-async function requireAdmin() {
+async function requireAdmin(permission: "operations.read" | "operations.write") {
   const session = await adminSession();
   if (!session.actor) return { response: noStore({ error: "请先输入访问密码。" }, 401) } as const;
-  if (!hasStudentImportAdminAccess(session.actor, session.fullAdmin)) {
+  if (!hasStudentImportAdminAccess(session.actor, session.fullAdmin)
+      || !session.identity
+      || !hasDemoSessionPermission(session.identity, permission)
+      || !hasUnrestrictedDemoSessionScope(session.identity)) {
     return { response: noStore({ error: "只有管理员可以执行学生正式导入。" }, 403) } as const;
   }
   return { session } as const;
@@ -117,7 +121,7 @@ async function requireAdmin() {
 
 /** Server-computed dry run; no source or student rows are accepted from the caller. */
 export async function GET() {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.read");
   if ("response" in access) return access.response;
 
   try {
@@ -137,7 +141,7 @@ export async function GET() {
  * write. It deliberately never accepts a client-computed students payload.
  */
 export async function POST(request: Request) {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.write");
   if ("response" in access) return access.response;
 
   try {

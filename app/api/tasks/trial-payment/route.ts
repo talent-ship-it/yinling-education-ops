@@ -1,14 +1,18 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   buildOpsAccessContext,
+  canWriteOpsEntity,
   filterOpsStateRows,
   managedTrialPaymentStudentProjectionSnapshot,
 } from "@/lib/ops-access";
 import {
   completeTrialPaymentTaskAtomic,
+  getTrialPaymentCompletionCommandResult,
+  getOpsState,
   OpsStoreError,
   type OpsStateRow,
 } from "@/lib/ops-store";
@@ -46,17 +50,63 @@ function rowsFromResult(result: {
   return rows;
 }
 
+function receiptOnly(result: Readonly<{ task_id: string; audit_entry_id: string }>) {
+  return noStore({
+    committed: true,
+    applied: false,
+    receiptOnly: true,
+    taskId: result.task_id,
+    taskRow: null,
+    managedTrialPaymentSnapshot: null,
+    auditEntryId: result.audit_entry_id,
+  });
+}
+
 /** Exact task completion; the request never contains a replacement task row. */
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
+  const fullAdmin = resolved.session.user === DEMO_ADMIN_USER
+    && resolved.session.role === "admin"
+    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const body = await request.json().catch(() => null);
   try {
     const command = parseTrialPaymentCompletionCommand(body);
+    const commandIntent = trialPaymentCompletionIntent(command);
+    const readCommandReceipt = () => getTrialPaymentCompletionCommandResult({
+      commandKey: command.commandKey,
+      commandIntent,
+      taskId: command.taskId,
+      actor: resolved.session.user,
+    });
+    const replay = await readCommandReceipt();
+    if (replay.length > 1) throw new OpsStoreError("试听收费确认回执不唯一。", "invalid_commit_result");
+    if (replay[0]) return receiptOnly(replay[0]);
+
+    const authorizationRows = await getOpsState(["bookings", "students", "lpItems", "tasks", "teachers"]);
+    const authorization = buildOpsAccessContext(
+      authorizationRows,
+      resolved.session.user,
+      fullAdmin,
+      resolved.session,
+    );
+    const visibleTasks = filterOpsStateRows(authorizationRows, authorization)
+      .find((row) => row.entity === "tasks")?.payload;
+    const taskVisible = Array.isArray(visibleTasks)
+      && visibleTasks.some((candidate) => candidate && typeof candidate === "object"
+        && !Array.isArray(candidate) && (candidate as { id?: unknown }).id === command.taskId);
+    if (!canWriteOpsEntity(authorization, "tasks") || !taskVisible) {
+      // A concurrent first request may have committed after the initial
+      // receipt lookup but before this current-state authorization read.
+      const lateReplay = await readCommandReceipt();
+      if (lateReplay.length > 1) throw new OpsStoreError("试听收费确认回执不唯一。", "invalid_commit_result");
+      if (lateReplay[0]) return receiptOnly(lateReplay[0]);
+      return noStore({ error: "这项试听收费提醒没有分配给当前账号。", code: "task_forbidden" }, 403);
+    }
     const saved = await completeTrialPaymentTaskAtomic({
       commandKey: command.commandKey,
-      commandIntent: trialPaymentCompletionIntent(command),
+      commandIntent,
       taskId: command.taskId,
       expectedVersions: command.expectedVersions,
       actor: resolved.session.user,
@@ -64,7 +114,7 @@ export async function POST(request: Request) {
     });
     if (saved.length !== 1) throw new OpsStoreError("试听收费确认回执不完整。", "invalid_commit_result");
     const committedRows = rowsFromResult(saved[0]);
-    const access = buildOpsAccessContext(committedRows, resolved.session.user, false, resolved.session.role);
+    const access = buildOpsAccessContext(committedRows, resolved.session.user, fullAdmin, resolved.session);
     const visible = filterOpsStateRows(committedRows, access);
     const taskRow = visible.find((row) => row.entity === "tasks");
     const visibleTask = Array.isArray(taskRow?.payload)
@@ -73,15 +123,7 @@ export async function POST(request: Request) {
     if (!taskRow || !visibleTask) {
       // The exact command receipt is still authoritative after a planner/task/
       // LP scope change. Do not leak the historic student identity or rows.
-      return noStore({
-        committed: true,
-        applied: false,
-        receiptOnly: true,
-        taskId: saved[0].task_id,
-        taskRow: null,
-        managedTrialPaymentSnapshot: null,
-        auditEntryId: saved[0].audit_entry_id,
-      });
+      return receiptOnly(saved[0]);
     }
     return noStore({
       committed: true,

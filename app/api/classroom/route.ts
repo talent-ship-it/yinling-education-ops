@@ -11,7 +11,7 @@ import {
   meetingStatus,
 } from "@/lib/bigbluebutton";
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsEntity, filterOpsStateRows } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
 import { expandLessonOccurrences, type LegacyLessonSeries, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
@@ -68,7 +68,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
   const fullAdmin = actor === DEMO_ADMIN_USER
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  const access = buildOpsAccessContext(stateRows, actor, fullAdmin, session.role);
+  const access = buildOpsAccessContext(stateRows, actor, fullAdmin, session);
   const visible = Object.fromEntries(filterOpsStateRows(stateRows, access).map((item) => [item.entity, item.payload]));
   const booking = rows(visible.bookings).find((item) => item.id === bookingId);
   if (!booking) return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
@@ -137,6 +137,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
     student,
     teacher,
     operable: canOperateStudent(access, studentId),
+    canWriteBookings: canWriteOpsEntity(access, "bookings"),
     forbidden: false as const,
   };
 }
@@ -219,6 +220,7 @@ export async function POST(request: NextRequest) {
     const context = await authorizedBooking(bookingId, occurrenceId, sourceDate);
     if (!context) return noStore({ error: "请先输入访问密码。" }, 401);
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
+    if (!context.canWriteBookings) return noStore({ error: "当前账号没有执行课堂操作的排课权限。" }, 403);
     if (!context.operable) return noStore({ error: "已归档学生的历史课堂只能查看，不能执行新操作。" }, 403);
 
     const meetingId = meetingIdForOccurrence(occurrenceId);

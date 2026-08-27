@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   clearStudentImportIdentityLinks,
@@ -45,7 +46,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-async function requireAdmin() {
+async function requireAdmin(permission: "operations.read" | "operations.write") {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) {
@@ -54,7 +55,9 @@ async function requireAdmin() {
   const { session } = resolved;
   const fullAdmin = session.user === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasStudentImportAdminAccess(session.user, fullAdmin)) {
+  if (!hasStudentImportAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, permission)
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有管理员可以确认学生身份关联。" }, 403) } as const;
   }
   return { actor: session.user } as const;
@@ -86,7 +89,7 @@ async function currentReview() {
 
 /** Returns display evidence and opaque closed options; normalized keys and IDs stay server-side. */
 export async function GET() {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.read");
   if ("response" in access) return access.response;
 
   try {
@@ -121,7 +124,7 @@ export async function GET() {
 
 /** Accepts only opaque clear, suggested-decision, or manual-pair tokens. */
 export async function POST(request: Request) {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.write");
   if ("response" in access) return access.response;
 
   const declaredLength = Number(request.headers.get("content-length") ?? "0");

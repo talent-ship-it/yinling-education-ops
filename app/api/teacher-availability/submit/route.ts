@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasDemoSessionPermission } from "@/lib/demo-session-token";
 import {
   getOpsState,
   OpsStoreError,
@@ -40,6 +41,9 @@ export async function POST(request: Request) {
   const { session } = resolved;
   if (session.role !== "teacher") {
     return noStore({ error: "只有当前登录老师本人可以提交月度 AVA。", code: "teacher_only" }, 403);
+  }
+  if (!hasDemoSessionPermission(session, "availability.write.self")) {
+    return noStore({ error: "当前账号没有提交本人可用时间的权限。", code: "availability_permission_forbidden" }, 403);
   }
 
   try {

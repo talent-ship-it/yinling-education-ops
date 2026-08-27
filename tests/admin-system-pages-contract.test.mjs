@@ -14,6 +14,8 @@ function section(source, startMarker, endMarker) {
 
 test("administrator system pages keep visible controls connected to their boundaries", async () => {
   const client = await read("../app/operations-client.tsx");
+  const accountWorkspace = await read("../app/account-lifecycle-workspace.tsx");
+  const accountLifecycle = await read("../app/account-admin-lifecycle.tsx");
   const sync = section(client, "  const renderSync = () =>", "  const renderReports = () =>");
   const reports = section(client, "  const renderReports = () =>", "  const renderSettings = () =>");
   const settings = section(client, "  const renderSettings = () =>", "  const renderAudit = () =>");
@@ -64,14 +66,24 @@ test("administrator system pages keep visible controls connected to their bounda
   assert.match(settings, /onClick=\{exportDemo\}/);
   assert.match(client, /fetch\("\/api\/app-state"/);
 
-  assert.match(accounts, /onClick=\{\(\) => setSelectedAccountName\(account\.id\)\}/);
-  assert.match(accounts, /onClick=\{\(\) => switchOperator\(selectedAccount\.operator\)\}/);
-  assert.match(accounts, /运营报表/);
-  assert.match(accounts, /同步与导入/);
-  assert.match(accounts, /规则设置/);
-  assert.match(accounts, /操作审计/);
-  assert.match(accounts, /仅查看本账号权限范围/);
-  assert.match(accounts, /查看此账号视图\{isLimitedAdminSession \? "（当前权限内）"/);
+  assert.match(accounts, /<AccountLifecycleWorkspace/);
+  assert.match(client, /staffSectionIds = new Set<Section>\(\[[^\]]*"accounts"\]\)/);
+  assert.match(client, /teacherSectionIds = new Set<Section>\(\[[^\]]*"accounts"\]\)/);
+  assert.match(accounts, /canManageAccounts=\{isAdminSession\}/);
+  assert.match(accounts, /refreshVersion=\{accountLifecycleRefreshVersion\}/);
+  assert.match(accounts, /onResetPassword=\{\(account: AccountDirectoryRecord\) =>/);
+  assert.match(accounts, /onViewAccount=\{\(account: AccountDirectoryRecord\) => switchOperator\(account\.account_name, account\.account_role\)\}/);
+  assert.match(accountWorkspace, /onUpdateAccess=\{\(change\) => void updateAccess\(change\)\}/);
+  assert.match(accountWorkspace, /onSetStatus=\{\(change\) => void updateStatus\(change\)\}/);
+  assert.match(accountWorkspace, /onRevokeSessions=\{\(account\) => void revokeSelectedSessions\(account\)\}/);
+  assert.match(accountWorkspace, /onResetMfa=\{\(account\) => void resetSelectedMfa\(account\)\}/);
+  assert.match(accountWorkspace, /handledRefreshVersionRef\.current === refreshVersion/);
+  assert.match(accountWorkspace, /const accountId = await loadDirectory\(selectedAccountId\);/);
+  assert.match(accountWorkspace, /if \(accountId\) await loadSelectedAccount\(accountId\);/);
+  assert.ok(accountWorkspace.indexOf("await loadDirectory(selectedAccountId)") < accountWorkspace.indexOf("await loadSelectedAccount(accountId)"));
+  assert.match(client, /setAccountLifecycleRefreshVersion\(\(current\) => current \+ 1\)/);
+  assert.match(accountLifecycle, /onClick=\{\(\) => \{ setInternalSelectedId\(account\.account_id\); onSelectAccount\?\.\(account\.account_id\); \}\}/);
+  assert.match(accountLifecycle, /onClick=\{\(\) => onViewAccount\(account\)\}/);
 
   assert.match(audit, /onChange=\{\(value\) => \{/);
   assert.match(audit, /onQuery=\{\(value\) => \{/);
@@ -106,7 +118,8 @@ test("administrator-only pages stay behind the client and server role boundaries
   assert.match(stateRoute, /getCurrentDemoSession/);
   assert.match(stateRoute, /if \(body\.entity === "audit"\) return noStore\(\{ error: "操作审计由服务器自动记录，不能直接修改。" \}, 403\)/);
   assert.match(snapshotRoute, /getCurrentDemoSession/);
-  assert.match(snapshotRoute, /sourceAccess = fullAdmin \|\| actor === DEMO_LIMITED_ADMIN_USER/);
+  assert.match(snapshotRoute, /sourceAccess = canReadUnrestrictedOpsData\(access\)/);
+  assert.match(stateRoute, /!canReadUnrestrictedOpsData\(access\)/);
   assert.match(auditRoute, /getCurrentDemoSession/);
   assert.match(access, /if \(entity === "payroll"\) return context\.fullAdmin/);
   assert.match(access, /if \(entity === "audit"\) return false/);

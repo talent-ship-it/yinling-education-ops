@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { meetingIdForOccurrenceValue } from "@/lib/bbb-analytics";
-import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import {
   expandLessonOccurrences,
@@ -908,6 +908,7 @@ export function prepareBookingCapacityMutation(input: {
   rows: readonly OpsStateRow[];
   actor: string;
   role?: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
   now?: Date;
 }): PreparedBookingCapacityMutation {
@@ -921,7 +922,12 @@ export function prepareBookingCapacityMutation(input: {
       fail("stale_expected_version", `${entity} changed after this command was opened.`);
     }
   }
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
+  const access = buildOpsAccessContext(
+    input.rows as OpsStateRow[],
+    input.actor,
+    input.fullAdmin,
+    input.authorization ?? input.role,
+  );
   const admin = access.fullAdmin || access.limitedAdmin;
   const existing = bookingRow.payload.find((booking) => booking.id === input.command.bookingId);
   if ((input.command.action === "delete" || input.command.action === "cancel_occurrence" || input.command.action === "update_occurrence" || input.command.action === "bind_classroom") && !existing) {
@@ -940,7 +946,10 @@ export function prepareBookingCapacityMutation(input: {
   if (!targetStudent) fail("student_not_found", "Booking student was not found.");
   if (!targetTeacher) fail("teacher_not_found", "Booking teacher was not found.");
 
-  if (!admin && (!access.staff && !access.teacher)) fail("student_scope_forbidden", "Current account cannot mutate bookings.");
+  if (!canWriteOpsTransaction(access, "bookings", ["bookings", "students", "lpItems", "tasks", "teachers"])
+      || (!admin && !access.staff && !access.teacher)) {
+    fail("student_scope_forbidden", "Current account cannot mutate bookings.");
+  }
   if (input.command.action === "upsert_bind_classroom" && !admin) {
     fail("classroom_scope_forbidden", "只有管理员可以创建带业务记录的临时课堂。");
   }

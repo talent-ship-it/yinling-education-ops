@@ -7,7 +7,6 @@ import {
   hashAccountPassword,
   validateAccountPassword,
 } from "@/lib/account-credentials";
-import { resolveAccountDirectoryIdentity, sameAccountIdentity } from "@/lib/account-directory";
 import {
   DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
@@ -16,15 +15,16 @@ import {
 import { normaliseDemoIdentity } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
+  getAccountDirectory,
   getAppAccountCredential,
-  getOpsState,
   OpsStoreError,
-  putAppAccountCredentialAtomic,
+  rotateAccountPasswordAtomic,
 } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 
-const COMMAND_KEY_PATTERN = /^account-credential:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMMAND_KEY_PATTERN = /^account-password:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, {
@@ -46,29 +46,32 @@ export async function POST(request: Request) {
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!fullAdmin) return noStore({ error: "仅超级管理员可以重置其他账号密码。" }, 403);
+  if (!session.accountId) return noStore({ error: "账号目录尚未建立，请退出后重新登录。" }, 409);
 
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const commandKey = typeof body?.commandKey === "string" ? body.commandKey.trim().toLowerCase() : "";
-  if (!COMMAND_KEY_PATTERN.test(commandKey)) return noStore({ error: "密码重置命令无效。" }, 400);
+  const accountId = typeof body?.accountId === "string" ? body.accountId.trim() : "";
+  const expectedCredentialVersion = body?.expectedCredentialVersion;
+  if (!COMMAND_KEY_PATTERN.test(commandKey) || !UUID_PATTERN.test(accountId)
+      || !Number.isSafeInteger(expectedCredentialVersion)
+      || (expectedCredentialVersion as number) < 0) {
+    return noStore({ error: "密码重置命令无效。" }, 400);
+  }
+  if (accountId === session.accountId) return noStore({ error: "请使用“修改密码”更新当前管理员账号。" }, 400);
 
   try {
-    const rows = await getOpsState(["teachers"]);
-    const teacherRow = rows.find((row) => row.entity === "teachers");
-    if (!teacherRow) return noStore({ error: "老师名册尚未初始化。" }, 503);
-    const target = resolveAccountDirectoryIdentity(body?.targetUser, body?.targetRole, teacherRow.payload);
-    if (!("identity" in target)) return noStore({ error: target.error }, target.status);
-    if (sameAccountIdentity(session, target.identity)) {
-      return noStore({ error: "请使用“修改密码”更新当前管理员账号。" }, 400);
-    }
-    const policyError = validateAccountPassword(body?.newPassword, target.identity.user);
+    const target = (await getAccountDirectory(session.accountId)).find((account) => account.account_id === accountId);
+    if (!target) return noStore({ error: "未找到该账号。" }, 404);
+    if (target.super_admin) return noStore({ error: "不能重置其他超级管理员账号。" }, 403);
+    const policyError = validateAccountPassword(body?.newPassword, target.account_name);
     if (policyError) return noStore({ error: policyError, code: "password_policy" }, 400);
 
-    const identityKey = accountIdentityKey(target.identity.user, target.identity.role);
+    const identityKey = accountIdentityKey(target.account_name, target.account_role);
     const existing = await getAppAccountCredential(identityKey);
     if (existing) {
       const credentialMatchesIdentity = existing.identity_key === identityKey
-        && existing.account_role === target.identity.role
-        && normaliseDemoIdentity(existing.account_name) === normaliseDemoIdentity(target.identity.user);
+        && existing.account_role === target.account_role
+        && normaliseDemoIdentity(existing.account_name) === normaliseDemoIdentity(target.account_name);
       if (!credentialMatchesIdentity) return noStore({ error: "账号凭据状态异常，未执行重置。" }, 409);
     }
 
@@ -76,31 +79,41 @@ export async function POST(request: Request) {
       body?.newPassword as string,
       accountPasswordCommandSalt(commandKey, identityKey, process.env.OPS_API_SECRET ?? ""),
     );
-    const committed = await putAppAccountCredentialAtomic({
+    const result = await rotateAccountPasswordAtomic({
       commandKey,
-      identityKey,
-      accountName: target.identity.user,
-      accountRole: target.identity.role,
+      accountId: target.account_id,
       ...password,
-      expectedVersion: existing?.credential_version ?? 0,
+      expectedCredentialVersion: expectedCredentialVersion as number,
       mustChangePassword: true,
       action: "admin_reset",
-      actor: session.user,
+      actorAccountId: session.accountId,
     });
-    const result = committed[0];
     if (!result || result.identity_key !== identityKey || !result.enabled) {
       throw new OpsStoreError("账号密码重置未返回有效结果。", "invalid_commit_result");
+    }
+    if (!result.currently_active
+        || result.current_credential_version !== result.credential_version) {
+      return noStore({
+        error: "这次密码重置曾成功，但该账号密码后来又被更新；请以最新一次重置为准。",
+        code: "password_reset_superseded",
+        committed: true,
+        reset: false,
+        superseded: true,
+      }, 409);
     }
     return noStore({
       ok: true,
       reset: true,
-      targetUser: target.identity.user,
-      targetRole: target.identity.role,
+      targetUser: target.account_name,
+      targetRole: target.account_role,
       mustChangePassword: result.must_change_password,
     });
   } catch (error) {
     if (accountContractUnavailable(error)) {
       return noStore({ error: "账号密码数据库合同尚未部署，当前不会重置密码。", code: "account_contract_unavailable" }, 501);
+    }
+    if (error instanceof OpsStoreError && error.message === "account_not_active") {
+      return noStore({ error: "请先恢复该账号，再重置临时密码。", code: "account_not_active" }, 409);
     }
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "account_credential_version_conflict")) {
       return noStore({ error: "该账号密码刚刚已更新，请刷新后再试。", code: "version_conflict" }, 409);

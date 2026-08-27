@@ -18,10 +18,11 @@ test("student creation is server-owned and has no client payload arrays", () => 
   assert.match(route, /getStudentCreationCommandResult/);
   assert.match(route, /createStudentWithTasksAtomic/);
   const handler = route.slice(route.indexOf("export async function POST"));
+  const sessionAt = handler.indexOf("const resolved = await getCurrentDemoSession");
   const replayAt = handler.indexOf("const replay = await getStudentCreationCommandResult");
-  assert.ok(replayAt >= 0 && replayAt < handler.indexOf("getCurrentDemoSession"));
+  assert.ok(sessionAt >= 0 && sessionAt < replayAt);
   assert.ok(handler.indexOf('session.role === "teacher"') > replayAt);
-  assert.match(route, /getDemoSession/);
+  assert.doesNotMatch(route, /\bgetDemoSession\(/);
   assert.match(route, /canonicalizeStudentCreationCommand/);
   assert.match(route, /authorizeStudentCreationCommand/);
   assert.match(route, /receiptOnly: true/);

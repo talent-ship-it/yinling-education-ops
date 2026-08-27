@@ -11,7 +11,7 @@ import {
   JiaowubaoOpenApiError,
   queryJiaowubaoScheduleList,
 } from "@/lib/jiaowubao-open-api";
-import { buildOpsAccessContext } from "@/lib/ops-access";
+import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
 
@@ -248,8 +248,10 @@ export async function GET(request: Request) {
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
-    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session.role);
-    if (!access.fullAdmin && !access.limitedAdmin) {
+    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);
+    if ((!access.fullAdmin && !access.limitedAdmin)
+        || access.restrictedStudentScope
+        || !["bookings", "students", "teachers"].every((entity) => canReadOpsEntity(access, entity))) {
       return noStore({ error: "只有管理员可以查看教务宝排课预览。" }, 403);
     }
     const response = await queryJiaowubaoScheduleList({

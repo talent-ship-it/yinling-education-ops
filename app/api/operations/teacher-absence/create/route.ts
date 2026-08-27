@@ -50,9 +50,9 @@ export async function POST(request: Request) {
     const commandIntent = teacherAbsenceCreationIntent(command);
     if (preview) {
       const rows = await getOpsState(ENTITIES);
-      const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+      const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
       if (!access.staff && !access.fullAdmin && !access.limitedAdmin) return noStore({ error: "当前账号不能创建老师请假流程。", code: "source_teacher_scope_forbidden" }, 403);
-      const preparedPreview = prepareTeacherAbsenceCreation({ command, rows, actor, role: session.role, fullAdmin });
+      const preparedPreview = prepareTeacherAbsenceCreation({ command, rows, actor, role: session.role, authorization: session, fullAdmin });
       return noStore({ preview: true, commandKey: preparedPreview.commandKey, sourceTeacherId: preparedPreview.sourceTeacherId, eventStart: preparedPreview.eventStart, eventEnd: preparedPreview.eventEnd, affectedGroups: preparedPreview.affectedGroups, affectedOccurrenceCount: preparedPreview.affectedOccurrenceCount, generatedTaskCount: preparedPreview.generatedTaskCount });
     }
     // For a commit, the actor-bound ledger lookup is deliberately the first
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       let scopeAuthorized = false;
       try {
         const currentRows = await getOpsState(ENTITIES);
-        const current = visibleRows(currentRows, actor, fullAdmin, session.role);
+        const current = visibleRows(currentRows, actor, fullAdmin, session);
         scopeAuthorized = replay[0].affected_student_ids.length > 0
           && replay[0].affected_student_ids.every((studentId) => canOperateStudent(current.access, studentId));
         if (scopeAuthorized) {
@@ -80,9 +80,9 @@ export async function POST(request: Request) {
       return noStore({ committed: true, applied: false, commandKey: replay[0].command_key, sourceTeacherId: replay[0].source_teacher_id, eventStart: replay[0].event_start, eventEnd: replay[0].event_end, operationIds: scopeAuthorized ? replay[0].operation_ids : [], affectedStudentIds: scopeAuthorized ? replay[0].affected_student_ids : [], operationRow: operationRow ?? null, taskRow: taskRow ?? null, auditEntryId: replay[0].audit_entry_id });
     }
     const rows = await getOpsState(ENTITIES);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!access.staff && !access.fullAdmin && !access.limitedAdmin) return noStore({ error: "当前账号不能创建老师请假流程。", code: "source_teacher_scope_forbidden" }, 403);
-    const prepared = prepareTeacherAbsenceCreation({ command, rows, actor, role: session.role, fullAdmin });
+    const prepared = prepareTeacherAbsenceCreation({ command, rows, actor, role: session.role, authorization: session, fullAdmin });
     const saved = await createTeacherAbsenceAtomic({ ...prepared, tasks: prepared.tasks as unknown as readonly Record<string, unknown>[], actor });
     if (!saved[0]) throw new OpsStoreError("老师请假事务没有返回保存结果。", "invalid_commit_result");
     // A concurrent identical request can win between the first replay lookup
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       const committedRows = saved[0].applied
         ? rows.map((row) => row.entity === "operations" ? saved[0].operations_row : row.entity === "tasks" ? saved[0].tasks_row : row)
         : await getOpsState(ENTITIES);
-      const committed = visibleRows(committedRows, actor, fullAdmin, session.role);
+      const committed = visibleRows(committedRows, actor, fullAdmin, session);
       scopeAuthorized = saved[0].affected_student_ids.length > 0
         && saved[0].affected_student_ids.every((studentId) => canOperateStudent(committed.access, studentId));
       if (scopeAuthorized) {

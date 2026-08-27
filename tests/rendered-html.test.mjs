@@ -135,6 +135,12 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(accountMenu, /\/api\/demo-logout/);
   assert.match(accountMenu, /打开账户菜单/);
   assert.match(accountMenu, /退出登录/);
+  assert.match(accountMenu, /response\.ok && body\.serverSessionRevoked === true/);
+  assert.match(accountMenu, /body\.localLogout === true/);
+  assert.match(accountMenu, /LOGOUT_RETRY_NOTICE_KEY/);
+  assert.match(client, /response\.ok && body\.serverSessionRevoked === true/);
+  assert.match(client, /x-yinling-logout-retry/);
+  assert.match(client, /window\.sessionStorage\.setItem/);
   assert.match(accountMenu, /\.operator select/);
   assert.match(client, /\/api\/account\/password/);
   assert.match(client, /修改密码/);
@@ -154,13 +160,13 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(snapshotRoute, /buildOpsAccessContext/);
   assert.match(snapshotRoute, /filterOpsStateRows/);
   assert.match(snapshotRoute, /actor === DEMO_ADMIN_USER/);
-  assert.match(snapshotRoute, /actor === DEMO_LIMITED_ADMIN_USER/);
+  assert.match(snapshotRoute, /sourceAccess = canReadUnrestrictedOpsData\(access\)/);
   assert.match(stateRoute, /filterOpsVersions/);
   assert.match(stateRoute, /mergeScopedPayload/);
   assert.match(stateRoute, /getAccessScopeVersions/);
   assert.match(stateRoute, /access_scope_changed/);
   assert.match(stateRoute, /操作审计由服务器自动记录/);
-  assert.match(stateRoute, /DEMO_LIMITED_ADMIN_USER/);
+  assert.match(stateRoute, /!canReadUnrestrictedOpsData\(access\)/);
   assert.match(auditRoute, /getOperationalAudit/);
   assert.match(auditRoute, /projectOperationalAuditEntry/);
   assert.match(auditRoute, /操作审计只能由服务器业务事务生成/);
@@ -188,6 +194,8 @@ test("revalidates roster-backed teacher sessions on every protected API", async 
     "../app/api/nixon-login/route.ts",
     "../app/api/nixon-session/route.ts",
     "../app/api/operations/confirm/route.ts",
+    "../app/api/operations/students/create/route.ts",
+    "../app/api/operations/legacy/create/route.ts",
     "../app/api/student-import/route.ts",
     "../app/api/student-import/source-rows/route.ts",
     "../app/api/teacher-availability/review/route.ts",
@@ -425,6 +433,8 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(route, /getCurrentDemoSession/);
   assert.match(route, /getOpsState\(\["students", "teachers", "bookings"\]\)/);
   assert.match(route, /filterOpsStateRows/);
+  assert.match(route, /canWriteBookings: canWriteOpsEntity\(access, "bookings"\)/);
+  assert.match(route, /if \(!context\.canWriteBookings\) return noStore/);
   const temporaryRoute = await read("../app/api/classroom/temporary/route.ts");
   assert.match(temporaryRoute, /createTemporaryTestMeeting/);
   assert.match(temporaryRoute, /DEMO_LIMITED_ADMIN_USER/);
@@ -510,6 +520,7 @@ test("records renewal outcomes through one atomic receipt and archives FU screen
   assert.match(uploadRoute, /hasStudentAttachmentMagicBytes/);
   assert.match(uploadRoute, /application\/pdf|studentAttachmentKind/);
   assert.match(downloadRoute, /getCurrentDemoSession/);
+  assert.match(downloadRoute, /canReadOpsEntity\(access, "files"\)/);
   assert.match(downloadRoute, /canAccessStudent/);
   assert.match(downloadRoute, /Cache-Control": "private, no-store"/);
   assert.match(migration, /create or replace function public\.put_renewal_follow_up_atomic/);

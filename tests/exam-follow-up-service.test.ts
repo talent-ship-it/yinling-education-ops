@@ -174,6 +174,19 @@ test("permits full/limited admins or the exact derived assignee, never a teacher
     command: command(), rows: rows(student(), resultsTask), actor: "Tara", role: "staff", fullAdmin: false,
   });
   assert.equal(identity.followUpKind, "exam_results_follow_up");
+  assert.throws(() => authorizeExamFollowUpCommand({
+    command: command(),
+    rows: rows(student(), resultsTask),
+    actor: "Tara",
+    role: "staff",
+    fullAdmin: false,
+    authorization: {
+      user: "Tara",
+      role: "staff",
+      permissions: ["operations.write"],
+      scopeMembers: [{ kind: "student", key: "STU-OTHER" }],
+    },
+  }), (error) => errorCode(error) === "task_scope_forbidden");
 });
 
 test("fails closed on stale versions, archive, invalid recipient projection and terminal states", () => {
@@ -246,4 +259,3 @@ test("undo restores the exact ledger before-image and rejects any post-completio
     completionContext: context,
   }), (error) => errorCode(error) === "follow_up_action_conflict");
 });
-

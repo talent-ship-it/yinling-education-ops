@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
+import { buildOpsAccessContext, canAccessStudent, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getJiaowubaoDirectStudentHistory, getOpsState, OpsStoreError } from "@/lib/ops-store";
 
@@ -40,7 +40,10 @@ export async function GET(_request: Request, context: { params: Promise<{ studen
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
-    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);
+    if (!canReadOpsEntity(access, "students") || !canReadOpsEntity(access, "bookings")) {
+      return noStore({ error: "当前账号不能查看教务宝学生历史。" }, 403);
+    }
     if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
     return noStore(await getJiaowubaoDirectStudentHistory(studentId));
   } catch (error) {

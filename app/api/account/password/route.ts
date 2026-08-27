@@ -8,25 +8,36 @@ import {
   validateAccountPassword,
   verifyAccountPassword,
 } from "@/lib/account-credentials";
+import {
+  accountAuthThrottleKeys,
+  admitAuthAttempt,
+  settleSuccessfulAuthAttempt,
+  retryAfterSeconds,
+} from "@/lib/account-rate-limit";
 import { legacyPasswordMatchesIdentity } from "@/lib/account-directory";
 import {
   DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
-  demoSessionToken,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
-import { normaliseDemoIdentity } from "@/lib/demo-session-token";
+import {
+  createServerSessionToken,
+  normaliseDemoIdentity,
+  SERVER_SESSION_MAX_AGE_SECONDS,
+} from "@/lib/demo-session-token";
 import { NIXON_COOKIE_NAME, nixonSessionToken } from "@/lib/nixon-auth";
 import {
+  createAccountSession,
+  getAccountByIdentity,
   getAppAccountCredential,
   getOpsState,
   OpsStoreError,
-  putAppAccountCredentialAtomic,
+  rotateAccountPasswordAtomic,
 } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 
-const COMMAND_KEY_PATTERN = /^account-credential:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMMAND_KEY_PATTERN = /^account-password:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, {
@@ -35,8 +46,32 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
+function changedButReauthenticationRequired() {
+  const response = noStore({
+    ok: true,
+    changed: true,
+    reauthRequired: true,
+    message: "密码已更新，请使用新密码重新登录。",
+  });
+  response.cookies.set(DEMO_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+  response.cookies.set(NIXON_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+  return response;
+}
+
 function accountContractUnavailable(error: unknown) {
   return error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883");
+}
+
+function throttledPassword(retryAfterValue: number) {
+  const retryAfter = retryAfterSeconds({ blocked: true, retry_after_seconds: retryAfterValue });
+  return NextResponse.json({
+    error: `当前密码尝试过于频繁，请在 ${retryAfter} 秒后重试。`,
+    code: "account_password_rate_limited",
+    retryAfterSeconds: retryAfter,
+  }, {
+    status: 429,
+    headers: { "Cache-Control": "private, no-store", "Retry-After": String(retryAfter) },
+  });
 }
 
 export async function POST(request: Request) {
@@ -47,6 +82,7 @@ export async function POST(request: Request) {
   );
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
+  if (!session.accountId) return noStore({ error: "账号目录尚未建立，请退出后重新登录。" }, 409);
 
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const commandKey = typeof body?.commandKey === "string" ? body.commandKey.trim().toLowerCase() : "";
@@ -60,6 +96,15 @@ export async function POST(request: Request) {
   }
   const policyError = validateAccountPassword(newPassword, session.user);
   if (policyError) return noStore({ error: policyError, code: "password_policy" }, 400);
+
+  let throttleKeys: readonly string[];
+  try {
+    throttleKeys = accountAuthThrottleKeys(request, "password", session.accountId);
+    const admission = await admitAuthAttempt(throttleKeys);
+    if (admission.blocked) return throttledPassword(admission.retry_after_seconds);
+  } catch {
+    return noStore({ error: "账号安全状态暂时无法核对，请稍后重试。" }, 503);
+  }
 
   const identityKey = accountIdentityKey(session.user, session.role);
   try {
@@ -81,7 +126,10 @@ export async function POST(request: Request) {
       currentMatches = legacyPasswordMatchesIdentity(currentPassword, session, teacherRow.payload);
       newMatchesCurrent = legacyPasswordMatchesIdentity(newPassword, session, teacherRow.payload);
     }
-    if (!currentMatches) return noStore({ error: "当前密码不正确。" }, 401);
+    if (!currentMatches) {
+      return noStore({ error: "当前密码不正确。" }, 401);
+    }
+    await settleSuccessfulAuthAttempt(throttleKeys);
     if (newMatchesCurrent) return noStore({ error: "新密码不能与当前密码相同。", code: "password_reused" }, 400);
 
     const secret = process.env.OPS_API_SECRET ?? "";
@@ -89,32 +137,42 @@ export async function POST(request: Request) {
       newPassword as string,
       accountPasswordCommandSalt(commandKey, identityKey, secret),
     );
-    const committed = await putAppAccountCredentialAtomic({
+    const result = await rotateAccountPasswordAtomic({
       commandKey,
-      identityKey,
-      accountName: session.user,
-      accountRole: session.role,
+      accountId: session.accountId,
       ...password,
-      expectedVersion: credential?.credential_version ?? 0,
+      expectedCredentialVersion: credential?.credential_version ?? 0,
       mustChangePassword: false,
       action: "self_change",
-      actor: session.user,
+      actorAccountId: session.accountId,
     });
-    const result = committed[0];
     if (!result || result.identity_key !== identityKey || !result.enabled) {
       throw new OpsStoreError("账号密码已提交但未返回有效结果。", "invalid_commit_result");
     }
-    const nextIdentity = {
-      user: session.user,
-      role: session.role,
-      credentialVersion: result.credential_version,
-    } as const;
-    const token = demoSessionToken(nextIdentity);
+    const currentDirectory = await getAccountByIdentity(identityKey).catch(() => null);
+    if (!currentDirectory
+        || currentDirectory.account_id !== session.accountId
+        || currentDirectory.status !== "active") {
+      return changedButReauthenticationRequired();
+    }
+    const serverSession = createServerSessionToken();
     const adminToken = session.user === DEMO_ADMIN_USER && session.role === "admin"
       ? nixonSessionToken()
       : null;
-    if (!token || (session.role === "admin" && !adminToken)) {
-      return noStore({ error: "密码已更新，请重新登录。", changed: true }, 503);
+    if (!serverSession || (session.role === "admin" && !adminToken)) {
+      return changedButReauthenticationRequired();
+    }
+    const created = await createAccountSession({
+      sessionId: serverSession.sessionId,
+      tokenHash: serverSession.tokenHash,
+      accountId: session.accountId,
+      expectedCredentialVersion: result.credential_version,
+      expectedAccessVersion: currentDirectory.access_version,
+      mfaVerified: session.mfaVerified === true,
+      userAgent: request.headers.get("user-agent")?.slice(0, 512) ?? null,
+    }).catch(() => null);
+    if (!created || created.session_id !== serverSession.sessionId) {
+      return changedButReauthenticationRequired();
     }
 
     const cookieOptions = {
@@ -122,7 +180,7 @@ export async function POST(request: Request) {
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: SERVER_SESSION_MAX_AGE_SECONDS,
     } as const;
     const response = noStore({
       ok: true,
@@ -130,7 +188,7 @@ export async function POST(request: Request) {
       credentialVersion: result.credential_version,
       mustChangePassword: false,
     });
-    response.cookies.set(DEMO_COOKIE_NAME, token, cookieOptions);
+    response.cookies.set(DEMO_COOKIE_NAME, serverSession.token, cookieOptions);
     if (adminToken) response.cookies.set(NIXON_COOKIE_NAME, adminToken, cookieOptions);
     return response;
   } catch (error) {

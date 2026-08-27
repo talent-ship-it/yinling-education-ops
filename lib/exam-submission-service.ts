@@ -4,7 +4,7 @@ import {
   reconcileExamTasks,
   routeExamTaskRecipients,
 } from "@/lib/exam-tasks";
-import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
 import {
   statusForDueAt,
   type OpsTask,
@@ -21,7 +21,7 @@ import {
   type ExamVariant,
   type StudentExamRecord,
 } from "@/lib/student-records";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 
 type RecordValue = Record<string, unknown>;
 
@@ -285,6 +285,7 @@ export function prepareExamSubmission(input: Readonly<{
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
   now?: Date;
 }>): PreparedExamSubmission {
@@ -296,8 +297,14 @@ export function prepareExamSubmission(input: Readonly<{
     fail("stale_expected_version", "Student or task state changed; refresh before saving the exam.");
   }
 
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (!canOperateStudent(access, input.command.studentId)) {
+  const access = buildOpsAccessContext(
+    input.rows as OpsStateRow[],
+    input.actor,
+    input.fullAdmin,
+    input.authorization ?? input.role,
+  );
+  if (!canWriteOpsTransaction(access, "students", ["students", "tasks"])
+      || !canOperateStudent(access, input.command.studentId)) {
     fail("student_scope_forbidden", "The current account cannot submit an exam for this student.");
   }
   const matchingStudents = studentsRow.payload.filter((student) => student.id === input.command.studentId);

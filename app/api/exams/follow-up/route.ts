@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     const command = parseExamFollowUpCommand(await request.json().catch(() => null));
     const commandIntent = examFollowUpIntent(command);
     const rows = await getOpsState(["students", "tasks"]);
-    authorizeExamFollowUpCommand({ command, rows, actor, role: session.role, fullAdmin });
+    authorizeExamFollowUpCommand({ command, rows, actor, role: session.role, authorization: session, fullAdmin });
 
     const replay = await getExamFollowUpCommandResult({
       commandKey: command.commandKey,
@@ -104,6 +104,7 @@ export async function POST(request: Request) {
         rows: replayRows,
         actor,
         role: session.role,
+        authorization: session,
         fullAdmin,
       });
       if (replay[0].task_id !== replayIdentity.taskId
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
         || replay[0].follow_up_kind !== replayIdentity.followUpKind) {
         throw new OpsStoreError("考试提醒重放身份不一致。", "invalid_commit_result");
       }
-      const { studentRow, taskRow } = visibleRows(replayRows, actor, fullAdmin, session.role);
+      const { studentRow, taskRow } = visibleRows(replayRows, actor, fullAdmin, session);
       return noStore({
         committed: true,
         applied: false,
@@ -140,6 +141,7 @@ export async function POST(request: Request) {
       rows,
       actor,
       role: session.role,
+      authorization: session,
       fullAdmin,
       completionContext,
     });
@@ -158,6 +160,7 @@ export async function POST(request: Request) {
       rows: committedRows,
       actor,
       role: session.role,
+      authorization: session,
       fullAdmin,
     });
     if (saved[0].task_id !== committedIdentity.taskId
@@ -166,7 +169,7 @@ export async function POST(request: Request) {
       || saved[0].follow_up_kind !== committedIdentity.followUpKind) {
       throw new OpsStoreError("考试提醒提交身份不一致。", "invalid_commit_result");
     }
-    const { studentRow, taskRow } = visibleRows(committedRows, actor, fullAdmin, session.role);
+    const { studentRow, taskRow } = visibleRows(committedRows, actor, fullAdmin, session);
     return noStore({
       committed: true,
       applied: saved[0].applied,
@@ -202,4 +205,3 @@ export async function POST(request: Request) {
     return noStore({ error: error instanceof Error ? error.message : "考试提醒保存失败。" }, 503);
   }
 }
-

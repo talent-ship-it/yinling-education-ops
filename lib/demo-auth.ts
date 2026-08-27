@@ -24,6 +24,7 @@ import { validateTeacherSession } from "@/lib/demo-teacher-login";
 import { accountIdentityKey } from "@/lib/account-credentials";
 import {
   getAccountByIdentity,
+  getAccountAuthorization,
   getAccountSession,
   getAppAccountAuthState,
   getOpsState,
@@ -97,6 +98,8 @@ function serverSessionIdentity(session: AccountSessionResolution): DemoSessionId
     roleVersion: session.role_version,
     scopeVersion: session.scope_version,
     mfaVerified: session.mfa_verified,
+    permissions: session.permissions,
+    scopeMembers: session.scope_members,
     ...(session.credential_version === null ? {} : { credentialVersion: session.credential_version }),
   };
 }
@@ -154,6 +157,8 @@ export async function getCurrentDemoSession(
 
   let mustChangePassword = false;
   let directory: AccountDirectoryRow | null = null;
+  let permissions: readonly string[] | undefined;
+  let scopeMembers: DemoSessionIdentity["scopeMembers"];
   try {
     const identityKey = accountIdentityKey(session.user, session.role);
     try {
@@ -171,6 +176,12 @@ export async function getCurrentDemoSession(
       || !directory.legacy_session_allowed
     )) {
       return { error: "账号登录状态已失效，请重新登录。", status: 401 };
+    }
+    if (directory) {
+      const authorization = await getAccountAuthorization(directory.account_id, directory.account_id);
+      if (!authorization) return { error: "账号权限状态暂时无法核对，请稍后重试。", status: 503 };
+      permissions = authorization.permissions;
+      scopeMembers = authorization.scope_members;
     }
     const authState = await getAppAccountAuthState(identityKey);
     if (authState) {
@@ -202,6 +213,8 @@ export async function getCurrentDemoSession(
         accessVersion: directory.access_version,
         roleVersion: directory.role_version,
         scopeVersion: directory.scope_version,
+        permissions,
+        scopeMembers,
       } : session,
       mustChangePassword,
     };
@@ -229,6 +242,8 @@ export async function getCurrentDemoSession(
           accessVersion: directory.access_version,
           roleVersion: directory.role_version,
           scopeVersion: directory.scope_version,
+          permissions,
+          scopeMembers,
         } : {}),
       },
       mustChangePassword,

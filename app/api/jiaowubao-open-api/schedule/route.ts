@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { mapJiaowubaoSnapshotParticipants } from "@/lib/jiaowubao-open-api-schedule-reader";
-import { buildOpsAccessContext } from "@/lib/ops-access";
+import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "@/lib/student-import";
 import {
@@ -489,8 +489,11 @@ export async function GET(request: Request) {
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
-    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session.role);
-    const unrestricted = access.fullAdmin || access.limitedAdmin;
+    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);
+    if (!["bookings", "students", "teachers"].every((entity) => canReadOpsEntity(access, entity))) {
+      return noStore({ error: "当前账号不能查看教务宝排课。" }, 403);
+    }
+    const unrestricted = access.fullAdmin || (access.limitedAdmin && !access.restrictedStudentScope);
     const requestedTeacherId = requestedTeacher.value;
     const knownTeacherIds = idsForEntity(rows, "teachers");
     const lookup = teacherLookup(rows);

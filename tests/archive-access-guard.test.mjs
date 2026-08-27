@@ -47,6 +47,7 @@ test("dedicated write APIs reject archived students while historical reads remai
   assert.doesNotMatch(bookingService, /canAccessStudent/);
   assert.match(bookingService, /canOperateStudent\(access, targetStudentId\)[\s\S]*canOperateStudent\(access, oldStudentId\)/);
   assert.match(fuUpload, /canOperateStudent\(access, studentId\)/);
+  assert.match(fuDownload, /canReadOpsEntity\(access, "files"\)/);
   assert.match(fuDownload, /canAccessStudent\(access, attachment\.student_id\)/);
 
   const classroomGet = classroom.slice(classroom.indexOf("export async function GET"), classroom.indexOf("export async function POST"));

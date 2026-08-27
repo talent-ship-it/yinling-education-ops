@@ -128,6 +128,11 @@ export type AppAccountCredentialCommitResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type AccountPasswordRotationResult = AppAccountCredentialCommitResult & Readonly<{
+  current_credential_version: number;
+  currently_active: boolean;
+}>;
+
 export type AccountRole = "admin" | "limited-admin" | "staff" | "teacher";
 export type AccountStatus = "invited" | "active" | "disabled";
 
@@ -243,7 +248,12 @@ export type AccountSessionRow = Readonly<{
 
 export type AccountSessionRevokeResult = Readonly<{
   revoked_session_count: number;
-  audit_entry_id: string;
+  audit_entry_id: string | null;
+}>;
+
+export type AccountAuthThrottleResult = Readonly<{
+  blocked: boolean;
+  retry_after_seconds: number;
 }>;
 
 export type AccountRecoveryIssueResult = Readonly<{
@@ -791,7 +801,8 @@ export const ACCOUNT_SESSION_CREATE_RPC = "create_account_session";
 export const ACCOUNT_SESSION_READ_RPC = "read_account_session";
 export const ACCOUNT_SESSIONS_READ_RPC = "read_account_sessions";
 export const ACCOUNT_SESSION_REVOKE_RPC = "revoke_account_sessions";
-export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_atomic";
+export const ACCOUNT_CURRENT_SESSION_REVOKE_RPC = "revoke_current_account_session";
+export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_atomic_v2";
 export const ACCOUNT_RECOVERY_ISSUE_RPC = "issue_account_recovery";
 export const ACCOUNT_RECOVERY_CONSUME_RPC = "consume_account_recovery";
 export const ACCOUNT_MFA_LOGIN_RPC = "read_account_mfa_for_login";
@@ -800,12 +811,16 @@ export const ACCOUNT_MFA_BEGIN_RPC = "begin_account_mfa_setup";
 export const ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa";
 export const ACCOUNT_MFA_DISABLE_RPC = "disable_account_mfa";
 export const ACCOUNT_MFA_RESET_RPC = "reset_account_mfa";
+export const ACCOUNT_AUTH_THROTTLE_ADMIT_RPC = "admit_account_auth_attempt";
+export const ACCOUNT_AUTH_THROTTLE_CHECK_RPC = "check_account_auth_throttle";
+export const ACCOUNT_AUTH_THROTTLE_RECORD_RPC = "record_account_auth_attempt";
 export const LP_PARENT_PROGRESS_SCHEDULER_BEGIN_RPC = "begin_lp_parent_progress_scheduler_run";
 export const LP_PARENT_PROGRESS_SCHEDULER_FINISH_RPC = "finish_lp_parent_progress_scheduler_run";
 export const LP_PARENT_PROGRESS_SCHEDULER_COMMIT_RPC = "put_lp_parent_progress_scheduler_tasks_authoritative";
 export const LP_PARENT_PROGRESS_SCHEDULER_RECOVER_RPC = "recover_stale_lp_parent_progress_scheduler_runs";
 export const TRIAL_PAYMENT_RECONCILE_RPC = "reconcile_trial_payment_tasks_authoritative";
 export const TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_atomic";
+export const TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC = "get_trial_payment_completion_command_result";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC = "begin_jiaowubao_open_api_schedule_snapshot_ingest";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC = "stage_jiaowubao_open_api_schedule_snapshot_page";
@@ -911,6 +926,12 @@ export type TrialPaymentCompletionResult = Readonly<{
   lp_items_row: OpsStateRow;
   tasks_row: OpsStateRow;
   teachers_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TrialPaymentCompletionCommandResult = Readonly<{
+  command_key: string;
+  task_id: string;
   audit_entry_id: string;
 }>;
 
@@ -1196,6 +1217,23 @@ export function completeTrialPaymentTaskAtomic(input: {
     p_expected_versions: input.expectedVersions,
     p_actor: input.actor,
     p_actor_role: input.actorRole,
+  });
+}
+
+/** Reads only an actor-bound immutable receipt; it returns no operational rows. */
+export function getTrialPaymentCompletionCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  taskId: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentCompletionCommandResult[]>(TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_task_id: input.taskId,
+    p_actor: input.actor,
   });
 }
 
@@ -2862,6 +2900,8 @@ export async function createAccountSession(input: {
   sessionId: string;
   tokenHash: string;
   accountId: string;
+  expectedCredentialVersion: number;
+  expectedAccessVersion: number;
   mfaVerified: boolean;
   userAgent?: string | null;
 }) {
@@ -2871,6 +2911,8 @@ export async function createAccountSession(input: {
     p_session_id: input.sessionId,
     p_token_hash: input.tokenHash,
     p_account_id: input.accountId,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_access_version: input.expectedAccessVersion,
     p_mfa_verified: input.mfaVerified,
     p_user_agent: input.userAgent ?? null,
   });
@@ -2913,6 +2955,45 @@ export async function revokeAccountSessions(input: {
   return rows[0] ?? null;
 }
 
+/** Logout capability: the opaque token can revoke only its exact ledger row. */
+export async function revokeCurrentAccountSession(input: { sessionId: string; tokenHash: string }) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountSessionRevokeResult[]>(ACCOUNT_CURRENT_SESSION_REVOKE_RPC, {
+    p_secret: secret,
+    p_session_id: input.sessionId,
+    p_token_hash: input.tokenHash,
+  });
+  return rows[0] ?? null;
+}
+
+export async function checkAccountAuthThrottle(throttleKeys: readonly string[]) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountAuthThrottleResult[]>(ACCOUNT_AUTH_THROTTLE_CHECK_RPC, {
+    p_secret: secret,
+    p_throttle_keys: throttleKeys,
+  });
+  return rows[0] ?? { blocked: false, retry_after_seconds: 0 };
+}
+
+export async function admitAccountAuthAttempt(throttleKeys: readonly string[]) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountAuthThrottleResult[]>(ACCOUNT_AUTH_THROTTLE_ADMIT_RPC, {
+    p_secret: secret,
+    p_throttle_keys: throttleKeys,
+  });
+  return rows[0] ?? { blocked: false, retry_after_seconds: 0 };
+}
+
+export async function recordAccountAuthAttempt(throttleKeys: readonly string[], succeeded: boolean) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountAuthThrottleResult[]>(ACCOUNT_AUTH_THROTTLE_RECORD_RPC, {
+    p_secret: secret,
+    p_throttle_keys: throttleKeys,
+    p_succeeded: succeeded,
+  });
+  return rows[0] ?? { blocked: false, retry_after_seconds: 0 };
+}
+
 export async function rotateAccountPasswordAtomic(input: {
   commandKey: string;
   accountId: string;
@@ -2925,7 +3006,7 @@ export async function rotateAccountPasswordAtomic(input: {
   actorAccountId: string;
 }) {
   const { secret } = configuration();
-  const rows = await rpc<AppAccountCredentialCommitResult[]>(ACCOUNT_PASSWORD_ROTATE_RPC, {
+  const rows = await rpc<AccountPasswordRotationResult[]>(ACCOUNT_PASSWORD_ROTATE_RPC, {
     p_secret: secret,
     p_command_key: input.commandKey,
     p_account_id: input.accountId,
@@ -2993,6 +3074,9 @@ export async function beginAccountMfaSetup(input: {
   encryptedSecret: string;
   expectedMfaVersion: number;
   actorAccountId: string;
+  sessionId: string;
+  expectedCredentialVersion: number;
+  expectedAccessVersion: number;
 }) {
   const { secret } = configuration();
   const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_BEGIN_RPC, {
@@ -3001,28 +3085,51 @@ export async function beginAccountMfaSetup(input: {
     p_secret_ciphertext: input.encryptedSecret,
     p_expected_mfa_version: input.expectedMfaVersion,
     p_actor_account_id: input.actorAccountId,
+    p_session_id: input.sessionId,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_access_version: input.expectedAccessVersion,
   });
   return rows[0] ?? null;
 }
 
-export async function confirmAccountMfa(input: { accountId: string; expectedMfaVersion: number; actorAccountId: string }) {
+export async function confirmAccountMfa(input: {
+  accountId: string;
+  expectedMfaVersion: number;
+  actorAccountId: string;
+  sessionId: string;
+  expectedCredentialVersion: number;
+  expectedAccessVersion: number;
+}) {
   const { secret } = configuration();
   const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_CONFIRM_RPC, {
     p_secret: secret,
     p_account_id: input.accountId,
     p_expected_mfa_version: input.expectedMfaVersion,
     p_actor_account_id: input.actorAccountId,
+    p_session_id: input.sessionId,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_access_version: input.expectedAccessVersion,
   });
   return rows[0] ?? null;
 }
 
-export async function disableAccountMfa(input: { accountId: string; expectedMfaVersion: number; actorAccountId: string }) {
+export async function disableAccountMfa(input: {
+  accountId: string;
+  expectedMfaVersion: number;
+  actorAccountId: string;
+  sessionId: string;
+  expectedCredentialVersion: number;
+  expectedAccessVersion: number;
+}) {
   const { secret } = configuration();
   const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_DISABLE_RPC, {
     p_secret: secret,
     p_account_id: input.accountId,
     p_expected_mfa_version: input.expectedMfaVersion,
     p_actor_account_id: input.actorAccountId,
+    p_session_id: input.sessionId,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_access_version: input.expectedAccessVersion,
   });
   return rows[0] ?? null;
 }

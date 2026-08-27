@@ -108,6 +108,51 @@ test("teachers never settle; staff only settle their own students; admins can se
   assert.equal(lessonSettlementAccess({ actor: "Nixon", fullAdmin: true, studentOwner: "Thea" }).allowed, true);
 });
 
+test("entity-scoped settlement authorizes every atomically mutated projection", () => {
+  const request = parseCompleteLessonOccurrenceRequest({ occurrenceId, expectedVersion: 4, attendanceEvidenceReference: "evidence-1" });
+  const baseAuthorization = {
+    user: "Ops Admin",
+    role: "limited-admin" as const,
+    permissions: ["operations.read", "operations.write"],
+  };
+  assert.throws(() => prepareLessonOccurrenceSettlement({
+    request,
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    fullAdmin: false,
+    role: "limited-admin",
+    authorization: {
+      ...baseAuthorization,
+      scopeMembers: [
+        { kind: "student", key: "STUDENT-A" },
+        { kind: "entity", key: "bookings" },
+      ],
+    },
+    attendance: attendance(),
+    completedAt,
+  }), serviceError("student_scope_forbidden"));
+
+  const prepared = prepareLessonOccurrenceSettlement({
+    request,
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    fullAdmin: false,
+    role: "limited-admin",
+    authorization: {
+      ...baseAuthorization,
+      scopeMembers: [
+        { kind: "student", key: "STUDENT-A" },
+        { kind: "entity", key: "bookings" },
+        { kind: "entity", key: "students" },
+        { kind: "entity", key: "payroll" },
+      ],
+    },
+    attendance: attendance(),
+    completedAt,
+  });
+  assert.equal(prepared.settlement.disposition, "completed");
+});
+
 test("automatic completion derives all billable fields from shared state and creates a stable key", () => {
   const request = parseCompleteLessonOccurrenceRequest({ occurrenceId, expectedVersion: 4, attendanceEvidenceReference: "evidence-1" });
   const first = prepareLessonOccurrenceSettlement({ request, rows: sharedRows(), actor: "Abby", fullAdmin: false, attendance: attendance(), completedAt });

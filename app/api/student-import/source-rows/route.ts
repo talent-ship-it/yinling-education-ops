@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLatestStudentImportSourceRows,
@@ -33,7 +34,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-async function requireAdmin() {
+async function requireAdmin(permission: "operations.read" | "operations.write") {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
@@ -41,7 +42,9 @@ async function requireAdmin() {
   const actor = session.user;
   const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasStudentImportAdminAccess(actor, fullAdmin)) {
+  if (!hasStudentImportAdminAccess(actor, fullAdmin)
+      || !hasDemoSessionPermission(session, permission)
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有管理员可以录入正式学生来源。" }, 403) } as const;
   }
   return { actor } as const;
@@ -69,7 +72,7 @@ function sourceRowsUnavailable(error: OpsStoreError) {
 
 /** Returns readiness metadata only; source rows and student PII stay server-side. */
 export async function GET() {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.read");
   if ("response" in access) return access.response;
 
   try {
@@ -113,7 +116,7 @@ export async function GET() {
  * source and never infers that an upload is newer than another revision.
  */
 export async function POST(request: Request) {
-  const access = await requireAdmin();
+  const access = await requireAdmin("operations.write");
   if ("response" in access) return access.response;
 
   const declaredLength = Number(request.headers.get("content-length") ?? "0");

@@ -92,6 +92,13 @@
   padding:0 8px;
 }
 
+.logoutError {
+  color:#9f3b36;
+  font-size:11px;
+  line-height:1.45;
+  margin:0;
+}
+
 .logout {
   align-items:center;
   background:#fff;

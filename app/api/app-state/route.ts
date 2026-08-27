@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   buildOpsAccessContext,
   canReadOpsEntity,
+  canReadUnrestrictedOpsData,
   filterOpsStateRows,
   filterOpsVersions,
   getAccessScopeVersions,
@@ -31,11 +32,7 @@ async function sessionContext() {
   if (!("session" in resolved)) return resolved;
   const { session } = resolved;
   const fullAdmin = session.user === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  return { session: { actor: session.user, role: session.role, fullAdmin } } as const;
-}
-
-async function canReadSources(actor: string, fullAdmin: boolean) {
-  return actor === DEMO_LIMITED_ADMIN_USER || fullAdmin;
+  return { session: { actor: session.user, role: session.role, fullAdmin, identity: session } } as const;
 }
 
 function noStore(payload: unknown, status = 200) {
@@ -65,7 +62,7 @@ export async function GET(request: NextRequest) {
       // separate versions RPC can race an ownership/archive change and make a
       // client believe its managed-exam projection is current when it is not.
       const rows = await getOpsState();
-      const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.role);
+      const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.identity);
       const versions = rows.map((row) => ({
         entity: row.entity,
         version: row.version,
@@ -91,14 +88,14 @@ export async function GET(request: NextRequest) {
       return noStore({ error: "试听收费提醒刷新必须同时读取排课、学生和任务权威版本。" }, 400);
     }
     const rows = await getOpsState();
-    const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.role);
+    const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.identity);
     if (entities?.some((entity) => !canReadOpsEntity(access, entity))) {
       return noStore({ error: "当前账号没有读取这部分资料的权限。" }, 403);
     }
 
     const visibleRows = filterOpsStateRows(rows, access)
       .filter((row) => !entities?.length || entities.includes(row.entity));
-    const sources = entities?.length || !(await canReadSources(context.actor, context.fullAdmin))
+    const sources = entities?.length || !canReadUnrestrictedOpsData(access)
       ? []
       : await getOpsSources();
     const managedExamSnapshot = includeManagedExamSnapshot
@@ -140,7 +137,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     const allRows = await getOpsState();
-    const access = buildOpsAccessContext(allRows, context.actor, context.fullAdmin, context.role);
+    const access = buildOpsAccessContext(allRows, context.actor, context.fullAdmin, context.identity);
     if (body.entity === "audit") return noStore({ error: "操作审计由服务器自动记录，不能直接修改。" }, 403);
 
     const currentRow = allRows.find((row) => row.entity === body.entity);
@@ -190,7 +187,7 @@ export async function PUT(request: NextRequest) {
     if (error instanceof OpsStateTransitionError) return noStore({ error: error.message }, error.status);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) {
       const allRows = await getOpsState().catch(() => []);
-      const access = buildOpsAccessContext(allRows, context.actor, context.fullAdmin, context.role);
+      const access = buildOpsAccessContext(allRows, context.actor, context.fullAdmin, context.identity);
       const current = filterOpsStateRows(allRows.filter((row) => row.entity === body.entity), access)[0];
       const currentStudentsVersion = allRows.find((row) => row.entity === "students")?.version;
       const currentTeachersVersion = allRows.find((row) => row.entity === "teachers")?.version;

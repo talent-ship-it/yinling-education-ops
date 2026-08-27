@@ -4,7 +4,7 @@ import {
   type DemoUser,
 } from "@/lib/demo-users";
 import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import { EXAM_RULE_NO_LONGER_APPLICABLE_RESULT } from "@/lib/exam-tasks";
 import {
   projectManagedExamRecord,
@@ -29,6 +29,10 @@ export type OpsAccessContext = {
   limitedAdmin: boolean;
   staff: boolean;
   teacher: boolean;
+  /** Null only for a legacy transition session that predates lifecycle authorization. */
+  permissions: Set<string> | null;
+  entityScope: Set<string>;
+  restrictedStudentScope: boolean;
   studentIds: Set<string>;
   activeStudentIds: Set<string>;
   /** Server-only scope facts used to authorize a managed task without exposing its student row. */
@@ -253,13 +257,36 @@ export function buildOpsAccessContext(
   rows: OpsStateRow[],
   actor: DemoUser,
   fullAdmin: boolean,
-  signedRole?: DemoSessionRole,
+  signedIdentity?: DemoSessionRole | DemoSessionIdentity,
 ): OpsAccessContext {
-  const limitedAdmin = actor === DEMO_LIMITED_ADMIN_USER;
+  const signedRole = typeof signedIdentity === "string" ? signedIdentity : signedIdentity?.role;
+  const permissions = typeof signedIdentity === "object" && Array.isArray(signedIdentity.permissions)
+    ? new Set(signedIdentity.permissions)
+    : null;
+  const scopeMembers = typeof signedIdentity === "object" && Array.isArray(signedIdentity.scopeMembers)
+    ? signedIdentity.scopeMembers.filter((member) => member && typeof member.kind === "string" && typeof member.key === "string")
+    : [];
+  const unrestrictedScope = scopeMembers.some((member) => member.kind === "all" && member.key === "*");
+  const studentScopeKeys = unrestrictedScope
+    ? new Set<string>()
+    : new Set(scopeMembers.filter((member) => member.kind === "student").map((member) => normalise(member.key)));
+  const teacherScopeKeys = unrestrictedScope
+    ? new Set<string>()
+    : new Set(scopeMembers.filter((member) => member.kind === "teacher").map((member) => normalise(member.key)));
+  const entityScope = unrestrictedScope
+    ? new Set<string>()
+    : new Set(scopeMembers.filter((member) => member.kind === "entity").map((member) => member.key.trim()).filter(Boolean));
+  const restrictedStudentScope = studentScopeKeys.size > 0 || teacherScopeKeys.size > 0;
+  const signedAdmin = signedRole === "admin";
+  const limitedAdmin = !fullAdmin && (signedRole
+    ? signedRole === "limited-admin" || signedAdmin
+    : actor === DEMO_LIMITED_ADMIN_USER);
   const staff = signedRole ? signedRole === "staff" : isDemoStaff(actor);
   const teacher = signedRole ? signedRole === "teacher" : teachersIncludeActor(rows, actor);
   const role: DemoSessionRole = fullAdmin
     ? "admin"
+    : signedAdmin
+      ? "admin"
     : limitedAdmin
       ? "limited-admin"
       : teacher
@@ -267,7 +294,21 @@ export function buildOpsAccessContext(
         : "staff";
 
   const teachers = payloadRecords(rows, "teachers");
-  const teacherIds = new Set(teachers.filter((item) => samePerson(item.name, actor)).map(rowId).filter(Boolean));
+  const actorTeacherIds = new Set(teachers.filter((item) => samePerson(item.name, actor)).map(rowId).filter(Boolean));
+  const explicitlyScopedTeacherIds = new Set(teachers
+    .filter((item) => teacherScopeKeys.has(normalise(rowId(item))))
+    .map(rowId)
+    .filter(Boolean));
+  const teacherNameCounts = new Map<string, number>();
+  for (const rosterTeacher of teachers) {
+    const name = normalise(rosterTeacher.name);
+    if (name) teacherNameCounts.set(name, (teacherNameCounts.get(name) ?? 0) + 1);
+  }
+  const explicitlyScopedTeacherNames = new Set(teachers
+    .filter((item) => explicitlyScopedTeacherIds.has(rowId(item)))
+    .map((item) => normalise(item.name))
+    .filter((name) => name && teacherNameCounts.get(name) === 1));
+  const teacherIds = teacherScopeKeys.size > 0 ? explicitlyScopedTeacherIds : actorTeacherIds;
   const bookings = payloadRecords(rows, "bookings");
   const trialBookingStudentById = new Map(
     bookings
@@ -288,6 +329,26 @@ export function buildOpsAccessContext(
       .map(rowId)
       .filter(Boolean),
   );
+  if (restrictedStudentScope) {
+    const directlyScopedStudentIds = new Set(students
+      .filter((student) => studentScopeKeys.has(normalise(rowId(student))))
+      .map(rowId)
+      .filter(Boolean));
+    const teacherScopedStudentIds = new Set(students.flatMap((student) => {
+      const studentId = rowId(student);
+      if (!studentId) return [];
+      const rosterAssigned = explicitlyScopedTeacherNames.has(normalise(student.teacher));
+      const bookingAssigned = bookings.some((booking) => rowStudentId(booking) === studentId
+        && bookingHasEffectiveTeacher(booking, explicitlyScopedTeacherIds));
+      return rosterAssigned || bookingAssigned ? [studentId] : [];
+    }));
+    for (const studentId of studentIds) {
+      if (!directlyScopedStudentIds.has(studentId) && !teacherScopedStudentIds.has(studentId)) studentIds.delete(studentId);
+    }
+    for (const booking of bookings) {
+      if (studentIds.has(rowStudentId(booking)) && rowTeacherId(booking)) teacherIds.add(rowTeacherId(booking));
+    }
+  }
   const activeStudentIds = new Set(
     students
       .filter((student) => student.importArchived !== true && studentIds.has(rowId(student)))
@@ -322,6 +383,9 @@ export function buildOpsAccessContext(
     limitedAdmin,
     staff,
     teacher,
+    permissions,
+    entityScope,
+    restrictedStudentScope,
     studentIds,
     activeStudentIds,
     allActiveStudentIds,
@@ -339,7 +403,7 @@ export function buildOpsAccessContext(
  * after the page was loaded.
  */
 export function getAccessScopeVersions(rows: OpsStateRow[], context: OpsAccessContext) {
-  if (context.fullAdmin || context.limitedAdmin) return null;
+  if (context.fullAdmin || (context.limitedAdmin && !context.restrictedStudentScope)) return null;
 
   return Object.fromEntries(ACCESS_SCOPE_ENTITIES.map((entity) => [
     entity,
@@ -348,7 +412,20 @@ export function getAccessScopeVersions(rows: OpsStateRow[], context: OpsAccessCo
 }
 
 export function canReadOpsEntity(context: OpsAccessContext, entity: string) {
+  if (context.entityScope.size > 0 && !context.entityScope.has(entity)) return false;
+  if (entity === "audit" && context.restrictedStudentScope) return false;
   if (entity === "payroll") return context.fullAdmin;
+  if (context.permissions) {
+    if (context.permissions.has("*")) return context.fullAdmin;
+    const required = entity === "bookings" || entity === "teachers"
+      ? ["operations.read", "bookings.read.assigned"]
+      : ["operations.read", "students.read.assigned"];
+    if (!required.some((permission) => context.permissions!.has(permission))) return false;
+    if (context.fullAdmin || context.limitedAdmin) return true;
+    if (context.staff) return STAFF_READ_ENTITIES.has(entity);
+    if (context.teacher) return TEACHER_READ_ENTITIES.has(entity);
+    return false;
+  }
   if (context.fullAdmin || context.limitedAdmin) return true;
   if (context.staff) return STAFF_READ_ENTITIES.has(entity);
   if (context.teacher) return TEACHER_READ_ENTITIES.has(entity);
@@ -357,15 +434,55 @@ export function canReadOpsEntity(context: OpsAccessContext, entity: string) {
 
 export function canWriteOpsEntity(context: OpsAccessContext, entity: string) {
   if (entity === "audit") return false;
+  if (context.entityScope.size > 0 && !context.entityScope.has(entity)) return false;
   if (entity === "payroll") return context.fullAdmin;
+  if (context.permissions) {
+    if (context.permissions.has("*")) return context.fullAdmin;
+    const required = entity === "bookings"
+      ? ["operations.write", "bookings.write.assigned"]
+      : entity === "messages"
+        ? ["operations.write", "messages.write.assigned"]
+        : ["operations.write"];
+    if (!required.some((permission) => context.permissions!.has(permission))) return false;
+    if (context.fullAdmin || context.limitedAdmin) return true;
+    if (context.staff) return STAFF_WRITE_ENTITIES.has(entity);
+    if (context.teacher) return TEACHER_WRITE_ENTITIES.has(entity);
+    return false;
+  }
   if (context.fullAdmin || context.limitedAdmin) return true;
   if (context.staff) return STAFF_WRITE_ENTITIES.has(entity);
   if (context.teacher) return TEACHER_WRITE_ENTITIES.has(entity);
   return false;
 }
 
+/** Raw source snapshots and global audit-style surfaces cannot be projected safely. */
+export function canReadUnrestrictedOpsData(context: OpsAccessContext) {
+  if (!context.fullAdmin && !context.limitedAdmin) return false;
+  if (context.restrictedStudentScope || context.entityScope.size > 0) return false;
+  if (context.permissions === null) return true;
+  return context.permissions.has("operations.read")
+    || (context.fullAdmin && context.permissions.has("*"));
+}
+
+/**
+ * Authorizes the user-facing command and then applies an explicit entity scope
+ * to every projection the server-owned atomic transaction will mutate. Derived
+ * projections do not grant a separate direct-write capability to the caller.
+ */
+export function canWriteOpsTransaction(
+  context: OpsAccessContext,
+  commandEntity: string,
+  mutatedEntities: readonly string[],
+) {
+  return canWriteOpsEntity(context, commandEntity)
+    && (context.entityScope.size === 0
+      || mutatedEntities.every((entity) => context.entityScope.has(entity)));
+}
+
 export function canAccessStudent(context: OpsAccessContext, studentId: string) {
-  return context.fullAdmin || context.limitedAdmin || context.studentIds.has(studentId);
+  return context.fullAdmin
+    || (context.limitedAdmin && !context.restrictedStudentScope)
+    || context.studentIds.has(studentId);
 }
 
 export function canOperateStudent(context: OpsAccessContext, studentId: string) {
@@ -373,9 +490,14 @@ export function canOperateStudent(context: OpsAccessContext, studentId: string) 
 }
 
 function canReadRecord(context: OpsAccessContext, entity: string, value: RecordValue) {
-  if (context.fullAdmin || context.limitedAdmin) return entity !== "payroll" || context.fullAdmin;
+  if (context.fullAdmin || (context.limitedAdmin && !context.restrictedStudentScope)) {
+    return entity !== "payroll" || context.fullAdmin;
+  }
   if (entity === "courses") return true;
-  if (entity === "teachers") return context.staff || (context.teacher && context.teacherIds.has(rowId(value)));
+  if (entity === "teachers") {
+    if (context.restrictedStudentScope) return context.teacherIds.has(rowId(value));
+    return context.staff || ((context.teacher || context.limitedAdmin) && context.teacherIds.has(rowId(value)));
+  }
   if (entity === "students") return canAccessStudent(context, rowId(value));
   if (entity === "tasks") {
     if (managedTrialPaymentTaskIdentity(value)) {
@@ -388,11 +510,13 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
       return managedExamTaskMatchesStudent(context, value) && taskAssignedTo(value, context.actor);
     }
     if (!canAccessStudent(context, rowStudentId(value))) return false;
+    if (context.limitedAdmin) return true;
     if (context.teacher) return taskExplicitlyVisibleToTeacher(value, context.actor);
     return context.staff && taskInvolves(value, context.actor);
   }
   if (["lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
   if (entity === "bookings") {
+    if (context.limitedAdmin) return canAccessStudent(context, rowStudentId(value));
     return context.teacher
       ? bookingHasEffectiveTeacher(value, context.teacherIds)
       : canAccessStudent(context, rowStudentId(value));
@@ -404,7 +528,7 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
 export function filterOpsStateRows(rows: OpsStateRow[], context: OpsAccessContext) {
   return rows.flatMap((row) => {
     if (!canReadOpsEntity(context, row.entity)) return [];
-    if (context.fullAdmin || context.limitedAdmin || !Array.isArray(row.payload)) return [row];
+    if (context.fullAdmin || (context.limitedAdmin && !context.restrictedStudentScope) || !Array.isArray(row.payload)) return [row];
     return [{ ...row, payload: row.payload.filter(isRecord).filter((value) => canReadRecord(context, row.entity, value)) }];
   });
 }
@@ -415,7 +539,7 @@ export function filterOpsStateRows(rows: OpsStateRow[], context: OpsAccessContex
  * this side channel because their regular students payload is already global.
  */
 export function managedExamStudentProjections(rows: OpsStateRow[], context: OpsAccessContext): ManagedExamStudentProjection[] {
-  if (!context.staff || context.fullAdmin || context.limitedAdmin) return [];
+  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope) return [];
   const students = payloadRecords(rows, "students");
   const tasks = payloadRecords(rows, "tasks");
   const examIdsByStudent = new Map<string, Set<string>>();
@@ -478,7 +602,7 @@ export function managedTrialPaymentStudentProjections(
   rows: OpsStateRow[],
   context: OpsAccessContext,
 ): ManagedTrialPaymentStudentProjection[] {
-  if (!context.staff || context.fullAdmin || context.limitedAdmin) return [];
+  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope) return [];
   const studentIds = new Set(payloadRecords(rows, "tasks").flatMap((task) => {
     const studentId = rowStudentId(task);
     if (context.studentIds.has(studentId)
@@ -517,7 +641,14 @@ export function filterOpsVersions(rows: OpsVersionRow[], context: OpsAccessConte
 
 function canModifyRecord(context: OpsAccessContext, entity: string, value: RecordValue) {
   if (entity === "students" && !canOperateStudent(context, rowId(value))) return false;
-  if (context.fullAdmin || context.limitedAdmin) return entity !== "payroll" || context.fullAdmin;
+  if (context.fullAdmin || (context.limitedAdmin && !context.restrictedStudentScope)) {
+    return entity !== "payroll" || context.fullAdmin;
+  }
+  if (context.limitedAdmin) {
+    return entity === "students"
+      ? canOperateStudent(context, rowId(value))
+      : canOperateStudent(context, rowStudentId(value));
+  }
   if (entity === "students") {
     return context.staff
       && samePerson(value.owner, context.actor)
@@ -550,7 +681,7 @@ export function mergeScopedPayload(input: {
 }) {
   const { entity, currentPayload, submittedPayload, context } = input;
   if (!canWriteOpsEntity(context, entity)) throw new OpsAccessError("当前账号没有修改这部分资料的权限。");
-  if (context.fullAdmin || context.limitedAdmin) return submittedPayload;
+  if (context.fullAdmin || (context.limitedAdmin && !context.restrictedStudentScope)) return submittedPayload;
   if (!Array.isArray(currentPayload) || !Array.isArray(submittedPayload)) {
     throw new OpsAccessError("当前账号只能修改已分配的资料记录。");
   }

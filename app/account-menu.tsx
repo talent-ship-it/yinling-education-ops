@@ -5,12 +5,14 @@ import { useEffect, useState } from "react";
 import styles from "./account-menu.module.css";
 
 type ViewOption = { label: string; value: string };
+const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
 
 export default function AccountMenu() {
   const [sessionUser, setSessionUser] = useState("");
   const [currentView, setCurrentView] = useState("");
   const [viewOptions, setViewOptions] = useState<ViewOption[]>([]);
   const [busy, setBusy] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
 
   useEffect(() => {
     let resolved = false;
@@ -75,15 +77,26 @@ export default function AccountMenu() {
 
   const logout = async () => {
     setBusy(true);
+    setLogoutError("");
     try {
       const response = await fetch("/api/demo-logout", { method: "POST" });
-      if (!response.ok) {
-        setBusy(false);
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.serverSessionRevoked === true) {
+        window.location.reload();
         return;
       }
-      window.location.reload();
-    } catch {
+      if (body.localLogout === true) {
+        window.sessionStorage.setItem(
+          LOGOUT_RETRY_NOTICE_KEY,
+          typeof body.error === "string" ? body.error : "本机已退出；服务器会话撤销将在后台重试。",
+        );
+        window.location.reload();
+        return;
+      }
+      throw new Error(typeof body.error === "string" ? body.error : "退出失败，请重试。");
+    } catch (error) {
       setBusy(false);
+      setLogoutError(error instanceof Error ? error.message : "退出失败，请重试。");
     }
   };
 
@@ -100,6 +113,7 @@ export default function AccountMenu() {
     </button>
     <section className={styles.menu} aria-label="账户菜单">
       {isAdmin && viewOptions.length > 1 && <label className={styles.viewPicker}><span>查看工作视图</span><select value={currentView} onChange={(event) => changeView(event.target.value)}>{viewOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>}
+      {logoutError && <p className={styles.logoutError} role="alert">{logoutError}</p>}
       <button className={styles.logout} type="button" disabled={busy} onClick={logout}><LogOut size={15} />{busy ? "正在退出" : "退出登录"}</button>
     </section>
   </div>;

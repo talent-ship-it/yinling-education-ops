@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { DEMO_LIMITED_ADMIN_USER } from "@/lib/demo-users";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsEntity } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import type {
   ExamFollowUpState,
@@ -259,6 +260,7 @@ export function authorizeExamFollowUpCommand(input: Readonly<{
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
 }>): ExamFollowUpIdentity {
   if (input.role === "teacher") fail("teacher_forbidden", "Teacher accounts cannot complete exam follow-ups.");
@@ -277,8 +279,25 @@ export function authorizeExamFollowUpCommand(input: Readonly<{
     fail("exam_not_found", "The task exam was not found on its student.");
   }
   const expectedRecipient = assertTaskProjection(task, student, identity);
-  const admin = input.fullAdmin || input.role === "limited-admin";
-  if (!admin && !samePerson(expectedRecipient, input.actor)) {
+  const access = buildOpsAccessContext(
+    input.rows as OpsStateRow[],
+    input.actor,
+    input.fullAdmin,
+    input.authorization ?? input.role,
+  );
+  const exactRecipient = samePerson(expectedRecipient, input.actor);
+  const admin = access.fullAdmin || access.limitedAdmin;
+  // Managed exam tasks intentionally allow their exact derived staff assignee
+  // to act across the ordinary owner projection. An explicit lifecycle scope
+  // remains authoritative and cannot be bypassed by that managed side channel.
+  const studentScopeAllowed = canOperateStudent(access, identity.studentId)
+    || (!admin && !access.restrictedStudentScope && exactRecipient);
+  if (!canWriteOpsEntity(access, "students")
+      || !canWriteOpsEntity(access, "tasks")
+      || !studentScopeAllowed) {
+    fail("task_scope_forbidden", "The current account cannot update this exam follow-up.");
+  }
+  if (!admin && !exactRecipient) {
     fail("task_scope_forbidden", "The current account is not the exact assignee for this exam follow-up.");
   }
   return identity;
@@ -319,6 +338,7 @@ export function prepareExamFollowUp(input: Readonly<{
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
   completionContext?: ExamFollowUpCompletionContext;
   now?: Date;

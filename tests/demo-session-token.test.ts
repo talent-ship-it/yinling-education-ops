@@ -4,7 +4,10 @@ import test from "node:test";
 
 import {
   createDemoSessionToken,
+  createServerSessionToken,
+  hashServerSessionToken,
   parseDemoSessionToken,
+  parseServerSessionToken,
 } from "../lib/demo-session-token";
 
 const SECRET = "test-only-session-secret";
@@ -85,4 +88,20 @@ test("valid version 3 sessions remain usable until the account adopts a credenti
     role: "admin",
   });
   assert.equal(parseDemoSessionToken(token, "wrong-secret", NOW), null);
+});
+
+test("version 5 sessions keep only an opaque token in the cookie and a digest in storage", () => {
+  const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+  const created = createServerSessionToken(sessionId);
+  assert.ok(created);
+  assert.match(created.token, /^v5\.123e4567-e89b-42d3-a456-426614174000\.[A-Za-z0-9_-]{43}$/u);
+  assert.equal(created.sessionId, sessionId);
+  assert.equal(created.tokenHash, hashServerSessionToken(created.token));
+  assert.match(created.tokenHash, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(parseServerSessionToken(created.token), {
+    sessionId,
+    tokenHash: created.tokenHash,
+  });
+  assert.equal(parseServerSessionToken(`${created.token}x`), null);
+  assert.equal(parseServerSessionToken("v5.not-a-session.not-a-secret"), null);
 });

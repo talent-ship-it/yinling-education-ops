@@ -1,5 +1,6 @@
 import "server-only";
 
+import { accountIdentityKey } from "@/lib/account-credentials";
 import { resolveDemoIdentity } from "@/lib/demo-auth";
 import {
   lookupTeacherRosterIdentity,
@@ -9,12 +10,14 @@ import { normaliseDemoIdentity, type DemoSessionIdentity, type DemoSessionRole }
 import {
   DEMO_ADMIN_USER,
   DEMO_LIMITED_ADMIN_USER,
+  DEMO_STAFF_USERS,
   resolveDemoStaffName,
 } from "@/lib/demo-users";
 import {
   getAccountAuthorization,
   getAccountByIdentity,
   getAccountDirectory,
+  ensureAccountDirectory,
   type AccountAuthorization,
   type AccountDirectoryRow,
   type AccountRole,
@@ -70,6 +73,68 @@ export function accountDirectoryDto(row: AccountDirectoryRow): AccountDirectoryD
 
 export async function readManagedAccounts(actorAccountId: string) {
   return (await getAccountDirectory(actorAccountId)).map(accountDirectoryDto);
+}
+
+/**
+ * Materialize every unambiguous server-owned login identity before showing
+ * the administration directory. This bridges roster additions that have not
+ * logged in yet without accepting any client-supplied account or role.
+ */
+export async function materializeManagedAccountDirectory(
+  teachersPayload: unknown,
+  existingAccounts: readonly Pick<AccountDirectoryDto, "account_name" | "account_role">[],
+) {
+  if (!Array.isArray(teachersPayload)) throw new Error("老师名册暂时无法核对。");
+  const rosterNames: string[] = [];
+  for (const value of teachersPayload) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("老师名册暂时无法核对。");
+    }
+    const teacher = value as { id?: unknown; name?: unknown };
+    if (typeof teacher.id !== "string" || !teacher.id.trim()
+        || typeof teacher.name !== "string" || !teacher.name.trim()) {
+      throw new Error("老师名册暂时无法核对。");
+    }
+    rosterNames.push(teacher.name.normalize("NFKC").trim());
+  }
+
+  const counts = new Map<string, number>();
+  for (const name of rosterNames) {
+    const key = normaliseDemoIdentity(name);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const privilegedNames = new Set(
+    [DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER].map(normaliseDemoIdentity),
+  );
+  const existingIdentityKeys = new Set(existingAccounts.map((account) =>
+    accountIdentityKey(account.account_name, account.account_role)));
+  const candidateIdentities: DemoSessionIdentity[] = [
+    { user: DEMO_ADMIN_USER, role: "admin" },
+    { user: DEMO_LIMITED_ADMIN_USER, role: "limited-admin" },
+    ...DEMO_STAFF_USERS.map((user) => ({ user, role: "staff" as const })),
+    ...rosterNames
+      .filter((name) => counts.get(normaliseDemoIdentity(name)) === 1)
+      .filter((name) => !privilegedNames.has(normaliseDemoIdentity(name)))
+      .map((user) => ({ user, role: "teacher" as const })),
+  ];
+  const identities = candidateIdentities
+    .filter((identity) => !existingIdentityKeys.has(accountIdentityKey(identity.user, identity.role)));
+
+  // Keep outbound RPC concurrency bounded for large imported rosters.
+  for (let offset = 0; offset < identities.length; offset += 8) {
+    const batch = identities.slice(offset, offset + 8);
+    const saved = await Promise.all(batch.map((identity) => ensureAccountDirectory({
+      identityKey: accountIdentityKey(identity.user, identity.role),
+      accountName: identity.user,
+      accountRole: identity.role,
+    })));
+    if (saved.some((row, index) => !row
+      || row.identity_key !== accountIdentityKey(batch[index].user, batch[index].role)
+      || row.account_role !== batch[index].role)) {
+      throw new Error("账号目录同步没有返回有效结果。");
+    }
+  }
+  return identities.length;
 }
 
 export async function readManagedAccount(identityKey: string) {

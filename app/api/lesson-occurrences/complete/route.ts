@@ -88,6 +88,7 @@ export async function POST(request: Request) {
       actor,
       fullAdmin,
       role: session.role,
+      authorization: session,
       attendance: attendanceRecord?.evidence,
       completedAt,
     });

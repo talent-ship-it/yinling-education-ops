@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, canAccessStudent, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canAccessStudent, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, OpsStoreError, putStudentFuAttachmentAtomic } from "@/lib/ops-store";
 import { isFuAttachmentCategory, type FuAttachmentCategory } from "@/lib/student-records";
@@ -58,8 +58,9 @@ export async function POST(request: NextRequest) {
   try {
     const allRows = await getOpsState();
     const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session);
     if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
+    if (!canWriteOpsTransaction(access, "files", ["files", "students"])) return noStore({ error: "当前账号不能新增学生附件。" }, 403);
     if (!canOperateStudent(access, studentId)) return noStore({ error: "已归档学生不能新增附件。" }, 403);
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.byteLength !== file.size || !hasStudentAttachmentMagicBytes(contentType, bytes)) {
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
     const committedRows = allRows.map((row) => row.entity === "files"
       ? result.files_row
       : row.entity === "students" ? result.students_row : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const committedVisible = filterOpsStateRows(committedRows, committedAccess);
     const visibleFilesRow = committedVisible.find((row) => row.entity === "files");
     const visibleStudentsRow = committedVisible.find((row) => row.entity === "students");

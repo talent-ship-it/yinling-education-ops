@@ -14,7 +14,7 @@ test("FU upload route sends one narrow atomic command and returns canonical shar
   assert.match(route, /expectedVersions: \{ files: filesRow\.version, students: studentsRow\.version \}/);
   assert.match(route, /putStudentFuAttachmentAtomic/);
   assert.match(route, /const committedRows = allRows\.map/);
-  assert.match(route, /buildOpsAccessContext\(committedRows, actor, fullAdmin, session\.role\)/);
+  assert.match(route, /buildOpsAccessContext\(committedRows, actor, fullAdmin, session\)/);
   assert.match(route, /filterOpsStateRows\(committedRows, committedAccess\)/);
   assert.match(route, /filesRow: visibleFilesRow/);
   assert.match(route, /studentsRow: visibleStudentsRow/);

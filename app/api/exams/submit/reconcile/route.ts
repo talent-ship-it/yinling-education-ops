@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     const command = parseExamSubmissionRecoveryCommand(await request.json().catch(() => null));
     const commandIntent = examSubmissionIntent(command);
     const rows = await getOpsState(["students", "tasks"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!canOperateStudent(access, command.studentId)) {
       return noStore({ error: "当前账号不能恢复这位学生的考试提交。", code: "student_scope_forbidden" }, 403);
     }
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
     // Re-read after the actor-bound ledger lookup. Access or archival changes
     // that happened after the original commit must govern the recovery result.
     const replayRows = await getOpsState(["students", "tasks"]);
-    const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+    const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
     if (!canOperateStudent(replayAccess, replay[0].student_id)) {
       return noStore({ error: "当前账号不能读取这次考试提交结果。", code: "student_scope_forbidden" }, 403);
     }

@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession, getDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { buildOpsAccessContext, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import {
   createStudentWithTasksAtomic, getOpsState, getStudentCreationCommandResult,
   OpsStoreError, STUDENT_CREATION_ATOMIC_RPC, type OpsStateRow, type StudentCreationCommandResult,
@@ -46,8 +46,8 @@ async function renderStudentReplay(result: StudentCreationCommandResult, actor: 
     if (!("session" in current) || current.session.user !== actor) return receiptOnly(result);
     const fullAdmin = actor === DEMO_ADMIN_USER && current.session.role === "admin" && hasValidNixonSession(nixonCookieValue);
     const rows = await getOpsState(["students", "tasks"]);
-    if (!replayVisible(result, rows, actor, fullAdmin, current.session.role)) return receiptOnly(result);
-    const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session.role));
+    if (!replayVisible(result, rows, actor, fullAdmin, current.session)) return receiptOnly(result);
+    const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session));
     return noStore({ committed: true, applied: false, receiptOnly: false, commandKey: result.command_key, studentId: result.student_id, taskIds: result.task_ids,
       studentsRow: visible.find((row) => row.entity === "students") ?? null, tasksRow: visible.find((row) => row.entity === "tasks") ?? null, auditEntryId: result.audit_entry_id });
   } catch {
@@ -61,9 +61,10 @@ async function renderStudentReplay(result: StudentCreationCommandResult, actor: 
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const cookieValue = cookieStore.get(DEMO_COOKIE_NAME)?.value;
-  const signed = getDemoSession(cookieValue);
-  if (!signed) return noStore({ error: "请先输入访问密码。" }, 401);
-  const actor = signed.user;
+  const resolved = await getCurrentDemoSession(cookieValue);
+  if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
+  const { session } = resolved;
+  const actor = session.user;
   try {
     const parsedCommand = parseStudentCreationCommand(await request.json().catch(() => null));
     // Only semantic canonicalization precedes replay. Current role/owner scope
@@ -73,21 +74,20 @@ export async function POST(request: Request) {
     const replay = await getStudentCreationCommandResult({ commandKey: command.commandKey, commandIntent, actor });
     if (replay[0]) return renderStudentReplay(replay[0], actor, cookieValue, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
-    const resolved = await getCurrentDemoSession(cookieValue);
-    if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
-    const { session } = resolved;
-    if (session.user !== actor) return noStore({ error: "登录身份已变化，请重新登录。", code: "session_identity_changed" }, 401);
     if (session.role === "teacher") return noStore({ error: "老师账号不能创建学生档案。", code: "teacher_forbidden" }, 403);
     const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const rows = await getOpsState(["students", "tasks"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
-    if (!access.staff && !access.fullAdmin && !access.limitedAdmin) return noStore({ error: "当前账号不能创建学生档案。", code: "student_scope_forbidden" }, 403);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
+    if (!canWriteOpsTransaction(access, "students", ["students", "tasks"])
+        || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+      return noStore({ error: "当前账号不能创建学生档案。", code: "student_scope_forbidden" }, 403);
+    }
     const authorized = authorizeStudentCreationCommand(command, actor, fullAdmin || actor === DEMO_LIMITED_ADMIN_USER);
     const prepared = prepareStudentCreation(authorized, rows);
     const saved = await createStudentWithTasksAtomic({ commandKey: prepared.commandKey, commandIntent: prepared.commandIntent, studentFields: prepared.studentFields, expectedVersions: prepared.expectedVersions, actor });
     if (!saved[0] || !saved[0].students_row || !saved[0].tasks_row) throw new OpsStoreError("学生创建事务没有返回完整状态行。", "invalid_commit_result");
     const committedRows = rows.map((row) => row.entity === "students" ? saved[0].students_row! : row.entity === "tasks" ? saved[0].tasks_row! : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const visible = filterOpsStateRows(committedRows, committedAccess);
     return noStore({ committed: true, applied: saved[0].applied, commandKey: saved[0].command_key, studentId: saved[0].student_id, taskIds: saved[0].task_ids,
       studentsRow: visible.find((row) => row.entity === "students") ?? null, tasksRow: visible.find((row) => row.entity === "tasks") ?? null, auditEntryId: saved[0].audit_entry_id });

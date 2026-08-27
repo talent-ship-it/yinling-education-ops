@@ -20,10 +20,11 @@ test("legacy leave and replacement use one operations/tasks command", () => {
   assert.match(sql, /'watchers', jsonb_build_array\('Ops Admin'\)/i);
   assert.match(route, /mutateLegacyOperationTaskAtomic/);
   const handler = route.slice(route.indexOf("export async function POST"));
+  const sessionAt = handler.indexOf("const resolved = await getCurrentDemoSession");
   const replayAt = handler.indexOf("const replay = await getLegacyOperationTaskCommandResult");
-  assert.ok(replayAt >= 0 && replayAt < handler.indexOf("getCurrentDemoSession"));
+  assert.ok(sessionAt >= 0 && sessionAt < replayAt);
   assert.ok(handler.indexOf('session.role === "teacher"') > replayAt);
-  assert.match(route, /getDemoSession/);
+  assert.doesNotMatch(route, /\bgetDemoSession\(/);
   assert.match(route, /receiptOnly: true/);
   const receiptStart = route.indexOf("function receiptOnly");
   const receiptEnd = route.indexOf("function record", receiptStart);

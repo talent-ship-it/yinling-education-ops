@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER, isDemoStaff, isDemoTeacher } from "@/lib/demo-users";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import {
   completeLessonOccurrence,
   expandLessonOccurrences,
@@ -284,6 +285,7 @@ export function prepareLessonOccurrenceSettlement(input: {
   actor: string;
   fullAdmin: boolean;
   role?: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   trustedProvider?: "bbb";
   attendance?: LessonAttendanceEvidence;
   completedAt: string;
@@ -303,6 +305,19 @@ export function prepareLessonOccurrenceSettlement(input: {
   if (!student) throw new LessonOccurrenceServiceError("student_not_found", "Occurrence student was not found.");
   const teacher = records(teachersRow, "teachers").find((item) => item.id === occurrence.teacherId);
   if (!teacher) throw new LessonOccurrenceServiceError("teacher_not_found", "Occurrence teacher was not found.");
+
+  if (!input.trustedProvider && input.authorization) {
+    const lifecycleAccess = buildOpsAccessContext(
+      input.rows as OpsStateRow[],
+      input.actor,
+      input.fullAdmin,
+      input.authorization,
+    );
+    if (!canWriteOpsTransaction(lifecycleAccess, "bookings", ["bookings", "students", "payroll"])
+        || !canOperateStudent(lifecycleAccess, requiredText(occurrence.studentId, "occurrence student"))) {
+      throw new LessonOccurrenceServiceError("student_scope_forbidden", "Current account cannot settle this student's lesson.");
+    }
+  }
 
   if (!input.trustedProvider) {
     const access = lessonSettlementAccess({

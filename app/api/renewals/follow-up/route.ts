@@ -164,11 +164,11 @@ export async function POST(request: NextRequest) {
     });
     if (replay[0]) {
       const replayRows = await getOpsState(["renewals", "students", "files", "tasks", "teachers"]);
-      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
       if (!canOperateStudent(replayAccess, replay[0].student_id)) {
         return noStore({ error: "当前账号不能读取这次续课提交结果。", code: "student_scope_forbidden" }, 403);
       }
-      const committed = visibleRows(replayRows, actor, fullAdmin, session.role);
+      const committed = visibleRows(replayRows, actor, fullAdmin, session);
       return noStore({
         committed: true,
         applied: false,
@@ -185,11 +185,11 @@ export async function POST(request: NextRequest) {
     }
 
     const rows = await getOpsState(["renewals", "students", "files", "tasks", "teachers"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!canOperateStudent(access, command.studentId)) {
       return noStore({ error: "当前账号不能记录这位学生的续课跟进。", code: "student_scope_forbidden" }, 403);
     }
-    const prepared = prepareRenewalFollowUp({ command, rows, actor, role: session.role, fullAdmin });
+    const prepared = prepareRenewalFollowUp({ command, rows, actor, role: session.role, authorization: session, fullAdmin });
     const saved = createIfMissing
       ? await putRenewalFollowUpCreateIfMissingAtomic({ ...prepared, packageId: command.packageId!, actor })
       : await putRenewalFollowUpAtomic({ ...prepared, actor });
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
       : row.entity === "students" ? result.students_row
         : row.entity === "files" ? result.files_row
           : row.entity === "tasks" ? result.tasks_row : row);
-    const committed = visibleRows(committedRows, actor, fullAdmin, session.role);
+    const committed = visibleRows(committedRows, actor, fullAdmin, session);
     return noStore({
       committed: true,
       applied: result.applied,

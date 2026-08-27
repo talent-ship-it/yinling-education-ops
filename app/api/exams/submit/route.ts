@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     const command = parseExamSubmissionCommand(await request.json().catch(() => null));
     const commandIntent = examSubmissionIntent(command);
     const rows = await getOpsState(["students", "tasks"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!canOperateStudent(access, command.studentId)) {
       return noStore({ error: "当前账号不能录入这位学生的考试。", code: "student_scope_forbidden" }, 403);
     }
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
       // Re-read after the ledger lookup so a lost-response recovery never
       // applies a pre-transaction snapshot or expands current access.
       const replayRows = await getOpsState(["students", "tasks"]);
-      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
       if (!canOperateStudent(replayAccess, replay[0].student_id)) {
         return noStore({ error: "当前账号不能读取这次考试提交结果。", code: "student_scope_forbidden" }, 403);
       }
@@ -104,6 +104,7 @@ export async function POST(request: Request) {
       rows,
       actor,
       role: session.role,
+      authorization: session,
       fullAdmin,
     });
     const saved = await submitExamAtomic({ ...prepared, actor });
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
     const committedRows = rows.map((row) => row.entity === "students"
       ? saved[0].students_row
       : row.entity === "tasks" ? saved[0].tasks_row : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const visible = filterOpsStateRows(committedRows, committedAccess);
     const studentRow = visible.find((row) => row.entity === "students");
     const taskRow = visible.find((row) => row.entity === "tasks");

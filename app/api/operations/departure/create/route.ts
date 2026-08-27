@@ -115,7 +115,7 @@ export async function POST(request: Request) {
     const command = parseTeacherDepartureCreationCommand(commandBody);
     const commandIntent = teacherDepartureCreationIntent(command);
     const rows = await getOpsState(DEPARTURE_ENTITIES);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!access.staff && !access.fullAdmin && !access.limitedAdmin) {
       return noStore({ error: "当前账号不能创建老师离职流程。", code: "source_teacher_scope_forbidden" }, 403);
     }
@@ -126,6 +126,7 @@ export async function POST(request: Request) {
         rows,
         actor,
         role: session.role,
+        authorization: session,
         fullAdmin,
       });
       return noStore({
@@ -154,7 +155,7 @@ export async function POST(request: Request) {
       // A replay result cannot reuse the snapshot read before its ledger lookup.
       // Re-read and re-authorize every affected student before returning rows.
       const replayRows = await getOpsState(DEPARTURE_ENTITIES);
-      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
       if (!replay[0].affected_student_ids.length
         || replay[0].affected_student_ids.some((studentId) => !canOperateStudent(replayAccess, studentId))) {
         return noStore({ error: "当前账号不能读取这次离职流程结果。", code: "affected_student_scope_forbidden" }, 403);
@@ -183,6 +184,7 @@ export async function POST(request: Request) {
       rows,
       actor,
       role: session.role,
+      authorization: session,
       fullAdmin,
     });
     const saved = await createTeacherDepartureAtomic({ ...prepared, affectedGroups: atomicAffectedGroups(prepared.affectedGroups), actor });
@@ -193,7 +195,7 @@ export async function POST(request: Request) {
     const committedRows = saved[0].applied
       ? committedRowsPayload(rows, saved[0].operations_row, saved[0].tasks_row)
       : await getOpsState(DEPARTURE_ENTITIES);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     if (!saved[0].affected_student_ids.length
       || saved[0].affected_student_ids.some((studentId) => !canOperateStudent(committedAccess, studentId))) {
       throw new OpsStoreError("离职流程保存后已超出当前账号范围。", "invalid_commit_result");

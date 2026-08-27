@@ -6,6 +6,7 @@ import {
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
@@ -60,7 +61,9 @@ export async function GET() {
   const fullAdmin = session.user === DEMO_ADMIN_USER
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasTeacherAvailabilityReviewAdminAccess(session.user, fullAdmin)) {
+  if (!hasTeacherAvailabilityReviewAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, "operations.read")
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return noStore({ error: "只有管理员可以查看老师 AVA 完整度。" }, 403);
   }
 

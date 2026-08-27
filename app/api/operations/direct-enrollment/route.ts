@@ -6,6 +6,7 @@ import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   buildOpsAccessContext,
   canOperateStudent,
+  canWriteOpsTransaction,
   filterOpsStateRows,
 } from "@/lib/ops-access";
 import {
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
       const replayRows = [replay[0].students_row, replay[0].lp_items_row, replay[0].tasks_row]
         .filter((row): row is NonNullable<typeof row> => Boolean(row));
       const replayAccess = replayRows.length === 3
-        ? buildOpsAccessContext(replayRows, actor, fullAdmin, session.role)
+        ? buildOpsAccessContext(replayRows, actor, fullAdmin, session)
         : null;
       const committed = replayAccess ? filterOpsStateRows(replayRows, replayAccess) : [];
       const studentRow = committed.find((row) => row.entity === "students");
@@ -73,8 +74,9 @@ export async function POST(request: Request) {
     }
 
     const rows = await getOpsState(["students", "lpItems", "tasks", "bookings"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
-    if (!canOperateStudent(access, command.studentId)) {
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
+    if (!canWriteOpsTransaction(access, "students", ["students", "lpItems", "tasks"])
+        || !canOperateStudent(access, command.studentId)) {
       return noStore({ error: "当前账号不能操作该学生。", code: "student_scope_forbidden" }, 403);
     }
     const studentPayload = rows.find((row) => row.entity === "students")?.payload;
@@ -114,7 +116,7 @@ export async function POST(request: Request) {
     const committedRows = rows.map((row) => row.entity === "students"
       ? savedStudentsRow
       : row.entity === "lpItems" ? savedLpItemsRow : row.entity === "tasks" ? savedTasksRow : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const visible = filterOpsStateRows(committedRows, committedAccess);
     const studentsRow = visible.find((row) => row.entity === "students");
     const lpItemsRow = visible.find((row) => row.entity === "lpItems");

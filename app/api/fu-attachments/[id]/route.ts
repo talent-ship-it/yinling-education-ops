@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, canAccessStudent } from "@/lib/ops-access";
+import { buildOpsAccessContext, canAccessStudent, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, getStudentFuAttachment } from "@/lib/ops-store";
 import { sanitiseStudentAttachmentName } from "@/lib/student-attachment-validation";
@@ -26,8 +26,8 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ id
     const allRows = await getOpsState();
     const actor = session.user;
     const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session.role);
-    if (!canAccessStudent(access, attachment.student_id)) {
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session);
+    if (!canReadOpsEntity(access, "files") || !canAccessStudent(access, attachment.student_id)) {
       return NextResponse.json({ error: "未找到该附件。" }, { status: 404 });
     }
     const bytes = new Uint8Array(Buffer.from(attachment.content_base64, "base64"));

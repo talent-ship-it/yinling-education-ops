@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLegacyTaskDeadlineCommandResult,
@@ -43,7 +44,9 @@ async function requireHighTierAdmin() {
   const fullAdmin = session.user === DEMO_ADMIN_USER
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasLegacyTaskDeadlineAdminAccess(session.user, fullAdmin)) {
+  if (!hasLegacyTaskDeadlineAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, "operations.write")
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有教务管理员可以补写历史任务的截止时间。" }, 403) } as const;
   }
   return { session: { actor: session.user, role: session.role, fullAdmin } } as const;

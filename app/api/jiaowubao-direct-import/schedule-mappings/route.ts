@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoDirectScheduleMappingReview,
@@ -30,7 +31,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-async function requireHighTierAdmin() {
+async function requireHighTierAdmin(permission: "operations.read" | "operations.write") {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) {
@@ -40,7 +41,9 @@ async function requireHighTierAdmin() {
   const fullAdmin = session.user === DEMO_ADMIN_USER
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)) {
+  if (!hasTeacherImportAdminAccess(session.user, fullAdmin)
+      || !hasDemoSessionPermission(session, permission)
+      || !hasUnrestrictedDemoSessionScope(session)) {
     return { response: noStore({ error: "只有教务管理员可以确认教务宝老师与课程映射。" }, 403) } as const;
   }
   return { actor: session.user } as const;
@@ -155,7 +158,7 @@ async function readBoundedRequestBody(request: Request) {
 
 /** High-tier, server-only reader for paged source-label mapping candidates. */
 export async function GET(request: Request) {
-  const access = await requireHighTierAdmin();
+  const access = await requireHighTierAdmin("operations.read");
   if ("response" in access) return access.response;
   try {
     const cursor = cursorFromRequest(request);
@@ -188,7 +191,7 @@ export async function GET(request: Request) {
  * from the browser request.
  */
 export async function POST(request: Request) {
-  const access = await requireHighTierAdmin();
+  const access = await requireHighTierAdmin("operations.write");
   if ("response" in access) return access.response;
 
   const declaredLength = Number(request.headers.get("content-length") ?? "0");

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { projectOperationalAuditEntry } from "@/lib/operational-audit";
 import { getOperationalAudit } from "@/lib/ops-store";
@@ -21,7 +22,11 @@ export async function GET() {
     && session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const limitedAdmin = session.user === DEMO_LIMITED_ADMIN_USER && session.role === "limited-admin";
-  if (!fullAdmin && !limitedAdmin) return noStore({ error: "当前账号没有读取操作审计的权限。" }, 403);
+  if ((!fullAdmin && !limitedAdmin)
+      || !hasDemoSessionPermission(session, "operations.read")
+      || !hasUnrestrictedDemoSessionScope(session)) {
+    return noStore({ error: "当前账号没有读取操作审计的权限。" }, 403);
+  }
 
   try {
     const entries = (await getOperationalAudit()).map(projectOperationalAuditEntry);

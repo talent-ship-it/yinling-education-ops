@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 import { renewalTaskAnchor } from "@/lib/renewal-tasks";
 import { RENEWAL_STATUSES, type RenewalStatus } from "@/lib/student-records";
@@ -272,6 +272,7 @@ export function prepareRenewalFollowUp(input: Readonly<{
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
 }>): PreparedRenewalFollowUp {
   if (input.role === "teacher") fail("teacher_forbidden", "Teacher accounts cannot record renewal follow-up.");
@@ -285,8 +286,14 @@ export function prepareRenewalFollowUp(input: Readonly<{
     || tasks.row.version !== input.command.expectedVersions.tasks) {
     fail("stale_expected_version", "Student, renewal, task or file state changed; refresh before saving the follow-up.");
   }
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (!canOperateStudent(access, input.command.studentId)) {
+  const access = buildOpsAccessContext(
+    input.rows as OpsStateRow[],
+    input.actor,
+    input.fullAdmin,
+    input.authorization ?? input.role,
+  );
+  if (!canWriteOpsTransaction(access, "renewals", ["files", "renewals", "students", "tasks"])
+      || !canOperateStudent(access, input.command.studentId)) {
     fail("student_scope_forbidden", "The current account cannot record renewal follow-up for this student.");
   }
   const matchingStudents = students.payload.filter((student) => student.id === input.command.studentId);

@@ -51,6 +51,8 @@ import {
 } from "lucide-react";
 
 import { cleanTimezone } from "@/lib/timezone";
+import { AccountLifecycleWorkspace } from "@/app/account-lifecycle-workspace";
+import type { AccountDirectoryRecord } from "@/app/account-admin-lifecycle";
 import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
 import {
   sortStudentsByName,
@@ -102,7 +104,6 @@ import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
   DEMO_STAFF_USERS,
-  demoStaffLoginAlias,
   normaliseDemoUserName,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
@@ -332,6 +333,7 @@ import {
 } from "@/lib/shared-state-recovery";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
 
 const teacherSubjectOptions = [
   "Local English",
@@ -406,10 +408,10 @@ type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message"
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
 type AccountPasswordResetTarget = Readonly<{
-  user: string;
-  role: DemoSessionRole;
+  accountId: string;
   label: string;
   login: string;
+  expectedCredentialVersion: number;
 }>;
 
 function operatorProfile(operator: string, teacherNames: ReadonlySet<string> = new Set()): OperatorProfile {
@@ -991,7 +993,7 @@ const navigationDefinitions: Array<{ id: Section; label: string; icon: typeof La
   { id: "sync", label: "同步与导入", icon: RefreshCw, group: "support" },
   { id: "reports", label: "运营报表", icon: SlidersHorizontal, group: "support" },
   { id: "settings", label: "规则设置", icon: Settings, group: "support" },
-  { id: "accounts", label: "账号与权限", icon: KeyRound, group: "support" },
+  { id: "accounts", label: "账号与安全", icon: KeyRound, group: "support" },
   { id: "audit", label: "操作审计", icon: ShieldCheck, group: "support" },
 ];
 
@@ -999,8 +1001,8 @@ function navigationFor(language: InterfaceLanguage) {
   return navigationDefinitions.map((item) => ({ ...item, label: displayTerm(item.label, language) }));
 }
 
-const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files"]);
-const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom"]);
+const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files", "accounts"]);
+const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom", "accounts"]);
 const noPayrollAdminSectionIds = new Set<Section>(navigationDefinitions.filter((item) => item.id !== "payroll").map((item) => item.id));
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "yinling.sidebar-collapsed";
 
@@ -2122,9 +2124,10 @@ function AuthStatusScreen({ title, detail }: { title: string; detail: string }) 
   );
 }
 
-function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (credentials: { username: string; password: string }) => void; loading: boolean; error: string }) {
+function AuthLoginScreen({ onSubmit, loading, error, mfaRequired }: { onSubmit: (credentials: { username: string; password: string; mfaCode: string }) => void; loading: boolean; error: string; mfaRequired: boolean }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const usernameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -2142,13 +2145,17 @@ function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (credentials:
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
-            onSubmit({ username, password });
+            onSubmit({ username, password, mfaCode });
           }}
         >
           <label htmlFor="username">账号 / 姓名</label>
           <input ref={usernameInputRef} id="username" name="username" value={username} type="text" autoComplete="username" placeholder="例如 Nixon、Abby 教务或老师姓名" maxLength={160} onChange={(event) => setUsername(event.target.value)} />
           <label htmlFor="password">登录密码</label>
           <input id="password" name="password" value={password} type="password" autoComplete="current-password" maxLength={256} aria-invalid={Boolean(error)} aria-describedby={error ? "login-error" : undefined} onChange={(event) => setPassword(event.target.value)} required />
+          {mfaRequired ? <>
+            <label htmlFor="mfa-code">验证器验证码</label>
+            <input id="mfa-code" name="mfaCode" value={mfaCode} type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setMfaCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required />
+          </> : null}
           <small className="login-hint">尚未设置独立密码的账号可暂时留空“账号 / 姓名”，沿用原登录方式。</small>
           {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
           <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
@@ -2165,6 +2172,7 @@ function AccountPasswordForm({
   onCancel,
   onLogout,
   logoutBusy = false,
+  logoutError = "",
 }: {
   accountLabel: string;
   forced?: boolean;
@@ -2172,6 +2180,7 @@ function AccountPasswordForm({
   onCancel?: () => void;
   onLogout?: () => void;
   logoutBusy?: boolean;
+  logoutError?: string;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -2203,7 +2212,7 @@ function AccountPasswordForm({
     const intent = JSON.stringify([currentPassword, newPassword]);
     const commandKey = commandRef.current?.intent === intent
       ? commandRef.current.commandKey
-      : "account-credential:" + crypto.randomUUID();
+      : "account-password:" + crypto.randomUUID();
     commandRef.current = { intent, commandKey };
     setBusy(true);
     try {
@@ -2212,7 +2221,7 @@ function AccountPasswordForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ commandKey, currentPassword, newPassword }),
       });
-      const body = await response.json().catch(() => null) as { error?: string; changed?: boolean } | null;
+      const body = await response.json().catch(() => null) as { error?: string; changed?: boolean; reauthRequired?: boolean } | null;
       if (!response.ok || !body?.changed) {
         setError(body?.error || "修改密码失败，请稍后重试。");
         return;
@@ -2221,6 +2230,10 @@ function AccountPasswordForm({
       setCurrentPassword("");
       setNewPassword("");
       setConfirmation("");
+      if (body.reauthRequired) {
+        window.location.reload();
+        return;
+      }
       onChanged();
     } catch {
       setError("网络暂时不可用，请保持页面打开后重试。");
@@ -2237,6 +2250,7 @@ function AccountPasswordForm({
     <label className="span-2">再次输入新密码<input name="confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => { setConfirmation(event.target.value); resetIntent(); }} minLength={12} maxLength={128} required /></label>
     <p className="form-footnote span-2">至少 12 个字符，同时包含字母和数字；不要使用账号名称。</p>
     {error && <div className="form-error span-2" role="alert">{error}</div>}
+    {!error && logoutError && <div className="form-error span-2" role="alert">{logoutError}</div>}
     <footer>
       {forced && onLogout
         ? <button className="secondary-button" type="button" disabled={busy || logoutBusy} onClick={onLogout}><LogOut size={15} />{logoutBusy ? "正在退出" : "退出登录"}</button>
@@ -2246,14 +2260,14 @@ function AccountPasswordForm({
   </form>;
 }
 
-function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy }: { user: string; onChanged: () => void; onLogout: () => void; logoutBusy: boolean }) {
+function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy, logoutError }: { user: string; onChanged: () => void; onLogout: () => void; logoutBusy: boolean; logoutError: string }) {
   return <main className="login-shell password-change-shell">
     <section className="login-panel password-change-panel">
       <div className="brand-mark">吟</div>
       <p className="eyebrow">账号安全</p>
       <h1>请先设置新密码</h1>
       <p className="login-copy">完成后会自动加载你的工作视图。</p>
-      <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} />
+      <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} logoutError={logoutError} />
     </section>
   </main>;
 }
@@ -2333,8 +2347,47 @@ export default function OperationsApp() {
   const [sessionUser, setSessionUser] = useState("");
   const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
   const [sessionMustChangePassword, setSessionMustChangePassword] = useState(false);
+  const [loginMfaRequired, setLoginMfaRequired] = useState(false);
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
+  const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
+
+  useEffect(() => {
+    const pendingNotice = window.sessionStorage.getItem(LOGOUT_RETRY_NOTICE_KEY);
+    let cancelled = false;
+    let timer: number | undefined;
+    const noticeTimer = pendingNotice
+      ? window.setTimeout(() => {
+        if (!cancelled) setLoginError(pendingNotice);
+      }, 0)
+      : undefined;
+    const retry = async () => {
+      try {
+        const response = await fetch("/api/demo-logout", {
+          method: "POST",
+          headers: { "x-yinling-logout-retry": "1" },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok && body.serverSessionRevoked === true) {
+          window.sessionStorage.removeItem(LOGOUT_RETRY_NOTICE_KEY);
+          if (!cancelled && pendingNotice) setLoginError("");
+          return;
+        }
+        if (!cancelled && typeof body.error === "string") setLoginError(body.error);
+      } catch {
+        // Keep the browser signed out while the path-scoped proof retries revocation.
+      }
+      if (!cancelled) timer = window.setTimeout(() => void retry(), 5_000);
+    };
+    // This request uses only the path-scoped retry cookie, so it is safe on
+    // every app load and never revokes a newly-created primary session.
+    void retry();
+    return () => {
+      cancelled = true;
+      if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -2385,21 +2438,23 @@ export default function OperationsApp() {
     };
   }, [authenticated, sessionMustChangePassword]);
 
-  const submitPassword = async ({ username, password }: { username: string; password: string }) => {
+  const submitPassword = async ({ username, password, mfaCode }: { username: string; password: string; mfaCode: string }) => {
     setLoginLoading(true);
     setLoginError("");
     const response = await fetch("/api/demo-login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, ...(mfaCode ? { mfaCode } : {}) }),
     });
     const body = await response.json().catch(() => ({}));
 
     setLoginLoading(false);
     if (!response.ok) {
+      setLoginMfaRequired(body.mfaRequired === true);
       setLoginError(body.error || "密码不正确。");
       return;
     }
+    setLoginMfaRequired(false);
     setAuthenticated(true);
     setSessionUser(typeof body.user === "string" ? body.user : "");
     setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
@@ -2409,18 +2464,32 @@ export default function OperationsApp() {
   const logoutFromPasswordChange = async () => {
     if (passwordLogoutBusy) return;
     setPasswordLogoutBusy(true);
+    setPasswordLogoutError("");
     try {
       const response = await fetch("/api/demo-logout", { method: "POST" });
-      if (!response.ok) throw new Error("logout failed");
-      window.location.reload();
-    } catch {
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.serverSessionRevoked === true) {
+        window.location.reload();
+        return;
+      }
+      if (body.localLogout === true) {
+        window.sessionStorage.setItem(
+          LOGOUT_RETRY_NOTICE_KEY,
+          typeof body.error === "string" ? body.error : "本机已退出；服务器会话撤销将在后台重试。",
+        );
+        window.location.reload();
+        return;
+      }
+      throw new Error(typeof body.error === "string" ? body.error : "退出失败，请重试。");
+    } catch (error) {
       setPasswordLogoutBusy(false);
+      setPasswordLogoutError(error instanceof Error ? error.message : "退出失败，请重试。");
     }
   };
 
   if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
-  if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} />;
-  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={sessionUser} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} />;
+  if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} mfaRequired={loginMfaRequired} />;
+  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={sessionUser} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
@@ -2921,12 +2990,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [auditQuery, setAuditQuery] = useState("");
   const [auditFilter, setAuditFilter] = useState("all");
   const [auditPage, setAuditPage] = useState(1);
-  const [accountQuery, setAccountQuery] = useState("");
-  const [accountPage, setAccountPage] = useState(1);
-  const [selectedAccountName, setSelectedAccountName] = useState<string>("admin:Nixon");
   const [accountPasswordResetTarget, setAccountPasswordResetTarget] = useState<AccountPasswordResetTarget | null>(null);
   const [accountPasswordResetBusy, setAccountPasswordResetBusy] = useState(false);
   const [accountPasswordResetError, setAccountPasswordResetError] = useState("");
+  const [accountLifecycleRefreshVersion, setAccountLifecycleRefreshVersion] = useState(0);
   const accountPasswordResetCommandRef = useRef<{ intent: string; commandKey: string } | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
@@ -4442,9 +4509,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now)).filter((task) => task.status !== "done"));
   }, [scopedTasks, taskRefreshKey]);
 
-  const switchOperator = (operator: string) => {
-    const teacherView = teacherOperatorNames.has(operator);
-    const adminScope = operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER;
+  const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
+    const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
+    const adminScope = accountRole
+      ? accountRole === "admin" || accountRole === "limited-admin"
+      : operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER;
     const teacher = teacherView ? recordTeachers.find((item) => item.name.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase()) : undefined;
     const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
     const allowedStudents = adminScope ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
@@ -4488,11 +4557,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     setLogoutBusy(true);
     try {
       const response = await fetch("/api/demo-logout", { method: "POST" });
-      if (!response.ok) throw new Error("logout failed");
-      window.location.reload();
-    } catch {
+      const body = await response.json().catch(() => ({}));
+      if (response.ok && body.serverSessionRevoked === true) {
+        window.location.reload();
+        return;
+      }
+      if (body.localLogout === true) {
+        window.sessionStorage.setItem(
+          LOGOUT_RETRY_NOTICE_KEY,
+          typeof body.error === "string" ? body.error : "本机已退出；服务器会话撤销将在后台重试。",
+        );
+        window.location.reload();
+        return;
+      }
+      throw new Error(typeof body.error === "string" ? body.error : "退出失败，请重试。");
+    } catch (error) {
       setLogoutBusy(false);
-      notify("退出失败，请重试");
+      notify(error instanceof Error ? error.message : "退出失败，请重试。");
     }
   };
 
@@ -10574,167 +10655,34 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
   };
 
-  const renderAccounts = () => {
-    const teacherLoginNames = new Set(recordTeachers.map((teacher) => normaliseDemoUserName(teacher.name)));
-    const accounts = [
-      { id: "admin:Nixon", name: "Admin", operator: "Nixon", login: "Nixon", sessionRole: "admin" as const, role: "超级管理员", permissions: ["全局学生与老师", "排课与运营", "运营报表", "同步与导入", "规则设置", "账号与权限", "操作审计", "课时与薪资"] },
-      { id: `limited-admin:${DEMO_LIMITED_ADMIN_USER}`, name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, login: DEMO_LIMITED_ADMIN_USER, sessionRole: "limited-admin" as const, role: "运营管理员", permissions: ["全局学生与老师", "排课与运营", "运营报表", "同步与导入", "规则设置", "账号与权限", "操作审计"] },
-      ...DEMO_STAFF_USERS.map((name) => ({
-        id: `staff:${name}`,
-        name,
-        operator: name,
-        login: teacherLoginNames.has(normaliseDemoUserName(name)) ? demoStaffLoginAlias(name) : name,
-        sessionRole: "staff" as const,
-        role: "教务账号",
-        permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"],
-      })),
-      ...recordTeachers.map((teacher) => ({ id: `teacher:${teacher.id}`, name: teacher.name, operator: teacher.name, login: teacher.name, sessionRole: "teacher" as const, role: "老师账号", permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"] })),
-    ];
-    const normalizedAccountQuery = accountQuery.trim().toLocaleLowerCase("zh-CN");
-    const filteredAccounts = accounts.filter((account) =>
-      [account.name, account.role, account.login]
-        .some((value) => value.toLocaleLowerCase("zh-CN").includes(normalizedAccountQuery)),
-    );
-    const accountPageSize = 10;
-    const safeAccountPage = Math.min(
-      accountPage,
-      Math.max(1, Math.ceil(filteredAccounts.length / accountPageSize)),
-    );
-    const pagedAccounts = filteredAccounts.slice(
-      (safeAccountPage - 1) * accountPageSize,
-      safeAccountPage * accountPageSize,
-    );
-    const selectedAccount =
-      pagedAccounts.find((account) => account.id === selectedAccountName) ??
-      pagedAccounts[0];
-    return (
-      <>
-        <ViewHeading
-          eyebrow="账号与权限"
-          title="账号与权限"
-        />
-        <section className="panel account-admin-shell">
-          <div className="account-admin-layout">
-            <article className="account-list">
-              <ListToolbar
-                query={accountQuery}
-                onQuery={(value) => {
-                  setAccountQuery(value);
-                  setAccountPage(1);
-                }}
-                placeholder="搜索账号、角色或登录方式"
-                count={`${filteredAccounts.length} 个账号`}
-              />
-              <div className="collection-head account-grid-row">
-                <span>账号</span>
-                <span>角色</span>
-                <span>登录账号</span>
-              </div>
-              {pagedAccounts.length ? pagedAccounts.map((account) => (
-                <button
-                  className={`collection-row account-grid-row ${selectedAccount?.id === account.id ? "selected" : ""}`}
-                  type="button"
-                  key={account.id}
-                  onClick={() => setSelectedAccountName(account.id)}
-                >
-                  <span className="table-person">
-                    <Avatar
-                      initials={
-                        account.name === "Admin" ? "AD" : initials(account.name)
-                      }
-                      tone={
-                        account.role === "老师账号"
-                          ? "green"
-                          : account.role === "教务账号"
-                            ? "blue"
-                            : "purple"
-                      }
-                    />
-                    <span>
-                      <strong>{account.name}</strong>
-                    </span>
-                  </span>
-                  <StatusPill
-                    tone={
-                      account.role === "老师账号"
-                        ? "green"
-                        : account.role === "教务账号"
-                          ? "blue"
-                          : "purple"
-                    }
-                  >
-                    {account.role}
-                  </StatusPill>
-                  <span>{account.login}</span>
-                </button>
-              )) : <EmptyState title="没有找到匹配账号" detail="请尝试账号名称、角色或登录方式。" />}
-              <Pagination
-                page={safeAccountPage}
-                total={filteredAccounts.length}
-                pageSize={accountPageSize}
-                onPage={setAccountPage}
-              />
-            </article>
-            {selectedAccount ? <aside className="account-preview">
-              <div className="preview-header">
-                <div>
-                  <h2>{selectedAccount.name}</h2>
-                </div>
-              </div>
-              <div className="student-facts account-facts">
-                <span>
-                  <small>角色</small>
-                  <strong>{selectedAccount.role}</strong>
-                </span>
-                <span>
-                  <small>登录账号 / 姓名</small>
-                  <strong>{selectedAccount.login}</strong>
-                </span>
-              </div>
-              <div className="detail-section">
-                <span>可访问功能</span>
-                <div className="permission-list">
-                  {selectedAccount.permissions.map((permission) => (
-                    <p key={permission}>
-                      <CheckCircle2 size={15} /> {permission}
-                    </p>
-                  ))}
-                </div>
-              </div>
-              <div className="account-actions">
-                {isLimitedAdminSession ? <div className="form-notice">仅查看本账号权限范围。</div> : null}
-                <div className="form-notice"><KeyRound size={15} /> 登录时填写“{selectedAccount.login}”和密码。账号首次设置独立密码后，原有简易登录不再生效。</div>
-                {isAdminSession && !(selectedAccount.operator === sessionOperator && selectedAccount.sessionRole === initialRole) && <button
-                  className="secondary-button full"
-                  type="button"
-                  onClick={() => {
-                    setAccountPasswordResetTarget({
-                      user: selectedAccount.operator,
-                      role: selectedAccount.sessionRole,
-                      label: selectedAccount.name,
-                      login: selectedAccount.login,
-                    });
-                    setAccountPasswordResetError("");
-                    accountPasswordResetCommandRef.current = null;
-                    setModal("accountPasswordReset");
-                  }}
-                >
-                  <KeyRound size={16} /> 重置此账号密码
-                </button>}
-                <button
-                  className="primary-button full"
-                  type="button"
-                  onClick={() => switchOperator(selectedAccount.operator)}
-                >
-                  <UserCog size={16} /> 查看此账号视图{isLimitedAdminSession ? "（当前权限内）" : ""}
-                </button>
-              </div>
-            </aside> : <aside className="account-preview"><EmptyState title="没有可预览的账号" detail="调整搜索条件后选择账号。" /></aside>}
-          </div>
-        </section>
-      </>
-    );
-  };
+  const renderAccounts = () => (
+    <>
+      <ViewHeading eyebrow="账号与安全" title={isAdminSession ? "账号与权限" : "账号安全"} />
+      <AccountLifecycleWorkspace
+        currentUser={sessionOperator}
+        currentRole={initialRole}
+        canManageAccounts={isAdminSession}
+        refreshVersion={accountLifecycleRefreshVersion}
+        onChangePassword={() => setModal("accountPasswordChange")}
+        onResetPassword={(account: AccountDirectoryRecord) => {
+          const staffNameCollidesWithTeacher = account.account_role === "staff"
+            && recordTeachers.some((teacher) => normaliseDemoUserName(teacher.name) === normaliseDemoUserName(account.account_name));
+          setAccountPasswordResetTarget({
+            accountId: account.account_id,
+            label: account.account_name,
+            login: staffNameCollidesWithTeacher
+              ? `${account.account_name} 教务`
+              : account.account_name,
+            expectedCredentialVersion: account.credential_version ?? 0,
+          });
+          setAccountPasswordResetError("");
+          accountPasswordResetCommandRef.current = null;
+          setModal("accountPasswordReset");
+        }}
+        onViewAccount={(account: AccountDirectoryRecord) => switchOperator(account.account_name, account.account_role)}
+      />
+    </>
+  );
 
   const renderView = () => {
     if (!canViewPayroll && active === "payroll") return renderDashboard();
@@ -12731,13 +12679,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
     const intent = JSON.stringify([
-      accountPasswordResetTarget.user,
-      accountPasswordResetTarget.role,
+      accountPasswordResetTarget.accountId,
+      accountPasswordResetTarget.expectedCredentialVersion,
       newPassword,
     ]);
     const commandKey = accountPasswordResetCommandRef.current?.intent === intent
       ? accountPasswordResetCommandRef.current.commandKey
-      : `account-credential:${crypto.randomUUID()}`;
+      : `account-password:${crypto.randomUUID()}`;
     accountPasswordResetCommandRef.current = { intent, commandKey };
     setAccountPasswordResetBusy(true);
     try {
@@ -12746,8 +12694,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           commandKey,
-          targetUser: accountPasswordResetTarget.user,
-          targetRole: accountPasswordResetTarget.role,
+          accountId: accountPasswordResetTarget.accountId,
+          expectedCredentialVersion: accountPasswordResetTarget.expectedCredentialVersion,
           newPassword,
         }),
       });
@@ -12758,6 +12706,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       }
       const label = accountPasswordResetTarget.label;
       accountPasswordResetCommandRef.current = null;
+      setAccountLifecycleRefreshVersion((current) => current + 1);
       setAccountPasswordResetTarget(null);
       setModal(null);
       notify(`${label} 的密码已重置；对方登录后需要立即设置新密码`);

@@ -15,6 +15,11 @@ export const SERVER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 export const SERVER_SESSION_IDLE_SECONDS = 60 * 60 * 12;
 
 export type DemoSessionRole = "admin" | "limited-admin" | "staff" | "teacher";
+export type DemoSessionScopeMember = Readonly<{
+  kind: string;
+  key: string;
+}>;
+
 export type DemoSessionIdentity = Readonly<{
   user: DemoUser;
   role: DemoSessionRole;
@@ -27,12 +32,28 @@ export type DemoSessionIdentity = Readonly<{
   roleVersion?: number;
   scopeVersion?: number;
   mfaVerified?: boolean;
+  /** Effective server-owned authorization for database-backed sessions. */
+  permissions?: readonly string[];
+  scopeMembers?: readonly DemoSessionScopeMember[];
 }>;
 
 export type ServerSessionEnvelope = Readonly<{
   sessionId: string;
   tokenHash: string;
 }>;
+
+/** Legacy sessions without lifecycle authorization keep their historical role policy. */
+export function hasDemoSessionPermission(identity: DemoSessionIdentity, permission: string) {
+  return identity.permissions === undefined
+    || identity.permissions.includes("*")
+    || identity.permissions.includes(permission);
+}
+
+/** Global review/import surfaces cannot safely project a partial student scope. */
+export function hasUnrestrictedDemoSessionScope(identity: DemoSessionIdentity) {
+  return identity.scopeMembers === undefined
+    || identity.scopeMembers.some((member) => member.kind === "all" && member.key === "*");
+}
 
 type DemoSessionPayload = DemoSessionIdentity & Readonly<{
   v: typeof SESSION_VERSION;

@@ -330,6 +330,7 @@ export async function POST(request: NextRequest) {
       rows,
       actor: session.user,
       role: session.role,
+      authorization: session,
       fullAdmin,
     });
     const studentRow = rows.find((row) => row.entity === "students");

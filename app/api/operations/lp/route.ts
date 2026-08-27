@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import {
   LpAtomicError,
   lpAtomicIntent,
@@ -58,14 +58,15 @@ export async function POST(request: Request) {
     const replay = await getLpAtomicCommandResult({ commandKey: command.commandKey, commandIntent, actor });
     if (replay[0]) {
       const rows = [replay[0].students_row, replay[0].lp_items_row, replay[0].tasks_row, replay[0].files_row].filter((row): row is OpsStateRow => row !== null);
-      const replayAccess = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(rows, actor, fullAdmin, session);
       if (!rows.some((row) => row.entity === "students") || !canOperateStudent(replayAccess, replay[0].student_id)) return noStore({ error: "当前账号不能操作该学生。", code: "student_scope_forbidden" }, 403);
       const visible = filterOpsStateRows(rows, replayAccess);
       return noStore({ committed: true, applied: false, commandKey: replay[0].command_key, operation: replay[0].operation, studentId: replay[0].student_id, lpItemId: replay[0].lp_item_id, ...rowsPayload(visible), auditEntryId: replay[0].audit_entry_id });
     }
     const rows = await getOpsState(["students", "lpItems", "tasks", "files"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
-    const studentInScope = command.studentId ? canOperateStudent(access, command.studentId) : fullAdmin;
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
+    const studentInScope = canWriteOpsTransaction(access, "lpItems", ["students", "lpItems", "tasks", "files"])
+      && (command.studentId ? canOperateStudent(access, command.studentId) : fullAdmin);
     if (!studentInScope) return noStore({ error: "当前账号不能操作该学生。", code: "student_scope_forbidden" }, 403);
     const prepared = prepareLpAtomicCommand({ command, rows, canOperateStudent: studentInScope, actor, fullAdmin });
     const saved = await mutateLpAtomic(prepared);
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
     const savedTasksRow = result.tasks_row as OpsStateRow;
     const savedFilesRow = result.files_row as OpsStateRow;
     const committedRows = rows.map((row) => row.entity === "students" ? savedStudentsRow : row.entity === "lpItems" ? savedLpItemsRow : row.entity === "tasks" ? savedTasksRow : row.entity === "files" ? savedFilesRow : row);
-    const visible = filterOpsStateRows(committedRows, buildOpsAccessContext(committedRows, actor, fullAdmin, session.role));
+    const visible = filterOpsStateRows(committedRows, buildOpsAccessContext(committedRows, actor, fullAdmin, session));
     const payload = rowsPayload(visible);
     if (!payload.studentsRow || !payload.lpItemsRow || !payload.tasksRow || !payload.filesRow) throw new OpsStoreError("LP 原子结果不可见。", "invalid_commit_result");
     return noStore({ committed: true, applied: result.applied, commandKey: result.command_key, operation: result.operation, studentId: result.student_id, lpItemId: result.lp_item_id, ...payload, auditEntryId: result.audit_entry_id });

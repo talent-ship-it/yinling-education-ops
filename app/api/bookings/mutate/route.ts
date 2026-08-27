@@ -88,7 +88,7 @@ export async function POST(request: Request) {
         replay[0].tasks_row,
         replay[0].teachers_row,
       ];
-      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session.role);
+      const replayAccess = buildOpsAccessContext(replayRows, actor, fullAdmin, session);
       const currentReplayBooking = Array.isArray(replay[0].bookings_row.payload)
         ? replay[0].bookings_row.payload.find((value) => value && typeof value === "object" && !Array.isArray(value)
           && (value as { id?: unknown }).id === replay[0].booking_id) as { teacherId?: unknown } | undefined
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
     }
 
     const rows = await getOpsState(["bookings", "students", "lpItems", "tasks", "teachers"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     const visibleRows = filterOpsStateRows(rows, access);
     const visibleBookings = visibleRows.find((row) => row.entity === "bookings");
     const existing = Array.isArray(visibleBookings?.payload)
@@ -156,7 +156,7 @@ export async function POST(request: Request) {
     if (command.action !== "bind_classroom" && (!studentAllowed || (session.role === "teacher" && command.action === "delete"))) {
       return noStore({ error: "当前账号不能修改这条排课。", code: "student_scope_forbidden" }, 403);
     }
-    const prepared = prepareBookingCapacityMutation({ command, rows, actor, role: session.role, fullAdmin });
+    const prepared = prepareBookingCapacityMutation({ command, rows, actor, role: session.role, authorization: session, fullAdmin });
     const saved = await mutateBookingCapacityAtomic({ ...prepared, actorRole: session.role, actor });
     if (!saved[0]) throw new OpsStoreError("排课事务没有返回保存结果。", "invalid_commit_result");
     const committedRows = [
@@ -166,7 +166,7 @@ export async function POST(request: Request) {
       saved[0].tasks_row,
       saved[0].teachers_row,
     ];
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     if (!canOperateStudent(committedAccess, saved[0].student_id)
       || !canOperateStudent(committedAccess, saved[0].previous_student_id)
       || (session.role === "teacher" && (

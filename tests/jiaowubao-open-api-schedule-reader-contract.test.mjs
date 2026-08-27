@@ -34,7 +34,7 @@ test("reader migration is a new immutable snapshot contract", () => {
 });
 
 test("API route keeps source mapping server-only and separates session/reader/upstream failures", () => {
-  assert.match(route, /buildOpsAccessContext\(rows, session\.user, fullAdmin, session\.role\)/);
+  assert.match(route, /buildOpsAccessContext\(rows, session\.user, fullAdmin, session\)/);
   assert.match(route, /getJiaowubaoOpenApiScheduleSnapshotWindow/);
   assert.match(route, /code: "session_required"/);
   assert.match(route, /resolved\.status === 401/);

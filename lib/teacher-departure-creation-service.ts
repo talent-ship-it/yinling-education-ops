@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import type { DemoSessionRole } from "@/lib/demo-session-token";
-import { canOperateStudent, buildOpsAccessContext } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
+import { canOperateStudent, buildOpsAccessContext, canWriteOpsTransaction } from "@/lib/ops-access";
 import {
   expandLessonOccurrences,
   lessonOccurrenceSourceRangeForTargetRange,
@@ -552,6 +552,7 @@ export function prepareTeacherDepartureCreation(input: Readonly<{
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
+  authorization?: DemoSessionIdentity;
   fullAdmin: boolean;
   now?: Date;
 }>): PreparedTeacherDepartureCreation {
@@ -567,8 +568,9 @@ export function prepareTeacherDepartureCreation(input: Readonly<{
     }
   }
 
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (!access.staff && !access.fullAdmin && !access.limitedAdmin) {
+  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.authorization ?? input.role);
+  if (!canWriteOpsTransaction(access, "operations", ["operations", "tasks"])
+      || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
     fail("source_teacher_scope_forbidden", "The current account cannot create teacher-departure workflows.");
   }
   const sourceTeachers = teacherRow.payload.filter((teacher) => teacher.id === input.command.sourceTeacherId);

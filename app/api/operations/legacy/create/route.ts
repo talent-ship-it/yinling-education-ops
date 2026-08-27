@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession, getDemoSession } from "@/lib/demo-auth";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import { getLegacyOperationTaskCommandResult, getOpsState, LEGACY_OPERATION_TASK_ATOMIC_RPC, mutateLegacyOperationTaskAtomic, OpsStoreError, type LegacyOperationTaskCommandResult, type OpsStateRow } from "@/lib/ops-store";
 import { LegacyOperationTaskError, legacyOperationTaskIntent, parseLegacyOperationTaskCommand, prepareLegacyOperationTask } from "@/lib/legacy-operation-task-service";
 
@@ -45,8 +45,8 @@ async function renderLegacyReplay(result: LegacyOperationTaskCommandResult, acto
     if (!("session" in current) || current.session.user !== actor) return receiptOnly(result);
     const fullAdmin = actor === DEMO_ADMIN_USER && current.session.role === "admin" && hasValidNixonSession(nixonCookieValue);
     const rows = await getOpsState(["bookings", "operations", "tasks", "students", "teachers"]);
-    if (!replayVisible(result, rows, actor, fullAdmin, current.session.role)) return receiptOnly(result);
-    const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session.role));
+    if (!replayVisible(result, rows, actor, fullAdmin, current.session)) return receiptOnly(result);
+    const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session));
     return noStore({ committed: true, applied: false, receiptOnly: false, commandKey: result.command_key, operationIds: result.operation_ids, affectedStudentIds: result.affected_student_ids,
       operationRow: visible.find((row) => row.entity === "operations") ?? null, taskRow: visible.find((row) => row.entity === "tasks") ?? null, auditEntryId: result.audit_entry_id });
   } catch {
@@ -58,29 +58,29 @@ async function renderLegacyReplay(result: LegacyOperationTaskCommandResult, acto
 
 export async function POST(request: Request) {
   const cookieStore = await cookies(); const cookieValue = cookieStore.get(DEMO_COOKIE_NAME)?.value;
-  const signed = getDemoSession(cookieValue);
-  if (!signed) return noStore({ error: "请先输入访问密码。" }, 401);
-  const actor = signed.user;
+  const resolved = await getCurrentDemoSession(cookieValue);
+  if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
+  const { session } = resolved;
+  const actor = session.user;
   try {
     const command = parseLegacyOperationTaskCommand(await request.json().catch(() => null)); const commandIntent = legacyOperationTaskIntent(command);
     const replay = await getLegacyOperationTaskCommandResult({ commandKey: command.commandKey, commandIntent, actor });
     if (replay[0]) return renderLegacyReplay(replay[0], actor, cookieValue, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
-    const resolved = await getCurrentDemoSession(cookieValue);
-    if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
-    const { session } = resolved;
-    if (session.user !== actor) return noStore({ error: "登录身份已变化，请重新登录。", code: "session_identity_changed" }, 401);
     if (session.role === "teacher") return noStore({ error: "老师账号不能创建教务异常流程。", code: "teacher_forbidden" }, 403);
     const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const rows = await getOpsState(["bookings", "operations", "students", "tasks", "teachers"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
-    if (!access.staff && !access.fullAdmin && !access.limitedAdmin) return noStore({ error: "当前账号不能创建教务异常流程。", code: "operation_scope_forbidden" }, 403);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
+    if (!canWriteOpsTransaction(access, "operations", ["operations", "tasks"])
+        || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+      return noStore({ error: "当前账号不能创建教务异常流程。", code: "operation_scope_forbidden" }, 403);
+    }
     if (command.studentId && !canOperateStudent(access, command.studentId)) return noStore({ error: "当前账号不能操作该学生。", code: "student_scope_forbidden" }, 403);
     const prepared = prepareLegacyOperationTask(command, rows, actor);
     const saved = await mutateLegacyOperationTaskAtomic({ commandKey: prepared.commandKey, commandIntent: prepared.commandIntent, type: prepared.type, detail: prepared.detail, studentId: prepared.studentId, teacherId: prepared.teacherId, eventStart: prepared.eventStart, eventEnd: prepared.eventEnd, sourceBookingId: prepared.sourceBookingId, expectedVersions: prepared.expectedVersions, actor });
     if (!saved[0] || !saved[0].operations_row || !saved[0].tasks_row) throw new OpsStoreError("异常事务没有返回完整状态行。", "invalid_commit_result");
     const committedRows = rows.map((row) => row.entity === "operations" ? saved[0].operations_row! : row.entity === "tasks" ? saved[0].tasks_row! : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role); const visible = filterOpsStateRows(committedRows, committedAccess);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session); const visible = filterOpsStateRows(committedRows, committedAccess);
     return noStore({ committed: true, applied: saved[0].applied, commandKey: saved[0].command_key, operationIds: saved[0].operation_ids, affectedStudentIds: saved[0].affected_student_ids, generatedTaskCount: saved[0].generated_task_count ?? null, operationRow: visible.find((row) => row.entity === "operations") ?? null, taskRow: visible.find((row) => row.entity === "tasks") ?? null, auditEntryId: saved[0].audit_entry_id });
   } catch (error) {
     if (error instanceof LegacyOperationTaskError) return noStore({ error: error.message, code: error.code }, error.code === "no_affected_occurrences" ? 409 : 400);

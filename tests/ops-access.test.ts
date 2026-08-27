@@ -5,6 +5,10 @@ import {
   buildOpsAccessContext,
   canAccessStudent,
   canOperateStudent,
+  canReadOpsEntity,
+  canReadUnrestrictedOpsData,
+  canWriteOpsTransaction,
+  canWriteOpsEntity,
   filterOpsStateRows,
   filterOpsVersions,
   getAccessScopeVersions,
@@ -430,6 +434,30 @@ test("limited admin can use operations data but payroll stays exclusive to full 
   assert.equal(filterOpsStateRows(rows, full).some((item) => item.entity === "payroll"), true);
 });
 
+test("signed admin roles are recognized independently of hard-coded account names", () => {
+  for (const role of ["admin", "limited-admin"] as const) {
+    const access = buildOpsAccessContext(rows, `Alternate ${role}`, false, {
+      user: `Alternate ${role}`,
+      role,
+      permissions: ["operations.read", "operations.write"],
+      scopeMembers: [{ kind: "all", key: "*" }],
+    });
+    assert.equal(access.limitedAdmin, true);
+    assert.equal(access.role, role);
+    assert.equal(canReadOpsEntity(access, "students"), true);
+    assert.equal(canWriteOpsEntity(access, "students"), true);
+  }
+
+  const demotedName = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "staff",
+    permissions: ["operations.read", "operations.write"],
+    scopeMembers: [],
+  });
+  assert.equal(demotedName.limitedAdmin, false);
+  assert.equal(demotedName.staff, true);
+});
+
 test("full and limited admins retain unrestricted task writes", () => {
   for (const context of [
     buildOpsAccessContext(rows, "Ops Admin", false),
@@ -455,6 +483,140 @@ test("scoped writes bind their access decision to the current scope versions", (
     teachers: 1,
   });
   assert.equal(getAccessScopeVersions(rows, global), null);
+});
+
+test("lifecycle permissions and scope members are enforced by operational reads and writes", () => {
+  const denied = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: [],
+    scopeMembers: [{ kind: "all", key: "*" }],
+  });
+  assert.deepEqual(filterOpsStateRows(rows, denied), []);
+  assert.equal(canReadOpsEntity(denied, "students"), false);
+  assert.equal(canWriteOpsEntity(denied, "students"), false);
+  assert.equal(canReadUnrestrictedOpsData(denied), false);
+
+  const scoped = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["operations.read", "operations.write"],
+    scopeMembers: [{ kind: "student", key: "STU-ABBY" }],
+  });
+  const scopedRows = filterOpsStateRows(rows, scoped);
+  assert.deepEqual((scopedRows.find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((item) => item.id), ["STU-ABBY"]);
+  assert.deepEqual((scopedRows.find((item) => item.entity === "teachers")?.payload as Array<{ id: string }>).map((item) => item.id), ["TEA-HELEN"]);
+  assert.equal(canAccessStudent(scoped, "STU-THEA"), false);
+  assert.notEqual(getAccessScopeVersions(rows, scoped), null);
+  assert.equal(canReadUnrestrictedOpsData(scoped), false);
+
+  const filesOnly = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["operations.read", "operations.write"],
+    scopeMembers: [{ kind: "entity", key: "files" }],
+  });
+  assert.deepEqual(filterOpsStateRows(rows, filesOnly).map((item) => item.entity), ["files"]);
+  assert.equal(canWriteOpsEntity(filesOnly, "files"), true);
+  assert.equal(canWriteOpsTransaction(filesOnly, "files", ["files", "students"]), false);
+
+  const humanNameScope = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["operations.read", "operations.write"],
+    scopeMembers: [
+      { kind: "student", key: "Abby student" },
+      { kind: "teacher", key: "Another teacher" },
+    ],
+  });
+  assert.deepEqual(humanNameScope.studentIds, new Set());
+  assert.deepEqual(filterOpsStateRows(rows, humanNameScope)
+    .find((item) => item.entity === "students")?.payload, []);
+
+  const payrollReader = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["payroll.read"],
+    scopeMembers: [{ kind: "all", key: "*" }],
+  });
+  assert.equal(canReadOpsEntity(payrollReader, "payroll"), false);
+  assert.equal(canWriteOpsEntity(payrollReader, "payroll"), false);
+  assert.equal(canReadUnrestrictedOpsData(payrollReader), false);
+
+  const unrestricted = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["operations.read"],
+    scopeMembers: [{ kind: "all", key: "*" }],
+  });
+  assert.equal(canReadUnrestrictedOpsData(unrestricted), true);
+});
+
+test("a teacher-id scope includes roster-assigned students without a current booking", () => {
+  const rowsWithoutTheaBooking = rows.map((item) => item.entity === "bookings"
+    ? { ...item, payload: (item.payload as Array<{ id: string }>).filter((booking) => booking.id !== "BOOK-THEA") }
+    : item);
+  const scoped = buildOpsAccessContext(rowsWithoutTheaBooking, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+    permissions: ["operations.read"],
+    scopeMembers: [{ kind: "teacher", key: "TEA-OTHER" }],
+  });
+  assert.deepEqual(scoped.studentIds, new Set(["STU-THEA"]));
+  assert.deepEqual((filterOpsStateRows(rowsWithoutTheaBooking, scoped)
+    .find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((student) => student.id), ["STU-THEA"]);
+});
+
+test("wildcard permissions require the independent full-admin proof", () => {
+  const primaryOnlyAdmin = buildOpsAccessContext(rows, "Nixon", false, {
+    user: "Nixon",
+    role: "admin",
+    permissions: ["*"],
+    scopeMembers: [{ kind: "all", key: "*" }],
+  });
+  assert.equal(canReadOpsEntity(primaryOnlyAdmin, "students"), false);
+  assert.equal(canReadOpsEntity(primaryOnlyAdmin, "payroll"), false);
+  assert.equal(canWriteOpsEntity(primaryOnlyAdmin, "students"), false);
+  assert.equal(canReadUnrestrictedOpsData(primaryOnlyAdmin), false);
+
+  const verifiedAdmin = buildOpsAccessContext(rows, "Nixon", true, {
+    user: "Nixon",
+    role: "admin",
+    permissions: ["*"],
+    scopeMembers: [{ kind: "all", key: "*" }],
+  });
+  assert.equal(canReadOpsEntity(verifiedAdmin, "students"), true);
+  assert.equal(canReadOpsEntity(verifiedAdmin, "payroll"), true);
+  assert.equal(canWriteOpsEntity(verifiedAdmin, "students"), true);
+  assert.equal(canReadUnrestrictedOpsData(verifiedAdmin), true);
+});
+
+test("teacher lifecycle permissions preserve assigned bookings and messages without broad writes", () => {
+  const teacher = buildOpsAccessContext(rows, "Helen Ceperkovic", false, {
+    user: "Helen Ceperkovic",
+    role: "teacher",
+    permissions: [
+      "students.read.assigned",
+      "bookings.read.assigned",
+      "bookings.write.assigned",
+      "messages.write.assigned",
+      "availability.write.self",
+    ],
+    scopeMembers: [],
+  });
+  assert.equal(canReadOpsEntity(teacher, "students"), true);
+  assert.equal(canWriteOpsEntity(teacher, "bookings"), true);
+  assert.equal(canWriteOpsEntity(teacher, "messages"), true);
+  assert.equal(canWriteOpsEntity(teacher, "students"), false);
+
+  const staff = buildOpsAccessContext(rows, "Abby", false, {
+    user: "Abby",
+    role: "staff",
+    permissions: ["operations.read", "operations.write"],
+    scopeMembers: [],
+  });
+  assert.equal(canReadOpsEntity(staff, "rules"), false);
+  assert.equal(canWriteOpsEntity(staff, "teachers"), false);
 });
 
 test("scoped writes preserve other users' records and reject cross-owner writes", () => {

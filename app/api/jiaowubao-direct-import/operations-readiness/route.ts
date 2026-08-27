@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext } from "@/lib/ops-access";
+import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoDirectOperationsReadiness,
@@ -67,8 +67,10 @@ export async function GET(request: Request) {
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
-    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session.role);
-    if (!access.fullAdmin && !access.limitedAdmin) {
+    const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);
+    if ((!access.fullAdmin && !access.limitedAdmin)
+        || access.restrictedStudentScope
+        || !["bookings", "students", "teachers"].every((entity) => canReadOpsEntity(access, entity))) {
       return noStore({ error: "只有管理员可以查看教务宝运营准备度。" }, 403);
     }
 

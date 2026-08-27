@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLatestStudentImportSourceRows,
@@ -33,7 +34,9 @@ async function requireAdmin() {
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
   const fullAdmin = resolved.session.user === DEMO_ADMIN_USER && resolved.session.role === "admin"
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-  if (!hasStudentImportAdminAccess(resolved.session.user, fullAdmin)) {
+  if (!hasStudentImportAdminAccess(resolved.session.user, fullAdmin)
+      || !hasDemoSessionPermission(resolved.session, "operations.write")
+      || !hasUnrestrictedDemoSessionScope(resolved.session)) {
     return { response: noStore({ error: "只有管理员可以确认学生总表重复项。" }, 403) } as const;
   }
   return { actor: resolved.session.user } as const;

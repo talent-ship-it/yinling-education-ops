@@ -4,19 +4,16 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("account administration searches and paginates large account collections", async () => {
-  const client = await read("../app/operations-client.tsx");
-  const start = client.indexOf("  const renderAccounts = () =>");
-  const end = client.indexOf("  const renderView = () =>", start);
-  assert.ok(start >= 0 && end > start);
-  const accounts = client.slice(start, end);
+test("account administration searches, filters and paginates large account collections", async () => {
+  const lifecycle = await read("../app/account-admin-lifecycle.tsx");
 
-  assert.match(accounts, /const filteredAccounts = accounts\.filter/);
-  assert.match(accounts, /const accountPageSize = 10/);
-  assert.match(accounts, /const pagedAccounts = filteredAccounts\.slice/);
-  assert.match(accounts, /placeholder="搜索账号、角色或登录方式"/);
-  assert.match(accounts, /pagedAccounts\.map\(\(account\) =>/);
-  assert.match(accounts, /<Pagination[\s\S]*total=\{filteredAccounts\.length\}/);
-  assert.match(accounts, /没有找到匹配账号/);
-  assert.doesNotMatch(accounts, /\{accounts\.map\(\(account\) =>/);
+  assert.match(lifecycle, /const pageSize = 12/);
+  assert.match(lifecycle, /const filteredAccounts = useMemo/);
+  assert.match(lifecycle, /const pagedAccounts = filteredAccounts\.slice/);
+  assert.match(lifecycle, /placeholder="搜索账号、角色或权限"/);
+  assert.match(lifecycle, /aria-label="账号状态筛选"/);
+  assert.match(lifecycle, /pagedAccounts\.map\(\(account\) =>/);
+  assert.match(lifecycle, /filteredAccounts\.length > pageSize/);
+  assert.match(lifecycle, /没有匹配的账号/);
+  assert.doesNotMatch(lifecycle, /\{accounts\.map\(\(account\) =>/);
 });

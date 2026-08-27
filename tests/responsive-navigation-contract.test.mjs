@@ -248,9 +248,9 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   };
 
   assert.deepEqual(sectionIds("staffSectionIds"), [
-    "dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files",
+    "dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files", "accounts",
   ]);
-  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "students", "schedule", "classroom"]);
+  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "students", "schedule", "classroom", "accounts"]);
   assert.doesNotMatch(client, /staffSectionIds = new Set<Section>\([^)]*"classroom"/s);
   assert.doesNotMatch(client, /teacherSectionIds = new Set<Section>\([^)]*"payroll"/s);
   assert.match(client, /const noPayrollAdminSectionIds = new Set<Section>\(navigationDefinitions\.filter\(\(item\) => item\.id !== "payroll"\)/);
@@ -275,9 +275,11 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   assert.doesNotMatch(client, /openCourseSource|courseSourceExpanded/);
   assert.match(classroom, /session\.role !== "admin" && session\.role !== "limited-admin" && session\.role !== "teacher"/);
   assert.match(classroom, /session\.role === "admin"[\s\S]*hasValidNixonSession/);
+  assert.match(classroom, /canWriteBookings: canWriteOpsEntity\(access, "bookings"\)/);
+  assert.match(classroom, /if \(!context\.canWriteBookings\) return noStore/);
   assert.match(appState, /if \(entities\?\.some\(\(entity\) => !canReadOpsEntity\(access, entity\)\)\)/);
   assert.match(appState, /if \(body\.entity === "audit"\) return noStore\([\s\S]*403\)/);
-  assert.match(appState, /actor === DEMO_LIMITED_ADMIN_USER \|\| fullAdmin/);
+  assert.match(appState, /!canReadUnrestrictedOpsData\(access\)/);
 });
 
 test("collapses messages/files before the 1210px rail and scrolls their own lists", async () => {

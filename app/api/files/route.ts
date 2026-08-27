@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
@@ -90,11 +90,11 @@ export async function POST(request: NextRequest) {
     const fullAdmin = actor === DEMO_ADMIN_USER
       && session.role === "admin"
       && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
-    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(allRows, actor, fullAdmin, session);
     // This check is intentionally server-side and uses the same active scope
     // as the rest of the operations API.  Archived students never become a
     // valid target, even when the browser submits a forged student id.
-    if (!canOperateStudent(access, studentId)) {
+    if (!canWriteOpsTransaction(access, "files", ["files", "students"]) || !canOperateStudent(access, studentId)) {
       return noStore({ error: "当前账号不能为该学生登记资料。", code: "student_scope_forbidden" }, 403);
     }
     const filesRow = allRows.find((row) => row.entity === "files");
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
     const committedRows = allRows.map((row) => row.entity === "files"
       ? result.files_row
       : row.entity === "students" ? result.students_row : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const visible = filterOpsStateRows(committedRows, committedAccess);
     const visibleFilesRow = visible.find((row) => row.entity === "files");
     const visibleStudentsRow = visible.find((row) => row.entity === "students");

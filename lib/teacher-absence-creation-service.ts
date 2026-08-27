@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import type { DemoSessionRole } from "@/lib/demo-session-token";
-import { buildOpsAccessContext, canOperateStudent } from "@/lib/ops-access";
+import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
+import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction } from "@/lib/ops-access";
 import type { OpsStateRow } from "@/lib/ops-store";
 import { expandLessonOccurrences, lessonOccurrenceSourceRangeForTargetRange, type LessonOccurrence } from "@/lib/lesson-occurrences";
 import { DEFAULT_TEACHING_CONTROL_WATCHER, type OpsTask } from "@/lib/ops-tasks";
@@ -218,7 +218,7 @@ function candidateTeacherIds(teachers: readonly RecordValue[], bookings: readonl
   }).map((teacher) => text(teacher, "id")!).sort(compare);
 }
 
-export function prepareTeacherAbsenceCreation(input: Readonly<{ command: TeacherAbsenceCreationCommand; rows: readonly OpsStateRow[]; actor: string; role: DemoSessionRole; fullAdmin: boolean; now?: Date }>): PreparedTeacherAbsenceCreation {
+export function prepareTeacherAbsenceCreation(input: Readonly<{ command: TeacherAbsenceCreationCommand; rows: readonly OpsStateRow[]; actor: string; role: DemoSessionRole; authorization?: DemoSessionIdentity; fullAdmin: boolean; now?: Date }>): PreparedTeacherAbsenceCreation {
   if (input.role === "teacher") fail("teacher_forbidden", "Teacher accounts cannot create teacher-absence workflows.");
   const bookingRow = payloadRow(input.rows, "bookings");
   const operationRow = payloadRow(input.rows, "operations");
@@ -226,8 +226,11 @@ export function prepareTeacherAbsenceCreation(input: Readonly<{ command: Teacher
   const taskRow = payloadRow(input.rows, "tasks");
   const teacherRow = payloadRow(input.rows, "teachers");
   for (const entity of ENTITIES) if (payloadRow(input.rows, entity).version !== input.command.expectedVersions[entity]) fail("stale_expected_version", `${entity} changed after the teacher-absence form was opened.`);
-  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.role);
-  if (!access.staff && !access.fullAdmin && !access.limitedAdmin) fail("source_teacher_scope_forbidden", "The current account cannot create teacher-absence workflows.");
+  const access = buildOpsAccessContext(input.rows as OpsStateRow[], input.actor, input.fullAdmin, input.authorization ?? input.role);
+  if (!canWriteOpsTransaction(access, "operations", ["operations", "tasks"])
+      || (!access.staff && !access.fullAdmin && !access.limitedAdmin)) {
+    fail("source_teacher_scope_forbidden", "The current account cannot create teacher-absence workflows.");
+  }
   const teachers = teacherRow.payload.filter((teacher) => teacher.id === input.command.sourceTeacherId);
   if (teachers.length !== 1) fail("source_teacher_not_found", "The affected teacher was not found.");
   if (operationRow.payload.some((operation) => ["老师请假", "请假", "代课"].includes(String(operation.type)) && !["已取消", "closed", "done"].includes(String(operation.status)) && operation.teacherId === input.command.sourceTeacherId && operation.eventStart === input.command.eventStart && operation.eventEnd === input.command.eventEnd)) fail("absence_already_exists", "This teacher absence workflow already exists for the selected date range.");

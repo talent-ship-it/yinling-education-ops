@@ -25,7 +25,7 @@ test("permanent replacement route uses one replayable four-entity atomic command
   );
   const replayBranch = route.slice(route.indexOf("if (replay[0])"), route.indexOf("const prepared ="));
   assert.match(replayBranch, /await getOpsState\(\["bookings", "operations", "students", "teachers"\]\)/);
-  assert.match(replayBranch, /buildOpsAccessContext\(replayRows, actor, fullAdmin, session\.role\)/);
+  assert.match(replayBranch, /buildOpsAccessContext\(replayRows, actor, fullAdmin, session\)/);
   assert.match(replayBranch, /filterOpsStateRows\(replayRows, replayAccess\)/);
   assert.match(replayBranch, /canOperateStudent\(replayAccess, replayOperation\.studentId\)/);
   assert.doesNotMatch(replayBranch, /Object\.fromEntries\(visibleRows/);

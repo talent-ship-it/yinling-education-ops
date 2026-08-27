@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   try {
     const command = parseConfirmOperationCommand(await request.json().catch(() => null));
     const rows = await getOpsState(["bookings", "operations", "teachers", "students"]);
-    const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
+    const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     const visibleRows = filterOpsStateRows(rows, access);
     const visibleOperations = visibleRows.find((row) => row.entity === "operations");
     const visibleOperation = Array.isArray(visibleOperations?.payload)
@@ -80,13 +80,13 @@ export async function POST(request: Request) {
         auditEntryId: replay[0].audit_entry_id,
       });
     }
-    const prepared = prepareOperationConfirmation({ command, rows, actor, fullAdmin, role: session.role });
+    const prepared = prepareOperationConfirmation({ command, rows, actor, fullAdmin, role: session.role, authorization: session });
     const saved = await confirmOperationOccurrencesAtomic({ ...prepared, actor });
     if (!saved[0]) throw new OpsStoreError("异常确认事务没有返回保存结果。", "invalid_commit_result");
     const committedRows = rows.map((row) => row.entity === "bookings"
       ? saved[0].bookings_row
       : row.entity === "operations" ? saved[0].operations_row : row);
-    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session.role);
+    const committedAccess = buildOpsAccessContext(committedRows, actor, fullAdmin, session);
     const committedVisible = filterOpsStateRows(committedRows, committedAccess);
     return noStore({
       committed: true,
