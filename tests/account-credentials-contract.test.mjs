@@ -89,7 +89,7 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(lifecycleMigration, /revoke all on table internal\.app_accounts from public, anon, authenticated/);
   assert.match(lifecycleMigration, /revoke all on table internal\.app_account_sessions from public, anon, authenticated/);
   assert.match(lifecycleMigration, /revoke all on table internal\.app_account_mfa from public, anon, authenticated/);
-  assert.match(lifecycleMigration, /rotate_account_password_atomic/);
+  assert.match(lifecycleMigration, /rotate_account_password_tx/);
   assert.match(lifecycleMigration, /set_account_status/);
   assert.match(lifecycleMigration, /update_account_access/);
   assert.match(lifecycleMigration, /create_account_session/);
@@ -109,7 +109,7 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
 });
 
 test("routes enforce full-admin boundaries and use atomic account operations", () => {
-  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_atomic_v2"/);
+  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v2"/);
   assert.match(store, /ACCOUNT_SESSION_CREATE_RPC = "create_account_session"/);
   assert.match(store, /ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa"/);
   assert.match(loginRoute, /ensureAccountDirectory/);
@@ -146,14 +146,14 @@ test("routes enforce full-admin boundaries and use atomic account operations", (
   assert.match(operationsClient, /expectedCredentialVersion: account\.credential_version \?\? 0/);
   assert.match(operationsClient, /accountPasswordResetTarget\.expectedCredentialVersion/);
   const passwordRotationV2 = lifecycleHardeningMigration.slice(
-    lifecycleHardeningMigration.indexOf("create or replace function public.rotate_account_password_atomic_v2"),
+    lifecycleHardeningMigration.indexOf("create or replace function public.rotate_account_password_tx_v2"),
     lifecycleHardeningMigration.indexOf("-- Materialize current built-in staff"),
   );
   assert.match(passwordRotationV2, /prior\.result_snapshot ->> 'identityKey'/);
   assert.match(passwordRotationV2, /current_credential\.credential_version/);
   assert.match(passwordRotationV2, /set result_snapshot = immutable_result/);
   assert.match(passwordRotationV2, /message = 'account_password_result_snapshot_missing'/);
-  assert.match(passwordRotationV2, /revoke all on function public\.rotate_account_password_atomic\(/);
+  assert.match(passwordRotationV2, /revoke all on function public\.rotate_account_password_tx\(/);
 
   for (const route of [accountsRoute, accessRoute, statusRoute, mfaResetRoute]) {
     assert.match(route, /resolveAccountRequestContext/);

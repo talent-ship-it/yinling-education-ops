@@ -743,7 +743,7 @@ $$;
 -- Password rotation deliberately lives in a separate RPC from status.  It
 -- never re-enables a disabled account; the old compatibility RPC remains
 -- available for its historical contract but is not used by the new routes.
-create or replace function public.rotate_account_password_atomic(
+create or replace function public.rotate_account_password_tx(
   p_secret text,
   p_command_key text,
   p_account_id uuid,
@@ -1746,7 +1746,7 @@ revoke all on function public.ensure_account_directory(text, text, text, text) f
 revoke all on function public.read_account_authorization(text, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.create_account_invite(text, text, text, text, text, text, uuid, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.accept_account_invite(text, text, text, text, text, text) from public, anon, authenticated;
-revoke all on function public.rotate_account_password_atomic(text, text, uuid, text, text, text, bigint, boolean, text, uuid) from public, anon, authenticated;
+revoke all on function public.rotate_account_password_tx(text, text, uuid, text, text, text, bigint, boolean, text, uuid) from public, anon, authenticated;
 revoke all on function public.set_account_status(text, text, uuid, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function public.update_account_access(text, text, uuid, text, jsonb, jsonb, bigint, bigint, uuid) from public, anon, authenticated;
 revoke all on function public.create_account_session(text, uuid, text, uuid, boolean, text) from public, anon, authenticated;
@@ -1768,7 +1768,7 @@ grant execute on function public.ensure_account_directory(text, text, text, text
 grant execute on function public.read_account_authorization(text, uuid, uuid) to anon, authenticated;
 grant execute on function public.create_account_invite(text, text, text, text, text, text, uuid, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.accept_account_invite(text, text, text, text, text, text) to anon, authenticated;
-grant execute on function public.rotate_account_password_atomic(text, text, uuid, text, text, text, bigint, boolean, text, uuid) to anon, authenticated;
+grant execute on function public.rotate_account_password_tx(text, text, uuid, text, text, text, bigint, boolean, text, uuid) to anon, authenticated;
 grant execute on function public.set_account_status(text, text, uuid, text, bigint, uuid) to anon, authenticated;
 grant execute on function public.update_account_access(text, text, uuid, text, jsonb, jsonb, bigint, bigint, uuid) to anon, authenticated;
 grant execute on function public.create_account_session(text, uuid, text, uuid, boolean, text) to anon, authenticated;

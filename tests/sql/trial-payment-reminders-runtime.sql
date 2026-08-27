@@ -17,11 +17,11 @@ begin
     'EXECUTE'
   ) or not has_function_privilege(
     'anon',
-    'public.complete_trial_payment_task_atomic(text,text,jsonb,text,jsonb,text,text)',
+    'public.complete_trial_payment_task_tx(text,text,jsonb,text,jsonb,text,text)',
     'EXECUTE'
   ) or not has_function_privilege(
     'authenticated',
-    'public.complete_trial_payment_task_atomic(text,text,jsonb,text,jsonb,text,text)',
+    'public.complete_trial_payment_task_tx(text,text,jsonb,text,jsonb,text,text)',
     'EXECUTE'
   ) then
     raise exception 'trial_payment_postgrest_roles_missing_execute';
@@ -32,7 +32,7 @@ begin
     'EXECUTE'
   ) or has_function_privilege(
     'service_role',
-    'public.complete_trial_payment_task_atomic(text,text,jsonb,text,jsonb,text,text)',
+    'public.complete_trial_payment_task_tx(text,text,jsonb,text,jsonb,text,text)',
     'EXECUTE'
   ) then
     raise exception 'trial_payment_service_role_execute_not_revoked';
@@ -57,7 +57,7 @@ begin
     if caught_message <> 'invalid_ops_secret' then raise; end if;
   end;
   begin
-    perform * from public.complete_trial_payment_task_atomic(
+    perform * from public.complete_trial_payment_task_tx(
       'wrong-secret',
       'trial-payment-complete:11111111-1111-4111-8111-111111111111',
       '{"action":"complete","taskId":"TASK-X"}'::jsonb,
@@ -274,7 +274,7 @@ begin
   -- A non-staff signed role cannot make the first write, even when its actor
   -- name matches the current planner. Role drift is permitted only on replay.
   begin
-    perform * from public.complete_trial_payment_task_atomic(
+    perform * from public.complete_trial_payment_task_tx(
       'booking-projection-fixture-secret',
       'trial-payment-complete:77777777-7777-4777-8777-777777777777',
       jsonb_build_object('action','complete','taskId',urgent_task_id),
@@ -296,7 +296,7 @@ begin
   -- Student operations ownership and teaching-control observation do not grant
   -- completion authority; only the locked current planner may complete.
   begin
-    perform * from public.complete_trial_payment_task_atomic(
+    perform * from public.complete_trial_payment_task_tx(
       'booking-projection-fixture-secret',
       'trial-payment-complete:33333333-3333-4333-8333-333333333333',
       jsonb_build_object('action','complete','taskId',urgent_task_id),
@@ -315,7 +315,7 @@ begin
     raise exception 'trial_payment_wrong_actor_changed_state';
   end if;
 
-  select * into completion_receipt from public.complete_trial_payment_task_atomic(
+  select * into completion_receipt from public.complete_trial_payment_task_tx(
     'booking-projection-fixture-secret',
     'trial-payment-complete:44444444-4444-4444-8444-444444444444',
     jsonb_build_object('action','complete','taskId',urgent_task_id),
@@ -333,7 +333,7 @@ begin
     raise exception 'trial_payment_planner_completion_failed';
   end if;
   completion_audit_id := completion_receipt.audit_entry_id;
-  select * into completion_replay from public.complete_trial_payment_task_atomic(
+  select * into completion_replay from public.complete_trial_payment_task_tx(
     'booking-projection-fixture-secret',
     'trial-payment-complete:44444444-4444-4444-8444-444444444444',
     jsonb_build_object('action','complete','taskId',urgent_task_id),
@@ -372,7 +372,7 @@ begin
       where item.value ->> 'id' <> urgent_task_id),
     version = version + 1
   where entity = 'tasks';
-  select * into completion_replay from public.complete_trial_payment_task_atomic(
+  select * into completion_replay from public.complete_trial_payment_task_tx(
     'booking-projection-fixture-secret',
     'trial-payment-complete:44444444-4444-4444-8444-444444444444',
     jsonb_build_object('action','complete','taskId',urgent_task_id),
@@ -435,7 +435,7 @@ declare
   );
   completion_sql text := format(
     'select applied, (tasks_row).version, audit_entry_id '
-      || 'from public.complete_trial_payment_task_atomic(%L,%L,%L::jsonb,%L,%L::jsonb,%L,%L)',
+      || 'from public.complete_trial_payment_task_tx(%L,%L,%L::jsonb,%L,%L::jsonb,%L,%L)',
     'booking-projection-fixture-secret',
     'trial-payment-complete:55555555-5555-4555-8555-555555555555',
     '{"action":"complete","taskId":"TASK-RACE"}',

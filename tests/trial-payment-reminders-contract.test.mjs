@@ -81,13 +81,15 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.ok(firstLedger >= 0 && firstLedger < locks);
   assert.ok(locks < secondLedger && secondLedger < roleGate && roleGate < taskAuthority);
 
-  const hardenedStart = hardening.lastIndexOf("create or replace function public.complete_trial_payment_task_atomic(");
+  const hardenedStart = hardening.lastIndexOf("create or replace function public.complete_trial_payment_task_tx(");
   const hardenedEnd = hardening.indexOf("$function$;", hardenedStart);
   const hardened = hardening.slice(hardenedStart, hardenedEnd);
   assert.match(hardened, /if p_actor_role not in \('staff', 'admin'\) then/);
   assert.match(hardened, /p_actor_role <> 'admin'[\s\S]*trial_payment_planner_forbidden/);
   assert.match(hardened, /item\.value ->> 'id' = p_task_id/);
   assert.match(hardened, /p_actor_role = 'admin' or/);
+  assert.match(hardening, /revoke all on function public\.complete_trial_payment_task_atomic/);
+  assert.match(store, /TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx"/);
   const receiptStart = hardening.indexOf("create or replace function public.get_trial_payment_completion_command_result(");
   const receiptEnd = hardening.indexOf("$$;", receiptStart);
   const receipt = hardening.slice(receiptStart, receiptEnd);

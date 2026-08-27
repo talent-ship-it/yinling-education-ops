@@ -37,7 +37,7 @@ alter table internal.app_account_commands
 -- the immutable command intent. Exact retries return the original snapshot,
 -- plus a separately computed current-state flag so a superseded temporary
 -- password is never presented as active.
-create or replace function public.rotate_account_password_atomic_v2(
+create or replace function public.rotate_account_password_tx_v2(
   p_secret text,
   p_command_key text,
   p_account_id uuid,
@@ -151,7 +151,7 @@ begin
   if target.status <> 'active' then
     raise exception using errcode = '55000', message = 'account_not_active';
   end if;
-  select * into rotated from public.rotate_account_password_atomic(
+  select * into rotated from public.rotate_account_password_tx(
     p_secret, p_command_key, p_account_id, p_password_algorithm,
     p_password_hash, p_password_salt, p_expected_credential_version,
     p_must_change_password, p_action, p_actor_account_id
@@ -178,13 +178,13 @@ begin
 end;
 $$;
 
-revoke all on function public.rotate_account_password_atomic(
+revoke all on function public.rotate_account_password_tx(
   text, text, uuid, text, text, text, bigint, boolean, text, uuid
 ) from public, anon, authenticated, service_role;
-revoke all on function public.rotate_account_password_atomic_v2(
+revoke all on function public.rotate_account_password_tx_v2(
   text, text, uuid, text, text, text, bigint, boolean, text, uuid
 ) from public, anon, authenticated, service_role;
-grant execute on function public.rotate_account_password_atomic_v2(
+grant execute on function public.rotate_account_password_tx_v2(
   text, text, uuid, text, text, text, bigint, boolean, text, uuid
 ) to anon, authenticated;
 
@@ -1398,7 +1398,7 @@ grant execute on function public.get_trial_payment_completion_command_result(tex
 
 -- Preserve super-admin task completion while keeping staff planner-bound.
 -- This forward replacement leaves the already-applied source migration immutable.
-create or replace function public.complete_trial_payment_task_atomic(
+create or replace function public.complete_trial_payment_task_tx(
   p_secret text,
   p_command_key text,
   p_command_intent jsonb,
@@ -1618,5 +1618,7 @@ $function$;
 
 revoke all on function public.complete_trial_payment_task_atomic(text, text, jsonb, text, jsonb, text, text)
   from public, anon, authenticated, service_role;
-grant execute on function public.complete_trial_payment_task_atomic(text, text, jsonb, text, jsonb, text, text)
+revoke all on function public.complete_trial_payment_task_tx(text, text, jsonb, text, jsonb, text, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.complete_trial_payment_task_tx(text, text, jsonb, text, jsonb, text, text)
   to anon, authenticated;
