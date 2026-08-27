@@ -1,0 +1,12 @@
+qa-evidence/
+qa-screenshots/
+supabase/.temp/
+.env
+.env.*
+.vercel/
+.next/
+node_modules/
+outputs/
+output/
+AGENTS.md
+CLAUDE.md

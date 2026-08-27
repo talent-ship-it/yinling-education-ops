@@ -43,3 +43,7 @@ next-env.d.ts
 /work/
 /private/real-data.json
 /app/temporary-real-data.json
+/supabase/.temp/
+/qa-evidence/
+/qa-screenshots/
+/CLAUDE.md
