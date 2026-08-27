@@ -97,7 +97,7 @@ begin
          or (slot ->> 'day')::integer not between 0 and 6
          or coalesce(slot ->> 'start', '') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
          or coalesce(slot ->> 'end', '') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
-         or slot ->> 'start' >= slot ->> 'end' then
+         or slot ->> 'start' = slot ->> 'end' then
         raise exception using errcode = '22023', message = 'invalid_teacher_availability_submission_slot';
       end if;
       slot_day := (slot ->> 'day')::integer;
@@ -107,6 +107,7 @@ begin
       slot_end := slot_day * 1440
         + substring(slot ->> 'end', 1, 2)::integer * 60
         + substring(slot ->> 'end', 4, 2)::integer;
+      if slot_end < slot_start then slot_end := slot_end + 1440; end if;
 
       if slot_index > 0 then
         for other_index in 0..slot_index - 1
@@ -119,6 +120,7 @@ begin
           other_end := other_day * 1440
             + substring(other_slot ->> 'end', 1, 2)::integer * 60
             + substring(other_slot ->> 'end', 4, 2)::integer;
+          if other_end < other_start then other_end := other_end + 1440; end if;
           for week_shift in -1..1
           loop
             if slot_start < other_end + week_shift * 10080
