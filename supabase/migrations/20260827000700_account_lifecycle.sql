@@ -42,10 +42,18 @@ insert into internal.app_accounts (
   created_by, updated_by
 )
 values (
-  encode(extensions.digest('yinling-account-v1' || chr(0) || 'admin' || chr(0) || 'nixon', 'sha256'), 'hex'),
+  encode(extensions.digest(
+    convert_to('yinling-account-v1', 'UTF8') || decode('00', 'hex')
+      || convert_to('admin', 'UTF8') || decode('00', 'hex') || convert_to('nixon', 'UTF8'),
+    'sha256'
+  ), 'hex'),
   'Nixon', 'admin', 'active', true, 'account-lifecycle-migration', 'account-lifecycle-migration'
 ), (
-  encode(extensions.digest('yinling-account-v1' || chr(0) || 'limited-admin' || chr(0) || 'ops admin', 'sha256'), 'hex'),
+  encode(extensions.digest(
+    convert_to('yinling-account-v1', 'UTF8') || decode('00', 'hex')
+      || convert_to('limited-admin', 'UTF8') || decode('00', 'hex') || convert_to('ops admin', 'UTF8'),
+    'sha256'
+  ), 'hex'),
   'Ops Admin', 'limited-admin', 'active', false, 'account-lifecycle-migration', 'account-lifecycle-migration'
 )
 on conflict (identity_key) do update
@@ -197,7 +205,9 @@ immutable
 set search_path = ''
 as $$
   select encode(extensions.digest(
-    'yinling-account-v1' || chr(0) || p_account_role || chr(0) || lower(trim(p_account_name)),
+    convert_to('yinling-account-v1', 'UTF8') || decode('00', 'hex')
+      || convert_to(p_account_role, 'UTF8') || decode('00', 'hex')
+      || convert_to(lower(trim(p_account_name)), 'UTF8'),
     'sha256'
   ), 'hex')
 $$;

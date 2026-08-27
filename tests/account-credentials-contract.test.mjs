@@ -84,6 +84,8 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(lifecycleHardeningMigration, /app_account_auth_throttles_updated_idx[\s\S]*updated_at/);
   assert.match(lifecycleHardeningMigration, /add column if not exists result_snapshot jsonb/);
   assert.match(lifecycleMigration, /create table if not exists internal\.app_account_commands/);
+  assert.doesNotMatch(lifecycleMigration, /chr\(0\)/);
+  assert.match(lifecycleMigration, /convert_to\('yinling-account-v1', 'UTF8'\) \|\| decode\('00', 'hex'\)/);
   assert.match(lifecycleMigration, /revoke all on table internal\.app_accounts from public, anon, authenticated/);
   assert.match(lifecycleMigration, /revoke all on table internal\.app_account_sessions from public, anon, authenticated/);
   assert.match(lifecycleMigration, /revoke all on table internal\.app_account_mfa from public, anon, authenticated/);
