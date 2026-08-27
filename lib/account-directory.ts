@@ -11,10 +11,75 @@ import {
   DEMO_LIMITED_ADMIN_USER,
   resolveDemoStaffName,
 } from "@/lib/demo-users";
+import {
+  getAccountAuthorization,
+  getAccountByIdentity,
+  getAccountDirectory,
+  type AccountAuthorization,
+  type AccountDirectoryRow,
+  type AccountRole,
+  type AccountStatus,
+} from "@/lib/ops-store";
 
 export type AccountDirectoryResolution =
   | { identity: DemoSessionIdentity }
   | { error: string; status: 400 | 404 | 409 | 503 };
+
+export type AccountDirectoryDto = Readonly<Pick<AccountDirectoryRow,
+  | "account_id"
+  | "account_name"
+  | "account_role"
+  | "status"
+  | "super_admin"
+  | "access_version"
+  | "role_version"
+  | "scope_version"
+  | "credential_version"
+  | "must_change_password"
+  | "mfa_enabled"
+  | "created_at"
+  | "updated_at"
+>>;
+
+export function isAccountRole(value: unknown): value is AccountRole {
+  return value === "admin" || value === "limited-admin" || value === "staff" || value === "teacher";
+}
+
+export function isAccountStatus(value: unknown): value is AccountStatus {
+  return value === "invited" || value === "active" || value === "disabled";
+}
+
+/** Convert a server-owned row to the safe account-management DTO. */
+export function accountDirectoryDto(row: AccountDirectoryRow): AccountDirectoryDto {
+  return {
+    account_id: row.account_id,
+    account_name: row.account_name,
+    account_role: row.account_role,
+    status: row.status,
+    super_admin: row.super_admin,
+    access_version: row.access_version,
+    role_version: row.role_version,
+    scope_version: row.scope_version,
+    credential_version: row.credential_version,
+    must_change_password: row.must_change_password,
+    mfa_enabled: row.mfa_enabled,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function readManagedAccounts(actorAccountId: string) {
+  return (await getAccountDirectory(actorAccountId)).map(accountDirectoryDto);
+}
+
+export async function readManagedAccount(identityKey: string) {
+  const row = await getAccountByIdentity(identityKey);
+  return row ? accountDirectoryDto(row) : null;
+}
+
+export async function readAccountAuthorization(accountId: string, actorAccountId = accountId): Promise<AccountAuthorization | null> {
+  return getAccountAuthorization(accountId, actorAccountId);
+}
 
 export function sameAccountIdentity(left: DemoSessionIdentity, right: DemoSessionIdentity) {
   return left.role === right.role

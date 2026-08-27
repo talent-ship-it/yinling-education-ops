@@ -1,12 +1,18 @@
 import "server-only";
 
-import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 
 export const ACCOUNT_PASSWORD_ALGORITHM = "scrypt-v1" as const;
 export const ACCOUNT_PASSWORD_MIN_LENGTH = 12;
 export const ACCOUNT_PASSWORD_MAX_LENGTH = 128;
+export const ACCOUNT_COMMAND_KEY_PATTERN = /^account-[a-z0-9-]+:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function createAccountCommandKey(action: string) {
+  const normalizedAction = action.trim().toLocaleLowerCase("en-AU").replace(/[^a-z0-9-]/gu, "-");
+  return `account-${normalizedAction}:${randomUUID()}`;
+}
 
 const SCRYPT_KEY_LENGTH = 64;
 const SCRYPT_OPTIONS = {

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   DEMO_ADMIN_USER,
@@ -10,6 +10,9 @@ import {
 const SESSION_VERSION = 4;
 const LEGACY_SESSION_VERSION = 3;
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+export const SERVER_SESSION_VERSION = 5;
+export const SERVER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+export const SERVER_SESSION_IDLE_SECONDS = 60 * 60 * 12;
 
 export type DemoSessionRole = "admin" | "limited-admin" | "staff" | "teacher";
 export type DemoSessionIdentity = Readonly<{
@@ -17,6 +20,18 @@ export type DemoSessionIdentity = Readonly<{
   role: DemoSessionRole;
   /** Present after the account adopts an independent password. */
   credentialVersion?: number;
+  /** Present only for a database-backed session. */
+  accountId?: string;
+  sessionId?: string;
+  accessVersion?: number;
+  roleVersion?: number;
+  scopeVersion?: number;
+  mfaVerified?: boolean;
+}>;
+
+export type ServerSessionEnvelope = Readonly<{
+  sessionId: string;
+  tokenHash: string;
 }>;
 
 type DemoSessionPayload = DemoSessionIdentity & Readonly<{
@@ -29,6 +44,28 @@ function safeEquals(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+const SERVER_SESSION_PATTERN = /^v5\.([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/u;
+
+/** Generate an opaque cookie value; only its SHA-256 digest enters Supabase. */
+export function createServerSessionToken(sessionId = randomUUID()) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(sessionId)) return null;
+  const token = `v${SERVER_SESSION_VERSION}.${sessionId}.${randomBytes(32).toString("base64url")}`;
+  return { token, sessionId, tokenHash: hashServerSessionToken(token) } as const;
+}
+
+export function hashServerSessionToken(token: string) {
+  return createHash("sha256")
+    .update(`yinling-server-session-v${SERVER_SESSION_VERSION}\u0000${token}`, "utf8")
+    .digest("hex");
+}
+
+export function parseServerSessionToken(value: string | undefined): ServerSessionEnvelope | null {
+  if (!value) return null;
+  const match = value.match(SERVER_SESSION_PATTERN);
+  if (!match) return null;
+  return { sessionId: match[1], tokenHash: hashServerSessionToken(value) };
 }
 
 export function normaliseDemoIdentity(value: string) {

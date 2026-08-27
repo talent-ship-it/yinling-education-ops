@@ -128,6 +128,156 @@ export type AppAccountCredentialCommitResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type AccountRole = "admin" | "limited-admin" | "staff" | "teacher";
+export type AccountStatus = "invited" | "active" | "disabled";
+
+/** Directory projection deliberately contains no password, token, or MFA secret. */
+export type AccountDirectoryRow = Readonly<{
+  account_id: string;
+  identity_key: string;
+  account_name: string;
+  account_role: AccountRole;
+  status: AccountStatus;
+  super_admin: boolean;
+  access_version: number;
+  role_version: number;
+  scope_version: number;
+  credential_version: number | null;
+  must_change_password: boolean;
+  mfa_enabled: boolean;
+  legacy_session_allowed: boolean;
+  created_at: string;
+  updated_at: string;
+  updated_by: string;
+}>;
+
+export type AccountAuthorization = Readonly<{
+  account_id: string;
+  account_role: AccountRole;
+  super_admin: boolean;
+  access_version: number;
+  role_version: number;
+  scope_version: number;
+  permissions: readonly string[];
+  scope_members: readonly Readonly<{ kind: string; key: string }> [];
+}>;
+
+export type AccountInviteResult = Readonly<{
+  account_id: string;
+  account_name: string;
+  account_role: AccountRole;
+  status: "invited";
+  role_version: number;
+  scope_version: number;
+  access_version: number;
+  expires_at: string;
+  delivery_status: "delivery_unconfigured";
+  audit_entry_id: string;
+}>;
+
+export type AccountInviteAcceptResult = Readonly<{
+  account_id: string;
+  account_name: string;
+  account_role: AccountRole;
+  status: "active";
+  credential_version: number;
+  access_version: number;
+  audit_entry_id: string;
+}>;
+
+export type AccountAccessUpdateResult = Readonly<{
+  account_id: string;
+  account_role: AccountRole;
+  status: AccountStatus;
+  role_version: number;
+  scope_version: number;
+  access_version: number;
+  permissions: readonly string[];
+  scope_members: readonly Readonly<{ kind: string; key: string }> [];
+  audit_entry_id: string;
+}>;
+
+export type AccountStatusResult = Readonly<{
+  account_id: string;
+  status: AccountStatus;
+  access_version: number;
+  revoked_session_count: number;
+  audit_entry_id: string;
+}>;
+
+export type AccountSessionResolution = Readonly<{
+  session_id: string;
+  account_id: string;
+  account_name: string;
+  account_role: AccountRole;
+  status: "active";
+  super_admin: boolean;
+  access_version: number;
+  role_version: number;
+  scope_version: number;
+  credential_version: number | null;
+  must_change_password: boolean;
+  mfa_verified: boolean;
+  permissions: readonly string[];
+  scope_members: readonly Readonly<{ kind: string; key: string }> [];
+}>;
+
+export type AccountSessionCreateResult = Readonly<{
+  session_id: string;
+  account_id: string;
+  absolute_expires_at: string;
+  idle_expires_at: string;
+  access_version: number;
+  audit_entry_id: string;
+}>;
+
+export type AccountSessionRow = Readonly<{
+  session_id: string;
+  created_at: string;
+  last_seen_at: string;
+  absolute_expires_at: string;
+  idle_expires_at: string;
+  mfa_verified: boolean;
+  current: boolean;
+}>;
+
+export type AccountSessionRevokeResult = Readonly<{
+  revoked_session_count: number;
+  audit_entry_id: string;
+}>;
+
+export type AccountRecoveryIssueResult = Readonly<{
+  accepted: boolean;
+  expires_at: string | null;
+  delivery_status: "delivery_unconfigured" | null;
+}>;
+
+export type AccountRecoveryResult = Readonly<{
+  account_id: string;
+  account_name: string;
+  account_role: AccountRole;
+  credential_version: number;
+  access_version: number;
+  audit_entry_id: string;
+}>;
+
+/** Ciphertext is consumed only by server-side MFA verification code. */
+export type AccountMfaRecord = Readonly<{
+  account_id: string;
+  secret_ciphertext: string;
+  enabled: boolean;
+  mfa_version: number;
+}>;
+
+export type AccountMfaMutationResult = Readonly<{
+  account_id: string;
+  enabled: boolean;
+  mfa_version: number;
+  access_version: number;
+  revoked_session_count: number;
+  audit_entry_id: string;
+}>;
+
 export type StudentFuAttachmentReferenceSnapshot = Readonly<{
   studentIds: readonly string[];
   fingerprint: string;
@@ -629,6 +779,27 @@ export const STUDENT_FILE_LINK_ATOMIC_PUT_RPC = "put_student_file_link_atomic";
 export const APP_ACCOUNT_AUTH_STATE_RPC = "read_app_account_auth_state";
 export const APP_ACCOUNT_CREDENTIAL_RPC = "read_app_account_credential";
 export const APP_ACCOUNT_CREDENTIAL_PUT_RPC = "put_app_account_credential_atomic";
+export const ACCOUNT_DIRECTORY_RPC = "read_account_directory";
+export const ACCOUNT_BY_IDENTITY_RPC = "read_account_by_identity";
+export const ACCOUNT_ENSURE_DIRECTORY_RPC = "ensure_account_directory";
+export const ACCOUNT_INVITE_RPC = "create_account_invite";
+export const ACCOUNT_INVITE_ACCEPT_RPC = "accept_account_invite";
+export const ACCOUNT_ACCESS_RPC = "update_account_access";
+export const ACCOUNT_STATUS_RPC = "set_account_status";
+export const ACCOUNT_AUTHORIZATION_RPC = "read_account_authorization";
+export const ACCOUNT_SESSION_CREATE_RPC = "create_account_session";
+export const ACCOUNT_SESSION_READ_RPC = "read_account_session";
+export const ACCOUNT_SESSIONS_READ_RPC = "read_account_sessions";
+export const ACCOUNT_SESSION_REVOKE_RPC = "revoke_account_sessions";
+export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_atomic";
+export const ACCOUNT_RECOVERY_ISSUE_RPC = "issue_account_recovery";
+export const ACCOUNT_RECOVERY_CONSUME_RPC = "consume_account_recovery";
+export const ACCOUNT_MFA_LOGIN_RPC = "read_account_mfa_for_login";
+export const ACCOUNT_MFA_READ_RPC = "read_account_mfa";
+export const ACCOUNT_MFA_BEGIN_RPC = "begin_account_mfa_setup";
+export const ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa";
+export const ACCOUNT_MFA_DISABLE_RPC = "disable_account_mfa";
+export const ACCOUNT_MFA_RESET_RPC = "reset_account_mfa";
 export const LP_PARENT_PROGRESS_SCHEDULER_BEGIN_RPC = "begin_lp_parent_progress_scheduler_run";
 export const LP_PARENT_PROGRESS_SCHEDULER_FINISH_RPC = "finish_lp_parent_progress_scheduler_run";
 export const LP_PARENT_PROGRESS_SCHEDULER_COMMIT_RPC = "put_lp_parent_progress_scheduler_tasks_authoritative";
@@ -2554,6 +2725,316 @@ export function putAppAccountCredentialAtomic(input: {
     p_action: input.action,
     p_actor: input.actor,
   });
+}
+
+export async function getAccountDirectory(actorAccountId: string) {
+  const { secret } = configuration();
+  return rpc<AccountDirectoryRow[]>(ACCOUNT_DIRECTORY_RPC, {
+    p_secret: secret,
+    p_actor_account_id: actorAccountId,
+  });
+}
+
+export async function getAccountByIdentity(identityKey: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountDirectoryRow[]>(ACCOUNT_BY_IDENTITY_RPC, {
+    p_secret: secret,
+    p_identity_key: identityKey,
+  });
+  return rows[0] ?? null;
+}
+
+/** Creates the stable row for a known legacy demo identity during transition. */
+export async function ensureAccountDirectory(input: {
+  identityKey: string;
+  accountName: string;
+  accountRole: AccountRole;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountDirectoryRow[]>(ACCOUNT_ENSURE_DIRECTORY_RPC, {
+    p_secret: secret,
+    p_identity_key: input.identityKey,
+    p_account_name: input.accountName,
+    p_account_role: input.accountRole,
+  });
+  return rows[0] ?? null;
+}
+
+export async function createAccountInvite(input: {
+  commandKey: string;
+  identityKey: string;
+  accountName: string;
+  accountRole: AccountRole;
+  tokenHash: string;
+  actorAccountId: string;
+  permissionOverrides?: Record<string, boolean>;
+  scopeMembers?: readonly Readonly<{ kind: string; key: string }>[];
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountInviteResult[]>(ACCOUNT_INVITE_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_identity_key: input.identityKey,
+    p_account_name: input.accountName,
+    p_account_role: input.accountRole,
+    p_token_hash: input.tokenHash,
+    p_actor_account_id: input.actorAccountId,
+    p_permission_overrides: input.permissionOverrides ?? {},
+    p_scope_members: input.scopeMembers ?? [],
+  });
+  return rows[0] ?? null;
+}
+
+export async function acceptAccountInvite(input: {
+  commandKey: string;
+  tokenHash: string;
+  passwordAlgorithm: "scrypt-v1";
+  passwordHash: string;
+  passwordSalt: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountInviteAcceptResult[]>(ACCOUNT_INVITE_ACCEPT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_token_hash: input.tokenHash,
+    p_password_algorithm: input.passwordAlgorithm,
+    p_password_hash: input.passwordHash,
+    p_password_salt: input.passwordSalt,
+  });
+  return rows[0] ?? null;
+}
+
+export async function updateAccountAccess(input: {
+  commandKey: string;
+  accountId: string;
+  accountRole: AccountRole;
+  permissionOverrides: Record<string, boolean>;
+  scopeMembers: readonly Readonly<{ kind: string; key: string }>[];
+  expectedRoleVersion: number;
+  expectedScopeVersion: number;
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountAccessUpdateResult[]>(ACCOUNT_ACCESS_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_account_id: input.accountId,
+    p_account_role: input.accountRole,
+    p_permission_overrides: input.permissionOverrides,
+    p_scope_members: input.scopeMembers,
+    p_expected_role_version: input.expectedRoleVersion,
+    p_expected_scope_version: input.expectedScopeVersion,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function setAccountStatus(input: {
+  commandKey: string;
+  accountId: string;
+  status: "active" | "disabled";
+  expectedAccessVersion: number;
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountStatusResult[]>(ACCOUNT_STATUS_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_account_id: input.accountId,
+    p_status: input.status,
+    p_expected_access_version: input.expectedAccessVersion,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountAuthorization(accountId: string, actorAccountId = accountId) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountAuthorization[]>(ACCOUNT_AUTHORIZATION_RPC, {
+    p_secret: secret,
+    p_account_id: accountId,
+    p_actor_account_id: actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function createAccountSession(input: {
+  sessionId: string;
+  tokenHash: string;
+  accountId: string;
+  mfaVerified: boolean;
+  userAgent?: string | null;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountSessionCreateResult[]>(ACCOUNT_SESSION_CREATE_RPC, {
+    p_secret: secret,
+    p_session_id: input.sessionId,
+    p_token_hash: input.tokenHash,
+    p_account_id: input.accountId,
+    p_mfa_verified: input.mfaVerified,
+    p_user_agent: input.userAgent ?? null,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountSession(tokenHash: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountSessionResolution[]>(ACCOUNT_SESSION_READ_RPC, {
+    p_secret: secret,
+    p_token_hash: tokenHash,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountSessions(input: { actorAccountId: string; targetAccountId?: string; currentSessionId?: string }) {
+  const { secret } = configuration();
+  return rpc<AccountSessionRow[]>(ACCOUNT_SESSIONS_READ_RPC, {
+    p_secret: secret,
+    p_actor_account_id: input.actorAccountId,
+    p_target_account_id: input.targetAccountId ?? input.actorAccountId,
+    p_current_session_id: input.currentSessionId ?? null,
+  });
+}
+
+export async function revokeAccountSessions(input: {
+  actorAccountId: string;
+  targetAccountId?: string;
+  tokenHash?: string | null;
+  revokeAll: boolean;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountSessionRevokeResult[]>(ACCOUNT_SESSION_REVOKE_RPC, {
+    p_secret: secret,
+    p_actor_account_id: input.actorAccountId,
+    p_target_account_id: input.targetAccountId ?? input.actorAccountId,
+    p_token_hash: input.tokenHash ?? null,
+    p_revoke_all: input.revokeAll,
+  });
+  return rows[0] ?? null;
+}
+
+export async function rotateAccountPasswordAtomic(input: {
+  commandKey: string;
+  accountId: string;
+  passwordAlgorithm: "scrypt-v1";
+  passwordHash: string;
+  passwordSalt: string;
+  expectedCredentialVersion: number;
+  mustChangePassword: boolean;
+  action: "self_change" | "admin_reset";
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AppAccountCredentialCommitResult[]>(ACCOUNT_PASSWORD_ROTATE_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_account_id: input.accountId,
+    p_password_algorithm: input.passwordAlgorithm,
+    p_password_hash: input.passwordHash,
+    p_password_salt: input.passwordSalt,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_must_change_password: input.mustChangePassword,
+    p_action: input.action,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function issueAccountRecovery(identityKey: string, tokenHash: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountRecoveryIssueResult[]>(ACCOUNT_RECOVERY_ISSUE_RPC, {
+    p_secret: secret,
+    p_identity_key: identityKey,
+    p_token_hash: tokenHash,
+  });
+  return rows[0] ?? { accepted: false, expires_at: null, delivery_status: null };
+}
+
+export async function consumeAccountRecovery(input: {
+  commandKey: string;
+  tokenHash: string;
+  passwordAlgorithm: "scrypt-v1";
+  passwordHash: string;
+  passwordSalt: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountRecoveryResult[]>(ACCOUNT_RECOVERY_CONSUME_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_token_hash: input.tokenHash,
+    p_password_algorithm: input.passwordAlgorithm,
+    p_password_hash: input.passwordHash,
+    p_password_salt: input.passwordSalt,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountMfaForLogin(identityKey: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaRecord[]>(ACCOUNT_MFA_LOGIN_RPC, {
+    p_secret: secret,
+    p_identity_key: identityKey,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountMfa(accountId: string, actorAccountId = accountId) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaRecord[]>(ACCOUNT_MFA_READ_RPC, {
+    p_secret: secret,
+    p_account_id: accountId,
+    p_actor_account_id: actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function beginAccountMfaSetup(input: {
+  accountId: string;
+  encryptedSecret: string;
+  expectedMfaVersion: number;
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_BEGIN_RPC, {
+    p_secret: secret,
+    p_account_id: input.accountId,
+    p_secret_ciphertext: input.encryptedSecret,
+    p_expected_mfa_version: input.expectedMfaVersion,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function confirmAccountMfa(input: { accountId: string; expectedMfaVersion: number; actorAccountId: string }) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_CONFIRM_RPC, {
+    p_secret: secret,
+    p_account_id: input.accountId,
+    p_expected_mfa_version: input.expectedMfaVersion,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function disableAccountMfa(input: { accountId: string; expectedMfaVersion: number; actorAccountId: string }) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_DISABLE_RPC, {
+    p_secret: secret,
+    p_account_id: input.accountId,
+    p_expected_mfa_version: input.expectedMfaVersion,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function resetAccountMfa(input: { accountId: string; targetAccountId: string }) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountMfaMutationResult[]>(ACCOUNT_MFA_RESET_RPC, {
+    p_secret: secret,
+    p_actor_account_id: input.accountId,
+    p_target_account_id: input.targetAccountId,
+  });
+  return rows[0] ?? null;
 }
 
 /** Atomically stores attachment bytes and updates the canonical file/student indexes. */
