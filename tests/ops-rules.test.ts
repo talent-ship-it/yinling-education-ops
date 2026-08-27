@@ -9,6 +9,7 @@ import {
   OpsRulesValidationError,
   parseRulesWrite,
   RULE_OPTIONS,
+  rulesMatch,
 } from "../lib/ops-rules";
 
 test("keeps confirmed workflow deadlines outside editable rules", () => {
@@ -60,6 +61,17 @@ test("read normalization safely falls back for missing or invalid legacy values"
     lowHours: "8",
     examDays: DEFAULT_RULES.examDays,
   });
+});
+
+test("compares only the normalized editable rule values", () => {
+  assert.equal(rulesMatch(
+    { lowHours: "5", examDays: "30" },
+    { lowHours: "5", examDays: "30", ignoredLegacyField: true },
+  ), true);
+  assert.equal(rulesMatch(
+    { lowHours: "3", examDays: "30" },
+    { lowHours: "5", examDays: "30" },
+  ), false);
 });
 
 test("strict writes accept every published option combination", () => {

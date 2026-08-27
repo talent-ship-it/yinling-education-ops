@@ -275,17 +275,19 @@ export function TeacherAvailabilityPanel({
           <button
             className={selectedMonth === currentMonth ? "active" : ""}
             type="button"
+            aria-pressed={selectedMonth === currentMonth}
             onClick={() => setSelectedMonth(currentMonth)}
           >本月</button>
           <button
             className={selectedMonth === nextMonth ? "active" : ""}
             type="button"
+            aria-pressed={selectedMonth === nextMonth}
             onClick={() => setSelectedMonth(nextMonth)}
           >下月</button>
         </div>
         <div className="segmented" aria-label="显示范围">
-          <button className={view === "week" ? "active" : ""} type="button" onClick={() => setView("week")}>周</button>
-          <button className={view === "month" ? "active" : ""} type="button" onClick={() => setView("month")}>月</button>
+          <button className={view === "week" ? "active" : ""} type="button" aria-pressed={view === "week"} onClick={() => setView("week")}>周</button>
+          <button className={view === "month" ? "active" : ""} type="button" aria-pressed={view === "month"} onClick={() => setView("month")}>月</button>
         </div>
         <select
           className="filter-select"
@@ -300,14 +302,14 @@ export function TeacherAvailabilityPanel({
       </div>
     </header>
 
-    {!hasMonthlyRecord ? <div className="collection-empty">
+    {!hasMonthlyRecord ? <div className="collection-empty" role="status">
       <strong>{selectedMonth} 未收集</strong>
       {legacySlots.length && onPromoteLegacy ? <button
         className="secondary-button"
         type="button"
         onClick={() => onPromoteLegacy(selectedMonth)}
       >采用旧 AVA 到 {selectedMonth}</button> : null}
-    </div> : occurrences.length === 0 ? <div className="collection-empty">
+    </div> : occurrences.length === 0 ? <div className="collection-empty" role="status">
       <strong>暂无可约时段</strong>
     </div> : <div className="master-detail-layout">
       <div className="collection-main">
@@ -319,6 +321,7 @@ export function TeacherAvailabilityPanel({
             className={`collection-row ${selectedOccurrence?.id === occurrence.id ? "selected" : ""}`}
             style={{ gridTemplateColumns: "1fr 1fr 1fr" }}
             type="button"
+            aria-pressed={selectedOccurrence?.id === occurrence.id}
             key={occurrence.id}
             onClick={() => { setSelectedOccurrenceId(occurrence.id); setEditing(false); }}
           >
@@ -350,10 +353,10 @@ export function TeacherAvailabilityPanel({
     {pendingSubmissions.length ? <div className="detail-section">
       <div className="panel-header"><h2>待审核提交</h2>{onRefreshSubmissions ? <button className="secondary-button" type="button" disabled={reviewInboxBusy || Boolean(reviewingSubmissionId)} onClick={onRefreshSubmissions}>{reviewInboxBusy ? "读取中" : "刷新"}</button> : null}</div>
       <div className="record-list">
-        {pendingSubmissions.map(({ submission, submittedAt, currentCity, additionalStudents, notes }) => <div className="record-row" key={submission.id}>
+        {pendingSubmissions.map(({ submission, submittedAt, additionalStudents, notes }) => <div className="record-row" key={submission.id}>
           <span className="status-pill amber">待审核</span>
           <div><strong>{submission.month}</strong><small>{submission.slots.length} 个时段 · 可接 {additionalStudents ?? 0} 人 · {submittedAt?.slice(0, 10) ?? "待审核"}</small></div>
-          <span>{submission.timezone}{currentCity ? ` · ${currentCity}` : ""}{notes ? ` · ${notes}` : ""}</span>
+          <span>{submission.timezone}{notes ? ` · ${notes}` : ""}</span>
           <div className="toolbar-actions">
             <button className="secondary-button" type="button" disabled={Boolean(reviewingSubmissionId)} onClick={() => onRejectSubmission(submission)}>拒绝</button>
             <button className="primary-button" type="button" disabled={Boolean(reviewingSubmissionId)} onClick={() => onApproveSubmission(submission)}>{reviewingSubmissionId === submission.id ? "处理中" : "通过"}</button>

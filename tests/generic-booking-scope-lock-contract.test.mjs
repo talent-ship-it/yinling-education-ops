@@ -43,6 +43,13 @@ test("app-state binds invariant validation to the just-read target and scope ver
   assert.match(route, /throw new OpsStoreError\("access_scope_changed", "40001"\)/);
 });
 
+test("booking conflicts re-evaluate scope drift before the client may merge", () => {
+  assert.match(route, /const accessChanged = error\.message === "access_scope_changed"[\s\S]*submittedBookingScopeVersions\.students !== currentStudentsVersion[\s\S]*submittedBookingScopeVersions\.teachers !== currentTeachersVersion/);
+  const hook = client.slice(client.indexOf("function useSharedState"), client.indexOf("function nowLabel"));
+  assert.match(hook, /if \(body\.accessChanged \|\| current\.version <= versionRef\.current\) \{\s*throw new Error/);
+  assert.ok(hook.indexOf("body.accessChanged") < hook.indexOf("mergeConcurrentPayload(JSON.parse(committedRef.current)"));
+});
+
 test("canonical and forward SQL lock bookings, students and teachers in the global order", () => {
   assert.equal(normalizedFunction(canonical), normalizedFunction(forward));
   for (const source of [canonical, forward]) {

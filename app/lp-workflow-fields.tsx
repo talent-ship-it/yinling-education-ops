@@ -22,7 +22,7 @@ import {
   type TeacherLpFields,
   type TeacherLpModificationFields,
   type TrialLpFields,
-  validateLpWorkflowFields,
+  validateCompleteLpWorkflowFields,
 } from "../lib/lp-workflows";
 
 export const LP_WORKFLOW_FORM_NAMES = Object.freeze({
@@ -329,7 +329,7 @@ function validateParsedFields<Type extends LpWorkflowType>(
   workflowType: Type,
   fields: LpWorkflowFieldsByType[Type],
 ): void {
-  validateLpWorkflowFields(workflowType, fields as unknown as LpFieldValues);
+  validateCompleteLpWorkflowFields(workflowType, fields as unknown as LpFieldValues);
 }
 
 /** Parses only fields confirmed for the selected workflow type; stale hidden controls are ignored. */
@@ -800,11 +800,11 @@ export function LpWorkflowDetails({ type, fields }: LpWorkflowDetailsProps) {
     const value = displayLpFieldValue(fields[field.key]);
     return value === null ? [] : [{ field, value }];
   });
+  const visibleEntries = entries.filter(({ field }) => field.key !== LP_WORKFLOW_FORM_NAMES.responsibleOperations);
 
-  return <section aria-label={`${type} 当前完整字段`}>
-    <div className="timeline-title"><strong>当前完整字段</strong><small>{entries.length} 项</small></div>
-    {entries.length ? <div className="detail-section split">
-      {entries.map(({ field, value }) => {
+  return <section aria-label={`${type} 字段`}>
+    {visibleEntries.length ? <div className="detail-section split">
+      {visibleEntries.map(({ field, value }) => {
         const url = field.control === "url" ? httpUrl(value) : null;
         return <div key={field.key}>
           <span>{field.label}</span>
@@ -845,26 +845,26 @@ export function LpRevisionHistory({
     ...revisions.map((revision) => ({
       id: `revision-${revision.id}`,
       time: revision.changedAt,
-      title: `版本 ${revision.number} · ${revision.changedBy}`,
-      detail: revision.note || "内容已修订",
+      title: "已修订",
+      detail: revision.note || null,
       tone: "purple",
       documentUrl: lpRevisionDocumentUrl(revision),
     })),
     ...stageAudit.map((entry) => ({
       id: `stage-${entry.id}`,
       time: entry.occurredAt,
-      title: `${entry.fromStage} → ${entry.toStage} · ${entry.actor}`,
-      detail: entry.note || "阶段已更新",
+      title: `${entry.fromStage} → ${entry.toStage}`,
+      detail: entry.note || null,
       tone: entry.toStage === "需修改" ? "amber" : entry.toStage === "完成" ? "green" : "blue",
       documentUrl: null,
     })),
   ].sort((left, right) => new Date(right.time).getTime() - new Date(left.time).getTime());
 
   return <section className="timeline" aria-label="LP 修订历史">
-    <div className="timeline-title"><strong>修订历史</strong><small>{entries.length} 条</small></div>
+    <div className="timeline-title"><strong>修订历史</strong></div>
     {entries.length ? entries.map((entry) => <div className="timeline-item" key={entry.id}>
       <i className={entry.tone} aria-hidden="true" />
-      <span><strong>{entry.title}</strong><small>{historyTime(entry.time, timeZone)} · {entry.detail}</small>{entry.documentUrl ? <a className="inline-link" href={entry.documentUrl} target="_blank" rel="noreferrer">打开版本文档</a> : null}</span>
+      <span><strong>{entry.title}</strong><small>{historyTime(entry.time, timeZone)}{entry.detail ? ` · ${entry.detail}` : ""}</small>{entry.documentUrl ? <a className="inline-link" href={entry.documentUrl} target="_blank" rel="noreferrer">打开版本文档</a> : null}</span>
     </div>) : <div className="empty-inline">暂无修订记录</div>}
   </section>;
 }

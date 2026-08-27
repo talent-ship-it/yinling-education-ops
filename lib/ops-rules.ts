@@ -71,6 +71,13 @@ export function normalizeRules(value: unknown): Rules {
   };
 }
 
+export function rulesMatch(left: unknown, right: unknown) {
+  const normalizedLeft = normalizeRules(left);
+  const normalizedRight = normalizeRules(right);
+  return normalizedLeft.lowHours === normalizedRight.lowHours
+    && normalizedLeft.examDays === normalizedRight.examDays;
+}
+
 /**
  * Validates an API write. Unlike read normalization this is deliberately
  * strict: both editable fields must be present, no other fields are accepted,

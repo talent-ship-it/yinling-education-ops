@@ -4,6 +4,7 @@ import {
   type LessonOccurrence,
   type LessonOccurrenceOverride,
 } from "./lesson-occurrences";
+import { recurrenceSourceEndDate } from "./booking-recurrence";
 
 export type TeacherDepartureBooking = LegacyLessonSeries & Readonly<{
   kind?: string;
@@ -29,12 +30,6 @@ function validCalendarDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function addDays(date: string, days: number) {
-  const parsed = new Date(`${date}T00:00:00.000Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
 }
 
 function overrideRelationshipMatches(
@@ -81,20 +76,27 @@ export function projectTeacherDepartureOccurrences<Booking extends TeacherDepart
     ) || overrideRelationshipMatches(booking, input.teacherId, input.studentId);
     if (!canContainTeacher) continue;
 
-    if (booking.recurring === true && booking.repeatCount === undefined) {
+    let sourceEnd: string | undefined;
+    try {
+      sourceEnd = recurrenceSourceEndDate({
+        startDate: booking.date,
+        recurring: booking.recurring === true,
+        ...(Number.isSafeInteger(booking.repeatCount) ? { repeatCount: booking.repeatCount as number } : {}),
+        ...(typeof booking.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: booking.recurrenceIntervalDays } : {}),
+        ...(typeof booking.recurrenceEndDate === "string" ? { recurrenceEndDate: booking.recurrenceEndDate } : {}),
+      });
+    } catch (error) {
       throw new TeacherDepartureProjectionError(
-        "unbounded_future_series",
-        "永久换师不能自动处理没有结束次数的旧循环课，请先编辑整个课程系列并限定 1-104 节。",
+        "invalid_booking",
+        error instanceof Error ? error.message : "循环课结束范围无效。",
       );
     }
-    if (booking.recurring === true
-      && (!Number.isSafeInteger(booking.repeatCount) || (booking.repeatCount as number) < 1 || (booking.repeatCount as number) > 104)) {
-      throw new TeacherDepartureProjectionError("invalid_booking", "循环课次数必须是 1-104 的整数。");
+    if (!sourceEnd) {
+      throw new TeacherDepartureProjectionError(
+        "unbounded_future_series",
+        "永久换师不能自动处理没有结束次数或结束日期的旧循环课，请先编辑整个课程系列并限定范围（repeatCount 需为 1-104，或填写结束日期）。",
+      );
     }
-
-    const sourceEnd = booking.recurring === true
-      ? addDays(booking.date, ((booking.repeatCount as number) - 1) * 7)
-      : booking.date;
     let occurrences: LessonOccurrence[];
     try {
       occurrences = expandLessonOccurrences(booking, {

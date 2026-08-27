@@ -84,22 +84,68 @@ test("derives the student exam and exact owner/planner managed tasks on the serv
     now: new Date("2026-08-15T00:00:00.000Z"),
   });
   assert.equal(prepared.action, "create");
-  assert.equal(prepared.generatedTaskCount, 3);
+  assert.equal(prepared.generatedTaskCount, 4);
   assert.deepEqual(prepared.unresolvedRoleLabels, []);
   const savedStudent = prepared.students[0];
   assert.equal(savedStudent.examSubject, "Selective");
   assert.equal(savedStudent.resultDate, "2026-10-01");
   const tasks = prepared.tasks as Record<string, unknown>[];
   assert.deepEqual(tasks.map((task) => task.ruleKey), [
+    "exam:EXM-1:planning",
     "exam:EXM-1:care",
     "exam:EXM-1:recall",
     "exam:EXM-1:results",
   ]);
-  assert.deepEqual(tasks.map((task) => task.owner), ["Abby", "Abby", "Tara"]);
-  assert.deepEqual(tasks.map((task) => task.watchers), [["Ops Admin"], ["Ops Admin"], ["Ops Admin"]]);
-  assert.equal(tasks[0].id, "TSK-EXAM-3f7fe3d5d033949ce01f735e");
-  assert.equal(tasks[0].anchorBookingId, "exam:EXM-1");
-  assert.equal(tasks[0].dueAt, "2026-09-01T08:00:00.000Z");
+  assert.deepEqual(tasks.map((task) => task.owner), ["Tara", "Abby", "Abby", "Tara"]);
+  assert.deepEqual(tasks.map((task) => task.watchers), [["Ops Admin"], ["Ops Admin"], ["Ops Admin"], ["Ops Admin"]]);
+  assert.equal(tasks[1].id, "TSK-EXAM-3f7fe3d5d033949ce01f735e");
+  assert.equal(tasks[1].anchorBookingId, "exam:EXM-1");
+  assert.equal(tasks[1].dueAt, "2026-09-01T08:00:00.000Z");
+});
+
+test("keeps planning month-end clamps, leap years and Melbourne DST exact", () => {
+  const prepared = prepareExamSubmission({
+    command: command({
+      exam: { ...command().exam, id: "EXM-MARCH-2026", examMonth: "2026-03", examDate: "2026-03-31" },
+    }),
+    rows: rows(),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-04-01T00:00:00.000Z"),
+  });
+  const planning = (prepared.tasks as Record<string, unknown>[]).find((task) => task.ruleKey === "exam:EXM-MARCH-2026:planning")!;
+  assert.equal(planning.due, "2026-02-28 18:00");
+  assert.equal(planning.dueAt, "2026-02-28T07:00:00.000Z");
+  assert.equal(planning.status, "overdue");
+
+  const leap = prepareExamSubmission({
+    command: command({
+      exam: { ...command().exam, id: "EXM-MARCH-2028", examMonth: "2028-03", examDate: "2028-03-31" },
+    }),
+    rows: rows(),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2028-01-01T00:00:00.000Z"),
+  });
+  const leapPlanning = (leap.tasks as Record<string, unknown>[]).find((task) => task.ruleKey === "exam:EXM-MARCH-2028:planning")!;
+  assert.equal(leapPlanning.due, "2028-02-29 18:00");
+  assert.equal(leapPlanning.dueAt, "2028-02-29T07:00:00.000Z");
+
+  const dst = prepareExamSubmission({
+    command: command({
+      exam: { ...command().exam, id: "EXM-OCTOBER-2026", examMonth: "2026-10", examDate: "2026-10-31" },
+    }),
+    rows: rows(),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  const dstPlanning = (dst.tasks as Record<string, unknown>[]).find((task) => task.ruleKey === "exam:EXM-OCTOBER-2026:planning")!;
+  assert.equal(dstPlanning.due, "2026-09-30 18:00");
+  assert.equal(dstPlanning.dueAt, "2026-09-30T08:00:00.000Z");
 });
 
 test("matches the SQL C collation for equal-date punctuation ids", () => {

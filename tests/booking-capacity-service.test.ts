@@ -3,11 +3,13 @@ import test from "node:test";
 
 import {
   BookingCapacityServiceError,
+  bookingCapacityTeacherReplayAllowed,
   parseBookingCapacityCommand,
   prepareBookingCapacityMutation,
   reconcileTeacherStudentCapacity,
   type BookingCapacityCommand,
 } from "../lib/booking-capacity-service.ts";
+import { meetingIdForOccurrenceValue } from "../lib/bbb-analytics.ts";
 import { createMonthlyAvailabilityWindows } from "../lib/teacher-availability.ts";
 import type { OpsStateRow } from "../lib/ops-store.ts";
 
@@ -21,6 +23,13 @@ const availability = createMonthlyAvailabilityWindows({
   timezone: "Australia/Melbourne",
   slots: [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, start: "00:00", end: "23:59" })),
   idSeed: "fixture-1",
+});
+const octoberAvailability = createMonthlyAvailabilityWindows({
+  teacherId: "T-1",
+  month: "2026-10",
+  timezone: "Australia/Melbourne",
+  slots: [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, start: "00:00", end: "23:59" })),
+  idSeed: "fixture-october-1",
 });
 const availability2 = availability.map((window) => ({ ...window, teacherId: "T-2", id: window.id.replace("fixture-1", "fixture-2") }));
 
@@ -40,6 +49,8 @@ function sharedRows(bookings: unknown[] = [], owner = "Abby") {
         consumedHours: 0,
       }],
     }]),
+    row("lpItems", []),
+    row("tasks", []),
     row("teachers", [
       { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: availability },
       { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
@@ -51,7 +62,7 @@ function upsert(overrides: Partial<NonNullable<BookingCapacityCommand["booking"]
   return {
     action: "upsert",
     bookingId,
-    expectedVersions: { bookings: 3, students: 3, teachers: 3 },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
     booking: {
       studentId: "S-1",
       teacherId: "T-1",
@@ -77,10 +88,283 @@ function error(code: BookingCapacityServiceError["code"]) {
 test("request is a narrow command and rejects client state payloads", () => {
   assert.deepEqual(parseBookingCapacityCommand(upsert()), upsert());
   assert.throws(() => parseBookingCapacityCommand({ ...upsert(), teachers: [] }), error("client_fields_forbidden"));
+  assert.throws(() => parseBookingCapacityCommand({ ...upsert(), students: [], tasks: [] }), error("client_fields_forbidden"));
   assert.throws(() => parseBookingCapacityCommand({ ...upsert(), booking: { ...upsert().booking, status: "已完成" } }), error("client_fields_forbidden"));
   assert.deepEqual(parseBookingCapacityCommand({
-    action: "delete", bookingId: "B-1", expectedVersions: { bookings: 3, students: 3, teachers: 3 },
+    action: "delete", bookingId: "B-1", expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
   }).action, "delete");
+  assert.deepEqual(parseBookingCapacityCommand({
+    action: "cancel_occurrence",
+    bookingId: "B-1",
+    occurrenceId: "B-1:2026-09-07",
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  }).action, "cancel_occurrence");
+  assert.deepEqual(parseBookingCapacityCommand({
+    action: "update_occurrence",
+    bookingId: "B-1",
+    occurrenceId: "B-1:2026-09-07",
+    occurrence: { date: "2026-09-08", start: "11:00", duration: 90, status: "confirmed" },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  }).occurrence?.duration, 90);
+  assert.throws(() => parseBookingCapacityCommand({
+    action: "cancel_occurrence",
+    bookingId: "B-1",
+    occurrenceId: "B-OTHER:2026-09-07",
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  }), error("invalid_request"));
+  assert.throws(() => parseBookingCapacityCommand({
+    action: "update_occurrence",
+    bookingId: "B-1",
+    occurrenceId: "B-1:2026-09-07",
+    occurrence: { date: "2026-09-08", start: "11:00", duration: 90, status: "confirmed", tasks: [] },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  }), error("client_fields_forbidden"));
+  const classroomCommand = {
+    action: "bind_classroom",
+    bookingId: "B-1",
+    occurrenceId: "B-1:2026-09-07",
+    classroom: { meetingId: meetingIdForOccurrenceValue("B-1:2026-09-07"), status: "ready" },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  } as const;
+  assert.deepEqual(parseBookingCapacityCommand(classroomCommand), classroomCommand);
+  assert.throws(() => parseBookingCapacityCommand({ ...classroomCommand, classroom: { ...classroomCommand.classroom, createdAt: "2026-08-24T00:00:00.000Z" } }), error("client_fields_forbidden"));
+  assert.throws(() => parseBookingCapacityCommand({ ...classroomCommand, action: "update_occurrence", occurrence: { date: "2026-09-07", start: "10:00", duration: 60, status: "confirmed" } }), error("client_fields_forbidden"));
+});
+
+test("bind_classroom merges an authoritative occurrence classroom without changing schedule fields", () => {
+  const current = {
+    id: "B-CLASSROOM", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "试听", status: "待确认", timezone: "Australia/Melbourne", recurring: false, repeatCount: 1,
+    course: "English", teacherSubjectId: "Local English",
+  };
+  const occurrenceId = "B-CLASSROOM:2026-09-07";
+  const meetingId = meetingIdForOccurrenceValue(occurrenceId);
+  const command = {
+    action: "bind_classroom" as const,
+    bookingId: "B-CLASSROOM",
+    occurrenceId,
+    classroom: { meetingId, status: "ready" as const },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  };
+  const prepared = prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-24T00:00:00.000Z"),
+  });
+  assert.equal(prepared.action, "update");
+  assert.equal(prepared.studentId, "S-1");
+  assert.equal(prepared.teacherId, "T-1");
+  assert.deepEqual(prepared.bookings[0], {
+    ...current,
+    occurrenceOverrides: [{
+      occurrenceId,
+      classroom: {
+        occurrenceId,
+        meetingId,
+        status: "ready",
+        createdAt: "2026-08-24T00:00:00.000Z",
+      },
+    }],
+  });
+  const running = prepareBookingCapacityMutation({
+    command: { ...command, classroom: { meetingId, status: "running" } },
+    rows: sharedRows(prepared.bookings as unknown[]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-24T00:01:00.000Z"),
+  });
+  const ended = prepareBookingCapacityMutation({
+    command: { ...command, classroom: { meetingId, status: "ended" } },
+    rows: sharedRows(running.bookings as unknown[]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-24T00:02:00.000Z"),
+  });
+  assert.equal((ended.bookings[0].occurrenceOverrides as Record<string, unknown>[])[0].classroom && ((ended.bookings[0].occurrenceOverrides as Record<string, unknown>[])[0].classroom as Record<string, unknown>).status, "ended");
+  const replayedStale = prepareBookingCapacityMutation({
+    command: { ...command, classroom: { meetingId, status: "ready" } },
+    rows: sharedRows(ended.bookings as unknown[]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-24T00:03:00.000Z"),
+  });
+  assert.equal(((replayedStale.bookings[0].occurrenceOverrides as Record<string, unknown>[])[0].classroom as Record<string, unknown>).status, "ended");
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: { ...command, classroom: { meetingId: "yinling-occ-000000000000000000000000000000000000000000000000", status: "ready" } },
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+  }), error("classroom_meeting_id_mismatch"));
+  assert.throws(() => prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows([current]),
+    actor: "Abby",
+    role: "staff",
+    fullAdmin: false,
+  }), error("classroom_scope_forbidden"));
+  const fabricatedOccurrenceId = "B-CLASSROOM:2026-09-08";
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: {
+      ...command,
+      occurrenceId: fabricatedOccurrenceId,
+      classroom: { meetingId: meetingIdForOccurrenceValue(fabricatedOccurrenceId), status: "ready" },
+    },
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+  }), error("classroom_occurrence_not_found"));
+
+  const substituted = {
+    ...current,
+    teacherId: "T-1",
+    occurrenceOverrides: [{ occurrenceId, teacherId: "T-2", status: "confirmed" }],
+  };
+  const teacherBinding = prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows([substituted]),
+    actor: "Teacher B",
+    role: "teacher",
+    fullAdmin: false,
+  });
+  assert.equal(teacherBinding.teacherId, "T-2");
+});
+
+test("upsert_bind_classroom validates and prepares Booking plus classroom in one projection payload", () => {
+  const bookingId = "TMP-COMBINED";
+  const occurrenceId = `${bookingId}:2026-09-07`;
+  const command = {
+    ...upsert({}, bookingId),
+    action: "upsert_bind_classroom" as const,
+    occurrenceId,
+    classroom: { meetingId: meetingIdForOccurrenceValue(occurrenceId), status: "ready" as const },
+  };
+  assert.deepEqual(parseBookingCapacityCommand(command), command);
+  const prepared = prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    role: "limited-admin",
+    fullAdmin: false,
+    now: new Date("2026-08-24T00:00:00.000Z"),
+  });
+  const saved = prepared.bookings[0] as Record<string, unknown>;
+  const override = (saved.occurrenceOverrides as Record<string, unknown>[])[0];
+  assert.equal(prepared.action, "create");
+  assert.equal(override.occurrenceId, occurrenceId);
+  assert.deepEqual(override.classroom, {
+    occurrenceId,
+    meetingId: command.classroom.meetingId,
+    status: "ready",
+    createdAt: "2026-08-24T00:00:00.000Z",
+  });
+  assert.throws(() => prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows(),
+    actor: "Abby",
+    role: "staff",
+    fullAdmin: false,
+  }), error("classroom_scope_forbidden"));
+  assert.throws(() => parseBookingCapacityCommand({
+    ...command,
+    classroom: { meetingId: "yinling-occ-000000000000000000000000000000000000000000000000", status: "ready" },
+  }), error("classroom_meeting_id_mismatch"));
+});
+
+test("temporary classroom booking semantics accept a supported non-Melbourne display zone across DST", () => {
+  const command = upsert({
+    date: "2026-10-05",
+    start: "10:00",
+    timezone: "Australia/Sydney",
+  }, "TMP-SYDNEY-DST");
+  const prepared = prepareBookingCapacityMutation({
+    command: {
+      ...command,
+      action: "upsert_bind_classroom",
+      occurrenceId: "TMP-SYDNEY-DST:2026-10-05",
+      classroom: {
+        meetingId: meetingIdForOccurrenceValue("TMP-SYDNEY-DST:2026-10-05"),
+        status: "ready",
+      },
+    },
+    rows: sharedRows().map((state) => state.entity === "teachers"
+      ? row("teachers", [
+        { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 1, capacityAssignments: [], availabilityWindows: octoberAvailability },
+        { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+      ])
+      : state),
+    actor: "Ops Admin",
+    role: "limited-admin",
+    fullAdmin: false,
+    now: new Date("2026-08-24T00:00:00.000Z"),
+  });
+  assert.equal((prepared.bookings[0] as Record<string, unknown>).timezone, "Australia/Sydney");
+});
+
+test("classroom binds reject a fabricated non-recurring source date", () => {
+  const bookingId = "TMP-CROSS-DATE";
+  const occurrenceId = `${bookingId}:2026-09-08`;
+  const command = {
+    ...upsert({}, bookingId),
+    action: "upsert_bind_classroom" as const,
+    occurrenceId,
+    classroom: { meetingId: meetingIdForOccurrenceValue(occurrenceId), status: "ready" as const },
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command,
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    role: "admin",
+    fullAdmin: true,
+  }), error("classroom_occurrence_not_found"));
+});
+
+test("classroom binds accept only concrete source dates in a recurring series", () => {
+  const bookingId = "TMP-RECURRING";
+  const recurring = upsert({ recurring: true, repeatCount: 3, recurrenceIntervalDays: 7, recurrenceEndDate: "2026-09-21" }, bookingId);
+  const invalidOccurrenceId = `${bookingId}:2026-09-08`;
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: {
+      ...recurring,
+      action: "upsert_bind_classroom" as const,
+      occurrenceId: invalidOccurrenceId,
+      classroom: { meetingId: meetingIdForOccurrenceValue(invalidOccurrenceId), status: "ready" as const },
+    },
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    role: "admin",
+    fullAdmin: true,
+  }), error("classroom_occurrence_not_found"));
+
+  const validOccurrenceId = `${bookingId}:2026-09-14`;
+  const prepared = prepareBookingCapacityMutation({
+    command: {
+      ...recurring,
+      action: "upsert_bind_classroom" as const,
+      occurrenceId: validOccurrenceId,
+      classroom: { meetingId: meetingIdForOccurrenceValue(validOccurrenceId), status: "ready" as const },
+    },
+    rows: sharedRows(),
+    actor: "Ops Admin",
+    role: "admin",
+    fullAdmin: true,
+  });
+  assert.equal(prepared.action, "create");
+});
+
+test("persists interval recurrence and rejects invalid custom intervals", () => {
+  const custom = upsert({ recurring: true, repeatCount: 3, recurrenceIntervalDays: 3 });
+  const parsed = parseBookingCapacityCommand(custom);
+  assert.equal(parsed.booking?.recurrenceIntervalDays, 3);
+  assert.equal(prepareBookingCapacityMutation({ command: custom, rows: sharedRows(), actor: "Abby", fullAdmin: false, now: new Date("2026-08-13T00:00:00Z") }).bookings[0].recurrenceIntervalDays, 3);
+  assert.throws(() => parseBookingCapacityCommand(upsert({ recurring: true, repeatCount: 2, recurrenceIntervalDays: 366 })), error("invalid_request"));
 });
 
 test("first non-substitute booking consumes exactly one stable capacity assignment", () => {
@@ -200,7 +484,7 @@ test("deleting the final relationship restores capacity, but not while another r
     { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
     { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
   ];
-  const command: BookingCapacityCommand = { action: "delete", bookingId: "B-1", expectedVersions: { bookings: 3, students: 3, teachers: 3 } };
+  const command: BookingCapacityCommand = { action: "delete", bookingId: "B-1", expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 } };
   const singleRows = sharedRows([current]).map((state) => state.entity === "teachers" ? row("teachers", teachers) : state);
   const single = prepareBookingCapacityMutation({ command, rows: singleRows, actor: "Nixon", fullAdmin: true });
   assert.equal(single.teachers[0].newStudentCapacity, 1);
@@ -211,6 +495,77 @@ test("deleting the final relationship restores capacity, but not while another r
   const multiple = prepareBookingCapacityMutation({ command, rows: multipleRows, actor: "Nixon", fullAdmin: true });
   assert.equal(multiple.teachers[0].newStudentCapacity, 0);
   assert.deepEqual(multiple.teachers[0].capacityAssignments, ["S-1"]);
+});
+
+test("recurring cancellation releases capacity only after the last active occurrence", () => {
+  const series = {
+    id: "B-SERIES", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "试听", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 3,
+    recurrenceIntervalDays: 7, recurrenceEndDate: "2026-09-21", course: "English",
+    teacherSubjectId: "Local English", requestedAt: "2026-08-01T00:00:00.000Z",
+  };
+  const withCapacity = (bookings: unknown[], teachers?: readonly Record<string, unknown>[]) => sharedRows(bookings)
+    .map((state) => state.entity === "teachers" ? row("teachers", teachers ?? [
+      { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
+      { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+    ]) : state);
+  const cancel = (occurrenceId: string): BookingCapacityCommand => ({
+    action: "cancel_occurrence",
+    bookingId: "B-SERIES",
+    occurrenceId,
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  });
+
+  const middle = prepareBookingCapacityMutation({
+    command: cancel("B-SERIES:2026-09-14"), rows: withCapacity([series]), actor: "Nixon", fullAdmin: true,
+  });
+  assert.equal(middle.action, "update");
+  assert.equal(middle.teachers[0].newStudentCapacity, 0);
+  assert.deepEqual(middle.teachers[0].capacityAssignments, ["S-1"]);
+  assert.deepEqual((middle.bookings[0].occurrenceOverrides as Record<string, unknown>[])[0], {
+    occurrenceId: "B-SERIES:2026-09-14", status: "cancelled",
+  });
+
+  const first = prepareBookingCapacityMutation({
+    command: cancel("B-SERIES:2026-09-07"),
+    rows: withCapacity(middle.bookings as unknown[], middle.teachers),
+    actor: "Nixon",
+    fullAdmin: true,
+  });
+  assert.equal(first.teachers[0].newStudentCapacity, 0);
+
+  const last = prepareBookingCapacityMutation({
+    command: cancel("B-SERIES:2026-09-21"),
+    rows: withCapacity(first.bookings as unknown[], first.teachers),
+    actor: "Nixon",
+    fullAdmin: true,
+  });
+  assert.equal(last.teachers[0].newStudentCapacity, 1);
+  assert.deepEqual(last.teachers[0].capacityAssignments, []);
+  assert.deepEqual(last.changedTeacherIds, ["T-1"]);
+});
+
+test("occurrence commands honor a 14-day end bound and reject out-of-series dates", () => {
+  const series = {
+    id: "B-14", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "试听", status: "待确认", timezone: "Australia/Melbourne", recurring: true,
+    recurrenceIntervalDays: 14, recurrenceEndDate: "2026-10-20", course: "English",
+    teacherSubjectId: "Local English", requestedAt: "2026-08-01T00:00:00.000Z",
+  };
+  const rows = sharedRows([series]).map((state) => state.entity === "teachers" ? row("teachers", [
+    { id: "T-1", name: "Teacher A", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 0, capacityAssignments: ["S-1"], availabilityWindows: availability },
+    { id: "T-2", name: "Teacher B", subjects: ["Local English"], acceptsStudents: true, newStudentCapacity: 2, capacityAssignments: [], availabilityWindows: availability2 },
+  ]) : state);
+  const valid: BookingCapacityCommand = {
+    action: "cancel_occurrence", bookingId: "B-14", occurrenceId: "B-14:2026-10-05",
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
+  };
+  const prepared = prepareBookingCapacityMutation({ command: valid, rows, actor: "Nixon", fullAdmin: true });
+  assert.equal(prepared.bookings[0].recurrenceIntervalDays, 14);
+  assert.equal(prepared.bookings[0].recurrenceEndDate, "2026-10-20");
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: { ...valid, occurrenceId: "B-14:2026-10-12" }, rows, actor: "Nixon", fullAdmin: true,
+  }), error("occurrence_not_found"));
 });
 
 test("non-trial package/subject is mandatory and checked on the server", () => {
@@ -268,7 +623,7 @@ test("package balance reserves every active occurrence without double-counting a
     }],
   }]) : state);
   assert.throws(() => prepareBookingCapacityMutation({
-    command: upsert({ recurring: true, repeatCount: 4 }),
+    command: upsert({ recurring: true, repeatCount: 4, recurrenceIntervalDays: 7 }),
     rows: lowBalanceRows,
     actor: "Abby",
     fullAdmin: false,
@@ -281,7 +636,7 @@ test("package balance reserves every active occurrence without double-counting a
     packageId: "P-1", course: "English", requestedAt: "2026-08-01T00:00:00.000Z",
   };
   const edited = prepareBookingCapacityMutation({
-    command: upsert({ recurring: true, repeatCount: 3 }),
+    command: upsert({ recurring: true, repeatCount: 3, recurrenceIntervalDays: 7 }),
     rows: lowBalanceRows.map((state) => state.entity === "bookings" ? row("bookings", [existing]) : state),
     actor: "Nixon",
     fullAdmin: true,
@@ -320,6 +675,92 @@ test("package reservations include other series and ignore cancelled or leave oc
     now: new Date("2026-08-13T00:00:00Z"),
   });
   assert.equal(prepared.action, "create");
+});
+
+test("capacity conflict closure includes a far source occurrence moved into the target range", () => {
+  const movedIn = {
+    id: "B-MOVED-IN", studentId: "S-1", teacherId: "T-1", date: "2026-08-01", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 12,
+    recurrenceIntervalDays: 7, packageId: "P-1", course: "English",
+    occurrenceOverrides: [{ occurrenceId: "B-MOVED-IN:2026-08-08", date: "2026-09-10" }],
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ date: "2026-09-10" }, "B-NEW"),
+    rows: sharedRows([movedIn]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("schedule_conflict"));
+});
+
+test("series updates retain moved overrides and reject a collision at the moved target", () => {
+  const current = {
+    id: "B-EDIT-MOVED", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 2,
+    recurrenceIntervalDays: 7, packageId: "P-1", course: "English",
+    occurrenceOverrides: [{ occurrenceId: "B-EDIT-MOVED:2026-09-14", date: "2026-09-20" }],
+  };
+  const other = {
+    id: "B-OTHER-MOVED", studentId: "S-1", teacherId: "T-2", date: "2026-09-20", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: false, repeatCount: 1,
+    packageId: "P-1", course: "English",
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ recurring: true, repeatCount: 2, recurrenceIntervalDays: 7 }, current.id),
+    rows: sharedRows([current, other]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("schedule_conflict"));
+});
+
+test("series updates reject two own source occurrences that resolve to one overlapping target", () => {
+  const current = {
+    id: "B-OWN-COLLISION", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 2,
+    recurrenceIntervalDays: 7, packageId: "P-1", course: "English",
+    occurrenceOverrides: [{ occurrenceId: "B-OWN-COLLISION:2026-09-14", date: "2026-09-07" }],
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ recurring: true, repeatCount: 2, recurrenceIntervalDays: 7 }, current.id),
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("schedule_conflict"));
+});
+
+test("series updates check teacher AVA at a moved target date, not only source dates", () => {
+  const current = {
+    id: "B-AVA-MOVED", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 2,
+    recurrenceIntervalDays: 7, packageId: "P-1", course: "English",
+    occurrenceOverrides: [{ occurrenceId: "B-AVA-MOVED:2026-09-14", date: "2026-10-01" }],
+  };
+  assert.throws(() => prepareBookingCapacityMutation({
+    command: upsert({ recurring: true, repeatCount: 2, recurrenceIntervalDays: 7 }, current.id),
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  }), error("teacher_unavailable"));
+});
+
+test("editing a legacy derived end date re-derives from the new repeat count", () => {
+  const current = {
+    id: "B-DERIVED-END", studentId: "S-1", teacherId: "T-1", date: "2026-09-01", start: "10:00", duration: 60,
+    kind: "常规课", status: "待确认", timezone: "Australia/Melbourne", recurring: true, repeatCount: 2,
+    recurrenceIntervalDays: 7, recurrenceEndDate: "2026-09-08", packageId: "P-1", course: "English",
+  };
+  const prepared = prepareBookingCapacityMutation({
+    command: upsert({ date: "2026-09-01", recurring: true, repeatCount: 4, recurrenceIntervalDays: 7 }, current.id),
+    rows: sharedRows([current]),
+    actor: "Nixon",
+    fullAdmin: true,
+    now: new Date("2026-08-13T00:00:00Z"),
+  });
+  assert.equal(prepared.bookings[0].repeatCount, 4);
+  assert.equal(prepared.bookings[0].recurrenceEndDate, undefined);
 });
 
 test("historical unsettled occurrences do not consume the future scheduling balance", () => {
@@ -363,7 +804,7 @@ test("archived students reject booking creates, edits, and deletes for every ope
   const command: BookingCapacityCommand = {
     action: "delete",
     bookingId: "B-1",
-    expectedVersions: { bookings: 3, students: 3, teachers: 3 },
+    expectedVersions: { bookings: 3, students: 3, lpItems: 3, tasks: 3, teachers: 3 },
   };
   for (const input of [
     { actor: "Abby", fullAdmin: false },
@@ -377,6 +818,25 @@ test("archived students reject booking creates, edits, and deletes for every ope
 test("staff is owner-scoped and teachers cannot mutate capacity or assignments", () => {
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert(), rows: sharedRows([], "Thea"), actor: "Abby", fullAdmin: false }), error("student_scope_forbidden"));
   assert.throws(() => prepareBookingCapacityMutation({ command: upsert(), rows: sharedRows(), actor: "Helen Ceperkovic", fullAdmin: false }), error("student_scope_forbidden"));
+});
+
+test("a teacher cannot replay a staff/admin command or another teacher's receipt", () => {
+  const allowedTeacherIds = new Set(["T-1"]);
+  const base = {
+    sessionRole: "teacher" as const,
+    ledgerActorRole: "teacher" as const,
+    action: "update" as const,
+    allowedTeacherIds,
+    teacherId: "T-1",
+    previousTeacherId: "T-1",
+    currentTeacherId: "T-1",
+  };
+  assert.equal(bookingCapacityTeacherReplayAllowed(base), true);
+  assert.equal(bookingCapacityTeacherReplayAllowed({ ...base, ledgerActorRole: "staff" }), false);
+  assert.equal(bookingCapacityTeacherReplayAllowed({ ...base, ledgerActorRole: "admin" }), false);
+  assert.equal(bookingCapacityTeacherReplayAllowed({ ...base, action: "delete" }), false);
+  assert.equal(bookingCapacityTeacherReplayAllowed({ ...base, currentTeacherId: "T-2" }), false);
+  assert.equal(bookingCapacityTeacherReplayAllowed({ ...base, teacherId: "T-2" }), false);
 });
 
 test("reviewed relationship transitions atomically release and consume capacity", () => {

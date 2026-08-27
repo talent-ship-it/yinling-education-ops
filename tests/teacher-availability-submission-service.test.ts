@@ -59,9 +59,13 @@ test("teacher AVA request rejects unsafe month, timezone and overlapping slots",
   assert.throws(() => parseTeacherAvailabilitySubmitRequest({ ...submission, month: "2026-07" }, new Date("2026-08-15T00:00:00Z")), code("invalid_month"));
   assert.throws(() => parseTeacherAvailabilitySubmitRequest({ ...submission, month: "2027-09" }, new Date("2026-08-15T00:00:00Z")), code("invalid_month"));
   assert.throws(() => parseTeacherAvailabilitySubmitRequest({ ...submission, timezone: "Mars/Olympus" }, new Date("2026-08-15T00:00:00Z")), code("invalid_timezone"));
-  assert.throws(() => parseTeacherAvailabilitySubmitRequest({
+  assert.doesNotThrow(() => parseTeacherAvailabilitySubmitRequest({
     ...submission,
     slots: [{ day: 1, start: "22:00", end: "02:00" }],
+  }, new Date("2026-08-15T00:00:00Z")));
+  assert.throws(() => parseTeacherAvailabilitySubmitRequest({
+    ...submission,
+    slots: [{ day: 1, start: "22:00", end: "22:00" }],
   }, new Date("2026-08-15T00:00:00Z")), code("invalid_slots"));
   assert.throws(() => parseTeacherAvailabilitySubmitRequest({
     ...submission,

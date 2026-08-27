@@ -8,7 +8,7 @@ import {
 } from "../lib/exam-tasks";
 import type { RuleBoundTask } from "../lib/ops-tasks";
 
-function examTask(suffix: "care" | "recall" | "results", overrides: Partial<RuleBoundTask> = {}): RuleBoundTask {
+function examTask(suffix: "planning" | "care" | "recall" | "results", overrides: Partial<RuleBoundTask> = {}): RuleBoundTask {
   return {
     id: `task-${suffix}`,
     title: suffix,
@@ -86,4 +86,18 @@ test("recognizes a cross-owner managed exam task only for an explicit recipient"
   assert.equal(isManagedExamTaskRecipient({ ...resultTask, category: "资料" }, "Tara"), false);
   assert.equal(isManagedExamTaskRecipient({ ...resultTask, anchorBookingId: "exam:other" }, "Tara"), false);
   assert.equal(isManagedExamTaskRecipient({ ...resultTask, ruleKey: "manual:results" }, "Tara"), false);
+});
+
+test("reconciles the planning rule as a sticky managed task", () => {
+  const planning = examTask("planning", { owner: "Tara", assignees: ["Tara"] });
+  const closed = reconcileExamTasks([planning], [], {
+    examId: "exam-1",
+    closedAt: "2026-08-13T00:00:00.000Z",
+  });
+  assert.equal(closed[0].status, "done");
+  const reopened = reconcileExamTasks(closed, [planning], {
+    examId: "exam-1",
+    closedAt: "2026-08-14T00:00:00.000Z",
+  });
+  assert.equal(reopened[0].status, "upcoming");
 });

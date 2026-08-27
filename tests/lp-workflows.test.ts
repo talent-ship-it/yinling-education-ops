@@ -15,6 +15,7 @@ import {
   SPECIFIED_CONTENT_STATUSES,
   validateLpDate,
   validateLpDocumentUrl,
+  validateCompleteLpWorkflowFields,
   validateLpResultStatus,
   validateLpWorkflowFields,
   type LpWorkflowRecord,
@@ -158,11 +159,32 @@ test("strictly validates confirmed template fields while accepting legacy stored
   }), /basicInfo is required/);
 });
 
+test("new submissions require the complete current handover template", () => {
+  assert.throws(() => validateCompleteLpWorkflowFields("老师新 LP", {
+    ...commonFields(), teacher: "A", subject: "Math", documentUrl: "https://docs.example/lp",
+  }), /additionalNotes is required/);
+  assert.throws(() => validateCompleteLpWorkflowFields("换老师试听", {
+    ...commonFields(), originalTeacher: "A", newTeacher: "B", subject: "English", changeReason: "Availability", trialInformation: "Saturday trial",
+  }), /handoverFromTeacher is required/);
+  assert.throws(() => validateCompleteLpWorkflowFields("代课 LP", {
+    ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", handoverNotes: "Legacy only",
+  }), /additionalNotes is required/);
+  assert.throws(() => validateCompleteLpWorkflowFields("学生报名交接", {
+    ...commonFields(), planner: "Tara", coursePackage: "20h", subject: "English", enrollmentHandoverNotes: "Legacy only",
+  }), /purchasedHours/);
+});
+
 test("keeps business result independent from stage and restricts it by workflow type", () => {
-  assert.deepEqual(LP_RESULT_STATUSES, ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"]);
   assert.deepEqual(allowedLpResultStatuses("试听 LP"), ["试听成功", "试听失败", "有希望报名", "试听未进行"]);
   assert.deepEqual(allowedLpResultStatuses("换老师试听"), ["在读试听成功", "在读试听失败"]);
-  assert.deepEqual(allowedLpResultStatuses("老师新 LP"), []);
+  const nonTrialTypes = ["老师新 LP", "老师 LP 修改", "代课 LP", "学生直报（无试听）", "学生报名交接"] as const;
+  for (const type of nonTrialTypes) {
+    assert.deepEqual(allowedLpResultStatuses(type), ["已完成", "已取消"]);
+    assert.doesNotThrow(() => validateLpResultStatus(type, "已完成"));
+    assert.doesNotThrow(() => validateLpResultStatus(type, "已取消"));
+    assert.throws(() => validateLpResultStatus(type, "试听成功"), /not valid/);
+  }
+  assert.deepEqual(LP_RESULT_STATUSES, ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败", "已完成", "已取消"]);
   assert.doesNotThrow(() => validateLpResultStatus("试听 LP", "有希望报名"));
   assert.throws(() => validateLpResultStatus("试听 LP", "在读试听成功"), /not valid/);
   assert.throws(() => validateLpResultStatus("老师新 LP", "试听成功"), /not valid/);

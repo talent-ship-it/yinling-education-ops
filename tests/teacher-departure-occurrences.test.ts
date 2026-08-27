@@ -80,6 +80,26 @@ test("departure projection follows moved occurrence dates and teacher overrides"
   })), [{ id: "B-1:2026-09-08", date: "2026-10-01", teacherId: "T-1" }]);
 });
 
+test("departure projection honors an explicit end date before the count bound", () => {
+  const projected = projectTeacherDepartureOccurrences({
+    teacherId: "T-1",
+    effectiveDate: "2026-09-04",
+    bookings: [{
+      id: "B-END",
+      studentId: "S-1",
+      teacherId: "T-1",
+      date: "2026-09-01",
+      start: "17:00",
+      duration: 60,
+      recurring: true,
+      repeatCount: 20,
+      recurrenceIntervalDays: 2,
+      recurrenceEndDate: "2026-09-05",
+    }],
+  });
+  assert.deepEqual(projected.map(({ occurrence }) => occurrence.occurrenceId), ["B-END:2026-09-05"]);
+});
+
 test("departure projection fails closed for a matching count-less legacy series", () => {
   assert.throws(() => projectTeacherDepartureOccurrences({
     teacherId: "T-1",
@@ -126,4 +146,32 @@ test("student-scoped projection ignores another student's count-less series", ()
   });
 
   assert.deepEqual(projected.map(({ occurrence }) => occurrence.occurrenceId), ["B-TARGET:2026-09-08"]);
+});
+
+test("teacher-wide departure projection ignores another teacher's count-less legacy series", () => {
+  const projected = projectTeacherDepartureOccurrences({
+    teacherId: "T-TARGET",
+    effectiveDate: "2026-09-08",
+    bookings: [
+      {
+        id: "B-OTHER-TEACHER",
+        studentId: "S-OTHER",
+        teacherId: "T-OTHER",
+        date: "2026-09-01",
+        start: "17:00",
+        duration: 60,
+        recurring: true,
+      },
+      {
+        id: "B-TARGET-TEACHER",
+        studentId: "S-TARGET",
+        teacherId: "T-TARGET",
+        date: "2026-09-08",
+        start: "18:00",
+        duration: 60,
+        recurring: false,
+      },
+    ],
+  });
+  assert.deepEqual(projected.map(({ occurrence }) => occurrence.occurrenceId), ["B-TARGET-TEACHER:2026-09-08"]);
 });

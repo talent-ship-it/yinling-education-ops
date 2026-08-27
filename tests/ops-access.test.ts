@@ -9,6 +9,9 @@ import {
   filterOpsVersions,
   getAccessScopeVersions,
   mergeScopedPayload,
+  managedExamStudentProjections,
+  managedTrialPaymentStudentProjectionSnapshot,
+  managedTrialPaymentStudentProjections,
   OpsAccessError,
 } from "../lib/ops-access";
 import type { OpsStateRow, OpsVersionRow } from "../lib/ops-store";
@@ -20,8 +23,8 @@ const rows: OpsStateRow[] = [
     updated_at: "2026-07-28T00:00:00.000Z",
     updated_by: "Admin",
     payload: [
-      { id: "STU-ABBY", name: "Abby student", owner: "Abby", planner: "Tara", teacher: "Helen Ceperkovic", exams: [{ id: "EXM-1" }] },
-      { id: "STU-THEA", name: "Thea student", owner: "Thea", planner: "Tara", teacher: "Another teacher", exams: [{ id: "EXM-2" }] },
+      { id: "STU-ABBY", name: "Abby student", owner: "Abby", planner: "Tara", teacher: "Helen Ceperkovic", exams: [{ id: "EXM-1", subject: "Maths", examType: "other", examMonth: "2026-08", privateStudentNote: "must not cross scope" }] },
+      { id: "STU-THEA", name: "Thea student", owner: "Thea", planner: "Tara", teacher: "Another teacher", exams: [{ id: "EXM-2", subject: "English", examType: "other", examMonth: "2026-09" }] },
     ],
   },
   {
@@ -127,6 +130,121 @@ test("a managed exam planner receives only the addressed task, not the student's
   }), /不能修改未分配/);
 });
 
+test("managed exam staff receive only a minimal projection for the assigned exam row", () => {
+  const access = buildOpsAccessContext(rows, "Tara", false, "staff");
+  const projections = managedExamStudentProjections(rows, access);
+
+  assert.deepEqual(projections, [{
+    id: "STU-ABBY",
+    name: "Abby student",
+    initials: "",
+    owner: "Abby",
+    exams: [{ id: "EXM-1", subject: "Maths", examType: "other", examMonth: "2026-08" }],
+  }]);
+  assert.equal("guardianWechat" in projections[0], false);
+  assert.equal("planner" in projections[0], false);
+  assert.equal("lessonPackages" in projections[0], false);
+  assert.equal("privateStudentNote" in projections[0].exams[0], false);
+
+  const unassigned = buildOpsAccessContext(rows, "Molly", false, "staff");
+  assert.deepEqual(managedExamStudentProjections(rows, unassigned), []);
+  assert.deepEqual(filterOpsStateRows(rows, unassigned).find((item) => item.entity === "tasks")?.payload, []);
+  assert.deepEqual(managedExamStudentProjections(rows, buildOpsAccessContext(rows, "Helen Ceperkovic", false, "teacher")), []);
+  assert.deepEqual(managedExamStudentProjections(rows, buildOpsAccessContext(rows, "Ops Admin", false, "limited-admin")), []);
+});
+
+test("cross-owner trial payment access is exact, minimal, and planner-only", () => {
+  const paymentRows = rows.map((item) => {
+    if (item.entity === "bookings") return {
+      ...item,
+      payload: (item.payload as Array<Record<string, unknown>>).map((booking) => booking.id === "BOOK-ABBY"
+        ? { ...booking, kind: "试听" }
+        : booking),
+    };
+    if (item.entity === "tasks") return {
+      ...item,
+      payload: [...(item.payload as Array<Record<string, unknown>>), {
+        id: "TASK-TRIAL-PAYMENT",
+        studentId: "STU-ABBY",
+        owner: "Tara",
+        assignees: ["Tara"],
+        watchers: ["Ops Admin"],
+        category: "试听",
+        ruleKey: "trial.payment-urgent",
+        anchorBookingId: "BOOK-ABBY",
+        title: "试听不足 24 小时仍未付款",
+        dueAt: "2026-08-20T00:00:00.000Z",
+      }],
+    };
+    return item;
+  });
+
+  const planner = buildOpsAccessContext(paymentRows, "Tara", false, "staff");
+  const plannerTasks = filterOpsStateRows(paymentRows, planner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>;
+  assert.equal(plannerTasks.some((task) => task.id === "TASK-TRIAL-PAYMENT"), true);
+  assert.deepEqual(managedTrialPaymentStudentProjections(paymentRows, planner), [{
+    id: "STU-ABBY",
+    name: "Abby student",
+    initials: "",
+  }]);
+  assert.deepEqual(managedTrialPaymentStudentProjectionSnapshot(paymentRows, planner), {
+    versions: { bookings: 2, students: 4, tasks: 1 },
+    students: [{ id: "STU-ABBY", name: "Abby student", initials: "" }],
+  });
+  assert.deepEqual(Object.keys(managedTrialPaymentStudentProjections(paymentRows, planner)[0]).sort(), [
+    "id", "initials", "name",
+  ]);
+
+  const operationsOwner = buildOpsAccessContext(paymentRows, "Abby", false, "staff");
+  const ownerTasks = filterOpsStateRows(paymentRows, operationsOwner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>;
+  assert.equal(ownerTasks.some((task) => task.id === "TASK-TRIAL-PAYMENT"), false);
+  assert.deepEqual(managedTrialPaymentStudentProjections(paymentRows, operationsOwner), []);
+
+  const unassigned = buildOpsAccessContext(paymentRows, "Molly", false, "staff");
+  assert.equal((filterOpsStateRows(paymentRows, unassigned)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+    .some((task) => task.id === "TASK-TRIAL-PAYMENT"), false);
+  assert.deepEqual(managedTrialPaymentStudentProjections(paymentRows, unassigned), []);
+
+  const taskPayload = paymentRows.find((item) => item.entity === "tasks")!.payload as Array<Record<string, unknown>>;
+  assert.throws(() => mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: taskPayload,
+    submittedPayload: taskPayload.map((task) => task.id === "TASK-TRIAL-PAYMENT"
+      ? { ...task, status: "done", result: "已由规划老师确认试听付款" }
+      : task),
+    context: planner,
+  }), /专用确认流程/);
+});
+
+test("archiving a cross-owner exam student removes both the managed task and minimal projection", () => {
+  const archivedRows = rows.map((item) => item.entity !== "students" ? item : {
+    ...item,
+    payload: (item.payload as Array<Record<string, unknown>>).map((student) => student.id === "STU-ABBY"
+      ? { ...student, importArchived: true }
+      : student),
+  });
+  const planner = buildOpsAccessContext(archivedRows, "Tara", false, "staff");
+  const visible = filterOpsStateRows(archivedRows, planner);
+
+  assert.deepEqual(visible.find((item) => item.entity === "students")?.payload, []);
+  assert.deepEqual(visible.find((item) => item.entity === "tasks")?.payload, []);
+  assert.deepEqual(managedExamStudentProjections(archivedRows, planner), []);
+
+  const current = rows.find((item) => item.entity === "tasks")?.payload as Array<Record<string, unknown>>;
+  const completion = current
+    .filter((task) => task.id === "TASK-EXAM-RESULT")
+    .map((task) => ({ ...task, status: "done", tone: "green", closedAt: "2026-08-15T00:00:00.000Z", result: "已完成" }));
+  assert.throws(() => mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: current,
+    submittedPayload: completion,
+    context: planner,
+  }), /不能修改未分配/);
+});
+
 test("teachers receive only their own assigned and booked students", () => {
   const access = buildOpsAccessContext(rows, "Helen Ceperkovic", false, "teacher");
   const visible = filterOpsStateRows(rows, access);
@@ -206,6 +324,47 @@ test("a roster teacher outside the seeded demo list receives teacher-only scope 
   assert.deepEqual((visible.find((item) => item.entity === "bookings")?.payload as Array<{ id: string }>).map((item) => item.id), ["BOOK-THEA"]);
   assert.deepEqual((visible.find((item) => item.entity === "teachers")?.payload as Array<{ id: string }>).map((item) => item.id), ["TEA-OTHER"]);
   assert.equal(visible.some((item) => item.entity === "lpItems"), false);
+});
+
+test("a substitute teacher receives the student and series through the effective occurrence teacher", () => {
+  const substitutedRows = rows.map((item) => {
+    if (item.entity === "teachers") return {
+      ...item,
+      payload: [...(item.payload as object[]), { id: "TEA-SUB", name: "Sub Teacher" }],
+    };
+    if (item.entity === "bookings") return {
+      ...item,
+      payload: [{
+        id: "BOOK-SUB",
+        studentId: "STU-ABBY",
+        teacherId: "TEA-HELEN",
+        date: "2026-09-01",
+        occurrenceOverrides: [{
+          occurrenceId: "BOOK-SUB:2026-09-01",
+          teacherId: "TEA-SUB",
+          status: "confirmed",
+        }],
+      }],
+    };
+    return item;
+  });
+  const substitute = buildOpsAccessContext(substitutedRows, "Sub Teacher", false, "teacher");
+  const substituteVisible = filterOpsStateRows(substitutedRows, substitute);
+  assert.deepEqual((substituteVisible.find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((item) => item.id), ["STU-ABBY"]);
+  assert.deepEqual((substituteVisible.find((item) => item.entity === "bookings")?.payload as Array<{ id: string }>).map((item) => item.id), ["BOOK-SUB"]);
+  assert.throws(() => mergeScopedPayload({
+    entity: "bookings",
+    currentPayload: substitutedRows.find((item) => item.entity === "bookings")?.payload,
+    submittedPayload: [{
+      ...(substituteVisible.find((item) => item.entity === "bookings")?.payload as Array<Record<string, unknown>>)[0],
+      status: "已确认",
+    }],
+    context: substitute,
+  }), OpsAccessError);
+
+  const parent = buildOpsAccessContext(substitutedRows, "Helen Ceperkovic", false, "teacher");
+  const parentVisible = filterOpsStateRows(substitutedRows, parent);
+  assert.deepEqual(parentVisible.find((item) => item.entity === "bookings")?.payload, []);
 });
 
 test("a signed teacher role is not promoted to staff when its name resembles a staff account", () => {

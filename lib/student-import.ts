@@ -4,12 +4,11 @@ import type { StudentLessonPackage } from "./student-records";
  * Pure domain logic for replacing the system student list from the latest
  * master sheet and enriching it with JWB balances.
  *
- * Matching is intentionally conservative. A master-sheet name and a JWB name
- * match only when their complete display names are equal after the shared
- * safe cleanup: NFKC, invisible-character removal, whitespace collapsing and
- * ASCII-only case folding. Punctuation and Chinese characters are never
- * discarded. Every key must still be unique on both sides; duplicates are
- * ambiguous and never attach JWB data.
+ * Matching is intentionally conservative but understands the way JWB stores
+ * bilingual names. Exact cleaned full names are preferred; when those do not
+ * match, a single unique Chinese-name run (for example `张三` and
+ * `张三 Zhang San`) may match. Every relaxed key must still be unique on both
+ * sides; duplicate cores stay ambiguous and never attach JWB data.
  */
 
 export const MASTER_STUDENT_STATUSES = [
@@ -24,13 +23,16 @@ export const MASTER_STUDENT_STATUSES = [
 export type MasterStudentStatus = (typeof MASTER_STUDENT_STATUSES)[number];
 
 /**
- * A retained historical/archive status. It is deliberately not an import
- * exclusion: every non-empty Tencent master-roster row is a formal student,
- * including people currently marked inactive without hours.
+ * Tencent's explicit inactive/no-hours status. These source rows remain in
+ * the read-only Tencent snapshot but never produce a current formal student.
  */
 export const ARCHIVED_STUDENT_STATUS: MasterStudentStatus = "不活跃 + 无课时";
-/** @deprecated Use ARCHIVED_STUDENT_STATUS. Master rows are no longer excluded by status. */
+/** The only status excluded from the formal Tencent-authoritative roster. */
 export const EXCLUDED_MASTER_STUDENT_STATUS = ARCHIVED_STUDENT_STATUS;
+
+export function isExcludedMasterStudentStatus(status: MasterStudentStatus) {
+  return status === EXCLUDED_MASTER_STUDENT_STATUS;
+}
 
 export type StudentImportSourceKey = string | number;
 export type StudentImportAttributes = Readonly<Record<string, unknown>>;
@@ -211,7 +213,7 @@ export type StudentImportExcluded = Readonly<{
   sourceRow: StudentImportSourceKey;
   name: string;
   status: MasterStudentStatus;
-  reason: "empty_name";
+  reason: "empty_name" | "inactive_no_hours";
 }>;
 
 export type StudentImportUnmatched = Readonly<{
@@ -414,13 +416,7 @@ function importedStudentDefaults(name: string, attributes: StudentImportAttribut
   };
 }
 
-/**
- * The only automatic identity comparison key. It preserves every visible
- * punctuation and every Chinese character, so a non-identical full name can
- * never inherit a JWB account merely because a punctuation-free alias happens
- * to look similar. NFKC/whitespace/ASCII-case are the deliberately narrow,
- * cross-runtime safe normalisations shared with the SQL write boundary.
- */
+/** Strict display-name comparison shared with the source/identity contract. */
 export function normalizeStudentImportName(value: string) {
   // Keep identity grouping deterministic across JavaScript and PostgreSQL.
   // NFKC already folds width/compatibility variants; only ASCII case folding
@@ -428,6 +424,38 @@ export function normalizeStudentImportName(value: string) {
   // Unicode case mappings diverging between runtimes.
   const displayName = cleanDisplayName(value);
   return displayName.replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
+
+const STUDENT_IMPORT_CJK_CHARACTER = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u{20000}-\u{2ffff}]/u;
+
+/**
+ * Extract exactly one contiguous Chinese name run. Latin text, spaces and
+ * ordinary annotations may surround the run; a second Chinese run is a
+ * collision-prone shape and fails closed. This is deliberately a fallback
+ * key, never a replacement for the strict key used by source identities.
+ */
+export function studentImportChineseNameKey(value: string) {
+  const displayName = cleanDisplayName(value);
+  if (!displayName) return "";
+  const runs: string[] = [];
+  let current = "";
+  for (const character of displayName) {
+    if (STUDENT_IMPORT_CJK_CHARACTER.test(character)) {
+      current += character;
+      continue;
+    }
+    if (current) {
+      runs.push(current);
+      current = "";
+    }
+  }
+  if (current) runs.push(current);
+  return runs.length === 1 && runs[0].length >= 2 ? runs[0] : "";
+}
+
+/** Key used only for the unique bilingual JWB enrichment fallback. */
+export function studentImportAutomaticJwbNameKey(value: string) {
+  return studentImportChineseNameKey(value) || normalizeStudentImportName(value);
 }
 
 // This closed alphabet intentionally excludes digits, whitespace, punctuation
@@ -474,9 +502,9 @@ export function isStudentImportJwbLatinParentheticalAnnotationMatch(
 }
 
 /**
- * Returns duplicate named master groups. Every non-empty Tencent roster row
- * is import-eligible regardless of its current activity status, so an
- * inactive row participates in the same hard duplicate-resolution contract.
+ * Returns duplicate named rows that are still eligible for a current formal
+ * Tencent-authoritative student record. Explicit inactive/no-hours rows stay
+ * in the source archive but cannot block a current student's resolution.
  * The normalized name is an internal comparison key and must not be sent to
  * the browser.
  */
@@ -504,6 +532,7 @@ export function findMasterStudentDuplicateGroups(
     if (status && !isMasterStudentStatus(status)) {
       throw new StudentImportError("invalid_status", `Unsupported master student status: ${String(row.status)}`, row.sourceRow);
     }
+    if (status === EXCLUDED_MASTER_STUDENT_STATUS) continue;
     groups.set(normalizedName, [...(groups.get(normalizedName) ?? []), row]);
   }
   const duplicates = [...groups.entries()]
@@ -537,6 +566,10 @@ export function applyMasterStudentDuplicateResolutions(
     group.rows.map((row) => sourceKey(row.sourceRow, "master source row")).sort(compareText).join("\u0000"),
     group,
   ]));
+  const sourceRowByKey = new Map(rows.map((row) => [
+    sourceKey(row.sourceRow, "master source row"),
+    row,
+  ]));
   const decidedRows = new Set<string>();
   const selectedStatuses = new Map<string, MasterStudentStatus | undefined>();
   for (const resolution of resolutions) {
@@ -550,6 +583,10 @@ export function applyMasterStudentDuplicateResolutions(
       throw new StudentImportError("invalid_master_duplicate_resolution", "Master duplicate resolution reuses a source row");
     }
     const groupKey = [...keys].sort(compareText).join("\u0000");
+    const staleExcludedResolution = !groupByRows.has(groupKey)
+      && keys.every((key) => sourceRowByKey.has(key))
+      && keys.some((key) => String(sourceRowByKey.get(key)?.status ?? "").trim() === EXCLUDED_MASTER_STUDENT_STATUS);
+    if (staleExcludedResolution) continue;
     if (!groupByRows.has(groupKey) || keys.some((key) => decidedRows.has(key))) {
       throw new StudentImportError("invalid_master_duplicate_resolution", "Master duplicate resolution does not match a current group");
     }
@@ -1109,6 +1146,82 @@ function activeJwbFactsFromExisting(
     : undefined;
 }
 
+/**
+ * A referenced-history row is identity/history, not an active lesson ledger.
+ * Preserve every package because historical bookings may still reference its
+ * stable ID, while also copying JWB-owned packages/balances/dates into the
+ * read-only snapshot consumed by audit UI. A retained JWB package is marked
+ * partial so it cannot claim a complete live ledger. Removing importSource
+ * also prevents a later canonical projection from mistaking this archive for
+ * a current formal Tencent student.
+ */
+function archiveReferencedStudent(student: ExistingStudentImportRecord): ImportedStudentRecord {
+  const sourceRow = student.sourceRow ?? student.id;
+  const existingPackages = Array.isArray(student.lessonPackages)
+    ? copyLessonPackages(student.lessonPackages)
+    : [];
+  const existingJwbPackages = existingPackages.filter(isManagedJwbPackage);
+  const packageCoverage = student.packageCoverage === "complete"
+    || student.packageCoverage === "partial"
+    || student.packageCoverage === "none"
+    ? student.packageCoverage
+    : undefined;
+  const existingSnapshot = copyHistoricalJwbSnapshot(student.historicalJwbSnapshot, sourceRow);
+  // `partial` on an existing archive describes why referenced package IDs
+  // remain top-level; it must not overwrite the original source coverage
+  // already preserved in retained history on every idempotent replay.
+  const displacedPackageCoverage = student.importArchived === true
+    && student.importArchivedReason === "referenced_history"
+    && existingSnapshot?.retained?.packageCoverage
+    ? undefined
+    : packageCoverage;
+  const displacedFacts = activeJwbFactsFromExisting(
+    student,
+    existingJwbPackages,
+    displacedPackageCoverage,
+  );
+  const retained = mergeHistoricalJwbFacts(existingSnapshot?.retained, displacedFacts);
+  const historicalJwbSnapshot = retained || existingSnapshot?.currentAggregate
+    ? {
+      ...(retained ? { retained } : {}),
+      ...(existingSnapshot?.currentAggregate
+        ? { currentAggregate: existingSnapshot.currentAggregate }
+        : {}),
+    }
+    : undefined;
+
+  const archived: Record<string, unknown> = {
+    ...importedStudentDefaults(cleanDisplayName(student.name), student),
+    ...student,
+  };
+  for (const field of [
+    "importSource",
+    "jwbMatchStatus",
+    "jwbSourceRow",
+    "remainingHours",
+    "contractHours",
+    "contractEffectiveDate",
+    "firstJwbHourEntryDate",
+    "historicalJwbSnapshot",
+    "studentNumberJwbDateCandidate",
+    "lessonPackages",
+    "packageCoverage",
+  ]) {
+    delete archived[field];
+  }
+  if (existingPackages.length) archived.lessonPackages = existingPackages;
+  if (existingJwbPackages.length) archived.packageCoverage = "partial";
+  if (historicalJwbSnapshot) archived.historicalJwbSnapshot = historicalJwbSnapshot;
+  Object.assign(archived, {
+    status: EXCLUDED_MASTER_STUDENT_STATUS,
+    next: "历史引用归档，只读",
+    nextTone: "neutral",
+    importArchived: true,
+    importArchivedReason: "referenced_history",
+  });
+  return archived as ImportedStudentRecord;
+}
+
 function currentJwbAggregateFacts(
   matchedJwb: JwbStudentImportRow | undefined,
   packageCoverage: "complete" | "partial" | "none" | undefined,
@@ -1398,6 +1511,16 @@ function groupByName<Row extends { name: string }>(rows: readonly Row[]) {
   return groups;
 }
 
+function groupRowsByKey<Row>(rows: readonly Row[], keyOf: (row: Row) => string) {
+  const groups = new Map<string, Row[]>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  return groups;
+}
+
 function existingMasterKey(student: ExistingStudentImportRecord, trustLegacySourceRow = true) {
   if (student.masterSourceKey !== undefined) return sourceKey(student.masterSourceKey, "existing master source key");
   if (trustLegacySourceRow && student.sourceRow !== undefined) {
@@ -1449,12 +1572,9 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   const ambiguous: StudentImportAmbiguity[] = [];
 
   const masterKeys = new Set<string>();
-  const masterJwbMemberKeys = new Set<string>();
-  const masterJwbMemberOwnerByKey = new Map<string, string>();
-  // Validate every authoritative master row before excluding inactive/blank
-  // rows. A populated JWB member ID is source identity evidence, so an
-  // unknown, duplicate, or cross-name ID must never be hidden in a row that
-  // happens not to produce a current student record.
+  // Validate every Tencent source row before deciding whether it is current.
+  // The explicit inactive/no-hours rows stay auditable in the source snapshot,
+  // but must not affect the current formal roster or its JWB matching.
   const masterEntries = [...input.masterRows]
     .map((row) => {
       const rawKey = sourceKey(row.sourceRow, "master source row");
@@ -1463,17 +1583,6 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       }
       masterKeys.add(rawKey);
       const jwbMemberKey = optionalMasterJwbMemberKey(row.jwbMemId, row.sourceRow);
-      if (jwbMemberKey !== undefined && masterJwbMemberKeys.has(jwbMemberKey)) {
-        throw new StudentImportError(
-          "duplicate_master_jwb_member_id",
-          `Duplicate master Jiaowubao member ID: ${jwbMemberKey}`,
-          row.sourceRow,
-        );
-      }
-      if (jwbMemberKey !== undefined) {
-        masterJwbMemberKeys.add(jwbMemberKey);
-        masterJwbMemberOwnerByKey.set(jwbMemberKey, rawKey);
-      }
       return {
         row,
         rawKey,
@@ -1485,16 +1594,35 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     })
     .sort((left, right) => compareText(left.rawKey, right.rawKey));
   // Tencent's hand-maintained master roster is authoritative for existence.
-  // A current status changes how the profile is shown, never whether this
-  // named learner receives a formal system record.
+  // The one explicitly rejected status remains source evidence only and never
+  // creates or updates a current learner record.
   const eligibleMasterRows = masterEntries
     .filter(({ row, status, name }) => {
       if (!name) {
         excluded.push({ sourceRow: row.sourceRow, name: "", status, reason: "empty_name" });
         return false;
       }
+      if (isExcludedMasterStudentStatus(status)) {
+        excluded.push({ sourceRow: row.sourceRow, name, status, reason: "inactive_no_hours" });
+        return false;
+      }
       return true;
     });
+
+  const masterJwbMemberKeys = new Set<string>();
+  const masterJwbMemberOwnerByKey = new Map<string, string>();
+  for (const entry of eligibleMasterRows) {
+    if (entry.jwbMemberKey === undefined) continue;
+    if (masterJwbMemberKeys.has(entry.jwbMemberKey)) {
+      throw new StudentImportError(
+        "duplicate_master_jwb_member_id",
+        `Duplicate master Jiaowubao member ID: ${entry.jwbMemberKey}`,
+        entry.row.sourceRow,
+      );
+    }
+    masterJwbMemberKeys.add(entry.jwbMemberKey);
+    masterJwbMemberOwnerByKey.set(entry.jwbMemberKey, entry.rawKey);
+  }
 
   // The database canonical projection rejects duplicate JWB source keys. Do
   // the same before matching so a preview never says it is committable only
@@ -1523,7 +1651,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   // collision key, even if it cannot be the candidate itself. Thus `张三` and
   // `张三（VIC）` can never be mistaken for one unique account on any side.
   const annotationMasterRowsByKey = new Map<string, string[]>();
-  for (const entry of masterEntries) {
+  for (const entry of eligibleMasterRows) {
     const key = studentImportJwbLatinParentheticalAnnotationKey(entry.name)
       || normalizeStudentImportName(entry.name);
     if (key) annotationMasterRowsByKey.set(key, [
@@ -1549,6 +1677,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   // competing links are both downgraded.  Processing in array order must not
   // decide which master gets the account; SQL canonical projection applies the
   // same global one-to-one rule.
+  const eligibleMasterByRawKey = new Map(eligibleMasterRows.map((entry) => [entry.rawKey, entry]));
   const identityLinkJwbCounts = new Map<string, number>();
   for (const linkValue of input.identityLinks ?? []) {
     if (!linkValue || typeof linkValue !== "object" || Array.isArray(linkValue)
@@ -1558,10 +1687,13 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       || linkValue.jwbSourceRow === undefined) {
       continue;
     }
+    const masterKey = (typeof linkValue.masterSourceRow === "string" || typeof linkValue.masterSourceRow === "number")
+      ? String(linkValue.masterSourceRow).trim()
+      : "";
+    if (!masterKey || !eligibleMasterByRawKey.has(masterKey)) continue;
     const jwbKey = sourceKey(linkValue.jwbSourceRow, "identity link JWB source row");
     identityLinkJwbCounts.set(jwbKey, (identityLinkJwbCounts.get(jwbKey) ?? 0) + 1);
   }
-  const eligibleMasterByRawKey = new Map(eligibleMasterRows.map((entry) => [entry.rawKey, entry]));
   // A deterministic master identity belongs to its active master source row,
   // even when that row cannot itself qualify for the narrow annotation
   // exception (for example, its display name contains parentheses).  Without
@@ -1586,7 +1718,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
   // drop the authoritative Tencent student from the formal roster.
   const explicitJwbByMasterKey = new Map<string, typeof cleanJwbRows[number]>();
   const invalidJwbMemberMasterKeys = new Set<string>();
-  for (const masterEntry of masterEntries) {
+  for (const masterEntry of eligibleMasterRows) {
     if (masterEntry.jwbMemberKey === undefined) continue;
     const matches = jwbByKey.get(masterEntry.jwbMemberKey) ?? [];
     if (matches.length !== 1) {
@@ -1600,9 +1732,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       invalidJwbMemberMasterKeys.add(masterEntry.rawKey);
       continue;
     }
-    if (eligibleMasterByRawKey.has(masterEntry.rawKey)) {
-      explicitJwbByMasterKey.set(masterEntry.rawKey, jwbEntry);
-    }
+    explicitJwbByMasterKey.set(masterEntry.rawKey, jwbEntry);
   }
   const existingById = new Map<string, ExistingStudentImportRecord[]>();
   const annotationExistingIdsByKey = new Map<string, string[]>();
@@ -1638,6 +1768,15 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       throw new StudentImportError("invalid_identity_link", `Identity link ${index + 1} is invalid`);
     }
     const masterKey = sourceKey(linkValue.masterSourceRow, "identity link master source row");
+    if (!eligibleMasterByRawKey.has(masterKey)) {
+      const sourceMaster = masterEntries.find((entry) => entry.rawKey === masterKey);
+      if (sourceMaster && isExcludedMasterStudentStatus(sourceMaster.status)) continue;
+      throw new StudentImportError(
+        "invalid_identity_link",
+        `Identity link ${index + 1} references an unknown or excluded master row`,
+        linkValue.masterSourceRow,
+      );
+    }
     if (typeof linkValue.studentId !== "string") {
       throw new StudentImportError(
         "invalid_identity_link",
@@ -1669,13 +1808,6 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       throw new StudentImportError(
         "duplicate_identity_link",
         `Identity link ${index + 1} reuses a master row or student`,
-        linkValue.masterSourceRow,
-      );
-    }
-    if (!eligibleMasterByRawKey.has(masterKey)) {
-      throw new StudentImportError(
-        "invalid_identity_link",
-        `Identity link ${index + 1} references an unknown or excluded master row`,
         linkValue.masterSourceRow,
       );
     }
@@ -1833,6 +1965,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     });
   }
   const ambiguousNames = new Set<string>();
+  const ambiguousChineseMasterKeys = new Set<string>();
   const ambiguousJwbMasterKeys = new Set<string>();
 
   for (const name of allNames) {
@@ -1892,6 +2025,60 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
     }
   }
 
+  // Exact full-name matching above remains authoritative. For rows that are
+  // still unmatched, allow the common JWB bilingual shape (`张三` versus
+  // `张三 Zhang San`) only when the extracted Chinese core is unique in both
+  // source arrays. A collision on either side is retained as ambiguity; it
+  // never picks the first account and never suppresses the master student.
+  const fallbackMasters = unlinkedMasterRows.filter(({ row, name }) => {
+    const masterKey = sourceKey(row.sourceRow, "master source row");
+    return Boolean(studentImportChineseNameKey(name))
+      && !matchedJwbByMasterKey.has(masterKey)
+      && !ambiguousJwbMasterKeys.has(masterKey)
+      && !ambiguousNames.has(normalizeStudentImportName(name));
+  });
+  const fallbackJwb = unlinkedJwbRows.filter(({ key, name }) =>
+    Boolean(studentImportChineseNameKey(name))
+      && ![...matchedJwbByMasterKey.values()].some((row) => sourceKey(row.sourceRow, "matched JWB source row") === key));
+  const fallbackMasterGroups = groupRowsByKey(fallbackMasters, ({ name }) => studentImportChineseNameKey(name));
+  const fallbackJwbGroups = groupRowsByKey(fallbackJwb, ({ name }) => studentImportChineseNameKey(name));
+  const fallbackCores = [...new Set([...fallbackMasterGroups.keys(), ...fallbackJwbGroups.keys()])].sort(compareText);
+  const removeUnmatched = (source: StudentImportUnmatched["source"], sourceRow: StudentImportSourceKey) => {
+    for (let index = unmatched.length - 1; index >= 0; index -= 1) {
+      if (unmatched[index].source === source && String(unmatched[index].sourceRow) === String(sourceRow)) {
+        unmatched.splice(index, 1);
+      }
+    }
+  };
+  for (const core of fallbackCores) {
+    const masters = fallbackMasterGroups.get(core) ?? [];
+    const jwb = fallbackJwbGroups.get(core) ?? [];
+    if (masters.length === 1 && jwb.length === 1) {
+      const master = masters[0];
+      matchedJwbByMasterKey.set(sourceKey(master.row.sourceRow, "master source row"), jwb[0].row);
+      removeUnmatched("master", master.row.sourceRow);
+      removeUnmatched("jwb", jwb[0].row.sourceRow);
+      continue;
+    }
+    if (masters.length > 1) {
+      ambiguousChineseMasterKeys.add(core);
+      // These are distinct full-name master identities whose bilingual core
+      // collides. Keep the JWB leg ambiguous, but do not turn an optional
+      // enrichment collision into a formal roster duplicate blocker.
+    } else if (masters.length === 1 && jwb.length > 1) {
+      const master = masters[0];
+      const masterKey = sourceKey(master.row.sourceRow, "master source row");
+      ambiguousJwbMasterKeys.add(masterKey);
+      removeUnmatched("master", master.row.sourceRow);
+      unmatched.push({
+        source: "master",
+        sourceRow: master.row.sourceRow,
+        name: cleanDisplayName(master.name),
+        reason: "ambiguous_jwb",
+      });
+    }
+  }
+
   const existingByKey = new Map<string, ExistingStudentImportRecord[]>();
   const legacyExistingByName = new Map<string, ExistingStudentImportRecord[]>();
   const currentNamespacedIds = new Map(eligibleMasterRows.map(({ row, key }) => [
@@ -1938,7 +2125,10 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
 
     const matchedJwb = matchedJwbByMasterKey.get(rawKey);
     if (matchedJwb) matchedJwbByStudentId.set(existing?.id ?? studentIdForMasterSource(row.sourceRow, namespace), matchedJwb);
-    const jwbStatus: ImportedStudentRecord["jwbMatchStatus"] = !linkedIdentity && ambiguousNames.has(normalizedName)
+    const chineseCore = studentImportChineseNameKey(name);
+    const jwbStatus: ImportedStudentRecord["jwbMatchStatus"] = !linkedIdentity
+      && (ambiguousNames.has(normalizedName)
+        || (chineseCore !== "" && ambiguousChineseMasterKeys.has(chineseCore)))
       ? "ambiguous"
       : matchedJwb
         ? "matched"
@@ -2167,15 +2357,7 @@ export function buildStudentImportPlan(input: BuildStudentImportPlanInput): Stud
       && !usedExistingIds.has(student.id)
       && !isManualTrial(student))
     .map((student): ImportedStudentRecord => {
-      const archived: ImportedStudentRecord = {
-        ...importedStudentDefaults(cleanDisplayName(student.name), student),
-        ...student,
-        status: EXCLUDED_MASTER_STUDENT_STATUS,
-        next: "历史引用归档，只读",
-        nextTone: "neutral",
-        importArchived: true,
-        importArchivedReason: "referenced_history",
-      };
+      const archived = archiveReferencedStudent(student);
       const fields = changedFields(student, archived);
       referencedArchivedActions.push({
         kind: fields.length ? "update" : "unchanged",

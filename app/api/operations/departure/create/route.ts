@@ -61,6 +61,33 @@ function committedRowsPayload(rows: Awaited<ReturnType<typeof getOpsState>>, ope
     : row.entity === "tasks" ? taskRow as typeof row : row);
 }
 
+function generatedDepartureTaskCount(taskRow: { payload?: unknown }, operationIds: readonly string[]) {
+  if (!Array.isArray(taskRow.payload)) return 0;
+  const anchors = new Set(operationIds);
+  return taskRow.payload.filter((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const task = value as Record<string, unknown>;
+    return typeof task.ruleKey === "string"
+      && task.ruleKey.startsWith("teacher-departure:")
+      && typeof task.anchorBookingId === "string"
+      && anchors.has(task.anchorBookingId);
+  }).length;
+}
+
+/**
+ * Preview groups carry human-readable metadata that is intentionally not part
+ * of the historical atomic RPC envelope. Keep the commit payload byte-shape
+ * narrow so deployed SQL contracts remain backwards compatible.
+ */
+function atomicAffectedGroups(groups: Awaited<ReturnType<typeof prepareTeacherDepartureCreation>>["affectedGroups"]) {
+  return groups.map(({ studentId, operationId, affectedOccurrenceIds, candidateTeacherIds }) => ({
+    studentId,
+    operationId,
+    affectedOccurrenceIds,
+    candidateTeacherIds,
+  }));
+}
+
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
@@ -75,12 +102,47 @@ export async function POST(request: Request) {
     && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
-    const command = parseTeacherDepartureCreationCommand(await request.json().catch(() => null));
+    const rawBody = await request.json().catch(() => null);
+    const isPreview = Boolean(rawBody
+      && typeof rawBody === "object"
+      && !Array.isArray(rawBody)
+      && (rawBody as Record<string, unknown>).preview === true);
+    const commandBody = isPreview && rawBody
+      && typeof rawBody === "object"
+      && !Array.isArray(rawBody)
+      ? Object.fromEntries(Object.entries(rawBody as Record<string, unknown>).filter(([key]) => key !== "preview"))
+      : rawBody;
+    const command = parseTeacherDepartureCreationCommand(commandBody);
     const commandIntent = teacherDepartureCreationIntent(command);
     const rows = await getOpsState(DEPARTURE_ENTITIES);
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session.role);
     if (!access.staff && !access.fullAdmin && !access.limitedAdmin) {
       return noStore({ error: "当前账号不能创建老师离职流程。", code: "source_teacher_scope_forbidden" }, 403);
+    }
+
+    if (isPreview) {
+      const preparedPreview = prepareTeacherDepartureCreation({
+        command,
+        rows,
+        actor,
+        role: session.role,
+        fullAdmin,
+      });
+      return noStore({
+        preview: true,
+        commandKey: preparedPreview.commandKey,
+        sourceTeacherId: preparedPreview.sourceTeacherId,
+        effectiveDate: preparedPreview.effectiveDate,
+        affectedGroups: preparedPreview.affectedGroups.map(({ studentId, subjects, firstAffectedAt, candidateTeacherIds, affectedOccurrenceIds }) => ({
+          studentId,
+          subjects,
+          firstAffectedAt,
+          candidateTeacherIds,
+          affectedOccurrenceCount: affectedOccurrenceIds.length,
+        })),
+        affectedOccurrenceCount: preparedPreview.affectedOccurrenceCount,
+        generatedTaskCount: preparedPreview.generatedTaskCount,
+      });
     }
 
     const replay = await getTeacherDepartureCreationCommandResult({
@@ -109,7 +171,7 @@ export async function POST(request: Request) {
         effectiveDate: replay[0].effective_date,
         operationIds: replay[0].operation_ids,
         affectedStudentIds: replay[0].affected_student_ids,
-        generatedTaskCount: replay[0].operation_ids.length * 5,
+        generatedTaskCount: generatedDepartureTaskCount(taskRow, replay[0].operation_ids),
         operationRow,
         taskRow,
         auditEntryId: replay[0].audit_entry_id,
@@ -123,7 +185,7 @@ export async function POST(request: Request) {
       role: session.role,
       fullAdmin,
     });
-    const saved = await createTeacherDepartureAtomic({ ...prepared, actor });
+    const saved = await createTeacherDepartureAtomic({ ...prepared, affectedGroups: atomicAffectedGroups(prepared.affectedGroups), actor });
     if (!saved[0]) throw new OpsStoreError("离职流程事务没有返回保存结果。", "invalid_commit_result");
     // A concurrent identical request can win after our first ledger miss. In
     // that applied=false path none of the original five rows is authoritative;

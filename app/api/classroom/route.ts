@@ -49,15 +49,25 @@ function handleError(error: unknown) {
   return noStore({ error: error instanceof Error ? error.message : "在线教室操作失败。" }, 500);
 }
 
-async function authorizedBooking(bookingId: string, occurrenceId: string) {
+async function authorizedBooking(bookingId: string, occurrenceId: string, requestedSourceDate?: string) {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return null;
   const { session } = resolved;
   const actor = session.user;
 
+  // Online classroom records and provider links are a dedicated admin/teacher
+  // surface. A scoped staff session may read and edit its bookings, but must
+  // not reach classroom state through a handcrafted request or a stale page
+  // button.
+  if (session.role !== "admin" && session.role !== "limited-admin" && session.role !== "teacher") {
+    return { actor, sessionRole: session.role, teacherIds: new Set<string>(), forbidden: true as const };
+  }
+
   const stateRows = await getOpsState(["students", "teachers", "bookings"]);
-  const fullAdmin = actor === DEMO_ADMIN_USER && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = actor === DEMO_ADMIN_USER
+    && session.role === "admin"
+    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const access = buildOpsAccessContext(stateRows, actor, fullAdmin, session.role);
   const visible = Object.fromEntries(filterOpsStateRows(stateRows, access).map((item) => [item.entity, item.payload]));
   const booking = rows(visible.bookings).find((item) => item.id === bookingId);
@@ -68,6 +78,9 @@ async function authorizedBooking(bookingId: string, occurrenceId: string) {
     return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
   }
   const sourceDate = occurrenceId.slice(-10);
+  if (requestedSourceDate !== undefined && (requestedSourceDate !== sourceDate || !/^\d{4}-\d{2}-\d{2}$/.test(requestedSourceDate))) {
+    return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
+  }
   const overrides = Array.isArray(booking.occurrenceOverrides) ? booking.occurrenceOverrides.map(record) : [];
   const override = overrides.find((item) => item.occurrenceId === occurrenceId);
   let expanded;
@@ -79,6 +92,8 @@ async function authorizedBooking(bookingId: string, occurrenceId: string) {
       duration: Number(booking.duration),
       recurring: booking.recurring === true,
       ...(typeof booking.repeatCount === "number" ? { repeatCount: booking.repeatCount } : {}),
+      ...(typeof booking.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: booking.recurrenceIntervalDays } : {}),
+      ...(typeof booking.recurrenceEndDate === "string" ? { recurrenceEndDate: booking.recurrenceEndDate } : {}),
       studentId: String(booking.studentId || ""),
       teacherId: String(booking.teacherId || ""),
       ...(typeof booking.packageId === "string" ? { packageId: booking.packageId } : {}),
@@ -91,11 +106,14 @@ async function authorizedBooking(bookingId: string, occurrenceId: string) {
   } catch {
     return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
   }
-  if (!expanded) {
+  if (!expanded || expanded.sourceDate !== sourceDate) {
     return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
   }
   const studentId = expanded.studentId ?? "";
   const teacherId = expanded.teacherId ?? "";
+  if (session.role === "teacher" && !access.teacherIds.has(teacherId)) {
+    return { actor, sessionRole: session.role, teacherIds: access.teacherIds, forbidden: true as const };
+  }
   const occurrence = {
     ...booking,
     studentId,
@@ -171,11 +189,12 @@ function bookingIsHistorical(booking: RecordValue) {
 export async function GET(request: NextRequest) {
   const bookingId = bookingIdFrom(request.nextUrl.searchParams.get("bookingId"));
   const occurrenceId = occurrenceIdFrom(request.nextUrl.searchParams.get("occurrenceId"));
+  const sourceDate = request.nextUrl.searchParams.get("sourceDate") ?? undefined;
   if (!bookingId) return noStore({ error: "缺少排课 ID。" }, 400);
   if (!occurrenceId) return noStore({ error: "缺少课次 ID。" }, 400);
 
   try {
-    const context = await authorizedBooking(bookingId, occurrenceId);
+    const context = await authorizedBooking(bookingId, occurrenceId, sourceDate);
     if (!context) return noStore({ error: "请先输入访问密码。" }, 401);
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
     const meetingId = meetingIdForOccurrence(occurrenceId);
@@ -189,13 +208,15 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   if (!body || typeof body.action !== "string") return noStore({ error: "在线教室参数不完整。" }, 400);
+
   const bookingId = bookingIdFrom(body.bookingId);
   const occurrenceId = occurrenceIdFrom(body.occurrenceId);
+  const sourceDate = typeof body.sourceDate === "string" ? body.sourceDate.trim() : undefined;
   if (!bookingId) return noStore({ error: "缺少排课 ID。" }, 400);
   if (!occurrenceId) return noStore({ error: "缺少课次 ID。" }, 400);
 
   try {
-    const context = await authorizedBooking(bookingId, occurrenceId);
+    const context = await authorizedBooking(bookingId, occurrenceId, sourceDate);
     if (!context) return noStore({ error: "请先输入访问密码。" }, 401);
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
     if (!context.operable) return noStore({ error: "已归档学生的历史课堂只能查看，不能执行新操作。" }, 403);
@@ -254,7 +275,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (body.action === "end") return noStore(await endMeeting(meetingId));
+    if (body.action === "end") {
+      if (unavailable) return noStore({ error: "当前课次状态不能结束在线教室。" }, 409);
+      if (historical) return noStore({ error: "历史课程不能结束在线教室。" }, 409);
+      if (classroom.meetingId !== meetingId) return noStore({ error: "这节课没有可结束的在线教室。" }, 409);
+      if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
+      const runtime = await meetingStatus(meetingId);
+      if (!runtime.running) return noStore({ error: "在线教室当前未在运行。" }, 409);
+      return noStore(await endMeeting(meetingId));
+    }
     return noStore({ error: "不支持的在线教室动作。" }, 400);
   } catch (error) {
     return handleError(error);

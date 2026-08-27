@@ -12,6 +12,8 @@ import {
   isStudentImportJwbLatinParentheticalAnnotationMatch,
   masterSourceKeyForSource,
   normalizeStudentImportName,
+  studentImportAutomaticJwbNameKey,
+  studentImportChineseNameKey,
   parseMasterStudentStatus,
   studentImportJwbLatinParentheticalAnnotationKey,
   studentIdForMasterSource,
@@ -108,7 +110,7 @@ test("accepts exactly the six master statuses and rejects every other value", ()
   }), /Unsupported master student status/);
 });
 
-test("imports every named inactive master student and keeps aggregate-only JWB facts read-only", () => {
+test("excludes explicit inactive/no-hours master rows even when JWB has a same-name supplement", () => {
   const plan = buildStudentImportPlan({
     masterRows: [
       master(1, "Excluded Learner", "不活跃 + 无课时"),
@@ -120,19 +122,40 @@ test("imports every named inactive master student and keeps aggregate-only JWB f
     ],
   });
 
-  assert.deepEqual(plan.students.map((student) => student.name), ["Excluded Learner", "Included Learner"]);
-  assert.deepEqual(plan.excluded, []);
-  assert.equal(plan.summary.excluded, 0);
-  assert.equal(plan.summary.unmatched, 0);
-  assert.equal(plan.students[0].status, "不活跃 + 无课时");
+  assert.deepEqual(plan.students.map((student) => student.name), ["Included Learner"]);
+  assert.deepEqual(plan.excluded, [{
+    sourceRow: 1,
+    name: "Excluded Learner",
+    status: "不活跃 + 无课时",
+    reason: "inactive_no_hours",
+  }]);
+  assert.equal(plan.summary.excluded, 1);
+  assert.equal(plan.summary.unmatched, 1);
+  assert.equal(plan.students[0].status, "不活跃 + 有课时");
   assert.equal(plan.students[0].jwbMatchStatus, "matched");
   assert.equal(plan.students[0].remainingHours, undefined);
   assert.equal(plan.students[0].lessonPackages, undefined);
-  assert.deepEqual(plan.students[0].historicalJwbSnapshot?.currentAggregate, {
-    remainingHours: 9,
-    contractHours: 12,
-    jwbSourceRow: 101,
+});
+
+test("an excluded duplicate Tencent row and its stale identity link never block the current row", () => {
+  const plan = buildStudentImportPlan({
+    masterRows: [
+      master(1, "Current Learner", "在读"),
+      master(2, "Current Learner", "不活跃 + 无课时"),
+    ],
+    jwbRows: [jwb(101, "Current Learner", 4, 10)],
+    identityLinks: [{
+      masterSourceRow: 2,
+      studentId: "STALE-INACTIVE-LINK",
+      jwbSourceRow: 101,
+    }],
   });
+
+  assert.equal(plan.students.length, 1);
+  assert.equal(plan.students[0].sourceRow, 1);
+  assert.equal(plan.students[0].jwbMatchStatus, "matched");
+  assert.equal(plan.ambiguous.length, 0);
+  assert.deepEqual(plan.excluded.map((entry) => entry.sourceRow), [2]);
 });
 
 test("assigns stable student numbers from the first JWB hour-entry date and preserves prior numbers", () => {
@@ -283,7 +306,10 @@ test("the sole identity key preserves Chinese punctuation and mixed-script order
   assert.equal(normalizeStudentImportName("  Ａvery   Example  "), "avery example");
 });
 
-test("matches only exact full names after safe normalization", () => {
+test("matches exact names first, then a unique bilingual Chinese core", () => {
+  assert.equal(studentImportChineseNameKey("张三 Zhang San"), "张三");
+  assert.equal(studentImportAutomaticJwbNameKey("张三"), "张三");
+  assert.equal(studentImportChineseNameKey("Alice 张三 王"), "");
   const punctuationMismatch = buildStudentImportPlan({
     masterRows: [master(201, "张·三", "活跃 + 有课时")],
     jwbRows: [jwb(301, "张（三）", 5, 10)],
@@ -309,9 +335,19 @@ test("matches only exact full names after safe normalization", () => {
     masterRows: [master(203, "Alice 张三", "在读")],
     jwbRows: [jwb(304, "张三 Alice", 5, 10)],
   });
-  assert.equal(mixedAliases.students[0].jwbMatchStatus, "unmatched");
+  assert.equal(mixedAliases.students[0].jwbMatchStatus, "matched");
   assert.equal(mixedAliases.summary.ambiguous, 0);
-  assert.equal(mixedAliases.students[0].jwbSourceRow, undefined);
+  assert.equal(mixedAliases.students[0].historicalJwbSnapshot?.currentAggregate?.jwbSourceRow, 304);
+});
+
+test("does not guess when a bilingual Chinese core collides", () => {
+  const collision = buildStudentImportPlan({
+    masterRows: [master(205, "张三 Alice", "在读"), master(206, "张三 Bob", "在读")],
+    jwbRows: [jwb(305, "张三", 5, 10)],
+  });
+  assert.equal(collision.students.every((student) => student.jwbMatchStatus === "ambiguous"), true);
+  assert.equal(collision.students.every((student) => student.jwbSourceRow === undefined), true);
+  assert.equal(collision.summary.ambiguous, 0);
 });
 
 test("replays only the reviewed one-way JWB trailing-Latin annotation exception", () => {
@@ -515,8 +551,8 @@ test("invalid JWB member IDs suppress enrichment but never suppress the master s
     }],
     jwbRows: base.jwbRows,
   });
-  assert.equal(inactiveUnknownId.students[0].status, "不活跃 + 无课时");
-  assert.equal(inactiveUnknownId.students[0].jwbMatchStatus, "unmatched");
+  assert.deepEqual(inactiveUnknownId.students, []);
+  assert.deepEqual(inactiveUnknownId.excluded.map((entry) => entry.reason), ["inactive_no_hours"]);
 
   const crossName = buildStudentImportPlan({
     ...base,
@@ -640,7 +676,7 @@ test("new imported students receive the complete runtime contract and map master
   });
 });
 
-test("keeps a referenced inactive master student as its normal formal record", () => {
+test("keeps a referenced inactive master student as read-only referenced history", () => {
   const historical: ExistingStudentImportRecord = {
     id: "STU-HISTORICAL-1",
     name: "Historical Learner",
@@ -663,17 +699,118 @@ test("keeps a referenced inactive master student as its normal formal record", (
   const first = buildStudentImportPlan({ ...input, existingStudents: [historical] });
   const imported = first.students[0];
 
-  assert.equal(first.summary.excluded, 0);
-  assert.equal(first.summary.preservedReferencedArchived, 0);
+  assert.equal(first.summary.excluded, 1);
+  assert.equal(first.summary.preservedReferencedArchived, 1);
   assert.equal(first.summary.update, 1);
   assert.equal(imported.id, historical.id);
   assert.equal(imported.status, "不活跃 + 无课时");
-  assert.equal(imported.importArchived, undefined);
-  assert.equal(imported.importArchivedReason, undefined);
+  assert.equal(imported.importArchived, true);
+  assert.equal(imported.importArchivedReason, "referenced_history");
 
   const second = buildStudentImportPlan({ ...input, existingStudents: first.students });
   assert.deepEqual(second.students, first.students);
-  assert.equal(second.summary.preservedReferencedArchived, 0);
+  assert.equal(second.summary.preservedReferencedArchived, 1);
+  assert.equal(second.summary.update, 0);
+  assert.equal(second.summary.unchanged, 1);
+});
+
+test("archives signed JWB balances as history while preserving referenced package IDs", () => {
+  const manualPackage = {
+    id: "PKG-MANUAL-HISTORY",
+    name: "Manual history package",
+    subjectIds: ["English"],
+    purchaseRecords: [{
+      id: "BUY-MANUAL-HISTORY",
+      purchasedAt: "2025-01-01T00:00:00.000Z",
+      hours: 3,
+    }],
+    consumedHours: 1,
+  };
+  const jwbPackage = {
+    id: "PKG-JWB-HISTORY",
+    name: "JWB history package",
+    subjectIds: ["Maths"],
+    purchaseRecords: [{
+      id: "BUY-JWB-HISTORY",
+      purchasedAt: "2025-02-01T00:00:00.000Z",
+      hours: 8,
+    }],
+    consumedHours: 2,
+  };
+  const historical: ExistingStudentImportRecord = {
+    id: "STU-HISTORICAL-JWB",
+    studentNumber: "20250201001",
+    studentNumberDateSource: "jwb_first_positive_contract",
+    name: "Historical JWB Learner",
+    initials: "HJ",
+    status: "在读",
+    owner: "Abby",
+    course: "Maths",
+    timezone: "Australia/Melbourne",
+    teacher: "Legacy Teacher",
+    next: "Old active reminder",
+    nextTone: "red",
+    files: 2,
+    sourceRow: 45,
+    masterSourceKey: "MSK-HISTORY-45",
+    importSource: "master",
+    jwbMatchStatus: "matched",
+    jwbSourceRow: "JWB-45",
+    remainingHours: -2,
+    contractHours: 8,
+    contractEffectiveDate: "2025-02-01",
+    firstJwbHourEntryDate: "2025-02-01",
+    packageCoverage: "none",
+    lessonPackages: [manualPackage, jwbPackage],
+    historicalJwbSnapshot: {
+      retained: { remainingHours: 1, jwbSourceRow: "JWB-OLD" },
+      currentAggregate: { remainingHours: 4, packageCoverage: "none", jwbSourceRow: "JWB-CURRENT" },
+    },
+    customSourceEvidence: "preserve-me",
+  };
+  const input = {
+    masterRows: [master(45, "Historical JWB Learner", "不活跃 + 无课时")],
+    jwbRows: [] as JwbStudentImportRow[],
+    preserveReferencedStudentIds: [historical.id],
+  };
+
+  const first = buildStudentImportPlan({ ...input, existingStudents: [historical] });
+  const archived = first.students[0];
+
+  assert.equal(first.summary.preservedReferencedArchived, 1);
+  assert.equal(archived.importSource, undefined);
+  assert.equal(archived.jwbMatchStatus, undefined);
+  assert.equal(archived.remainingHours, undefined);
+  assert.equal(archived.contractHours, undefined);
+  assert.equal(archived.contractEffectiveDate, undefined);
+  assert.equal(archived.firstJwbHourEntryDate, undefined);
+  assert.equal(archived.jwbSourceRow, undefined);
+  assert.equal(archived.packageCoverage, "partial");
+  assert.deepEqual(archived.lessonPackages, [manualPackage, jwbPackage]);
+  assert.deepEqual(archived.historicalJwbSnapshot, {
+    retained: {
+      remainingHours: -2,
+      contractHours: 8,
+      contractEffectiveDate: "2025-02-01",
+      firstJwbHourEntryDate: "2025-02-01",
+      packageCoverage: "none",
+      jwbSourceRow: "JWB-45",
+      lessonPackages: [jwbPackage],
+    },
+    currentAggregate: {
+      remainingHours: 4,
+      packageCoverage: "none",
+      jwbSourceRow: "JWB-CURRENT",
+    },
+  });
+  assert.equal(archived.studentNumber, historical.studentNumber);
+  assert.equal(archived.studentNumberDateSource, historical.studentNumberDateSource);
+  assert.equal(archived.sourceRow, historical.sourceRow);
+  assert.equal(archived.masterSourceKey, historical.masterSourceKey);
+  assert.equal(archived.customSourceEvidence, "preserve-me");
+
+  const second = buildStudentImportPlan({ ...input, existingStudents: first.students });
+  assert.deepEqual(second.students, first.students);
   assert.equal(second.summary.update, 0);
   assert.equal(second.summary.unchanged, 1);
 });

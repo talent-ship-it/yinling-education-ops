@@ -57,8 +57,11 @@ test("follow-up route uses one closed server-derived command and fresh replay au
   assert.match(handler, /completionCommandKey/);
   assert.match(handler, /action: "complete" \| "undo"/);
   const completeTask = client.slice(client.indexOf("const completeTask"), client.indexOf("const recordTrialParentReply"));
-  assert.ok(completeTask.indexOf("void completeManagedExamFollowUp(task)") < completeTask.indexOf("setTasks((current)"));
+  const managedExamCompletion = completeTask.indexOf("void completeManagedExamFollowUp(task)");
+  const genericTaskCommit = completeTask.indexOf("void tasksShared.mutateAndCommit");
+  assert.ok(managedExamCompletion >= 0 && genericTaskCommit > managedExamCompletion, "managed exam completion must return before the generic task commit");
   assert.match(completeTask, /void completeManagedExamFollowUp\(task\);[\s\S]*return;/);
+  assert.doesNotMatch(completeTask, /setTasks\(/);
   assert.match(client, /readPendingExamFollowUp/);
   assert.match(client, /writePendingExamFollowUp/);
   assert.match(client, /clearPendingExamFollowUp/);
@@ -113,8 +116,9 @@ test("follow-up SQL fixture pins identity, recipient and complete projection", a
 test("exam modal and idempotency key survive unknown transport outcomes", async () => {
   const client = await readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
   const submit = client.slice(client.indexOf("const submitExam"), client.indexOf("const submitTask"));
+  assert.match(submit, /const target = requireStudentModalTarget\(true\);/);
   assert.match(submit, /readPendingExamSubmission\(sessionOperator\)/);
-  assert.match(submit, /pendingExamMatchesDraft\([\s\S]*recovered,[\s\S]*selectedStudent\.id,[\s\S]*examDraftWithoutId/);
+  assert.match(submit, /pendingExamMatchesDraft\([\s\S]*recovered,[\s\S]*target\.id,[\s\S]*examDraftWithoutId/);
   assert.match(submit, /writePendingExamSubmission\(sessionOperator/);
   assert.ok(submit.indexOf("clearPendingExamSubmission(sessionOperator)") > submit.indexOf("if (!response.ok"));
   assert.equal((submit.match(/clearPendingExamSubmission/g) ?? []).length, 1, "only a confirmed success may clear the key");
@@ -122,7 +126,7 @@ test("exam modal and idempotency key survive unknown transport outcomes", async 
   assert.match(modal, /onClose=\{\(\) => \{ if \(examSubmissionBusy\) return;/);
   assert.match(modal, /disabled=\{examSubmissionBusy\}/);
   const escape = client.slice(client.indexOf("const onKeyDown"), client.indexOf('window.addEventListener("keydown"'));
-  assert.match(escape, /if \(!\(modal === "exam" && examSubmissionBusy\)\) setModal\(null\)/);
+  assert.match(escape, /if \(modal\) \{\s*if \(\(modal === "exam" && examSubmissionBusy\) \|\| \(modal === "legacyTaskDeadline" && legacyTaskDeadlineBusy\)\) return;\s*setModal\(null\);/);
 });
 
 test("canonical bootstrap carries the byte-equivalent follow-up suffix", async () => {

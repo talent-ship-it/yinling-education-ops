@@ -12,6 +12,8 @@ test("source ingest route is admin-only, bounded and never fetches or infers a s
   assert.match(route, /hasStudentImportAdminAccess/);
   assert.match(route, /parseStudentImportSourceIngestRequest/);
   assert.match(route, /MAX_REQUEST_BYTES/);
+  assert.match(route, /input\.sourceKind === "jwb"/);
+  assert.match(route, /jiaowubao_student_source_chunked_ingest_required/);
   assert.match(route, /putStudentImportSourceRows\(\{ \.\.\.input, actor: access\.actor \}\)/);
   assert.match(route, /error\.sourceErrorCode/);
   assert.match(route, /sourceCode: error\.sourceErrorCode/);

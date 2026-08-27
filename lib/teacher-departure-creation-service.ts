@@ -20,6 +20,7 @@ import {
   TeacherDepartureProjectionError,
   type TeacherDepartureBooking,
 } from "@/lib/teacher-departure-occurrences";
+import { recurrenceSourceEndDate } from "@/lib/booking-recurrence";
 
 type RecordValue = Record<string, unknown>;
 
@@ -62,6 +63,9 @@ export type TeacherDepartureCreationGroup = Readonly<{
   studentId: string;
   operationId: string;
   affectedOccurrenceIds: readonly string[];
+  /** Read-only preview metadata; the atomic commit payload strips these fields. */
+  subjects: readonly string[];
+  firstAffectedAt: string;
   candidateTeacherIds: readonly string[];
 }>;
 
@@ -231,6 +235,18 @@ function expandedWithinDates(booking: RecordValue, rangeStart: string, rangeEnd:
   }
 }
 
+function departureOverrideMatches(booking: RecordValue, teacherId: string, studentId: string) {
+  return bookingOverrides(booking).some((override) => {
+    const resolvedTeacherId = Object.prototype.hasOwnProperty.call(override, "teacherId")
+      ? override.teacherId
+      : booking.teacherId;
+    const resolvedStudentId = Object.prototype.hasOwnProperty.call(override, "studentId")
+      ? override.studentId
+      : booking.studentId;
+    return resolvedTeacherId === teacherId && resolvedStudentId === studentId;
+  });
+}
+
 function occurrenceInstant(occurrence: LessonOccurrence, booking: RecordValue) {
   const timezone = text(booking, "timezone");
   if (!timezone) fail("invalid_shared_state", "An affected booking is missing its timezone.");
@@ -379,11 +395,96 @@ function dueTaskState(dueDate: string, submittedAt: Date, futureTone: TaskTone) 
   };
 }
 
+/**
+ * Finds the finite native occurrences taught by the departing teacher before
+ * the effective date.  This is intentionally separate from the future
+ * replacement projection: the handover LP deadline is based on the actual
+ * penultimate historical lesson, not on an effective-date offset.
+ */
+function historicalDepartureOccurrences(input: {
+  bookings: readonly RecordValue[];
+  sourceTeacherId: string;
+  studentId: string;
+  effectiveDate: string;
+}): LessonOccurrence[] {
+  const result: LessonOccurrence[] = [];
+  for (const booking of input.bookings) {
+    if (booking.kind === "代课") continue;
+    const canContainTeacher = (booking.teacherId === input.sourceTeacherId
+      && booking.studentId === input.studentId)
+      || departureOverrideMatches(booking, input.sourceTeacherId, input.studentId);
+    if (!canContainTeacher) continue;
+    const bookingDate = text(booking, "date");
+    if (!bookingDate) fail("invalid_shared_state", "A historical departure lesson is missing its date.");
+    const overrides = bookingOverrides(booking);
+    const overrideDates = overrides.flatMap((override) => typeof override.date === "string" ? [override.date] : []);
+    let sourceEnd: string | undefined;
+    try {
+      sourceEnd = recurrenceSourceEndDate({
+        startDate: bookingDate,
+        recurring: booking.recurring === true,
+        ...(Number.isSafeInteger(booking.repeatCount) ? { repeatCount: booking.repeatCount as number } : {}),
+        ...(typeof booking.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: booking.recurrenceIntervalDays } : {}),
+        ...(typeof booking.recurrenceEndDate === "string" ? { recurrenceEndDate: booking.recurrenceEndDate } : {}),
+      });
+    } catch (error) {
+      fail("invalid_shared_state", error instanceof Error ? error.message : "A historical departure lesson has an invalid recurrence range.");
+    }
+    if (!sourceEnd) {
+      fail("unbounded_future_series", "永久换师不能自动处理没有结束次数或结束日期的旧循环课，请先编辑整个课程系列并限定范围。");
+    }
+    const rangeStart = [bookingDate, ...overrideDates].sort()[0];
+    const rangeEnd = [sourceEnd, ...overrideDates].sort().at(-1) ?? sourceEnd;
+    const sourceRange = lessonOccurrenceSourceRangeForTargetRange(rangeStart, rangeEnd, overrides);
+    let occurrences: LessonOccurrence[];
+    try {
+      occurrences = expandLessonOccurrences(booking as TeacherDepartureBooking, {
+        ...sourceRange,
+        overrides,
+      });
+    } catch {
+      fail("invalid_shared_state", "A historical departure lesson cannot be expanded safely.");
+    }
+    result.push(...occurrences.filter((occurrence) => occurrence.date < input.effectiveDate
+      && occurrence.studentId === input.studentId
+      && occurrence.teacherId === input.sourceTeacherId
+      && occurrence.status !== "cancelled"
+      && occurrence.status !== "leave"));
+  }
+  return result.sort((left, right) =>
+    left.date.localeCompare(right.date)
+    || left.start.localeCompare(right.start)
+    || left.occurrenceId.localeCompare(right.occurrenceId),
+  );
+}
+
+function penultimateLessonFollowUpDate(input: {
+  historicalOccurrences: readonly LessonOccurrence[];
+  bookingBySeriesId: ReadonlyMap<string, RecordValue>;
+}): string | undefined {
+  if (input.historicalOccurrences.length < 2) return undefined;
+  const penultimate = input.historicalOccurrences.at(-2);
+  if (!penultimate) return undefined;
+  const booking = input.bookingBySeriesId.get(penultimate.seriesId);
+  if (!booking) return undefined;
+  const timezone = text(booking, "timezone");
+  if (!timezone) fail("invalid_shared_state", "A historical departure lesson is missing its timezone.");
+  try {
+    const end = new Date(occurrenceInstant(penultimate, booking).getTime()
+      + penultimate.scheduledDurationMinutes * 60_000);
+    // Task deadlines are displayed in the operating timezone.  Convert the
+    // actual lesson end first, then add one calendar day, at 18:00.
+    return shiftScheduleDate(scheduleDateInTimezone(end, MELBOURNE_TIME_ZONE), 1);
+  } catch {
+    fail("invalid_shared_state", "A historical departure lesson cannot be timed safely.");
+  }
+}
+
 function departureTask(input: {
   commandKey: string;
   operationId: string;
   studentId: string;
-  rule: "recommendation" | "new-teacher-contact" | "handover" | "parent-contact" | "management-watcher";
+  rule: "recommendation" | "new-teacher-contact" | "handover" | "parent-contact" | "management-watcher" | "lp-to-new-teacher";
   title: string;
   owner: string;
   dueDate: string;
@@ -413,16 +514,36 @@ function tasksForStudent(input: {
   studentId: string;
   owner: string;
   effectiveDate: string;
+  sourceTeacherId: string;
+  sourceTeacherName: string;
+  bookings: readonly RecordValue[];
   submittedAt: Date;
 }) {
   const fourteenDaysBefore = shiftScheduleDate(input.effectiveDate, -14);
   const sevenDaysBefore = shiftScheduleDate(input.effectiveDate, -7);
+  const historicalOccurrences = historicalDepartureOccurrences({
+    bookings: input.bookings,
+    sourceTeacherId: input.sourceTeacherId,
+    studentId: input.studentId,
+    effectiveDate: input.effectiveDate,
+  });
+  const bookingBySeriesId = new Map(input.bookings.map((booking) => [String(booking.id), booking]));
+  const lpFollowUpDate = penultimateLessonFollowUpDate({ historicalOccurrences, bookingBySeriesId });
   return [
     departureTask({ ...input, rule: "recommendation", title: "筛选并确认推荐老师名单", owner: "Tiffany", dueDate: fourteenDaysBefore, futureTone: "red", trigger: "老师离职：推荐老师名单" }),
     departureTask({ ...input, rule: "new-teacher-contact", title: "开启新老师沟通", dueDate: fourteenDaysBefore, futureTone: "amber", trigger: "老师离职：新老师沟通" }),
     departureTask({ ...input, rule: "handover", title: "确认 Handover Notes 与原老师约定 DDL", dueDate: sevenDaysBefore, futureTone: "blue", trigger: "老师离职：交接资料" }),
     departureTask({ ...input, rule: "parent-contact", title: "告知家长并记录最终安排", dueDate: sevenDaysBefore, futureTone: "red", trigger: "老师离职：家长沟通" }),
     departureTask({ ...input, rule: "management-watcher", title: "向龙老师汇报离职交接进度", owner: "思佳", dueDate: sevenDaysBefore, futureTone: "amber", trigger: "老师离职：管理确认" }),
+    ...(lpFollowUpDate ? [departureTask({
+      ...input,
+      rule: "lp-to-new-teacher",
+      title: "写 LP 给新老师",
+      owner: input.sourceTeacherName,
+      dueDate: lpFollowUpDate,
+      futureTone: "blue",
+      trigger: "老师离职：写 LP 给新老师",
+    })] : []),
   ];
 }
 
@@ -515,6 +636,14 @@ export function prepareTeacherDepartureCreation(input: Readonly<{
     }
     const operationId = stableId("OPS-DEPARTURE", `${input.command.commandKey}\u001f${studentId}`);
     const affectedOccurrenceIds = affected.map(({ occurrence }) => occurrence.occurrenceId).sort(compareAscii);
+    const firstAffected = [...affected].sort((left, right) => {
+      const leftInstant = occurrenceInstant(left.occurrence, left.booking).getTime();
+      const rightInstant = occurrenceInstant(right.occurrence, right.booking).getTime();
+      return leftInstant - rightInstant || compareAscii(left.occurrence.occurrenceId, right.occurrence.occurrenceId);
+    })[0];
+    if (!firstAffected) fail("invalid_shared_state", "An affected student has no valid departure occurrence.");
+    const subjects = [...new Set(affected.map(({ teacherSubjectId }) => teacherSubjectId))].sort(compareAscii);
+    const firstAffectedAt = occurrenceInstant(firstAffected.occurrence, firstAffected.booking).toISOString();
     const candidates = candidateTeacherIds({
       sourceTeacherId: input.command.sourceTeacherId,
       studentId,
@@ -551,9 +680,12 @@ export function prepareTeacherDepartureCreation(input: Readonly<{
       studentId,
       owner,
       effectiveDate: input.command.effectiveDate,
+      sourceTeacherId: input.command.sourceTeacherId,
+      sourceTeacherName: text(sourceTeachers[0], "name") ?? fail("invalid_shared_state", "离职老师缺少权威姓名。"),
+      bookings: bookingRow.payload,
       submittedAt: now,
     }));
-    affectedGroups.push({ studentId, operationId, affectedOccurrenceIds, candidateTeacherIds: candidates });
+    affectedGroups.push({ studentId, operationId, affectedOccurrenceIds, subjects, firstAffectedAt, candidateTeacherIds: candidates });
   }
 
   return {

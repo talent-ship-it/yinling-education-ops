@@ -2,14 +2,12 @@
 
 import { ChevronDown, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { DemoSessionRole } from "@/lib/demo-session-token";
 import styles from "./account-menu.module.css";
 
 type ViewOption = { label: string; value: string };
 
 export default function AccountMenu() {
   const [sessionUser, setSessionUser] = useState("");
-  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
   const [currentView, setCurrentView] = useState("");
   const [viewOptions, setViewOptions] = useState<ViewOption[]>([]);
   const [busy, setBusy] = useState(false);
@@ -24,7 +22,6 @@ export default function AccountMenu() {
         if (body.ok && typeof body.user === "string") {
           resolved = true;
           setSessionUser(body.user);
-          setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
         }
       } catch {
         // The login screen remains usable while the session endpoint is unavailable.
@@ -84,7 +81,7 @@ export default function AccountMenu() {
         setBusy(false);
         return;
       }
-      window.location.assign("/");
+      window.location.reload();
     } catch {
       setBusy(false);
     }
@@ -92,18 +89,16 @@ export default function AccountMenu() {
 
   if (!sessionUser) return null;
   const isAdmin = sessionUser === "Nixon";
-  const isTeacher = sessionRole === "teacher";
   const displayName = isAdmin ? "Admin" : sessionUser;
   const initials = isAdmin ? "AD" : sessionUser.slice(0, 2).toUpperCase();
 
   return <div className={styles.root}>
     <button className={styles.trigger} type="button" aria-label="打开账户菜单">
       <span className={styles.avatar}>{initials}</span>
-      <span className={styles.identity}><small>{isAdmin ? "超级管理员" : isTeacher ? "老师个人权限" : "教务个人权限"}</small><strong>{displayName}</strong></span>
+      <span className={styles.identity}><strong>{displayName}</strong></span>
       <ChevronDown size={14} aria-hidden="true" />
     </button>
     <section className={styles.menu} aria-label="账户菜单">
-      <div className={styles.loggedIn}><small>当前登录</small><strong>{displayName}</strong></div>
       {isAdmin && viewOptions.length > 1 && <label className={styles.viewPicker}><span>查看工作视图</span><select value={currentView} onChange={(event) => changeView(event.target.value)}>{viewOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>}
       <button className={styles.logout} type="button" disabled={busy} onClick={logout}><LogOut size={15} />{busy ? "正在退出" : "退出登录"}</button>
     </section>

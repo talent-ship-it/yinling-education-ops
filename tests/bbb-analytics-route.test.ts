@@ -17,8 +17,11 @@ test("BBB create binds one meeting per occurrence to the signed analytics callba
   assert.match(bbb, /bbbCallbackSignature/);
   assert.doesNotMatch(route, /meetingIdForBooking\(bookingId\)/);
   assert.match(route, /meetingIdForOccurrence\(occurrenceId\)/);
+  assert.match(route, /recurrenceIntervalDays/);
+  assert.match(route, /recurrenceEndDate/);
+  assert.match(route, /sourceDate/);
   assert.match(route, /role: "MODERATOR", userId: teacherId/);
-  assert.match(route, /authorizedBooking\(bookingId, occurrenceId\)/);
+  assert.match(route, /authorizedBooking\(bookingId, occurrenceId, sourceDate\)/);
   assert.match(callback, /verifyBbbCallbackSignature/);
   assert.match(callback, /processBbbAnalyticsCallback/);
   assert.doesNotMatch(callback, /cookies\(/);
@@ -33,8 +36,17 @@ test("only the assigned signed teacher can request a teacher attendance identity
   assert.match(route, /context\.sessionRole !== "teacher"/);
   assert.match(route, /!context\.teacherIds\.has\(teacherId\)/);
   assert.match(route, /只有本节课的授课老师可以使用老师身份进入教室/);
-  assert.match(client, /disabled=\{classroomBusy \|\| !isTeacherView\}/);
+  assert.match(client, /const canJoinTeacherClassroom = initialRole === "teacher" && isTeacherView/);
+  assert.match(client, /disabled=\{classroomBusy \|\| !canJoinTeacherClassroom\}/);
   assert.match(client, /等待授课老师进入/);
+  assert.match(client, /const selectedClassroomOccurrence/);
+  assert.match(client, /const selectedClassroomOccurrenceKey/);
+  assert.match(client, /selectedBookingSourceDate/);
+  assert.match(client, /bookingOccurrenceByStableKey/);
+  assert.match(client, /sourceDate=\$\{encodeURIComponent\(selectedClassroomSourceDate\)\}/);
+  assert.doesNotMatch(client, /visibleClassrooms\.find\(\(booking\) => booking\.id === selectedBookingId && booking\.date === selectedBookingDate\)/);
+  assert.match(client, /const occurrenceKey = selectedClassroomOccurrenceKey/);
+  assert.doesNotMatch(client.slice(client.indexOf("const selectedClassroomOccurrence"), client.indexOf("const renderTeacherDashboard")), /selectedBookingDate \?\? selectedBooking\.date/);
 });
 
 test("provider callback persists evidence then uses the same atomic settlement contract", async () => {

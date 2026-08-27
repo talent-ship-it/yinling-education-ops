@@ -87,16 +87,40 @@ test("generates one active renewal task at depletion with explicit recipients", 
   assert.equal(generateRenewalTask(projection({ status: "renewed" }), { now: NOW }), null);
 });
 
-test("supports an explicit lead time and clamps a stale deadline just after now", () => {
+test("supports an explicit lead time and preserves an exact stale deadline", () => {
   assert.equal(
     calculateRenewalTaskDueAt("2026-08-20T09:00:00.000Z", NOW, 8).toISOString(),
     "2026-08-12T09:00:00.000Z",
   );
   assert.equal(
     calculateRenewalTaskDueAt("2026-08-09T09:00:00.000Z", NOW).toISOString(),
-    "2026-08-10T00:00:00.001Z",
+    "2026-08-09T09:00:00.000Z",
   );
   assert.throws(() => calculateRenewalTaskDueAt("2026-08-20T09:00:00.000Z", NOW, -1), /non-negative integer/);
+});
+
+test("does not generate a task when depletion evidence is missing", () => {
+  assert.equal(generateRenewalTask(projection({ depletionAt: undefined }), { now: NOW }), null);
+  assert.equal(generateRenewalTask(projection({ depletionAt: null }), { now: NOW }), null);
+  assert.deepEqual(reconcileRenewalTasks([], [projection({ depletionAt: undefined })], { now: NOW }), []);
+});
+
+test("keeps an exact past depletion timestamp and marks it overdue", () => {
+  const task = generateRenewalTask(projection({ depletionAt: "2026-08-09T09:00:00.000Z" }), { now: NOW });
+  assert.ok(task);
+  assert.equal(task.dueAt, "2026-08-09T09:00:00.000Z");
+  assert.equal(task.status, "overdue");
+});
+
+test("closes an old automatic task when depletion evidence disappears", () => {
+  const active = reconcileRenewalTasks([], [projection()], { now: NOW });
+  const withoutEvidence = reconcileRenewalTasks(active, [projection({ depletionAt: undefined })], {
+    now: "2026-08-11T00:00:00.000Z",
+  });
+  assert.equal(withoutEvidence.length, 1);
+  assert.equal(withoutEvidence[0].status, "done");
+  assert.equal(withoutEvidence[0].result, RENEWAL_NOT_DUE_RESULT);
+  assert.equal(withoutEvidence[0].dueAt, "2026-08-20T09:00:00.000Z");
 });
 
 test("reconciles multiple packages to one independent task each", () => {

@@ -61,6 +61,32 @@ test("server derives exact occurrence IDs and preserves prior occurrence edits",
   assert.equal(prepared.operations[0].status, "已确认");
 });
 
+test("operation closure expands a moved-in occurrence from its stable source date", () => {
+  const movedOperation = {
+    ...operation,
+    eventStart: "2026-09-10",
+    eventEnd: "2026-09-10",
+  };
+  const movedBooking = {
+    ...booking,
+    date: "2026-08-01",
+    repeatCount: 12,
+    occurrenceOverrides: [{ occurrenceId: "B-1:2026-08-08", date: "2026-09-10" }],
+  };
+  const movedRows = rows.map((row) => row.entity === "bookings"
+    ? { ...row, payload: [movedBooking] }
+    : row.entity === "operations"
+      ? { ...row, payload: [movedOperation] }
+      : row);
+  const prepared = prepareOperationConfirmation({
+    command: { operationId: "OPS-1", expectedVersions: { bookings: 3, operations: 4, teachers: 5 } },
+    rows: movedRows,
+    actor: "Abby",
+    fullAdmin: false,
+  });
+  assert.deepEqual(prepared.affectedOccurrenceIds, ["B-1:2026-08-08"]);
+});
+
 test("stale state and out-of-scope staff confirmation are rejected", () => {
   assert.throws(() => prepareOperationConfirmation({
     command: { operationId: "OPS-1", expectedVersions: { bookings: 2, operations: 4, teachers: 5 } },

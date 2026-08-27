@@ -28,6 +28,7 @@ import {
 } from "@/lib/student-import-service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, {

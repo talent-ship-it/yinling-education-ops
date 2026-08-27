@@ -341,15 +341,27 @@ export const LP_RESULT_STATUSES = [
   "试听未进行",
   "在读试听成功",
   "在读试听失败",
+  "已完成",
+  "已取消",
 ] as const;
 export type LpResultStatus = (typeof LP_RESULT_STATUSES)[number];
 
 const TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["试听成功", "试听失败", "有希望报名", "试听未进行"]);
 const ENROLLED_TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["在读试听成功", "在读试听失败"]);
+/** Non-trial LPs report whether the workflow itself was completed or cancelled. */
+const NON_TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["已完成", "已取消"]);
+const NON_TRIAL_WORKFLOW_TYPES = new Set<LpWorkflowType>([
+  "老师新 LP",
+  "老师 LP 修改",
+  "代课 LP",
+  "学生直报（无试听）",
+  "学生报名交接",
+]);
 
 export function allowedLpResultStatuses(type: LpWorkflowType): readonly LpResultStatus[] {
   if (type === "试听 LP") return LP_RESULT_STATUSES.filter((status) => TRIAL_RESULT_STATUSES.has(status));
   if (type === "换老师试听") return LP_RESULT_STATUSES.filter((status) => ENROLLED_TRIAL_RESULT_STATUSES.has(status));
+  if (NON_TRIAL_WORKFLOW_TYPES.has(type)) return LP_RESULT_STATUSES.filter((status) => NON_TRIAL_RESULT_STATUSES.has(status));
   return [];
 }
 
@@ -558,8 +570,8 @@ export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldVa
   }
   if (type === "学生报名交接") {
     for (const key of ["planner", "coursePackage", "subject"]) requireText(fields, key);
-    const templateKeys = ["purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers"] as const;
-    if (hasAnyField(fields, templateKeys)) {
+    const enrollmentKeys = ["purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers"] as const;
+    if (hasAnyField(fields, enrollmentKeys)) {
       requireNonNegativeHours(fields);
       for (const key of ["lessonFrequency", "preferredTime", "coursesAndTeachers"]) requireText(fields, key);
       optionalText(fields, "enrollmentHandoverNotes");
@@ -568,6 +580,35 @@ export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldVa
     }
   }
   return immutableFields(fields);
+}
+
+/**
+ * Validates a newly submitted workflow against the complete current form
+ * contract. Historical rows use validateLpWorkflowFields so older handover
+ * shapes remain readable, but no new API or UI submission may create them.
+ */
+export function validateCompleteLpWorkflowFields(type: LpWorkflowType, fields: LpFieldValues) {
+  const validated = validateLpWorkflowFields(type, fields);
+  if (type === "老师新 LP") {
+    for (const key of ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule"]) requireText(validated, key);
+    optionalText(validated, "comments");
+  }
+  if (type === "老师 LP 修改") requireText(validated, "modificationRequirements");
+  if (type === "换老师试听") {
+    for (const key of ["handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"]) requireText(validated, key);
+    validateOptionalHttpUrl(validated, "lastLessonRecordingUrl");
+  }
+  if (type === "代课 LP") {
+    for (const key of ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "lastHomework", "lastLessonRecordingUrl"]) requireText(validated, key);
+    optionalText(validated, "comments");
+    validateOptionalHttpUrl(validated, "lastLessonRecordingUrl");
+  }
+  if (type === "学生报名交接") {
+    requireNonNegativeHours(validated);
+    for (const key of ["lessonFrequency", "preferredTime", "coursesAndTeachers"]) requireText(validated, key);
+    optionalText(validated, "enrollmentHandoverNotes");
+  }
+  return immutableFields(validated);
 }
 
 export function createLpRevision(

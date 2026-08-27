@@ -5,6 +5,11 @@ import {
   type LessonHourLedgerEntry,
   type StudentLessonPackage,
 } from "./student-records";
+import {
+  LEGACY_BOOKING_RECURRENCE_INTERVAL_DAYS,
+  normalizeBookingRecurrence,
+  shiftBookingDate,
+} from "./booking-recurrence";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -39,6 +44,8 @@ export type LegacyLessonSeries = Readonly<{
   duration: number;
   recurring?: boolean;
   repeatCount?: number;
+  recurrenceIntervalDays?: number;
+  recurrenceEndDate?: string;
   studentId?: string;
   teacherId?: string;
   packageId?: string;
@@ -206,13 +213,6 @@ function roundedHours(minutes: number) {
   return Math.round((minutes / 60) * HOUR_PRECISION) / HOUR_PRECISION;
 }
 
-function addDays(date: string, days: number) {
-  requireDate(date, "date");
-  const parsed = new Date(`${date}T00:00:00.000Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
-}
-
 function copyPackages(packages: readonly StudentLessonPackage[]) {
   return packages.map((lessonPackage) => ({
     ...lessonPackage,
@@ -292,7 +292,7 @@ export function earliestLessonOccurrenceTargetDate(
   return [seriesDate, ...targetDates].sort()[0];
 }
 
-/** Expands weekly legacy series into independently mutable occurrence records. */
+/** Expands legacy and interval-based series into independently mutable occurrences. */
 export function expandLessonOccurrences(
   series: LegacyLessonSeries,
   options: ExpandLessonOccurrencesOptions,
@@ -304,8 +304,9 @@ export function expandLessonOccurrences(
   requireDate(options.rangeStart, "rangeStart");
   requireDate(options.rangeEnd, "rangeEnd");
   if (options.rangeEnd < options.rangeStart) throw new RangeError("rangeEnd must not be before rangeStart");
-  if (series.recurring && series.repeatCount !== undefined && (!Number.isSafeInteger(series.repeatCount) || series.repeatCount < 1)) {
-    throw new RangeError("repeatCount must be a positive integer");
+  const recurrence = normalizeBookingRecurrence({ ...series, startDate: series.date });
+  if (series.recurring && series.repeatCount !== undefined && (!Number.isSafeInteger(series.repeatCount) || series.repeatCount < 1 || series.repeatCount > 104)) {
+    throw new RangeError("repeatCount must be an integer from 1 to 104");
   }
 
   const overrides = new Map<string, LessonOccurrenceOverride>();
@@ -320,7 +321,9 @@ export function expandLessonOccurrences(
     if (series.date >= options.rangeStart && series.date <= options.rangeEnd) sourceDates.push(series.date);
   } else {
     const maximum = series.repeatCount ?? Number.POSITIVE_INFINITY;
-    for (let index = 0, date = series.date; index < maximum && date <= options.rangeEnd; index += 1, date = addDays(date, 7)) {
+    const interval = series.recurrenceIntervalDays ?? recurrence.recurrenceIntervalDays ?? LEGACY_BOOKING_RECURRENCE_INTERVAL_DAYS;
+    for (let index = 0, date = series.date; index < maximum && date <= options.rangeEnd; index += 1, date = shiftBookingDate(date, interval)) {
+      if (series.recurrenceEndDate && date > series.recurrenceEndDate) break;
       if (date >= options.rangeStart) sourceDates.push(date);
     }
   }

@@ -117,11 +117,18 @@ const payrollLedger = {
 const payrollSummary = {
   id: "PAY-1",
   teacherId: "T-1",
+  teacherName: "Teacher One",
+  month: "2026-08",
+  section: "Teacher payroll",
+  currency: "AUD",
   lessons: 1,
   trialLessons: 0,
   amount: 30,
   status: "需核对",
   note: "",
+  lineCount: 0,
+  lines: [],
+  rateRange: [30],
 };
 
 function fixtureRows(bookings: RecordValue[] = [booking, conflictingBooking]) {
@@ -426,6 +433,8 @@ test("generic task writes require unique legal watchers and preserve Ops Admin e
     owner: "Abby",
     title: "Follow up",
     watchers: ["Abby", "Ops Admin"],
+    status: "upcoming",
+    dueAt: "2026-08-20T08:00:00.000Z",
   };
   transition("tasks", [validTask], [{ ...validTask, title: "Updated" }]);
 
@@ -442,11 +451,37 @@ test("generic task writes require unique legal watchers and preserve Ops Admin e
   assert.throws(() => transition("tasks", [validTask], [{ ...validTask, title: "Updated", watchers: undefined }]), rejected);
 });
 
+test("trial payment reminders are immutable outside the dedicated payment flow", () => {
+  const paymentTask = {
+    id: "TASK-TRIAL-PAYMENT",
+    studentId: "S-1",
+    owner: "Tara",
+    assignees: ["Tara"],
+    watchers: ["Ops Admin"],
+    category: "试听",
+    ruleKey: "trial.payment-urgent",
+    anchorBookingId: "BOOK-TRIAL-1",
+    title: "试听不足 24 小时仍未付款",
+    status: "today",
+    tone: "red",
+    dueAt: "2026-08-20T00:00:00.000Z",
+  };
+  transition("tasks", [paymentTask], [paymentTask]);
+  assert.throws(() => transition("tasks", [paymentTask], []), rejected);
+  assert.throws(() => transition("tasks", [paymentTask], [{
+    ...paymentTask,
+    status: "done",
+    tone: "green",
+    result: "已由规划老师确认试听付款",
+  }]), rejected);
+  assert.throws(() => transition("tasks", [], [paymentTask]), rejected);
+});
+
 test("an unchanged legacy task remains deploy-order compatible but must be repaired before editing", () => {
   const legacy = { id: "TASK-LEGACY", studentId: "S-1", owner: "Abby", title: "Legacy" };
   transition("tasks", [legacy], [legacy]);
   assert.throws(() => transition("tasks", [legacy], [{ ...legacy, title: "Edited" }]), rejected);
-  transition("tasks", [legacy], [{ ...legacy, title: "Edited", watchers: ["Ops Admin"] }]);
+  assert.throws(() => transition("tasks", [legacy], [{ ...legacy, title: "Edited", watchers: ["Ops Admin"] }]), rejected);
 });
 
 test("generic teacher writes freeze authority and identity while validating reviewed manual state", () => {
@@ -530,6 +565,108 @@ test("student settlement ledger and consumed hours are immutable while package p
       }],
     })),
   }]), rejected);
+});
+
+test("generic student writes cannot alter import-owned Jiaowubao facts", () => {
+  const imported = {
+    ...student,
+    sourceRow: 12,
+    masterSourceKey: "master:12",
+    jwbMatchStatus: "matched",
+    jwbSourceRow: 88,
+    remainingHours: 19,
+    contractHours: 20,
+    contractEffectiveDate: "2026-08-01",
+    firstJwbHourEntryDate: "2026-08-01",
+    packageCoverage: "complete",
+  };
+  transition("students", [imported], [{ ...imported, name: "Allowed profile edit" }]);
+  for (const [field, value] of [
+    ["sourceRow", 13],
+    ["masterSourceKey", "master:forged"],
+    ["jwbMatchStatus", "unmatched"],
+    ["jwbSourceRow", 89],
+    ["remainingHours", 999],
+    ["contractHours", 999],
+    ["contractEffectiveDate", "2026-09-01"],
+    ["firstJwbHourEntryDate", "2026-09-01"],
+    ["packageCoverage", "partial"],
+  ] as const) {
+    assert.throws(() => transition("students", [imported], [{ ...imported, [field]: value }]), rejected);
+  }
+  assert.throws(() => transition("students", [student], [{ ...student, remainingHours: 999 }]), rejected);
+  assert.throws(() => transition("students", [], [{ id: "S-NEW", name: "New", owner: "Abby", jwbMatchStatus: "matched" }]), rejected);
+});
+
+test("generic package writes enforce valid records and one safe subject binding", () => {
+  const secondPackage = {
+    id: "P-2",
+    name: "English replacement",
+    subjectIds: ["English"],
+    purchaseRecords: [{ id: "PUR-2", purchasedAt: "2026-08-13T00:00:00.000Z", hours: 5 }],
+    consumedHours: 0,
+  };
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    lessonPackages: [...student.lessonPackages, secondPackage],
+  }]), rejected);
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    lessonPackages: [
+      { ...student.lessonPackages[0], subjectIds: [] },
+      secondPackage,
+    ],
+  }]), rejected);
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    lessonPackages: [...student.lessonPackages, {
+      ...secondPackage,
+      id: "P-BAD",
+      subjectIds: null,
+    }],
+  }]), rejected);
+
+  const zeroBalance = {
+    ...student,
+    lessonPackages: [{
+      ...student.lessonPackages[0],
+      purchaseRecords: [{ id: "PUR-ZERO", purchasedAt: "2026-08-01T00:00:00.000Z", hours: 1 }],
+      consumedHours: 1,
+    }],
+  };
+  transition("students", [zeroBalance], [{
+    ...zeroBalance,
+    lessonPackages: [
+      { ...zeroBalance.lessonPackages[0], subjectIds: [] },
+      secondPackage,
+    ],
+  }]);
+
+  const legacyMalformed = {
+    ...student,
+    lessonPackages: [{ id: "P-LEGACY", name: "Legacy", subjectIds: null, purchaseRecords: [], consumedHours: 0 }],
+  };
+  transition("students", [legacyMalformed], [{ ...legacyMalformed, name: "Legacy repaired later" }]);
+});
+
+test("generic student writes reject forged statuses and removal of an existing status", () => {
+  const current = [{ ...student, status: "在读" }];
+  const withoutStatus: RecordValue = { ...current[0] };
+  delete withoutStatus.status;
+
+  assert.throws(
+    () => transition("students", current, [{ ...current[0], status: "forged" }]),
+    (error) => error instanceof OpsStateTransitionError
+      && error.status === 400
+      && /学生状态/.test(error.message),
+  );
+  assert.throws(
+    () => transition("students", current, [withoutStatus]),
+    (error) => error instanceof OpsStateTransitionError
+      && error.status === 400
+      && /学生状态/.test(error.message),
+  );
+  transition("students", current, [{ ...current[0], status: "在读 + 加课待排" }]);
 });
 
 test("generic student writes cannot create or mutate managed exam history", () => {
@@ -673,6 +810,23 @@ test("student follow-up and LP revision/audit histories are append-only", () => 
     ...followedUp,
     followUpHistory: [{ id: "FU-1", followedUpAt: "2026-08-13T00:00:00.000Z", note: "Changed" }],
   }]), rejected);
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    followUpHistory: [{ id: "FU-BAD-DATE", followedUpAt: "not-a-date" }],
+  }]), rejected);
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    followUpHistory: [{ id: "FU-BAD-CALENDAR-DATE", followedUpAt: "2026-02-30" }],
+  }]), rejected);
+  assert.throws(() => transition("students", [student], [{
+    ...student,
+    followUpHistory: [{ id: "FU-BAD-NOTE", followedUpAt: "2026-08-13T00:00:00.000Z", note: { forged: true } }],
+  }]), rejected);
+  const legacyBadFollowUp = {
+    ...student,
+    followUpHistory: [{ id: "FU-LEGACY-BAD", followedUpAt: "not-a-date" }],
+  };
+  transition("students", [legacyBadFollowUp], [{ ...legacyBadFollowUp, name: "Unrelated safe edit" }]);
 
   const revision = {
     id: "LPR-1",
@@ -782,6 +936,100 @@ test("payroll summaries remain editable but teacher-hours and reversal ledger en
   assert.throws(() => transition("payroll", current, [payrollSummary, { ...payrollLedger, payableHours: 3 }]), rejected);
 });
 
+test("legacy duplicate payroll IDs remain editable one record at a time without allowing new duplicates", () => {
+  const legacyDuplicate = {
+    ...payrollSummary,
+    amount: 45,
+    rateRange: [45],
+    note: "Distinct legacy record sharing the imported ID",
+  };
+  const current = [payrollSummary, legacyDuplicate, payrollLedger];
+
+  transition("payroll", current, current);
+  transition("payroll", current, [
+    payrollSummary,
+    { ...legacyDuplicate, amount: 50, rateRange: [50] },
+    payrollLedger,
+  ]);
+
+  assert.throws(
+    () => transition("payroll", current, [payrollSummary, payrollLedger]),
+    rejected,
+  );
+  assert.throws(
+    () => transition("payroll", current, [
+      payrollSummary,
+      legacyDuplicate,
+      { ...legacyDuplicate, amount: 55, rateRange: [55] },
+      payrollLedger,
+    ]),
+    rejected,
+  );
+  assert.throws(
+    () => transition("payroll", current, [
+      payrollSummary,
+      legacyDuplicate,
+      { ...payrollSummary, id: "PAY-NEW", teacherId: "T-2", teacherName: "Teacher Two", month: "2026-09" },
+      { ...payrollSummary, id: "PAY-NEW", teacherId: "T-2", teacherName: "Teacher Two", month: "2026-10" },
+      payrollLedger,
+    ]),
+    rejected,
+  );
+});
+
+test("payroll summary writes validate month, status, currency, amounts, teachers, and detail totals", () => {
+  const current = [payrollSummary, payrollLedger];
+  const validNewSummary = {
+    ...payrollSummary,
+    id: "PAY-2",
+    teacherId: "T-2",
+    teacherName: "Teacher Two",
+    month: "2026-09",
+  };
+  transition("payroll", current, [payrollSummary, validNewSummary, payrollLedger]);
+
+  for (const invalidSummary of [
+    { ...payrollSummary, month: "2026-13" },
+    { ...payrollSummary, month: "2026-8" },
+    { ...payrollSummary, status: "paid" },
+    { ...payrollSummary, currency: "USD" },
+    { ...payrollSummary, amount: "30" },
+    { ...payrollSummary, amount: -30 },
+  ]) {
+    assert.throws(() => transition("payroll", current, [invalidSummary, payrollLedger]), rejected);
+  }
+
+  assert.throws(() => transition("payroll", current, [{
+    ...validNewSummary,
+    teacherId: "T-UNKNOWN",
+  }, payrollSummary, payrollLedger]), rejected);
+  assert.throws(() => transition("payroll", current, [{
+    ...payrollSummary,
+    teacherId: "T-2",
+  }, payrollLedger]), rejected);
+  assert.throws(() => transition("payroll", current, [payrollSummary, {
+    ...validNewSummary,
+    teacherId: "T-1",
+    month: "2026-08",
+  }, payrollLedger]), rejected);
+
+  const reversalSummary = {
+    ...payrollSummary,
+    amount: -30,
+    lineAmount: -30,
+    teacherTotalAmount: -30,
+    lineCount: 1,
+    lines: [{ studentName: "Student One", hours: -1, rate: 30, subtotal: -30 }],
+  };
+  transition("payroll", current, [reversalSummary, payrollLedger]);
+  assert.throws(() => transition("payroll", current, [{
+    ...payrollSummary,
+    amount: 25,
+    lineCount: 1,
+    lines: [{ studentName: "Student One", hours: 1, rate: 30, subtotal: 30 }],
+  }, payrollLedger]), rejected);
+});
+
 test("generic saves cannot add, change, or remove atomic FU and Report file indexes", () => {
   const atomicFile = {
     id: "FU-5e35b8d4-d345-4d44-a2fb-1431e5c07b5f",
@@ -804,4 +1052,15 @@ test("generic saves cannot add, change, or remove atomic FU and Report file inde
   assert.throws(() => transition("files", [atomicFile, ordinaryFile], [{ ...atomicFile, title: "Changed" }, ordinaryFile], rows), rejected);
   assert.throws(() => transition("files", [ordinaryFile], [atomicFile, ordinaryFile], rows), rejected);
   assert.doesNotThrow(() => transition("files", [ordinaryFile], [{ ...ordinaryFile, title: "Updated link" }], rows));
+  assert.throws(() => transition("files", [], [{
+    ...ordinaryFile,
+    id: "FILE-BAD-TYPE",
+    type: null,
+  }], rows), rejected);
+  const malformedLegacyFile = { ...ordinaryFile, id: "FILE-LEGACY-BAD", type: null };
+  assert.doesNotThrow(() => transition("files", [malformedLegacyFile], [malformedLegacyFile], rows));
+  assert.throws(() => transition("files", [malformedLegacyFile], [{
+    ...malformedLegacyFile,
+    title: "Edited malformed file",
+  }], rows), rejected);
 });

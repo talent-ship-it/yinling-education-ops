@@ -8,6 +8,8 @@ import {
   filterOpsStateRows,
   filterOpsVersions,
   getAccessScopeVersions,
+  managedExamStudentProjectionSnapshot,
+  managedTrialPaymentStudentProjectionSnapshot,
   mergeScopedPayload,
   OpsAccessError,
 } from "@/lib/ops-access";
@@ -17,7 +19,6 @@ import { assertOpsStateTransition, OpsStateTransitionError } from "@/lib/ops-sta
 import {
   getOpsSources,
   getOpsState,
-  getOpsVersions,
   OpsStoreError,
   putOpsState,
 } from "@/lib/ops-store";
@@ -60,8 +61,17 @@ export async function GET(request: NextRequest) {
 
   try {
     if (request.nextUrl.searchParams.get("mode") === "versions") {
-      const [rows, versions] = await Promise.all([getOpsState(), getOpsVersions()]);
+      // Scope and versions must come from the same ops_state statement. A
+      // separate versions RPC can race an ownership/archive change and make a
+      // client believe its managed-exam projection is current when it is not.
+      const rows = await getOpsState();
       const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.role);
+      const versions = rows.map((row) => ({
+        entity: row.entity,
+        version: row.version,
+        updated_at: row.updated_at,
+        updated_by: row.updated_by,
+      }));
       return noStore({ versions: filterOpsVersions(versions, access) });
     }
 
@@ -70,6 +80,16 @@ export async function GET(request: NextRequest) {
       ?.split(",")
       .map((entity) => entity.trim())
       .filter(Boolean);
+    const includeManagedExamSnapshot = request.nextUrl.searchParams.get("includeManagedExamSnapshot") === "1";
+    const includeManagedTrialPaymentSnapshot = request.nextUrl.searchParams.get("includeManagedTrialPaymentSnapshot") === "1";
+    if (includeManagedExamSnapshot
+      && (!entities?.includes("students") || !entities.includes("tasks"))) {
+      return noStore({ error: "考试提醒刷新必须同时读取学生和任务权威版本。" }, 400);
+    }
+    if (includeManagedTrialPaymentSnapshot
+      && (!entities?.includes("bookings") || !entities.includes("students") || !entities.includes("tasks"))) {
+      return noStore({ error: "试听收费提醒刷新必须同时读取排课、学生和任务权威版本。" }, 400);
+    }
     const rows = await getOpsState();
     const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.role);
     if (entities?.some((entity) => !canReadOpsEntity(access, entity))) {
@@ -81,8 +101,19 @@ export async function GET(request: NextRequest) {
     const sources = entities?.length || !(await canReadSources(context.actor, context.fullAdmin))
       ? []
       : await getOpsSources();
+    const managedExamSnapshot = includeManagedExamSnapshot
+      ? managedExamStudentProjectionSnapshot(rows, access)
+      : undefined;
+    const managedTrialPaymentSnapshot = includeManagedTrialPaymentSnapshot
+      ? managedTrialPaymentStudentProjectionSnapshot(rows, access)
+      : undefined;
 
-    return noStore({ rows: visibleRows, sources });
+    return noStore({
+      rows: visibleRows,
+      sources,
+      ...(managedExamSnapshot ? { managedExamSnapshot } : {}),
+      ...(managedTrialPaymentSnapshot ? { managedTrialPaymentSnapshot } : {}),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "共享数据读取失败。";
     return noStore({ error: message }, 503);
@@ -161,7 +192,13 @@ export async function PUT(request: NextRequest) {
       const allRows = await getOpsState().catch(() => []);
       const access = buildOpsAccessContext(allRows, context.actor, context.fullAdmin, context.role);
       const current = filterOpsStateRows(allRows.filter((row) => row.entity === body.entity), access)[0];
-      const accessChanged = error.message === "access_scope_changed";
+      const currentStudentsVersion = allRows.find((row) => row.entity === "students")?.version;
+      const currentTeachersVersion = allRows.find((row) => row.entity === "teachers")?.version;
+      const accessChanged = error.message === "access_scope_changed"
+        || (body.entity === "bookings"
+          && submittedBookingScopeVersions !== null
+          && (submittedBookingScopeVersions.students !== currentStudentsVersion
+            || submittedBookingScopeVersions.teachers !== currentTeachersVersion));
       return noStore({
         error: accessChanged ? "你的权限或负责范围刚刚变更，本次保存没有执行。请刷新页面后继续。" : "其他人刚刚修改了同一部分资料。",
         current,

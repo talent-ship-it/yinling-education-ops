@@ -25,7 +25,7 @@ test("departure client sends only the narrow five-version command to one atomic 
   assert.match(route, /getOpsState\(DEPARTURE_ENTITIES\)/);
   assert.match(route, /getTeacherDepartureCreationCommandResult/);
   assert.match(route, /prepareTeacherDepartureCreation/);
-  assert.match(route, /createTeacherDepartureAtomic\(\{ \.\.\.prepared, actor \}\)/);
+  assert.match(route, /createTeacherDepartureAtomic\(\{ \.\.\.prepared, affectedGroups: atomicAffectedGroups\(prepared\.affectedGroups\), actor \}\)/);
   assert.match(route, /replayRows = await getOpsState\(DEPARTURE_ENTITIES\)/);
   assert.match(route, /saved\[0\]\.applied[\s\S]*committedRowsPayload\([\s\S]*await getOpsState\(DEPARTURE_ENTITIES\)/);
   assert.match(route, /affected_student_ids\.some\(\(studentId\) => !canOperateStudent/);

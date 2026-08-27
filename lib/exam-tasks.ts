@@ -6,7 +6,7 @@ import {
 } from "./ops-tasks";
 import type { ExamTaskAssigneeRole } from "./student-records";
 
-export const EXAM_MANAGED_RULE_SUFFIXES = ["care", "recall", "results"] as const;
+export const EXAM_MANAGED_RULE_SUFFIXES = ["planning", "care", "recall", "results"] as const;
 export const EXAM_RULE_NO_LONGER_APPLICABLE_RESULT = "考试日期或规则更新，任务自动关闭";
 
 export const EXAM_ROLE_LABELS: Readonly<Record<ExamTaskAssigneeRole, string>> = Object.freeze({
@@ -69,7 +69,7 @@ function sameRecipient(left: string, right: string) {
  * proving the exam/student binding before returning a cross-owner task.
  */
 export function isManagedExamTaskRecipient(task: OpsTask, recipient: string) {
-  const match = task.ruleKey?.match(/^exam:([^:]+):(care|recall|results)$/);
+  const match = task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/);
   if (!recipient.trim()
     || task.category !== "考试"
     || !match

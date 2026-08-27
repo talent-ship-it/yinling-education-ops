@@ -128,6 +128,11 @@ test("server derives one operation and five watched tasks per affected student",
   assert.equal(prepared.generatedTaskCount, 10);
   assert.equal(prepared.affectedOccurrenceCount, 3);
   assert.deepEqual(prepared.affectedGroups.map((group) => group.candidateTeacherIds), [["T-GOOD"], ["T-GOOD"]]);
+  assert.deepEqual(prepared.affectedGroups.map((group) => group.subjects), [["Maths&Science"], ["Maths&Science"]]);
+  assert.deepEqual(prepared.affectedGroups.map((group) => group.firstAffectedAt), [
+    "2026-09-01T07:00:00.000Z",
+    "2026-09-01T08:00:00.000Z",
+  ]);
   assert.equal(prepared.operations.at(-1)?.id, "OPS-OLD", "existing operation order/value is retained");
   assert.equal(prepared.tasks.at(-1)?.id, "TSK-OLD", "existing task order/value is retained");
   for (const operationId of prepared.operationIds) {
@@ -145,6 +150,132 @@ test("server derives one operation and five watched tasks per affected student",
     prepared.tasks.find((task) => task.anchorBookingId === prepared.operationIds[0])?.id,
     "TSK-DEPARTURE-33b1857fea16f74280c16518",
   );
+});
+
+test("departure adds LP handover task after the actual penultimate historical lesson", () => {
+  const historicalRows = rows().map((row) => row.entity === "bookings" ? {
+    ...row,
+    payload: [...row.payload as Record<string, unknown>[], {
+      id: "B-HIST",
+      studentId: "S-1",
+      teacherId: "T-SOURCE",
+      date: "2026-08-18",
+      start: "17:00",
+      duration: 60,
+      timezone: "Australia/Melbourne",
+      kind: "常规课",
+      status: "已确认",
+      recurring: true,
+      repeatCount: 2,
+      teacherSubjectId: "Maths&Science",
+    }],
+  } : row);
+  const prepared = prepareTeacherDepartureCreation({
+    command: parseTeacherDepartureCreationCommand(command()),
+    rows: historicalRows,
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-15T00:00:00.000Z"),
+  });
+  const lpTask = prepared.tasks.find((task) => task.studentId === "S-1"
+    && task.ruleKey === `teacher-departure:${prepared.operationIds[0]}:lp-to-new-teacher`);
+  assert.equal(lpTask?.title, "写 LP 给新老师");
+  assert.equal(lpTask?.owner, "Source Teacher");
+  assert.deepEqual(lpTask?.assignees, ["Source Teacher"]);
+  assert.equal(lpTask?.due, "2026-08-19 18:00");
+  assert.equal(lpTask?.dueAt, "2026-08-19T08:00:00.000Z");
+  assert.equal(prepared.tasks.filter((task) => task.studentId === "S-1").length, 7);
+  assert.equal(prepared.tasks.filter((task) => task.studentId === "S-2").length, 5);
+});
+
+test("departure timeline follows moved historical overrides and excludes cancelled lessons", () => {
+  const historicalRows = rows().map((row) => row.entity === "bookings" ? {
+    ...row,
+    payload: [...row.payload as Record<string, unknown>[],
+      {
+        id: "B-HIST-EARLY",
+        studentId: "S-1",
+        teacherId: "T-SOURCE",
+        date: "2026-08-04",
+        start: "17:00",
+        duration: 60,
+        timezone: "Australia/Melbourne",
+        kind: "常规课",
+        status: "已确认",
+        teacherSubjectId: "Maths&Science",
+      },
+      {
+        id: "B-MOVED",
+        studentId: "S-1",
+        teacherId: "T-SOURCE",
+        date: "2026-08-11",
+        start: "17:00",
+        duration: 60,
+        timezone: "Australia/Melbourne",
+        kind: "常规课",
+        status: "已确认",
+        teacherSubjectId: "Maths&Science",
+        occurrenceOverrides: [{
+          occurrenceId: "B-MOVED:2026-08-11",
+          date: "2026-08-25",
+          start: "19:00",
+        }],
+      },
+    ],
+  } : row);
+  const prepared = prepareTeacherDepartureCreation({
+    command: parseTeacherDepartureCreationCommand(command()),
+    rows: historicalRows,
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-15T00:00:00.000Z"),
+  });
+  const lpTask = prepared.tasks.find((task) => task.studentId === "S-1"
+    && task.title === "写 LP 给新老师");
+  assert.equal(lpTask?.due, "2026-08-05 18:00");
+
+  const cancelledRows = historicalRows.map((row) => row.entity === "bookings" ? {
+    ...row,
+    payload: (row.payload as Record<string, unknown>[]).map((booking) => booking.id === "B-MOVED"
+      ? { ...booking, occurrenceOverrides: [{
+        occurrenceId: "B-MOVED:2026-08-11",
+        date: "2026-08-25",
+        status: "cancelled",
+      }] }
+      : booking),
+  } : row);
+  const cancelledPrepared = prepareTeacherDepartureCreation({
+    command: parseTeacherDepartureCreationCommand(command()),
+    rows: cancelledRows,
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-15T00:00:00.000Z"),
+  });
+  assert.equal(cancelledPrepared.tasks.some((task) => task.title === "写 LP 给新老师"), false);
+
+  const clearedIdentityRows = historicalRows.map((row) => row.entity === "bookings" ? {
+    ...row,
+    payload: (row.payload as Record<string, unknown>[]).map((booking) => booking.id === "B-MOVED"
+      ? { ...booking, occurrenceOverrides: [{
+        occurrenceId: "B-MOVED:2026-08-11",
+        date: "2026-08-25",
+        teacherId: null,
+        studentId: null,
+      }] }
+      : booking),
+  } : row);
+  const clearedIdentityPrepared = prepareTeacherDepartureCreation({
+    command: parseTeacherDepartureCreationCommand(command()),
+    rows: clearedIdentityRows,
+    actor: "Nixon",
+    role: "admin",
+    fullAdmin: true,
+    now: new Date("2026-08-15T00:00:00.000Z"),
+  });
+  assert.equal(clearedIdentityPrepared.tasks.some((task) => task.title === "写 LP 给新老师"), false);
 });
 
 test("a zero-candidate student aborts the entire workflow and AVA correction permits a clean retry", () => {

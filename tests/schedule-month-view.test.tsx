@@ -45,7 +45,8 @@ test("renders a full month grid with concrete occurrence buttons and stable stud
     onSelect={() => {}}
   />);
 
-  assert.equal((html.match(/role="gridcell"/g) ?? []).length, 35);
+  assert.equal((html.match(/class="month-day[^\"]*" role="group"/g) ?? []).length, 35);
+  assert.doesNotMatch(html, /role="grid"|role="gridcell"|role="columnheader"/);
   assert.match(html, /2026-09 月课表/);
   assert.match(html, /Alex Chen/);
   assert.match(html, /Bella Wang/);

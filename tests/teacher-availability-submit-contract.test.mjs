@@ -54,7 +54,9 @@ test("database self-submit is secret-only, identity-bound, idempotent and never 
   assert.match(body, /overlapping_teacher_availability_submission_slots/);
   assert.match(body, /p_slots is null/);
   assert.match(body, /jsonb_typeof\(slot -> 'day'\) is distinct from 'number'/);
-  assert.match(body, /slot ->> 'start' >= slot ->> 'end'/);
+  assert.match(body, /slot ->> 'start' = slot ->> 'end'/);
+  assert.match(body, /if slot_end < slot_start then slot_end := slot_end \+ 1440/);
+  assert.match(body, /if other_end < other_start then other_end := other_end \+ 1440/);
   assert.match(body, /pg_catalog\.pg_timezone_names/);
   assert.match(body, /teacher_availability_pending_submission_exists/);
   assert.match(body, /insert into public\.teacher_availability_submissions/);

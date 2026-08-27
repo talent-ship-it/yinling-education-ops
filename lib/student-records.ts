@@ -192,7 +192,7 @@ export const EXAM_VARIANTS = [
 ] as const;
 
 export type ExamVariant = (typeof EXAM_VARIANTS)[number];
-export type ExamTaskKind = "exam_care" | "exam_recall" | "exam_results_follow_up";
+export type ExamTaskKind = "exam_care" | "exam_recall" | "exam_month_planning" | "exam_results_follow_up";
 
 export const EXAM_FOLLOW_UP_STATUSES = ["pending", "completed", "not_required"] as const;
 export type ExamFollowUpStatus = (typeof EXAM_FOLLOW_UP_STATUSES)[number];
@@ -235,7 +235,7 @@ function validateExam(record: StudentExamRecord) {
   }
   if (record.resultDateOverride) requireDateOnly(record.resultDateOverride, "resultDateOverride");
   Object.entries(record.followUpState ?? {}).forEach(([kind, state]) => {
-    if (!["exam_care", "exam_recall", "exam_results_follow_up"].includes(kind)) {
+    if (!["exam_care", "exam_recall", "exam_month_planning", "exam_results_follow_up"].includes(kind)) {
       throw new Error(`unsupported exam follow-up kind ${kind}`);
     }
     if (!state || !(EXAM_FOLLOW_UP_STATUSES as readonly string[]).includes(state.status)) {
@@ -301,17 +301,31 @@ export function addCalendarDays(dateOnly: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-/** Adds whole calendar months and clamps to the target month's final day. */
-export function addCalendarMonths(dateOnly: string, months: number) {
+/** Shifts whole calendar months and clamps to the target month's final day. */
+function shiftCalendarMonths(dateOnly: string, months: number) {
   requireDateOnly(dateOnly, "date");
-  if (!Number.isSafeInteger(months) || months < 0) {
-    throw new RangeError("months must be a non-negative integer");
+  if (!Number.isSafeInteger(months)) {
+    throw new RangeError("months must be an integer");
   }
   const [year, month, day] = dateOnly.split("-").map(Number);
   const target = new Date(Date.UTC(year, month - 1 + months, 1));
   const lastTargetDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
   target.setUTCDate(Math.min(day, lastTargetDay));
   return target.toISOString().slice(0, 10);
+}
+
+/** Adds whole calendar months and clamps to the target month's final day. */
+export function addCalendarMonths(dateOnly: string, months: number) {
+  if (months < 0) throw new RangeError("months must be a non-negative integer");
+  return shiftCalendarMonths(dateOnly, months);
+}
+
+/** Subtracts whole calendar months and clamps to the target month's final day. */
+export function subtractCalendarMonths(dateOnly: string, months: number) {
+  if (!Number.isSafeInteger(months) || months < 0) {
+    throw new RangeError("months must be a non-negative integer");
+  }
+  return shiftCalendarMonths(dateOnly, -months);
 }
 
 /** Counts Monday-Friday only. Public holidays are deliberately not inferred. */
@@ -457,8 +471,18 @@ function followUpFields(record: StudentExamRecord, kind: ExamTaskKind) {
 export function buildExamTaskDefinitions(record: StudentExamRecord, options: ExamTaskOptions = {}) {
   validateExam(record);
   if (!record.examDate) return [];
+  const planningDate = subtractCalendarMonths(record.examDate, 1);
   const includeRecall = options.includeRecall ?? record.includeRecall ?? true;
   const tasks: ExamTaskDefinition[] = [{
+    key: `exam:${record.id}:planning`,
+    examId: record.id,
+    kind: "exam_month_planning",
+    title: `${record.subject}考试前一个月规划`,
+    dueDate: planningDate,
+    assigneeRoles: ["course_planner"],
+    assigneeRole: "course_planner",
+    ...followUpFields(record, "exam_month_planning"),
+  }, {
     key: `exam:${record.id}:care`,
     examId: record.id,
     kind: "exam_care",
@@ -511,6 +535,7 @@ export function deriveExamFollowUpStatuses(
   return {
     exam_care: statusFor("exam_care"),
     exam_recall: statusFor("exam_recall"),
+    exam_month_planning: statusFor("exam_month_planning"),
     exam_results_follow_up: statusFor("exam_results_follow_up"),
   };
 }
@@ -519,6 +544,9 @@ export type LessonPackagePurchase = {
   id: string;
   purchasedAt: string;
   hours: number;
+  /** Structured manual-entry breakdown; legacy/JWB purchases may omit both. */
+  purchasedHours?: number;
+  bonusHours?: number;
   note?: string;
 };
 
@@ -540,6 +568,24 @@ function validatePurchase(purchase: LessonPackagePurchase) {
   requireNonEmpty(purchase.id, "purchase id");
   requireDateTime(purchase.purchasedAt, "purchasedAt");
   requirePositiveHours(purchase.hours, "purchase hours");
+  const purchasedHours = purchase.purchasedHours;
+  const bonusHours = purchase.bonusHours;
+  const hasPurchasedHours = purchasedHours !== undefined;
+  const hasBonusHours = bonusHours !== undefined;
+  if (hasPurchasedHours !== hasBonusHours) {
+    throw new Error("purchase breakdown must include purchasedHours and bonusHours together");
+  }
+  if (hasPurchasedHours && hasBonusHours) {
+    if (!Number.isFinite(purchasedHours) || purchasedHours < 0) {
+      throw new RangeError("purchasedHours must be a non-negative number");
+    }
+    if (!Number.isFinite(bonusHours) || bonusHours < 0) {
+      throw new RangeError("bonusHours must be a non-negative number");
+    }
+    if (roundHours(purchasedHours + bonusHours) !== roundHours(purchase.hours)) {
+      throw new RangeError("purchase breakdown must add up to hours");
+    }
+  }
 }
 
 function validateLessonPackage(lessonPackage: StudentLessonPackage) {

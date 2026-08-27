@@ -5,7 +5,11 @@ import {
 } from "./booking-capacity-service";
 import type { OpsAccessContext } from "./ops-access";
 import type { OpsStateRow } from "./ops-store";
-import { DEFAULT_TEACHING_CONTROL_WATCHER } from "./ops-tasks";
+import {
+  DEFAULT_TEACHING_CONTROL_WATCHER,
+  isCanonicalTaskDueAt,
+  isFrozenLegacyTask,
+} from "./ops-tasks";
 import {
   expandLessonOccurrences,
   type LegacyLessonSeries,
@@ -79,7 +83,6 @@ const ARCHIVED_STUDENT_REFERENCE_ENTITIES = new Set([
   "messages",
   "files",
   "bookings",
-  "payroll",
 ]);
 const ATOMIC_ATTACHMENT_FILE_ID = /^(?:FU|REPORT)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ATOMIC_ATTACHMENT_SOURCE = /^\/api\/fu-attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -91,6 +94,33 @@ const TEACHER_MANUAL_EDIT_FIELDS = new Set([
   "newStudentCapacity",
 ]);
 const TEACHER_AVAILABILITY_STATUSES = new Set(["可接新生", "暂停接新", "待确认"]);
+const STUDENT_STATUSES = new Set([
+  "在读",
+  "不活跃 + 无课时",
+  "活跃 + 无课时",
+  "活跃 + 有课时",
+  "不活跃 + 有课时",
+  "在读 + 加课待排",
+]);
+const STUDENT_IMPORT_OWNED_FIELDS = new Set([
+  "sourceRow",
+  "masterSourceKey",
+  "jwbMemId",
+  "jwbMatchStatus",
+  "jwbSourceRow",
+  "remainingHours",
+  "contractHours",
+  "contractEffectiveDate",
+  "firstJwbHourEntryDate",
+  "studentNumberJwbDateCandidate",
+  "packageCoverage",
+  "jwbSyncedAt",
+  "jwbSyncStatus",
+]);
+const STUDENT_FILE_SECTIONS = new Set(["lp", "report", "fu"]);
+const PAYROLL_STATUSES = new Set(["需核对", "可审核", "已锁定"]);
+const PAYROLL_CURRENCIES = new Set(["CNY", "AUD"]);
+const PAYROLL_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export class OpsStateTransitionError extends Error {
   constructor(
@@ -129,6 +159,13 @@ function same(left: unknown, right: unknown) {
 function requiredText(value: unknown, label: string) {
   if (typeof value !== "string" || !value.trim()) invalid(`${label} 格式不正确。`);
   return value.trim();
+}
+
+function isValidDateOrTimestamp(value: unknown) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return false;
+  if (!DATE_PATTERN.test(value)) return true;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
 function records(value: unknown, label: string): RecordValue[] {
@@ -210,6 +247,25 @@ function assertAtomicAttachmentFilesReadOnly(currentPayload: unknown, nextPayloa
   }
 }
 
+function assertStudentFilesTransition(currentPayload: unknown, nextPayload: unknown) {
+  assertAtomicAttachmentFilesReadOnly(currentPayload, nextPayload);
+  const current = byId(records(currentPayload, "files"));
+  const next = byId(records(nextPayload, "files"));
+  for (const [id, file] of next) {
+    if (same(current.get(id), file)) continue;
+    requiredText(file.studentId, "file.studentId");
+    requiredText(file.title, "file.title");
+    requiredText(file.type, "file.type");
+    requiredText(file.source, "file.source");
+    if (!isValidDateOrTimestamp(file.addedAt)) {
+      invalid("文件登记时间格式不正确。");
+    }
+    if (file.recordSection !== undefined && !STUDENT_FILE_SECTIONS.has(String(file.recordSection))) {
+      invalid("文件资料分组格式不正确。");
+    }
+  }
+}
+
 function addDays(value: string, days: number) {
   if (!DATE_PATTERN.test(value)) invalid("课次日期格式不正确。");
   const result = new Date(`${value}T00:00:00.000Z`);
@@ -232,6 +288,8 @@ function bookingSeries(value: RecordValue): LegacyLessonSeries {
     duration,
     recurring: value.recurring === true,
     ...(typeof value.repeatCount === "number" ? { repeatCount: value.repeatCount } : {}),
+    ...(typeof value.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: value.recurrenceIntervalDays } : {}),
+    ...(typeof value.recurrenceEndDate === "string" ? { recurrenceEndDate: value.recurrenceEndDate } : {}),
     studentId: requiredText(value.studentId, "booking.studentId"),
     teacherId: requiredText(value.teacherId, "booking.teacherId"),
     ...(typeof value.packageId === "string" && value.packageId.trim() ? { packageId: value.packageId.trim() } : {}),
@@ -436,6 +494,9 @@ function assertOccurrenceEdit(input: {
   if (!nextOccurrence) forbidden("修改后的具体课次不存在。");
   const currentTeacherId = requiredText(currentOccurrence.teacherId, "currentOccurrence.teacherId");
   const nextTeacherId = requiredText(nextOccurrence.teacherId, "nextOccurrence.teacherId");
+  if (input.context.teacher && !input.context.teacherIds.has(currentTeacherId)) {
+    forbidden("老师账号只能修改分配给自己的具体课次。");
+  }
   if (currentTeacherId !== nextTeacherId) {
     forbidden("单节课程不能通过通用保存更换老师，请使用代课或永久换老师专用流程。");
   }
@@ -645,29 +706,64 @@ function assertTaskWatchers(task: RecordValue) {
   }
 }
 
+function assertTaskDeadline(task: RecordValue) {
+  if (isFrozenLegacyTask(task)) {
+    invalid("冻结的历史截止时间证据不能通过通用任务保存创建或修改。");
+  }
+  if (task.status === "done") return;
+  if (!isCanonicalTaskDueAt(task.dueAt)) {
+    invalid("开放任务必须有准确的截止日期和时间，不能使用历史描述或缺失时间。");
+  }
+  const hasRule = task.ruleKey !== undefined || task.anchorBookingId !== undefined;
+  if (hasRule && (typeof task.ruleKey !== "string" || !task.ruleKey.trim()
+    || typeof task.anchorBookingId !== "string" || !task.anchorBookingId.trim())) {
+    invalid("规则任务必须绑定权威业务锚点。");
+  }
+}
+
 function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
   const current = byId(records(currentPayload, "tasks"));
   const next = records(nextPayload, "tasks");
   const managedExamTask = (task: RecordValue) => task.category === "考试"
     && typeof task.ruleKey === "string"
-    && /^exam:[^:]+:(care|recall|results)$/.test(task.ruleKey)
+    && /^exam:[^:]+:(planning|care|recall|results)$/.test(task.ruleKey)
     && task.anchorBookingId === `exam:${task.ruleKey.split(":")[1]}`;
+  const managedTrialPaymentTask = (task: RecordValue) => task.category === "试听"
+    && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent")
+    && typeof task.anchorBookingId === "string"
+    && Boolean(task.anchorBookingId.trim());
   const nextIds = new Set(next.map((task) => requiredText(task.id, "task.id")));
   for (const [taskId, task] of current) {
+    if (isFrozenLegacyTask(task) && !nextIds.has(taskId)) {
+      forbidden("缺少准确截止时间的历史任务已冻结，不能删除历史证据。");
+    }
     if (managedExamTask(task) && !nextIds.has(taskId)) {
       forbidden("考试提醒只能由专用考试流程删除或关闭。");
+    }
+    if (managedTrialPaymentTask(task) && !nextIds.has(taskId)) {
+      forbidden("试听收费提醒只能由专用收费流程删除或关闭。");
     }
   }
   for (const task of next) {
     const existing = current.get(requiredText(task.id, "task.id"));
+    if (existing && isFrozenLegacyTask(existing)) {
+      if (same(existing, task)) continue;
+      forbidden("冻结任务只能由专用修复或权威工作流解冻，通用保存不能解冻。");
+    }
     if ((!existing && managedExamTask(task))
       || (existing && !same(existing, task) && (managedExamTask(existing) || managedExamTask(task)))) {
       forbidden("考试提醒只能由专用考试流程创建、完成或恢复。");
+    }
+    if ((!existing && managedTrialPaymentTask(task))
+      || (existing && !same(existing, task)
+        && (managedTrialPaymentTask(existing) || managedTrialPaymentTask(task)))) {
+      forbidden("试听收费提醒只能由专用收费流程创建、完成或恢复。");
     }
     // This narrow no-op exception lets application code and the one-time
     // watcher backfill be deployed in either order. Any new or edited task is
     // immediately held to the canonical recipient contract.
     if (existing && same(existing, task)) continue;
+    assertTaskDeadline(task);
     assertTaskWatchers(task);
   }
 }
@@ -758,17 +854,125 @@ function assertAppendOnlyHistory(
   }
 }
 
+function assertPurchaseBreakdown(purchase: RecordValue) {
+  const hasPurchasedHours = Object.hasOwn(purchase, "purchasedHours");
+  const hasBonusHours = Object.hasOwn(purchase, "bonusHours");
+  if (hasPurchasedHours !== hasBonusHours) {
+    invalid("课包购买记录必须同时提供购买课时和赠送课时。");
+  }
+  if (!hasPurchasedHours) return;
+  if (typeof purchase.purchasedHours !== "number"
+    || !Number.isFinite(purchase.purchasedHours)
+    || purchase.purchasedHours < 0
+    || typeof purchase.bonusHours !== "number"
+    || !Number.isFinite(purchase.bonusHours)
+    || purchase.bonusHours < 0) {
+    invalid("课包购买记录的购买课时和赠送课时必须是非负数字。");
+  }
+  if (typeof purchase.hours !== "number" || !Number.isFinite(purchase.hours)
+    || Math.round((purchase.purchasedHours + purchase.bonusHours) * 1_000_000)
+      !== Math.round(purchase.hours * 1_000_000)) {
+    invalid("课包购买记录的购买课时与赠送课时合计必须等于总课时。");
+  }
+}
+
 function assertPurchaseRecords(currentPackage: RecordValue, nextPackage: RecordValue) {
   const current = history(currentPackage, "purchaseRecords");
   const next = history(nextPackage, "purchaseRecords");
   assertAppendOnlyHistory(current, next, "课包购买记录");
+  next.forEach(assertPurchaseBreakdown);
   const currentIds = new Set(current.map((purchase) => requiredText(purchase.id, "purchase.id")));
   for (const purchase of next.filter((candidate) => !currentIds.has(requiredText(candidate.id, "purchase.id")))) {
     if (typeof purchase.hours !== "number" || !Number.isFinite(purchase.hours) || purchase.hours <= 0) {
       invalid("新增课包购买课时必须是正数。");
     }
-    if (typeof purchase.purchasedAt !== "string" || !Number.isFinite(Date.parse(purchase.purchasedAt))) {
+    if (!isValidDateOrTimestamp(purchase.purchasedAt)) {
       invalid("新增课包购买时间格式不正确。");
+    }
+  }
+}
+
+function assertValidLessonPackageRecord(lessonPackage: RecordValue) {
+  try {
+    getLessonPackageBalance(lessonPackage as StudentLessonPackage);
+  } catch (error) {
+    invalid(error instanceof Error ? `课包资料无效：${error.message}` : "课包资料无效。");
+  }
+  for (const purchase of history(lessonPackage, "purchaseRecords")) {
+    if (!isValidDateOrTimestamp(purchase.purchasedAt)) {
+      invalid("课包购买时间格式不正确。");
+    }
+    if (purchase.note !== undefined && typeof purchase.note !== "string") {
+      invalid("课包购买备注格式不正确。");
+    }
+  }
+}
+
+function subjectPackageBindings(lessonPackages: ReadonlyMap<string, RecordValue>) {
+  const bindings = new Map<string, Set<string>>();
+  for (const [packageId, lessonPackage] of lessonPackages) {
+    if (!Array.isArray(lessonPackage.subjectIds)) continue;
+    for (const subjectId of lessonPackage.subjectIds) {
+      if (typeof subjectId !== "string" || !subjectId.trim()) continue;
+      const normalized = subjectId.trim();
+      const packageIds = bindings.get(normalized) ?? new Set<string>();
+      packageIds.add(packageId);
+      bindings.set(normalized, packageIds);
+    }
+  }
+  return bindings;
+}
+
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function assertLessonPackageSubjectBindings(
+  currentPackages: ReadonlyMap<string, RecordValue>,
+  nextPackages: ReadonlyMap<string, RecordValue>,
+) {
+  const currentBindings = subjectPackageBindings(currentPackages);
+  const nextBindings = subjectPackageBindings(nextPackages);
+  for (const subjectId of new Set([...currentBindings.keys(), ...nextBindings.keys()])) {
+    const before = currentBindings.get(subjectId) ?? new Set<string>();
+    const after = nextBindings.get(subjectId) ?? new Set<string>();
+    if (sameStringSet(before, after)) continue;
+    if (after.size > 1) forbidden(`科目 ${subjectId} 只能绑定一个课包。`);
+    for (const removedPackageId of [...before].filter((packageId) => !after.has(packageId))) {
+      const removedPackage = currentPackages.get(removedPackageId);
+      if (!removedPackage) continue;
+      let remainingHours: number;
+      try {
+        remainingHours = getLessonPackageBalance(removedPackage as StudentLessonPackage).remainingHours;
+      } catch {
+        forbidden(`科目 ${subjectId} 的原课包资料异常，不能通过通用保存解绑。`);
+      }
+      if (remainingHours !== 0) {
+        forbidden(`科目 ${subjectId} 的原课包仍有余额，不能解绑或改绑。`);
+      }
+    }
+  }
+}
+
+function assertStudentImportOwnedFields(existing: RecordValue | undefined, student: RecordValue) {
+  for (const field of STUDENT_IMPORT_OWNED_FIELDS) {
+    if (!existing && Object.hasOwn(student, field)) {
+      forbidden("教务宝汇总、匹配与导入来源字段只能由正式导入流程写入。");
+    }
+    if (existing && !same(existing[field], student[field])) {
+      forbidden("教务宝汇总、匹配与导入来源字段只能由正式导入流程修改。");
+    }
+  }
+}
+
+function assertNewStudentFollowUps(current: readonly RecordValue[], next: readonly RecordValue[]) {
+  const currentIds = new Set(current.map((entry) => requiredText(entry.id, "followUp.id")));
+  for (const followUp of next.filter((entry) => !currentIds.has(requiredText(entry.id, "followUp.id")))) {
+    if (!isValidDateOrTimestamp(followUp.followedUpAt)) {
+      invalid("学生跟进时间格式不正确。");
+    }
+    if (followUp.note !== undefined && typeof followUp.note !== "string") {
+      invalid("学生跟进备注格式不正确。");
     }
   }
 }
@@ -784,6 +988,13 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
   }
   for (const student of next) {
     const existing = currentById.get(requiredText(student.id, "student.id"));
+    assertStudentImportOwnedFields(existing, student);
+    if (student.status !== undefined && !STUDENT_STATUSES.has(String(student.status))) {
+      invalid("学生状态不正确。");
+    }
+    if (existing?.status !== undefined && student.status === undefined) {
+      invalid("已有学生不能移除学生状态。");
+    }
     const studentNumber = student.studentNumber;
     if (studentNumber !== undefined && (typeof studentNumber !== "string" || !/^\d{11}$/.test(studentNumber))) {
       invalid("学生编号必须为 YYYYMMDD 加三位流水号。");
@@ -866,6 +1077,8 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
     }
     for (const [packageId, lessonPackage] of nextPackages) {
       const currentPackage = currentPackages.get(packageId);
+      if (currentPackage && same(currentPackage, lessonPackage)) continue;
+      assertValidLessonPackageRecord(lessonPackage);
       if (currentPackage && !same(currentPackage.consumedHours ?? 0, lessonPackage.consumedHours ?? 0)) {
         forbidden("课包已消耗课时只能由专用课次结算流程更新。");
       }
@@ -878,19 +1091,20 @@ function assertStudentsTransition(currentPayload: unknown, nextPayload: unknown)
           if (typeof purchase.hours !== "number" || !Number.isFinite(purchase.hours) || purchase.hours <= 0) {
             invalid("新课包购买课时必须是正数。");
           }
-          if (typeof purchase.purchasedAt !== "string" || !Number.isFinite(Date.parse(purchase.purchasedAt))) {
+          assertPurchaseBreakdown(purchase);
+          if (!isValidDateOrTimestamp(purchase.purchasedAt)) {
             invalid("新课包购买时间格式不正确。");
           }
         }
       }
     }
+    assertLessonPackageSubjectBindings(currentPackages, nextPackages);
+    const currentFollowUps = existing ? history(existing, "followUpHistory") : [];
+    const nextFollowUps = history(student, "followUpHistory");
     if (existing) {
-      assertAppendOnlyHistory(
-        history(existing, "followUpHistory"),
-        history(student, "followUpHistory"),
-        "学生跟进历史",
-      );
+      assertAppendOnlyHistory(currentFollowUps, nextFollowUps, "学生跟进历史");
     }
+    assertNewStudentFollowUps(currentFollowUps, nextFollowUps);
   }
 }
 
@@ -920,15 +1134,163 @@ function isPayrollLedger(value: RecordValue) {
   return value.kind === "teacher_hours" || value.kind === "reversal";
 }
 
-function assertPayrollTransition(currentPayload: unknown, nextPayload: unknown) {
-  const current = records(currentPayload, "payroll");
-  const next = records(nextPayload, "payroll");
-  const currentLedger = new Map(current.filter(isPayrollLedger).map((item) => [requiredText(item.id, "payroll.id"), item]));
-  const nextLedger = new Map(next.filter(isPayrollLedger).map((item) => [requiredText(item.id, "payroll.id"), item]));
-  if (currentLedger.size !== nextLedger.size) forbidden("老师课时流水只能由专用课次结算流程更新。");
-  for (const [id, entry] of currentLedger) {
-    if (!nextLedger.has(id) || !same(entry, nextLedger.get(id))) {
-      forbidden("老师课时流水只能由专用课次结算流程更新。");
+function payrollRecords(value: unknown): RecordValue[] {
+  if (!Array.isArray(value) || !value.every(isRecord)) invalid("payroll 资料格式不正确。");
+  const result = value as RecordValue[];
+  result.forEach((item) => requiredText(item.id, "payroll.id"));
+  return result;
+}
+
+function payrollGroups(items: readonly RecordValue[]) {
+  const grouped = new Map<string, RecordValue[]>();
+  for (const item of items) {
+    const id = requiredText(item.id, "payroll.id");
+    grouped.set(id, [...(grouped.get(id) ?? []), item]);
+  }
+  return grouped;
+}
+
+function canonicalCounts(items: readonly RecordValue[]) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = canonical(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function assertPayrollSummary(summary: RecordValue) {
+  if (summary.kind !== undefined) invalid("薪资汇总类型不正确。");
+  if (summary.studentId !== undefined) invalid("薪资汇总不能伪造学生课时流水引用。");
+  requiredText(summary.id, "payroll.id");
+  requiredText(summary.teacherId, "payroll.teacherId");
+  requiredText(summary.teacherName, "payroll.teacherName");
+  requiredText(summary.section, "payroll.section");
+  if (typeof summary.month !== "string" || !PAYROLL_MONTH_PATTERN.test(summary.month)) {
+    invalid("薪资月份格式不正确。");
+  }
+  if (!PAYROLL_STATUSES.has(String(summary.status))) invalid("薪资状态不正确。");
+  if (!PAYROLL_CURRENCIES.has(String(summary.currency))) invalid("薪资币种不正确。");
+
+  for (const field of ["lessons", "trialLessons", "amount"] as const) {
+    if (typeof summary[field] !== "number" || !Number.isFinite(summary[field])) {
+      invalid("薪资课时与金额必须是有限数字。");
+    }
+  }
+  for (const field of ["teacherTotalHours", "teacherTotalAmount", "lineAmount"] as const) {
+    if (summary[field] !== undefined
+      && (typeof summary[field] !== "number" || !Number.isFinite(summary[field]))) {
+      invalid("薪资汇总数值格式不正确。");
+    }
+  }
+  for (const field of ["sourceHours", "sourceLessonCount", "sourceNoShowHours", "hourVariance"] as const) {
+    if (summary[field] !== undefined && summary[field] !== null
+      && (typeof summary[field] !== "number" || !Number.isFinite(summary[field]))) {
+      invalid("薪资来源核对数值格式不正确。");
+    }
+  }
+  if (summary.teacherTotalAmount !== undefined
+    && Math.round((summary.teacherTotalAmount as number) * 100) !== Math.round((summary.amount as number) * 100)) {
+    invalid("老师薪资总额必须与建议金额一致。");
+  }
+  if (summary.lineAmount !== undefined
+    && Math.round((summary.lineAmount as number) * 100) !== Math.round((summary.amount as number) * 100)) {
+    invalid("薪资明细金额必须与建议金额一致。");
+  }
+
+  if (!Array.isArray(summary.rateRange)
+    || !summary.rateRange.every((rate) => typeof rate === "number" && Number.isFinite(rate) && rate >= 0)) {
+    invalid("薪资费率范围格式不正确。");
+  }
+  if (!Array.isArray(summary.lines) || !summary.lines.every(isRecord)) {
+    invalid("薪资学生明细格式不正确。");
+  }
+  if (!Number.isSafeInteger(summary.lineCount) || (summary.lineCount as number) < 0
+    || summary.lineCount !== summary.lines.length) {
+    invalid("薪资明细数量格式不正确。");
+  }
+
+  let lineTotal = 0;
+  for (const line of summary.lines as RecordValue[]) {
+    requiredText(line.studentName, "payroll.line.studentName");
+    if (typeof line.hours !== "number" || !Number.isFinite(line.hours)
+      || typeof line.rate !== "number" || !Number.isFinite(line.rate) || line.rate < 0
+      || typeof line.subtotal !== "number" || !Number.isFinite(line.subtotal)) {
+      invalid("薪资学生明细课时、费率或小计格式不正确。");
+    }
+    if (Math.round(line.hours * line.rate * 100) !== Math.round(line.subtotal * 100)) {
+      invalid("薪资学生明细小计与课时费计算不一致。");
+    }
+    lineTotal += line.subtotal;
+  }
+  if (summary.lines.length
+    && Math.round(lineTotal * 100) !== Math.round((summary.amount as number) * 100)) {
+    invalid("薪资学生明细合计必须与建议金额一致。");
+  }
+  if ((summary.amount as number) < 0 && !summary.lines.length) {
+    invalid("负数薪资必须提供可核对的冲销明细。");
+  }
+  if (summary.status === "已锁定") {
+    requiredText(summary.lockedBy, "payroll.lockedBy");
+    if (!isValidDateOrTimestamp(summary.lockedAt)) invalid("薪资锁定时间格式不正确。");
+  }
+}
+
+function assertPayrollTransition(currentPayload: unknown, nextPayload: unknown, rows: readonly OpsStateRow[]) {
+  const current = payrollRecords(currentPayload);
+  const next = payrollRecords(nextPayload);
+  const currentLedger = current.filter(isPayrollLedger);
+  const nextLedger = next.filter(isPayrollLedger);
+  const currentLedgerCounts = canonicalCounts(currentLedger);
+  const nextLedgerCounts = canonicalCounts(nextLedger);
+  if (currentLedger.length !== nextLedger.length
+    || currentLedgerCounts.size !== nextLedgerCounts.size
+    || [...currentLedgerCounts].some(([entry, count]) => nextLedgerCounts.get(entry) !== count)) {
+    forbidden("老师课时流水只能由专用课次结算流程更新。");
+  }
+
+  const currentSummaries = payrollGroups(current.filter((item) => !isPayrollLedger(item)));
+  const nextSummaries = payrollGroups(next.filter((item) => !isPayrollLedger(item)));
+  for (const [id, currentGroup] of currentSummaries) {
+    const nextGroup = nextSummaries.get(id) ?? [];
+    if (nextGroup.length < currentGroup.length) {
+      forbidden("薪资汇总记录不能通过通用保存删除。");
+    }
+    if (nextGroup.length > currentGroup.length) {
+      forbidden("已有薪资 ID 不能新增重复记录。");
+    }
+  }
+  for (const [id, nextGroup] of nextSummaries) {
+    if (!currentSummaries.has(id) && nextGroup.length !== 1) {
+      forbidden("新增薪资记录不能使用重复 ID。");
+    }
+  }
+  const teacherIds = new Set(rowsFor(rows, "teachers")
+    .map((teacher) => requiredText(teacher.id, "teacher.id")));
+  const nextSummaryList = [...nextSummaries.values()].flat();
+  for (const [id, nextGroup] of nextSummaries) {
+    const currentGroup = currentSummaries.get(id) ?? [];
+    for (const [index, summary] of nextGroup.entries()) {
+      const existing = currentGroup[index];
+      if (existing && same(existing, summary)) continue;
+      assertPayrollSummary(summary);
+      const nextTeacherId = requiredText(summary.teacherId, "payroll.teacherId");
+      if (existing) {
+        if (requiredText(existing.teacherId, "payroll.teacherId") !== nextTeacherId) {
+          forbidden("已有薪资记录不能更换老师。");
+        }
+      } else if (!teacherIds.has(nextTeacherId)) {
+        forbidden("新增薪资记录必须选择现有老师。");
+      }
+
+      const pairChanged = !existing
+        || existing.teacherId !== summary.teacherId
+        || existing.month !== summary.month;
+      if (pairChanged && nextSummaryList.some((candidate) => candidate !== summary
+        && candidate.teacherId === summary.teacherId
+        && candidate.month === summary.month)) {
+        forbidden("同一老师同一月份只能有一条薪资记录。");
+      }
     }
   }
 }
@@ -968,10 +1330,10 @@ export function assertOpsStateTransition(input: {
       assertLpItemsTransition(input.currentPayload, input.nextPayload);
       return;
     case "payroll":
-      assertPayrollTransition(input.currentPayload, input.nextPayload);
+      assertPayrollTransition(input.currentPayload, input.nextPayload, input.rows);
       return;
     case "files":
-      assertAtomicAttachmentFilesReadOnly(input.currentPayload, input.nextPayload);
+      assertStudentFilesTransition(input.currentPayload, input.nextPayload);
       return;
     default:
       return;

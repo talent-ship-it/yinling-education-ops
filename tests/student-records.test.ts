@@ -226,20 +226,36 @@ test("builds stable care, recall and results task definitions", () => {
   };
   const tasks = buildExamTaskDefinitions(exam);
   assert.deepEqual(tasks.map((task) => [task.kind, task.dueDate, task.assigneeRole]), [
+    ["exam_month_planning", "2026-08-01", "course_planner"],
     ["exam_care", "2026-09-01", "academic_coordinator"],
     ["exam_recall", "2026-09-01", "academic_coordinator"],
     ["exam_results_follow_up", "2026-10-01", "course_planner"],
   ]);
   assert.deepEqual(tasks.map((task) => task.assigneeRoles), [
+    ["course_planner"],
     ["academic_coordinator"],
     ["academic_coordinator"],
     ["course_planner"],
   ]);
   assert.deepEqual(buildExamTaskDefinitions(exam, { includeRecall: false }).map((task) => task.kind), [
+    "exam_month_planning",
     "exam_care",
     "exam_results_follow_up",
   ]);
   assert.deepEqual(buildExamTaskDefinitions({ ...exam, examDate: undefined }), []);
+});
+
+test("plans one calendar month before the exact exam date, including month ends", () => {
+  const base: StudentExamRecord = {
+    id: "exam-planning",
+    subject: "Maths",
+    examType: "other",
+    examMonth: "2026-03",
+    examDate: "2026-03-31",
+  };
+  assert.equal(buildExamTaskDefinitions(base)[0].dueDate, "2026-02-28");
+  assert.equal(buildExamTaskDefinitions({ ...base, examDate: "2026-04-30", examMonth: "2026-04" })[0].dueDate, "2026-03-30");
+  assert.equal(buildExamTaskDefinitions({ ...base, examDate: undefined })[0], undefined);
 });
 
 test("persists the recall preference on the exam record with a legacy true default", () => {
@@ -252,6 +268,7 @@ test("persists the recall preference on the exam record with a legacy true defau
     includeRecall: false,
   };
   assert.deepEqual(buildExamTaskDefinitions(exam).map((task) => task.kind), [
+    "exam_month_planning",
     "exam_care",
     "exam_results_follow_up",
   ]);
@@ -294,13 +311,15 @@ test("builds three stable definitions with completion state and never schedules 
   };
   const tasks = buildExamTaskDefinitions(exam, { fixedResultDates: { vce: "2026-12-10" } });
   assert.deepEqual(tasks.map((task) => task.key), [
+    "exam:exam-state:planning",
     "exam:exam-state:care",
     "exam:exam-state:recall",
     "exam:exam-state:results",
   ]);
-  assert.deepEqual(tasks.map((task) => task.completionStatus), ["completed", "pending", "pending"]);
-  assert.equal(tasks[0].completedAt, completedAt);
+  assert.deepEqual(tasks.map((task) => task.completionStatus), ["pending", "completed", "pending", "pending"]);
+  assert.equal(tasks[1].completedAt, completedAt);
   assert.deepEqual(deriveExamFollowUpStatuses(exam, { fixedResultDates: { vce: "2026-12-10" } }), {
+    exam_month_planning: "pending",
     exam_care: "completed",
     exam_recall: "pending",
     exam_results_follow_up: "pending",
@@ -309,6 +328,7 @@ test("builds three stable definitions with completion state and never schedules 
   const monthOnly = { ...exam, examDate: undefined };
   assert.deepEqual(buildExamTaskDefinitions(monthOnly, { fixedResultDates: { vce: "2026-12-10" } }), []);
   assert.deepEqual(deriveExamFollowUpStatuses(monthOnly, { fixedResultDates: { vce: "2026-12-10" } }), {
+    exam_month_planning: "not_required",
     exam_care: "not_required",
     exam_recall: "not_required",
     exam_results_follow_up: "not_required",
@@ -342,6 +362,61 @@ test("supports custom multi-subject packages, purchase history and appended hour
   });
   assert.equal(addLessonPackageHours(withBonus, withBonus.purchaseRecords[1]).purchaseRecords.length, 2);
   assert.equal(first.purchaseRecords.length, 1);
+});
+
+test("keeps manual purchase and bonus hours structured while accepting legacy records", () => {
+  const structured = createStudentLessonPackage({
+    id: "package-breakdown",
+    name: "Breakdown",
+    subjectIds: ["math"],
+    initialPurchase: {
+      id: "purchase-breakdown",
+      purchasedAt: "2026-08-01",
+      hours: 10,
+      purchasedHours: 8,
+      bonusHours: 2,
+    },
+  });
+  assert.deepEqual(structured.purchaseRecords[0], {
+    id: "purchase-breakdown",
+    purchasedAt: "2026-08-01",
+    hours: 10,
+    purchasedHours: 8,
+    bonusHours: 2,
+  });
+  assert.equal(getLessonPackageBalance(structured).totalHours, 10);
+
+  const legacy = createStudentLessonPackage({
+    id: "package-legacy",
+    name: "Legacy",
+    subjectIds: ["math"],
+    initialPurchase: { id: "purchase-legacy", purchasedAt: "2026-08-01", hours: 4 },
+  });
+  assert.equal(getLessonPackageBalance(legacy).totalHours, 4);
+
+  assert.throws(() => createStudentLessonPackage({
+    id: "package-invalid-breakdown",
+    name: "Invalid",
+    subjectIds: ["math"],
+    initialPurchase: {
+      id: "purchase-invalid-breakdown",
+      purchasedAt: "2026-08-01",
+      hours: 10,
+      purchasedHours: 7,
+      bonusHours: 2,
+    },
+  }), /add up to hours/);
+  assert.throws(() => createStudentLessonPackage({
+    id: "package-partial-breakdown",
+    name: "Invalid",
+    subjectIds: ["math"],
+    initialPurchase: {
+      id: "purchase-partial-breakdown",
+      purchasedAt: "2026-08-01",
+      hours: 10,
+      purchasedHours: 10,
+    },
+  }), /include purchasedHours and bonusHours together/);
 });
 
 test("requires an old package to have no remaining hours before rebinding its subject", () => {

@@ -18,7 +18,8 @@ export type DisplayPreferences = {
 export const displayTimezoneOptions = [
   { id: "Australia/Melbourne", zh: "墨尔本", en: "Melbourne" },
   { id: "Australia/Adelaide", zh: "阿德莱德", en: "Adelaide" },
-  { id: "Australia/Sydney", zh: "悉尼 / 堪培拉", en: "Sydney / Canberra" },
+  { id: "Australia/Sydney", zh: "悉尼", en: "Sydney" },
+  { id: "Australia/Canberra", zh: "堪培拉", en: "Canberra" },
   { id: "Australia/Hobart", zh: "霍巴特", en: "Hobart" },
   { id: "Australia/Brisbane", zh: "布里斯班", en: "Brisbane" },
   { id: "Australia/Perth", zh: "珀斯", en: "Perth" },
@@ -168,7 +169,7 @@ export const interfaceCopy = {
     synced: "已同步",
     conflict: "有冲突",
     offline: "离线",
-    search: "搜索学生、老师或 ID",
+    search: "搜索学生、老师或课程",
   },
   "en-AU": {
     profilePreferences: "Display preferences",
@@ -199,6 +200,6 @@ export const interfaceCopy = {
     synced: "Synced",
     conflict: "Conflict",
     offline: "Offline",
-    search: "Search students, teachers or ID",
+    search: "Search students, teachers or courses",
   },
 } as const;

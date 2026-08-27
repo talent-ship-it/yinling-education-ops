@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import { useId, useState, type ChangeEvent } from "react";
 
 import {
   EXAM_VARIANTS,
@@ -427,17 +427,27 @@ export function ExamForm({
   initialIncludeRecall = true,
 }: ExamFormProps) {
   const [examVariant, setExamVariant] = useState<ExamVariant>(initialVariant ?? initialType);
+  const [subject, setSubject] = useState(initialSubject ?? "");
+  const subjectListId = `exam-subject-options-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const uniqueSubjectOptions = [...new Map(
+    subjectOptions
+      .map((option) => ({ ...option, value: option.value.trim() }))
+      .filter((option) => option.value)
+      .map((option) => [option.value, option] as const),
+  ).values()];
   return <>
     {initialExamId ? <input name={STUDENT_RECORD_FORM_NAMES.examId} type="hidden" value={initialExamId} /> : null}
     <label>考试科目
-      {subjectOptions.length ? <select
+      <input
         name={STUDENT_RECORD_FORM_NAMES.examSubject}
-        defaultValue={initialSubject ?? ""}
+        value={subject}
+        onChange={(event) => setSubject(event.target.value)}
+        list={subjectListId}
         required
-      >
-        <option value="" disabled>请选择</option>
-        {subjectOptions.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
-      </select> : <input name={STUDENT_RECORD_FORM_NAMES.examSubject} defaultValue={initialSubject} required />}
+      />
+      <datalist id={subjectListId}>
+        {uniqueSubjectOptions.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
+      </datalist>
     </label>
     <label>考试类型
       <select

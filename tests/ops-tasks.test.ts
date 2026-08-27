@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   closeTrialEscalationTasks,
+  closeStudentLpLifecycleTasks,
   closeTasksForBooking,
   DEFAULT_TEACHING_CONTROL_WATCHER,
+  deterministicTaskId,
+  formatTaskDeadline,
   generateTrialBookingTasks,
   generateTrialEscalationTasks,
   generateTrialRequestTasks,
@@ -60,6 +63,21 @@ test("status uses the Melbourne calendar date, including its midnight boundary",
 
   // Melbourne is UTC+11 in January, so these two UTC dates are one local day.
   assert.equal(statusForDueAt("2026-01-04T23:30:00.000Z", "2026-01-04T22:00:00.000Z"), "today");
+});
+
+test("formats the canonical task deadline as an exact Melbourne date and time", () => {
+  assert.equal(
+    formatTaskDeadline("2026-08-19T08:00:00.000Z"),
+    "2026年8月19日 18:00",
+  );
+  // Melbourne observes daylight saving in January, so the same wall-clock
+  // deadline has a different UTC offset.
+  assert.equal(
+    formatTaskDeadline("2026-01-04T07:00:00.000Z"),
+    "2026年1月4日 18:00",
+  );
+  assert.equal(formatTaskDeadline("not-a-deadline"), undefined);
+  assert.equal(formatTaskDeadline(undefined), undefined);
 });
 
 test("refresh preserves completed tasks and recalculates active tasks", () => {
@@ -158,6 +176,65 @@ test("upsert keeps manual tasks without rule metadata and rejects an unkeyed inc
   assert.throws(() => upsertTaskByRule([manual], manual), /requires ruleKey and anchorBookingId/);
 });
 
+test("LP creation closes only this student's open create-LP task idempotently", () => {
+  const tasks = [
+    ruleTask({ id: "create-open", studentId: "STU-1", ruleKey: "student.create-lp", status: "today" }),
+    ruleTask({ id: "create-duplicate", studentId: "STU-1", ruleKey: "student.create-lp", status: "upcoming" }),
+    ruleTask({ id: "create-done", studentId: "STU-1", ruleKey: "student.create-lp", status: "done", result: "历史人工完成", closedAt: "2026-08-10T00:00:00.000Z" }),
+    ruleTask({ id: "other-student", studentId: "STU-2", ruleKey: "student.create-lp", status: "today" }),
+    ruleTask({ id: "other-rule", studentId: "STU-1", ruleKey: "student.initial-handover", status: "today" }),
+  ];
+  const completed = closeStudentLpLifecycleTasks(tasks, {
+    studentId: "STU-1",
+    workflowType: "老师新 LP",
+    isFirstWorkflow: false,
+    closedAt: "2026-08-20T01:02:03.000Z",
+  });
+
+  assert.deepEqual(completed.map((task) => [task.id, task.status]), [
+    ["create-open", "done"],
+    ["create-duplicate", "done"],
+    ["create-done", "done"],
+    ["other-student", "today"],
+    ["other-rule", "today"],
+  ]);
+  assert.equal(completed[0].closedAt, "2026-08-20T01:02:03.000Z");
+  assert.equal(completed[2].result, "历史人工完成");
+  assert.deepEqual(
+    closeStudentLpLifecycleTasks(completed, {
+      studentId: "STU-1",
+      workflowType: "老师新 LP",
+      isFirstWorkflow: false,
+      closedAt: "2026-08-20T01:02:03.000Z",
+    }),
+    completed,
+  );
+});
+
+test("initial handover closes only after an audited first trial/enrollment workflow", () => {
+  const openTasks = [
+    ruleTask({ id: "initial", studentId: "STU-1", ruleKey: "student.initial-handover", status: "today" }),
+    ruleTask({ id: "create", studentId: "STU-1", ruleKey: "student.create-lp", status: "today" }),
+  ];
+  const laterWorkflow = closeStudentLpLifecycleTasks(openTasks, {
+    studentId: "STU-1",
+    workflowType: "老师 LP 修改",
+    isFirstWorkflow: false,
+    closedAt: "2026-08-20T01:02:03.000Z",
+  });
+  assert.equal(laterWorkflow.find((task) => task.id === "initial")?.status, "today");
+  assert.equal(laterWorkflow.find((task) => task.id === "create")?.status, "done");
+
+  const firstTrial = closeStudentLpLifecycleTasks(openTasks, {
+    studentId: "STU-1",
+    workflowType: "试听 LP",
+    isFirstWorkflow: true,
+    closedAt: "2026-08-20T01:02:03.000Z",
+  });
+  assert.equal(firstTrial.find((task) => task.id === "initial")?.status, "done");
+  assert.equal(firstTrial.find((task) => task.id === "create")?.status, "done");
+});
+
 test("trial request immediately creates stable same-day 18:00 and scheduling +24h tasks", () => {
   const input = {
     anchorBookingId: "WORKFLOW-1",
@@ -206,6 +283,11 @@ test("materializes stable 4h, 8h and recurring 24h escalation tasks", () => {
   assert.deepEqual(
     generateTrialEscalationTasks(input).map((task) => task.id),
     tasks.map((task) => task.id),
+  );
+  const clientGenerated = generateTrialEscalationTasks({ ...input, idFactory: () => "random-client-id" });
+  assert.equal(
+    clientGenerated.find((task) => task.ruleKey === "trial.parent-progress-sync.1")?.id,
+    deterministicTaskId(input.anchorBookingId, "trial.parent-progress-sync.1"),
   );
   tasks.forEach((task) => {
     assert.deepEqual(task.assignees, ["Abby"]);
@@ -269,7 +351,7 @@ test("automatic trial tasks explicitly assign their owner and teaching-control w
   });
 });
 
-test("stale request deadlines are compressed to strictly after now", () => {
+test("stale request deadlines use the exact creation instant", () => {
   const now = new Date("2026-08-13T00:00:00.000Z");
   const tasks = generateTrialRequestTasks({
     anchorBookingId: "WORKFLOW-LATE",
@@ -279,8 +361,7 @@ test("stale request deadlines are compressed to strictly after now", () => {
     now,
   });
   const dueTimes = tasks.map((task) => Date.parse(task.dueAt));
-  assert.ok(dueTimes.every((dueAt) => dueAt > now.getTime()));
-  assert.ok(dueTimes[1] > dueTimes[0]);
+  assert.deepEqual(dueTimes, [now.getTime(), now.getTime()]);
 });
 
 test("normal trial workflow uses same-day 18:00, +24h, and N-3/N-2/N-1 18:00", () => {
@@ -341,8 +422,8 @@ test("a trial 71 hours away keeps distinct immediate LP-review and preparation t
     trialStartsAt: trial,
   });
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_SHORT_NOTICE_TASK_RULES);
-  assert.equal(tasks.find((task) => task.ruleKey === "trial.lp-review")?.dueAt, "2026-08-10T00:00:00.001Z");
-  assert.equal(tasks.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.002Z");
+  assert.equal(tasks.find((task) => task.ruleKey === "trial.lp-review")?.dueAt, "2026-08-10T00:00:00.000Z");
+  assert.equal(tasks.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.000Z");
   assert.match(tasks.find((task) => task.ruleKey === "trial.lp-review")?.trigger ?? "", /立即审核 LP/);
   assert.match(tasks.find((task) => task.ruleKey === "trial.prep")?.trigger ?? "", /立即确认备课/);
   assert.ok(tasks.every((task) => Date.parse(task.dueAt) < trial.getTime()));
@@ -363,10 +444,10 @@ test("a trial under 24 hours clamps future request deadlines and keeps two urgen
   const dueTimes = tasks.map((task) => Date.parse(task.dueAt));
   assert.deepEqual(tasks.map((task) => task.ruleKey), TRIAL_SHORT_NOTICE_TASK_RULES);
   assert.equal(dueTimes.length, 4);
-  assert.equal(new Set(dueTimes).size, 4);
-  assert.ok(dueTimes.every((dueAt) => dueAt > now.getTime() && dueAt < trial.getTime()));
-  assert.equal(Date.parse(tasks[2].dueAt), now.getTime() + 1);
-  assert.equal(Date.parse(tasks[3].dueAt), now.getTime() + 2);
+  assert.equal(new Set(dueTimes).size, 1, "all immediate tasks share the real reconciliation instant");
+  assert.ok(dueTimes.every((dueAt) => dueAt >= now.getTime() && dueAt < trial.getTime()));
+  assert.equal(Date.parse(tasks[2].dueAt), now.getTime());
+  assert.equal(Date.parse(tasks[3].dueAt), now.getTime());
 });
 
 test("short notice retains genuinely overdue request history", () => {
@@ -385,8 +466,8 @@ test("short notice retains genuinely overdue request history", () => {
   ]);
   assert.equal(tasks[2].ruleKey, "trial.lp-review");
   assert.equal(tasks[3].ruleKey, "trial.prep");
-  assert.equal(Date.parse(tasks[2].dueAt), now.getTime() + 1);
-  assert.equal(Date.parse(tasks[3].dueAt), now.getTime() + 2);
+  assert.equal(Date.parse(tasks[2].dueAt), now.getTime());
+  assert.equal(Date.parse(tasks[3].dueAt), now.getTime());
 });
 
 test("exactly 72 hours uses the standard fixed workflow", () => {
@@ -488,7 +569,7 @@ test("rescheduling enters and exits short notice without duplicates or reopening
   assert.equal(entered.length, TRIAL_MANAGED_TASK_RULES.length);
   assert.equal(new Set(entered.map((task) => `${task.ruleKey}:${task.anchorBookingId}`)).size, entered.length);
   assert.equal(entered.find((task) => task.ruleKey === "trial.prep")?.status === "done", false);
-  assert.equal(entered.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.002Z");
+  assert.equal(entered.find((task) => task.ruleKey === "trial.prep")?.dueAt, "2026-08-10T00:00:00.000Z");
   for (const ruleKey of ["trial.minimum", "trial.short-notice-prep"] as const) {
     const closed = entered.find((task) => task.ruleKey === ruleKey);
     assert.equal(closed?.status, "done");
@@ -715,8 +796,8 @@ test("linking clamps future request deadlines when an early trial would put them
   assert.equal(linked.find((task) => task.ruleKey === "trial.parent-follow-up")?.id, "request:trial.parent-follow-up");
   assert.equal(linked.find((task) => task.ruleKey === "trial.scheduling")?.id, "request:trial.scheduling");
   const dueTimes = linked.map((task) => Date.parse(task.dueAt!));
-  assert.ok(dueTimes.every((dueAt) => dueAt > now.getTime() && dueAt < trialStartsAt.getTime()));
-  assert.ok(dueTimes.every((dueAt, index) => index === 0 || dueAt > dueTimes[index - 1]));
+  assert.ok(dueTimes.every((dueAt) => dueAt >= now.getTime() && dueAt < trialStartsAt.getTime()));
+  assert.ok(dueTimes.every((dueAt, index) => index === 0 || dueAt >= dueTimes[index - 1]));
 });
 
 test("linking keeps completion state but clamps its still-future deadline before an early trial", () => {

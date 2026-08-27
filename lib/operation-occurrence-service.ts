@@ -15,6 +15,7 @@ import {
   type LessonOccurrenceOverride,
 } from "@/lib/lesson-occurrences";
 import { expandTeacherAvailability, type TeacherAvailabilityWindow } from "@/lib/teacher-availability";
+import { recurrenceSourceEndDate } from "@/lib/booking-recurrence";
 import {
   projectTeacherDepartureOccurrences,
   TeacherDepartureProjectionError,
@@ -228,6 +229,8 @@ function expandBooking(booking: RecordValue, rangeStart: string, rangeEnd: strin
       duration: Number(booking.duration),
       recurring: booking.recurring === true,
       ...(typeof booking.repeatCount === "number" ? { repeatCount: booking.repeatCount } : {}),
+      ...(typeof booking.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: booking.recurrenceIntervalDays } : {}),
+      ...(typeof booking.recurrenceEndDate === "string" ? { recurrenceEndDate: booking.recurrenceEndDate } : {}),
       studentId: optionalText(booking.studentId),
       teacherId: optionalText(booking.teacherId),
       packageId: optionalText(booking.packageId),
@@ -257,8 +260,14 @@ function affectedOccurrences(bookings: readonly RecordValue[], operation: Record
 
   return bookings.flatMap((booking) => {
     if (sourceBookingId && booking.id !== sourceBookingId) return [];
-    return expandBooking(booking, rangeStart, rangeEnd).filter((occurrence) =>
-      occurrence.studentId === studentId
+    const overrides = Array.isArray(booking.occurrenceOverrides)
+      ? booking.occurrenceOverrides.filter(isRecord) as LessonOccurrenceOverride[]
+      : [];
+    const sourceRange = lessonOccurrenceSourceRangeForTargetRange(rangeStart, rangeEnd, overrides);
+    return expandBooking(booking, sourceRange.rangeStart, sourceRange.rangeEnd).filter((occurrence) =>
+      occurrence.date >= rangeStart
+      && occurrence.date <= rangeEnd
+      && occurrence.studentId === studentId
       && (!teacherScoped || occurrence.teacherId === teacherId)
       && occurrence.status !== "cancelled"
       && occurrence.status !== "completed"
@@ -466,13 +475,20 @@ export function permanentTeacherReplacementIntent(
 function finiteSeriesEnd(booking: RecordValue) {
   const date = stateText(booking, "date", "booking");
   if (booking.recurring !== true) return date;
-  if (!Number.isSafeInteger(booking.repeatCount) || (booking.repeatCount as number) < 1) {
-    fail("unbounded_future_series", "永久换师不能自动处理没有结束次数的旧循环课，请先人工限定课次范围。");
+  let sourceEnd: string | undefined;
+  try {
+    sourceEnd = recurrenceSourceEndDate({
+      startDate: date,
+      recurring: true,
+      ...(Number.isSafeInteger(booking.repeatCount) ? { repeatCount: booking.repeatCount as number } : {}),
+      ...(typeof booking.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: booking.recurrenceIntervalDays } : {}),
+      ...(typeof booking.recurrenceEndDate === "string" ? { recurrenceEndDate: booking.recurrenceEndDate } : {}),
+    });
+  } catch (error) {
+    fail("invalid_shared_state", error instanceof Error ? error.message : "循环课结束范围无效。");
   }
-  if ((booking.repeatCount as number) > 104) {
-    fail("invalid_shared_state", "循环课次数超过可安全处理的 104 次上限。");
-  }
-  return shiftDate(date, ((booking.repeatCount as number) - 1) * 7);
+  if (!sourceEnd) fail("unbounded_future_series", "永久换师不能自动处理没有结束次数或结束日期的旧循环课，请先人工限定范围。");
+  return sourceEnd;
 }
 
 function activeFutureOccurrences(input: {
@@ -530,7 +546,17 @@ function makeReplacementTheFutureSeriesDefault(input: {
     if (!original
       || optionalText(original.studentId) !== input.studentId
       || optionalText(original.teacherId) !== input.sourceTeacherId) continue;
-    const allOriginal = expandBooking(original, stateText(original, "date", "booking"), finiteSeriesEnd(original));
+    const originalRangeStart = stateText(original, "date", "booking");
+    const originalRangeEnd = finiteSeriesEnd(original);
+    const originalOverrides = Array.isArray(original.occurrenceOverrides)
+      ? original.occurrenceOverrides.filter(isRecord) as LessonOccurrenceOverride[]
+      : [];
+    const originalSourceRange = lessonOccurrenceSourceRangeForTargetRange(
+      originalRangeStart,
+      originalRangeEnd,
+      originalOverrides,
+    );
+    const allOriginal = expandBooking(original, originalSourceRange.rangeStart, originalSourceRange.rangeEnd);
     next = next.map((booking) => booking.id === seriesId
       ? { ...booking, teacherId: input.replacementTeacherId }
       : booking);

@@ -46,7 +46,7 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(auth, /function safeEquals/);
 });
 
-test("limits staff and teacher views and keeps Tencent Docs read-only", async () => {
+test("limits staff and teacher views and keeps external source status read-only", async () => {
   const [client, users] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../lib/demo-users.ts"),
@@ -71,10 +71,37 @@ test("limits staff and teacher views and keeps Tencent Docs read-only", async ()
   assert.match(client, /new Set\(\[task\.owner, \.\.\.\(task\.assignees \?\? \[\]\), \.\.\.\(task\.watchers \?\? \[\]\)\]\)\.has\(currentOperator\)/);
   assert.match(client, /const teamOwnerOptions/);
   assert.match(client, /teamOwnerOptions\.map/);
-  assert.match(client, /腾讯文档当前只读取和留存镜像/);
-  assert.match(client, /不会从本系统回写或删除原文档内容/);
+  assert.match(client, /腾讯文档来源/);
+  assert.match(client, /最近读取状态/);
+  assert.match(client, /sourceFreshnessLabel/);
   assert.doesNotMatch(client, /采用腾讯值：Tiffany/);
   assert.doesNotMatch(client, /actor: "当前操作员"/);
+});
+
+test("shares the To Do UI across operations roles and leaves the teacher workspace task-free", async () => {
+  const [client, css, toDoList] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/globals.css"),
+    read("../app/to-do-list.tsx"),
+  ]);
+  const teacherStart = client.indexOf("const renderTeacherDashboard = () => {");
+  const dashboardStart = client.indexOf("const renderDashboard = () => {");
+  const dashboardEnd = client.indexOf("  const renderStudents = () => {", dashboardStart);
+  assert.ok(teacherStart >= 0 && dashboardStart > teacherStart && dashboardEnd > dashboardStart);
+
+  const teacherDashboard = client.slice(teacherStart, dashboardStart);
+  const operationsDashboard = client.slice(dashboardStart, dashboardEnd);
+  assert.match(operationsDashboard, /if \(isTeacherView\) return renderTeacherDashboard\(\);/);
+  assert.match(operationsDashboard, /<ToDoList tasks=\{visibleTasks\}/);
+  assert.doesNotMatch(operationsDashboard, /isAdminView\s*&&\s*<ToDoList/);
+  assert.match(client, /const scopedTasks = useMemo\(\(\) => isAdminView \? tasks : tasks\.filter/);
+  assert.doesNotMatch(teacherDashboard, /ToDoList|command-strip/);
+
+  assert.doesNotMatch(client, /<section className="command-strip/);
+  assert.doesNotMatch(css, /command-strip/);
+  assert.match(toDoList, /aria-expanded=\{expanded\}/);
+  assert.match(toDoList, /hidden=\{!expanded\}/);
+  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt\)/);
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
@@ -102,12 +129,15 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /operatorLabel\(entry\.actor\)/);
   assert.match(client, /const canViewPayroll = isFullAdminSession && currentOperator === "Nixon"/);
   assert.match(client, /canViewPayroll \|\| noPayrollAdminSectionIds\.has/);
-  assert.match(client, /\{canViewPayroll && <button type="button" onClick=\{\(\) => setActive\("payroll"\)\}/);
+  assert.doesNotMatch(client, /aria-label="快速工作流"/);
+  assert.doesNotMatch(client, /Teacher shortcuts|老师快捷操作/);
   assert.match(client, /if \(!canViewPayroll && active === "payroll"\) return renderDashboard/);
   assert.match(accountMenu, /\/api\/demo-logout/);
   assert.match(accountMenu, /打开账户菜单/);
   assert.match(accountMenu, /退出登录/);
   assert.match(accountMenu, /\.operator select/);
+  assert.match(client, /\/api\/account\/password/);
+  assert.match(client, /修改密码/);
   assert.doesNotMatch(client, /NixonAccessDialog/);
   assert.match(demoLogin, /resolveDemoIdentity/);
   assert.match(demoLogin, /identity\.user === DEMO_ADMIN_USER/);
@@ -115,6 +145,8 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(demoLogin, /resolveTeacherIdentity/);
   assert.match(demoLogin, /pinned && pinned\.role !== "staff"/);
   assert.match(demoLogin, /resolveTeacherIdentity\(candidate, teachersPayload\)/);
+  assert.match(demoLogin, /getAppAccountCredential/);
+  assert.match(demoLogin, /verifyAccountPassword/);
   assert.match(demoSession, /getCurrentDemoSession/);
   assert.match(demoLogout, /DEMO_COOKIE_NAME/);
   assert.match(demoLogout, /NIXON_COOKIE_NAME/);
@@ -129,9 +161,10 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(stateRoute, /access_scope_changed/);
   assert.match(stateRoute, /操作审计由服务器自动记录/);
   assert.match(stateRoute, /DEMO_LIMITED_ADMIN_USER/);
-  assert.match(auditRoute, /getAccessScopeVersions/);
-  assert.match(auditRoute, /scopeVersions/);
-  assert.match(auditRoute, /actor: actor === DEMO_ADMIN_USER \? "Admin" : actor/);
+  assert.match(auditRoute, /getOperationalAudit/);
+  assert.match(auditRoute, /projectOperationalAuditEntry/);
+  assert.match(auditRoute, /操作审计只能由服务器业务事务生成/);
+  assert.doesNotMatch(auditRoute, /body\?\.(?:action|detail|tone)|putOpsState/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
   assert.match(nixonAuth, /process\.env\.OPS_API_SECRET/);
   assert.match(nixonAuth, /createHash\("sha256"\)/);
@@ -173,6 +206,7 @@ test("revalidates roster-backed teacher sessions on every protected API", async 
   assert.match(auth, /validateTeacherSession/);
   assert.match(login, /getOpsState\(\["teachers"\]\)/);
   assert.match(login, /pinned && pinned\.role !== "staff"/);
+  assert.match(login, /getAppAccountCredential/);
 });
 
 test("retains core operations workflows and responsive UI", async () => {
@@ -187,12 +221,11 @@ test("retains core operations workflows and responsive UI", async () => {
 
   for (const contract of [
     "scheduleConflict",
-    "createLpWorkflow",
-    "generateTrialEscalationTasks",
-    "generateTrialRequestTasks",
-    "linkTrialRequestTasksToBooking",
-    "reconcileTrialBookingTasks",
-    "closeTasksForBooking",
+    "lpAtomicIntent",
+    "readBookingProjectionPendingCommands",
+    "bookingProjectionCommandKeysRef",
+    "studentsShared\\.applyRemote\\(body\\.studentRow",
+    "tasksShared\\.applyRemote\\(body\\.taskRow",
     "ToDoList",
     "renderOperations",
     "renderRenewals",
@@ -205,6 +238,11 @@ test("retains core operations workflows and responsive UI", async () => {
     "bookingHasDstRisk",
     "examReminderStudents",
   ]) assert.match(client, new RegExp(contract));
+  assert.match(tasks, /export function generateTrialEscalationTasks/);
+  assert.match(tasks, /export function generateTrialRequestTasks/);
+
+  assert.doesNotMatch(client, /aria-label="快速工作流"/);
+  assert.doesNotMatch(client, /Teacher shortcuts|老师快捷操作/);
 
   for (const field of ["ruleKey", "dueAt", "anchorBookingId"]) {
     assert.match(tasks, new RegExp(`${field}\\?: string`));
@@ -227,27 +265,33 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(tasks, /id: existing\.id/);
   assert.match(tasks, /export function linkTrialRequestTasksToBooking/);
   assert.match(tasks, /TRIAL_SCHEDULED_ESCALATION_CLOSED_RESULT/);
-  assert.match(client, /parentProgressSyncCount: 1/);
-  assert.match(client, /trial\\\.parent-progress-sync/);
+  assert.doesNotMatch(client, /parentProgressSyncCount: 1/);
+  assert.doesNotMatch(client, /reconcileAllLpParentProgressTasks/);
+  assert.match(client, /requestedAt: bookingDraft\?\.requestedAt \?\? submittedAt\.toISOString\(\)/);
+  assert.doesNotMatch(client, /const nextProgressTask = progressCycle/);
   assert.match(tasks, /id: canonicalRequest\.id/);
   assert.match(tasks, /export function closeTasksForBooking/);
+  assert.match(tasks, /export function closeStudentLpLifecycleTasks/);
   assert.match(tasks, /export function restoreTrialRequestTasksToWorkflow/);
-  assert.match(client, /setTasks\(\(current\) => sortTasksByDueAt\(upsertTasksByRule\(current, generated\)\)\)/);
+  assert.doesNotMatch(client, /setTasks\(\(current\) => sortTasksByDueAt\(closeStudentLpLifecycleTasks\(/);
   assert.match(client, /if \(isTeacherView\) \{\s*notify\("老师账号不能删除排课，请联系负责教务处理"\)/);
   assert.match(client, /onConfirm: async \(\) => \{\s*await writeBookingCapacityMutation\(\{ action: "delete", bookingId: booking\.id \}\)/);
   assert.match(client, /kind !== "代课" && firstTeacherStudentBooking/);
   assert.match(client, /<ToDoList tasks=\{visibleTasks\}/);
-  assert.match(toDoList, /TO_DO_FILTERS = \["all", "LP", "考试", "续课", "请假代课"\]/);
+  assert.match(toDoList, /TO_DO_FILTERS = \["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"\]/);
   assert.match(toDoList, /title="今日到期"/);
   assert.match(toDoList, /title="已逾期"/);
   assert.match(toDoList, /sortTasksByDueAt/);
-  assert.match(toDoList, /\{task\.due\}/);
+  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt\)/);
+  assert.match(client, /student\.id && isExecutableOpenTask\(task\)/);
+  assert.doesNotMatch(client, /截止时间待确认/);
 
   assert.match(css, /--brand:#75C9C2/);
   assert.match(client, /teacherTotalHours/);
   assert.match(client, /function availabilitySummary/);
-  assert.match(client, /teacher-source-evidence/);
-  assert.match(client, /腾讯表原始记录（仅供人工结构化）/);
+  assert.match(client, /availabilitySourceText/);
+  assert.match(client, /capacitySourceText/);
+  assert.doesNotMatch(client, /腾讯表原话/);
   assert.match(client, /const teacherPageSize = 8/);
   assert.match(client, /本月未收集/);
   assert.match(client, /function formatMoney/);
@@ -316,7 +360,9 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(client, /contractEffectiveDate\?: string/);
   assert.match(client, /jwbSyncStatus\?: string/);
   assert.match(client, /教务宝同步/);
-  assert.match(client, /教务宝剩余 \/ 当前总课时/);
+  assert.match(client, /const jwbHoursValue =/);
+  assert.match(client, /<small>\{english \? "Lesson hours" : "课时"\}<\/small>/);
+  assert.doesNotMatch(client, /教务宝剩余 \/ 当前总课时/);
   assert.match(client, /disabled=\{bookingFormKind !== "试听" && balance <= 0\}/);
   assert.match(client, /disabled=\{balance <= 0\}/);
   assert.doesNotMatch(client, /课时与合约数据来自只读镜像；本系统不会回写教务宝/);
@@ -328,7 +374,7 @@ test("keeps Jiaowubao imports read-only and exposes real operations data", async
   assert.match(client, /const renewalPageSize = 10/);
   assert.match(client, /Pagination page=\{safeRenewalPage\}/);
   assert.match(client, /const payrollPageSize = 10/);
-  assert.match(client, /学生课时、课程目录与本周排课已只读镜像；不会回写教务宝/);
+  assert.match(client, /sourceFreshnessLabel/);
   assert.match(css, /\.course-layout/);
   assert.match(css, /\.course-grid-row/);
   assert.match(css, /\.week-board \{/);
@@ -353,20 +399,23 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /joinTeacherClassroom/);
   assert.match(client, /copyStudentClassroomLink/);
   assert.match(client, /submitTemporaryClassroom/);
-  assert.match(client, /prepareTemporaryClassroomLink/);
   assert.match(client, /立即开临时课堂/);
-  assert.match(client, /已关联网上教室/);
-  assert.match(client, /writeBookingCapacityMutation\(\{ action: "upsert", bookingId, booking \}\)/);
-  assert.match(client, /name="packageId" required/);
+  assert.match(client, /查看教室与录播/);
   const temporarySubmit = client.slice(client.indexOf("const submitTemporaryClassroom"), client.indexOf("const endClassroom"));
-  assert.doesNotMatch(temporarySubmit, /setBookings\(/);
+  assert.match(temporarySubmit, /const hasRecordDetails/);
+  assert.doesNotMatch(temporarySubmit, /writeBookingCapacityMutation\(\{ action: "upsert"/);
+  assert.match(temporarySubmit, /temporaryClassroomRequest\(\{[\s\S]*requestKey/);
+  assert.match(client, /\/api\/classroom\/temporary/);
+  assert.doesNotMatch(client, /以上选项全部可留空/);
+  assert.doesNotMatch(client, /不记录排课、课时、薪资、出勤或录播/);
+  assert.match(client, /测试参与者链接/);
   assert.match(client, /endClassroom/);
   assert.match(client, /occurrenceId: occurrence\.occurrenceKey/);
   assert.match(client, /occurrenceId: booking\.occurrenceKey/);
   assert.doesNotMatch(client, /meetingId: `yinling-\$\{bookingId\}`/);
   assert.match(client, /window\.setInterval\(poll, 15000\)/);
-  assert.match(client, /BiggerBlueButton 托管课堂/);
-  assert.match(client, /自动录播/);
+  assert.match(client, /title="BiggerBlueButton"/);
+  assert.match(client, /录播/);
   assert.match(client, /正在连接网上教室/);
   assert.match(client, /通常需要 10–30 秒/);
   assert.match(client, /首次进入请允许浏览器使用麦克风和摄像头/);
@@ -376,6 +425,13 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(route, /getCurrentDemoSession/);
   assert.match(route, /getOpsState\(\["students", "teachers", "bookings"\]\)/);
   assert.match(route, /filterOpsStateRows/);
+  const temporaryRoute = await read("../app/api/classroom/temporary/route.ts");
+  assert.match(temporaryRoute, /createTemporaryTestMeeting/);
+  assert.match(temporaryRoute, /DEMO_LIMITED_ADMIN_USER/);
+  assert.match(temporaryRoute, /getOpsState/);
+  assert.match(temporaryRoute, /createMeeting\(/);
+  assert.match(temporaryRoute, /upsert_bind_classroom/);
+  assert.match(temporaryRoute, /meetingId = `yinling-test-\$\{digest/);
   assert.match(route, /meetingIdForOccurrence\(occurrenceId\)/);
   assert.match(route, /role: "MODERATOR", userId: teacherId/);
   assert.match(route, /body\.action === "teacher-join"/);
@@ -385,6 +441,12 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(bbb, /createHash\("sha1"\)/);
   assert.match(bbb, /XMLParser/);
   assert.match(bbb, /autoStartRecording: true/);
+  assert.match(bbb, /createTemporaryTestMeeting/);
+  const temporaryMeeting = bbb.slice(bbb.indexOf("export async function createTemporaryTestMeeting"), bbb.indexOf("export function createJoinUrl"));
+  assert.match(temporaryMeeting, /record: false/);
+  assert.match(temporaryMeeting, /autoStartRecording: false/);
+  assert.doesNotMatch(temporaryMeeting, /analyticsCallbackUrl/);
+  assert.doesNotMatch(temporaryMeeting, /meta_occurrence-id/);
   assert.match(bbb, /meetingIdForOccurrence/);
   assert.match(css, /\.classroom-recording-pending/);
   assert.match(css, /\.classroom-share-link/);
@@ -404,13 +466,14 @@ test("settles a concrete ended lesson occurrence only through the server contrac
   assert.doesNotMatch(client, /setBookings\([^;]*lessonSettlementDraft/s);
 });
 
-test("records renewal outcomes, preserves prior contact time and archives FU screenshots securely", async () => {
-  const [client, store, uploadRoute, downloadRoute, migration, pdfMigration, css] = await Promise.all([
+test("records renewal outcomes through one atomic receipt and archives FU screenshots securely", async () => {
+  const [client, store, renewalRoute, uploadRoute, downloadRoute, migration, pdfMigration, css] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../lib/ops-store.ts"),
+    read("../app/api/renewals/follow-up/route.ts"),
     read("../app/api/fu-attachments/route.ts"),
     read("../app/api/fu-attachments/[id]/route.ts"),
-    read("../supabase/migrations/20260728_add_student_fu_attachments.sql"),
+    read("../supabase/migrations/20260824000400_renewal_follow_up_atomic.sql"),
     read("../supabase/migrations/20260812220509_allow_pdf_student_fu_attachments.sql"),
     read("../app/globals.css"),
   ]);
@@ -419,19 +482,28 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(client, /lastAttemptAt\?: string/);
   assert.match(client, /lastContactedAt\?: string/);
   assert.match(client, /renewal\.status === "本次未跟进"/);
-  assert.match(client, /lastContactedAt: contacted \? attemptedAt : renewalDraft\.lastContactedAt/);
   assert.match(client, /renewalStatusForPackage\(renewalStatusRecords/);
   assert.match(client, /scopeStudentIds\.push\(student\.id\)/);
   assert.match(client, /mapLessonPackageDepletionEstimates\(packages, projectedOccurrences/);
   assert.match(client, /normalizeRenewalBusinessStatus\(renewal\.status\)/);
   assert.match(client, /getLatestStudentFollowUp\(student\?\.followUpHistory \?\? \[\]\)/);
-  assert.match(client, /appendStudentFollowUp\(item\.followUpHistory \?\? \[\], followUp\)/);
   assert.match(client, /addAudit\(\s*"记录续课跟进"/);
-  assert.match(client, /fetch\("\/api\/fu-attachments"/);
-  assert.match(client, /upload\.set\("fileType", "续课 FU"\)/);
+  assert.match(client, /const submitRenewalFollowUp = async/);
+  assert.match(client, /upload\.set\("attemptedAt", attemptedAt\)/);
+  assert.match(client, /upload\.set\("attachment", attachment\)/);
+  assert.match(client, /fetch\("\/api\/renewals\/follow-up"/);
+  assert.match(client, /body\.committed === true/);
+  assert.match(client, /renewalsShared\.applyRemote\(body\.renewalsRow/);
+  assert.match(client, /studentsShared\.applyRemote\(body\.studentsRow/);
+  assert.match(client, /filesShared\.applyRemote\(body\.filesRow/);
+  assert.match(client, /tasksShared\.applyRemote\(body\.tasksRow/);
+  assert.doesNotMatch(client.slice(client.indexOf("const submitRenewalFollowUp"), client.indexOf("const submitFile")), /mutateAndCommit/);
   assert.match(client, /聊天记录截图（可选）/);
-  assert.match(store, /putStudentFuAttachmentAtomic/);
+  assert.match(store, /putRenewalFollowUpAtomic/);
   assert.match(store, /getStudentFuAttachment/);
+  assert.match(renewalRoute, /parseRenewalFollowUpCommand/);
+  assert.match(renewalRoute, /putRenewalFollowUpAtomic/);
+  assert.doesNotMatch(renewalRoute, /putOpsState/);
   assert.match(uploadRoute, /getCurrentDemoSession/);
   assert.match(uploadRoute, /MAX_STUDENT_ATTACHMENT_BYTES/);
   assert.match(uploadRoute, /isStudentAttachmentContentType/);
@@ -440,10 +512,13 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
   assert.match(downloadRoute, /getCurrentDemoSession/);
   assert.match(downloadRoute, /canAccessStudent/);
   assert.match(downloadRoute, /Cache-Control": "private, no-store"/);
-  assert.match(migration, /student_fu_attachments enable row level security/);
+  assert.match(migration, /create or replace function public\.put_renewal_follow_up_atomic/);
+  assert.match(migration, /renewal_follow_up_commands/);
+  assert.match(migration, /internal\.validate_renewal_follow_up_intent/);
+  assert.match(migration, /lock table internal\.student_fu_attachments/);
+  assert.match(migration, /grant execute on function public\.put_renewal_follow_up_atomic/);
   assert.match(migration, /if not internal\.verify_ops_secret\(p_secret\) then/);
   assert.doesNotMatch(migration, /perform internal\.verify_ops_secret\(p_secret\)/);
-  assert.match(migration, /revoke all on table internal\.student_fu_attachments from anon, authenticated/);
   assert.match(pdfMigration, /application\/pdf/);
   assert.match(pdfMigration, /octet_length\(decoded\) > 4194304/);
   assert.match(pdfMigration, /if not internal\.verify_ops_secret\(p_secret\) then/);
@@ -453,21 +528,23 @@ test("records renewal outcomes, preserves prior contact time and archives FU scr
 });
 
 test("covers current scheduling, LP, AVA and student record changes", async () => {
-  const [client, css, lpWorkflows, lpFields] = await Promise.all([
+  const [client, css, lpWorkflows, lpFields, studentSubjects] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/globals.css"),
     read("../lib/lp-workflows.ts"),
     read("../app/lp-workflow-fields.tsx"),
+    read("../lib/student-subject-options.ts"),
   ]);
 
   assert.match(client, /repeatCount\?: number/);
   assert.match(client, /expandLessonOccurrences\(booking/);
-  assert.match(client, /const validationCount = recurring \? \(repeatCount \?\? 104\) : 1/);
+  assert.match(client, /const validationCount = recurring\s+\? recurrenceOccurrenceCount\([\s\S]*?\) \?\? 104\s+: 1/);
+  assert.match(client, /authoritativeRecurrenceEndDate/);
   assert.match(client, /const proposedDates = Array\.from\(\{ length: validationCount \}/);
   assert.match(client, /const weekOccurrences = scopedBookings/);
   assert.match(client, /bookingOccurrencesWithinRange\(booking, shiftIsoDate\(weekDays\[0\]\.date, -1\)/);
   assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
-  assert.match(client, /const displayedBooking = currentScheduleScope\.find/);
+  assert.match(client, /const displayedBooking = \(selectedBookingOccurrenceKey[\s\S]*?currentScheduleScope\.find\(\(booking\) => booking\.occurrenceKey === selectedBookingOccurrenceKey\)/);
   assert.match(client, /bookingHasDstRisk\(displayedBookingSeries/);
   assert.match(client, /const conflictDate = proposedDates\.find/);
   assert.match(client, /const unavailableDate = proposedDates\.find/);
@@ -480,9 +557,10 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /老师请假/);
   assert.match(client, /启动代课/);
   assert.match(client, /sourceBookingId: booking\.id/);
-  assert.match(client, /!substitution \|\| booking\.studentId === studentId/);
+  assert.match(client, /item\.kind !== "代课" && item\.teacherId === teacherId && item\.studentId === studentId/);
   assert.match(client, /\{!isTeacherView && <>/);
-  assert.match(client, /选择可代课老师/);
+  assert.match(client, /selectedOperation\.type === "老师离职" \? "永久接替老师" : "代课候选"/);
+  assert.match(client, /selectedOperation\.type === "老师离职" \? "选择永久接替老师" : "选择代课推荐老师"/);
   for (const workflowType of [
     "试听 LP",
     "老师新 LP",
@@ -502,17 +580,22 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /<LpWorkflowFields/);
   assert.match(client, /<LpWorkflowDetails/);
   assert.match(client, /<details className="span-2" open>/);
-  assert.match(client, /parsedLp\.fields as unknown as LpFieldValues/);
-  assert.match(client, /const revised = reviseLpWorkflow/);
+  assert.match(client, /const fields = parsedLp\.fields as LpFieldValues/);
+  assert.match(client, /const submitLpRevision = async/);
+  assert.match(client, /operation: "revise" as const/);
   assert.match(client, /const changed = changeLpStage/);
   assert.match(client, /lpFilter === "revision" \? item\.stage === "需修改"/);
   assert.match(client, /<LpRevisionHistory/);
   assert.match(client, /name="guardianWechat"/);
+  assert.match(client, /resolveStudentDisplayName/);
+  assert.equal(client.match(/subjectOptions=\{getStudentSubjectOptions\(/g)?.length, 2);
+  assert.match(studentSubjects, /booking\.studentId !== input\.studentId/);
+  assert.doesNotMatch(studentSubjects, /courses\.map/);
   assert.match(client, /name="provisionalGuardianWechat"/);
   assert.doesNotMatch(client, /name="provisionalName"/);
   assert.doesNotMatch(client, /name="guardian"/);
-  assert.match(client, /canAdd=\{!isTeacherView && selectedStudent\.importArchived !== true\}/);
-  assert.match(client, /isTeacherView \|\| selectedStudent\?\.importArchived/);
+  assert.match(client, /canAdd=\{!isTeacherView && studentModalTargetStudent\.importArchived !== true\}/);
+  assert.match(client, /isTeacherView \|\| studentModalTargetStudent\.importArchived/);
   assert.match(client, /id: "archived", label: .*"历史归档"/);
   assert.match(client, /历史归档只读/);
   assert.match(client, /历史业务记录/);
@@ -522,11 +605,13 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /readOnly=\{visibleSelectedStudent\.importArchived === true\}/);
   assert.match(client, /student\.importArchived \? "历史归档" : "学生"/);
   assert.match(client, /openStudentRecord\(visibleSelectedStudent\.id, section\)/);
-  assert.match(client, /直报录入课时/);
+  assert.match(client, /录入课时 \/ 课包/);
   assert.match(client, /暂未有学生姓名，先按科目创建临时档案/);
   assert.match(client, /if \(!isAdminView\) \{\s*notify\("无姓名临时建档需要管理员处理/);
-  assert.match(client, /\{isAdminView && <>/);
-  assert.match(client, /姓名待补/);
+  assert.match(client, /if \(provisional && workflowType !== "试听 LP"\) \{\s*notify\("只有试听 LP 可以创建无姓名临时档案/);
+  assert.match(client, /resolveStudentDisplayName\(\{\s*segment: "试听",\s*name: "",\s*guardianWechat: provisionalGuardianWechat/);
+  assert.match(client, /\{isAdminView && lpDraftType === "试听 LP" && <>/);
+  assert.match(client, /provisionalIntake/);
   assert.match(client, /规划老师/);
   assert.match(client, /负责教务/);
   assert.match(client, /上传沟通或家长反馈/);
@@ -554,6 +639,26 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /type="submit" disabled=\{confirmBusy\}>\{confirmBusy/);
   assert.match(client, /actionLabel: undo \? translateInterfaceText\("撤销", displayPreferences\.language\)/);
   assert.match(client, /current\?\.id === toastId/);
+  assert.match(client, /<h2>\{stage\}<\/h2>/);
+  assert.match(css, /\.kanban-board header h2 \{ font:inherit; margin:0; \}/);
+  assert.match(client, /window\.matchMedia\("\(min-width: 761px\) and \(pointer: fine\)"\)/);
+  assert.doesNotMatch(client, /id="password"[^>]*autoFocus/);
+  assert.doesNotMatch(client, /正在(?:进入|上传|保存|登记)\.\.\./);
+  assert.match(client, /正在进入…/);
+  assert.match(client, /正在上传…/);
+  assert.match(client, /正在保存…/);
+  assert.match(client, /正在重置…/);
+  assert.match(client, /summarizeScheduleAttendance/);
+  assert.match(client, /const lastSevenDaysStart = shiftIsoDate\(todayInScheduleTimezone, -6\)/);
+  assert.match(client, /aria-label=\{englishSchedule \? "Attendance summary" : "出勤率统计"\}/);
+  assert.match(client, /englishSchedule \? "Last 7 days" : "近 7 天"/);
+  assert.match(client, /englishSchedule \? "This month" : "本月"/);
+  assert.match(client, /`出勤 \$\{summary\.present\} \/ 应到 \$\{summary\.scheduled\}`/);
+  assert.equal(client.match(/\{scheduleAttendancePanel\}/g)?.length, 4);
+  assert.match(css, /\.schedule-attendance-strip \{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\);/);
+  assert.match(client, /const studentRecordData = buildStudentRecordsPanelData\(student, files\)/);
+  assert.match(client, /followUp: studentRecordData\.followUps\.length/);
+  assert.doesNotMatch(client, /followUp: student\.followUpHistory\?\.length \?\? \(student\.followUp \? 1 : 0\)/);
 });
 
 test("wires controlled raw JWB and two-workbook teacher imports into the sync workspace", async () => {
@@ -570,9 +675,9 @@ test("wires controlled raw JWB and two-workbook teacher imports into the sync wo
   assert.doesNotMatch(client, /studentJwbSourceFormat/);
   assert.match(client, /jiaowubao-api-v2/);
   assert.doesNotMatch(client, /系统标准 rows/);
-  assert.match(client, /逐课程余额/);
+  assert.doesNotMatch(client, /逐课程余额/);
   assert.match(client, /studentJwbNegativePolicy/);
-  assert.match(client, /仅保留净余额，不创建该生课包/);
+  assert.doesNotMatch(client, /仅保留净余额，不创建该生课包/);
   assert.match(client, /fetch\("\/api\/student-import\/source-rows"/);
   assert.match(client, /fetch\("\/api\/student-import\/source-rows", \{ cache: "no-store" \}\)/);
   assert.match(client, /body\.ready !== true/);
@@ -603,27 +708,17 @@ test("wires controlled raw JWB and two-workbook teacher imports into the sync wo
   assert.match(teacherService, /prepareTeacherImport/);
 });
 
-test("presents master-authoritative students without JWB separately from unresolved JWB ledgers", async () => {
+test("keeps master-authoritative students and unresolved JWB ledgers separate", async () => {
   const [client, recordsPanel] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/student-records-panel.tsx"),
   ]);
 
   assert.match(client, /jwbMatchStatus\?: "matched" \| "unmatched" \| "ambiguous"/);
-  assert.match(client, /腾讯总表已建档；课时和课包暂为空/);
-  assert.match(client, /腾讯总表有效档案 · 未关联教务宝资料/);
-  assert.match(client, /腾讯总表有效档案 · 多个教务宝候选待核对/);
+  assert.match(client, /StudentRecordsPanel/);
   assert.match(client, /historicalJwbSnapshot\?: StudentHistoricalJwbSnapshot/);
-  assert.match(client, /仅作为只读历史证据，不能用于排课或扣课/);
-  assert.match(client, /hasActiveLessonPackages/);
-  assert.match(client, /现有可用课包已单独保留，仍可用于排课或扣课/);
-  assert.match(client, /hasVerifiedActiveJwbPackages/);
-  assert.match(client, /当前可核对课包仍可使用；历史快照仅独立保留供核验/);
-  assert.match(client, /学号日期：系统建档日期/);
-  assert.match(client, /腾讯学生总表是唯一学生档案来源/);
   assert.match(client, /formalImportDate: string/);
-  assert.match(client, /学号使用正式导入日期/);
-  assert.match(client, /仅在教务宝、未出现在总表的旧账号不会自动建档/);
+  assert.match(recordsPanel, /studentJwbPackageNotice/);
   assert.match(recordsPanel, /腾讯总表已建档，暂未关联教务宝资料；课时和课包暂为空/);
   assert.match(recordsPanel, /腾讯总表已建档，教务宝有多个候选待核对；当前不采用任何候选，课时和课包暂为空/);
   assert.match(recordsPanel, /历史待核验 · 不可用于排课或扣课/);

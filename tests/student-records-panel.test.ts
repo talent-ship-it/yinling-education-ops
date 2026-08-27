@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildStudentRecordsPanelData,
   filterStudentRecordExams,
+  studentRecordsMelbourneMonth,
   studentFileRecordSection,
   studentHistoricalJwbSnapshotEvidence,
   studentJwbPackageNotice,
+  StudentRecordsPanel,
   type StudentRecordsPanelFile,
   type StudentRecordsPanelStudent,
 } from "../app/student-records-panel";
+
+test("derives the exam panel month in Melbourne instead of UTC", () => {
+  assert.equal(studentRecordsMelbourneMonth(new Date("2026-08-31T14:30:00.000Z")), "2026-09");
+  assert.equal(studentRecordsMelbourneMonth(new Date("2026-08-31T13:59:59.999Z")), "2026-08");
+});
 
 const files: StudentRecordsPanelFile[] = [
   { id: "other-student", studentId: "student-2", title: "Ignore", type: "Learning Plan", source: "腾讯文档", addedAt: "2026-08-10" },
@@ -103,6 +112,7 @@ test("derives the three care/recall/results states and filters current-month inc
 
   assert.deepEqual(data.exams.map(({ exam }) => exam.id), ["month-only", "dated-complete", "dated-incomplete", "later"]);
   assert.deepEqual(data.exams[0].followUpStatuses, {
+    exam_month_planning: "not_required",
     exam_care: "not_required",
     exam_recall: "not_required",
     exam_results_follow_up: "not_required",
@@ -113,6 +123,7 @@ test("derives the three care/recall/results states and filters current-month inc
     "dated-incomplete",
   ]);
   assert.deepEqual(filterStudentRecordExams(data.exams, "2026-08", "incomplete").map(({ exam }) => exam.id), [
+    "dated-complete",
     "dated-incomplete",
   ]);
   assert.equal(data.exams[0].estimatedResultDate, "2026-09-10");
@@ -123,6 +134,14 @@ test("supports explicit file grouping and stable legacy defaults", () => {
   assert.equal(studentFileRecordSection(files[3]), "report");
   assert.equal(studentFileRecordSection(files[4]), "fu");
   assert.equal(studentFileRecordSection({ ...files[1], recordSection: "fu" }), "fu");
+  assert.equal(studentFileRecordSection({
+    ...files[3],
+    recordSection: "forged",
+  } as unknown as StudentRecordsPanelFile), "report");
+  assert.doesNotThrow(() => buildStudentRecordsPanelData(student, [{
+    ...files[4],
+    recordSection: "forged",
+  } as unknown as StudentRecordsPanelFile]));
 });
 
 test("derives latest follow-up while retaining the full sorted history", () => {
@@ -160,6 +179,47 @@ test("does not turn legacy empty follow-up labels into history", () => {
 
   assert.equal(data.latestFollowUp, null);
   assert.deepEqual(data.followUps, []);
+});
+
+test("filters invalid follow-ups and safely renders malformed legacy files and packages", () => {
+  const malformedStudent = {
+    ...student,
+    followUp: "not-a-date",
+    followUpHistory: [
+      { id: "bad-date", followedUpAt: "not-a-date" },
+      { id: "bad-calendar-date", followedUpAt: "2026-02-30" },
+      { id: "bad-id", followedUpAt: "2026-08-12", note: { forged: true } },
+    ],
+    lessonPackages: [{
+      id: "bad-package",
+      name: "Malformed package",
+      subjectIds: null,
+      purchaseRecords: [],
+      consumedHours: 0,
+    }],
+  } as unknown as StudentRecordsPanelStudent;
+  const malformedFiles = [{
+    id: "legacy-file",
+    studentId: student.id,
+    title: "Legacy file",
+    type: null,
+    source: null,
+    addedAt: null,
+  }] as unknown as StudentRecordsPanelFile[];
+
+  const data = buildStudentRecordsPanelData(malformedStudent, malformedFiles);
+  assert.deepEqual(data.followUps, []);
+  assert.equal(data.latestFollowUp, null);
+  assert.deepEqual(data.lessonPackages, []);
+  assert.equal(data.files.lp[0]?.type, "资料");
+  assert.equal(data.files.lp[0]?.source, "未知来源");
+  assert.equal(data.files.lp[0]?.addedAt, "日期待确认");
+  assert.doesNotThrow(() => renderToStaticMarkup(createElement(StudentRecordsPanel, {
+    student: malformedStudent,
+    files: malformedFiles,
+    callbacks: { onAdd: () => undefined },
+    initialSection: "lessonPackages",
+  })));
 });
 
 test("shows package balances and every purchase newest first", () => {
@@ -294,6 +354,21 @@ test("labels absent and historical Jiaowubao snapshots without treating them as 
   assert.equal(retainedAggregate.lessonPackages.length, 0);
   assert.equal(activePartialWithSnapshot.lessonPackages.length, 1);
   assert.equal(studentJwbPackageNotice(activePartialWithSnapshot), "下方仅显示当前可用课包。当前可核对课包仍可使用；历史教务宝资料已作为只读快照保留待核验，不可用于排课或扣课。");
+
+  const html = renderToStaticMarkup(createElement(StudentRecordsPanel, {
+    student: {
+      id: "retained-render",
+      name: "Retained render",
+      jwbMatchStatus: "unmatched",
+      historicalJwbSnapshot: retainedAggregate.historicalJwbSnapshot,
+    },
+    files: [],
+    callbacks: { onAdd: () => undefined },
+    initialSection: "lessonPackages",
+  }));
+  assert.match(html, /历史待核验 · 不可用于排课或扣课/);
+  assert.match(html, /历史保留课包 1 个/);
+  assert.match(html, /当前教务宝汇总（只读）：余额 2 · 总 8/);
 });
 
 test("sorts month-only exams before dated exams and estimates result dates", () => {

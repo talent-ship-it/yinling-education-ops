@@ -276,8 +276,8 @@ function stableManagedTaskId(studentId: string, ruleKey: string) {
   return `TSK-EXAM-${createHash("sha256").update(`${studentId}\u001f${ruleKey}`).digest("hex").slice(0, 24)}`;
 }
 
-function taskTone(kind: "exam_care" | "exam_recall" | "exam_results_follow_up"): TaskTone {
-  return kind === "exam_results_follow_up" ? "purple" : "amber";
+function taskTone(kind: "exam_care" | "exam_recall" | "exam_month_planning" | "exam_results_follow_up"): TaskTone {
+  return kind === "exam_results_follow_up" || kind === "exam_month_planning" ? "purple" : "amber";
 }
 
 export function prepareExamSubmission(input: Readonly<{

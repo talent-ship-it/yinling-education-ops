@@ -128,6 +128,51 @@ test("expands a legacy recurring series into independent occurrences and ignores
   assert.equal(occurrences[2].teacherId, "TEACHER-A");
 });
 
+test("expands daily, every-other-day, weekly, biweekly and custom intervals", () => {
+  for (const [interval, expectedSecondDate] of [[1, "2026-09-08"], [2, "2026-09-09"], [7, "2026-09-14"], [14, "2026-09-21"], [31, "2026-10-08"]] as const) {
+    const occurrences = expandLessonOccurrences({
+      id: `INTERVAL-${interval}`,
+      date: "2026-09-07",
+      start: "16:00",
+      duration: 60,
+      recurring: true,
+      repeatCount: 2,
+      recurrenceIntervalDays: interval,
+      studentId: "STUDENT-A",
+      teacherId: "TEACHER-A",
+    }, { rangeStart: "2026-09-07", rangeEnd: "2026-10-31" });
+    assert.equal(occurrences[1].date, expectedSecondDate);
+    assert.equal(occurrences[1].sourceDate, expectedSecondDate);
+  }
+});
+
+test("expansion truncates at the earlier repeat-count or recurrence-end bound", () => {
+  const occurrences = expandLessonOccurrences({
+    id: "END-DATE-SERIES",
+    date: "2026-09-01",
+    start: "16:00",
+    duration: 60,
+    recurring: true,
+    repeatCount: 10,
+    recurrenceIntervalDays: 2,
+    recurrenceEndDate: "2026-09-05",
+  }, { rangeStart: "2026-09-01", rangeEnd: "2026-09-30" });
+  assert.deepEqual(occurrences.map((item) => item.date), ["2026-09-01", "2026-09-03", "2026-09-05"]);
+  assert.equal(occurrences.at(-1)?.sourceDate, "2026-09-05");
+});
+
+test("rejects recurrence intervals outside the persisted contract", () => {
+  assert.throws(() => expandLessonOccurrences({
+    id: "INVALID-INTERVAL",
+    date: "2026-09-07",
+    start: "16:00",
+    duration: 60,
+    recurring: true,
+    repeatCount: 2,
+    recurrenceIntervalDays: 0,
+  }, { rangeStart: "2026-09-01", rangeEnd: "2026-09-30" }), /1 to 365/);
+});
+
 test("finds occurrences moved before the series start or into an earlier target range", () => {
   const overrides = [{
     occurrenceId: lessonOccurrenceId("LEGACY-SERIES", "2026-08-10"),
@@ -156,6 +201,32 @@ test("finds occurrences moved before the series start or into an earlier target 
   assert.equal(occurrences.length, 1);
   assert.equal(occurrences[0].sourceDate, "2026-08-10");
   assert.equal(occurrences[0].status, "completed");
+});
+
+test("keeps two source occurrences distinct when both move to one target date", () => {
+  const movedTarget = "2026-09-20";
+  const overrides = [
+    { occurrenceId: lessonOccurrenceId("COLLISION-SERIES", "2026-09-06"), date: movedTarget },
+    { occurrenceId: lessonOccurrenceId("COLLISION-SERIES", "2026-09-13"), date: movedTarget },
+  ];
+  const occurrences = expandLessonOccurrences({
+    id: "COLLISION-SERIES",
+    date: "2026-09-06",
+    start: "16:00",
+    duration: 60,
+    recurring: true,
+    repeatCount: 2,
+  }, {
+    ...lessonOccurrenceSourceRangeForTargetRange(movedTarget, movedTarget, overrides),
+    overrides,
+  }).filter((item) => item.date === movedTarget);
+
+  assert.deepEqual(occurrences.map((item) => item.occurrenceId), [
+    "COLLISION-SERIES:2026-09-06",
+    "COLLISION-SERIES:2026-09-13",
+  ]);
+  assert.deepEqual(occurrences.map((item) => item.sourceDate), ["2026-09-06", "2026-09-13"]);
+  assert.equal(new Set(occurrences.map((item) => item.occurrenceId)).size, 2);
 });
 
 test("accumulates overlapping join/leave spans once and applies the attendance tolerance", () => {

@@ -28,9 +28,10 @@ function workbook(overrides: Partial<TeacherWorkbookSnapshot> = {}): TeacherWork
 
 test("the authoritative sheet orders mirror the K12 and university workbooks", () => {
   assert.deepEqual(TEACHER_WORKBOOK_SHEETS.k12, [
-    "在职总表", "Local English", "ABC华裔English", "Maths&Science", "VCE数学科学", "VCE其他",
-    "奖学金", "AEAS", "青少英语", "QCE", "HSC", "WACE", "SACE", "AMC数学竞赛", "科学竞赛",
-    "雅思PTE", "IB", "已离职教师",
+    "在职总表", "Local English", "ABC华裔English", "Maths&Science", "奖学金", "AEAS", "青少英语",
+    "AMC数学竞赛", "科学竞赛", "雅思PTE", "IB", "高考 English EAL", "高考 Humanities", "高考 LOTE",
+    "高考中文", "高考地理", "高考心理学", "高考法律", "高考数学", "高考化学", "高考物理", "高考生物",
+    "高考经济", "高考会计", "高考商科", "高考计算机", "高考设计", "高考日语", "高考法语", "已离职教师",
   ]);
   assert.deepEqual(TEACHER_WORKBOOK_SHEETS.university, [
     "大学老师在职总表", "Engineering", "商科", "IT", "理科", "文科（含论文辅导）", "教育学", "其他科目",
@@ -124,22 +125,22 @@ test("parenthesized nicknames never fuzzy-merge even when source text mentions t
         name: "Areejz Slamang",
         availabilityText: "Ree老师8.24之后可接新生",
       }],
-      subjectRows: [{ workbook: "k12", sheetName: "HSC", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
+      subjectRows: [{ workbook: "k12", sheetName: "高考 Humanities", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
     })],
   });
   assert.equal(confirmed.teachers.length, 2);
   assert.deepEqual(confirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang")?.subjects, []);
-  assert.deepEqual(confirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["HSC"]);
+  assert.deepEqual(confirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["高考 Humanities"]);
   assert.equal(confirmed.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), false);
 
   const unconfirmed = buildTeacherImportPlan({
     workbooks: [workbook({
       rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Areejz Slamang" }],
-      subjectRows: [{ workbook: "k12", sheetName: "HSC", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
+      subjectRows: [{ workbook: "k12", sheetName: "高考 Humanities", sourceRow: 11, name: "Areejz Slamang(Ree)" }],
     })],
   });
   assert.equal(unconfirmed.teachers.length, 2);
-  assert.deepEqual(unconfirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["HSC"]);
+  assert.deepEqual(unconfirmed.teachers.find((teacher) => teacher.name === "Areejz Slamang(Ree)")?.subjects, ["高考 Humanities"]);
   assert.equal(unconfirmed.issues.some((issue) => issue.code === "subject_teacher_not_in_roster"), false);
 });
 
@@ -716,7 +717,7 @@ test("sheet drift blocks invented categories while exact subject-only names rema
       rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Roster Teacher" }],
       subjectRows: [
         { workbook: "k12", sheetName: "IB", sourceRow: 2, name: "Roster Teacher" },
-        { workbook: "k12", sheetName: "HSC", sourceRow: 3, name: "Unknown Teacher" },
+        { workbook: "k12", sheetName: "高考 Humanities", sourceRow: 3, name: "Unknown Teacher" },
         { workbook: "k12", sheetName: "临时自由分类", sourceRow: 4, name: "Roster Teacher" },
       ],
     })],
@@ -728,7 +729,7 @@ test("sheet drift blocks invented categories while exact subject-only names rema
   assert.equal(codes.has("sheet_order_mismatch"), true);
   assert.equal(codes.has("subject_teacher_not_in_roster"), false);
   assert.deepEqual(plan.teachers[0].subjects, []);
-  assert.deepEqual(plan.teachers.find((teacher) => teacher.name === "Unknown Teacher")?.subjects, ["HSC"]);
+  assert.deepEqual(plan.teachers.find((teacher) => teacher.name === "Unknown Teacher")?.subjects, ["高考 Humanities"]);
 });
 
 test("source attributes cannot invent capacity or AVA windows, while existing confirmations survive", () => {
@@ -1129,21 +1130,21 @@ test("a subject-only exact name is authoritative and assign/ignore choices are i
   assert.deepEqual(ignored, baseline);
 });
 
-test("fifteen authoritative subject categories replace any legacy category set exactly", () => {
-  const sheets = TEACHER_WORKBOOK_SHEETS.k12.slice(1, 16);
+test("all current K12 subject categories replace any legacy category set exactly", () => {
+  const sheets = TEACHER_WORKBOOK_SHEETS.k12.slice(1, -1);
   const plan = buildTeacherImportPlan({
     workbooks: [workbook({
-      rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Fifteen Category Teacher" }],
+      rosterRows: [{ workbook: "k12", sourceRow: 1, name: "Subject Category Teacher" }],
       subjectRows: sheets.map((sheetName, index) => ({
         workbook: "k12" as const,
         sheetName,
         sourceRow: index + 10,
-        name: "Fifteen Category Teacher",
+        name: "Subject Category Teacher",
       })),
     })],
     existingTeachers: [{
       id: "TEA-FIFTEEN",
-      name: "Fifteen Category Teacher",
+      name: "Subject Category Teacher",
       subjects: ["IB"],
       sourceCategories: ["IB"],
       subjectDetail: "stale detail",

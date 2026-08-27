@@ -136,6 +136,15 @@ export async function POST(request: Request) {
       );
     }
     const input = parseStudentImportSourceIngestRequest(payload);
+    if (input.sourceKind === "jwb") {
+      // Material JWB API snapshots must use the resumable, terminal-only
+      // staging protocol. This keeps a browser/request retry from replacing
+      // the active source pointer with one oversized, non-resumable payload.
+      return noStore({
+        error: "教务宝来源必须使用分块 staging 导入，不能通过一次性上传替换。",
+        code: "jiaowubao_student_source_chunked_ingest_required",
+      }, 409);
+    }
     const saved = await putStudentImportSourceRows({ ...input, actor: access.actor });
     return noStore({ ingested: true, source: saved });
   } catch (error) {

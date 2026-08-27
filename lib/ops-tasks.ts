@@ -38,11 +38,43 @@ export interface OpsTask {
   result?: string;
   ruleKey?: string;
   dueAt?: string;
+  /**
+   * Historical evidence retained when an imported task had no verifiable
+   * deadline. Frozen evidence is deliberately not an executable task.
+   */
+  legacyEvidence?: {
+    state: "frozen";
+    reason: "missing_canonical_due_at";
+    sourceDue?: string;
+    sourceDueAt?: string;
+    frozenAt: string;
+  };
   anchorBookingId?: string;
   closedAt?: string;
 }
 
 export type Task = OpsTask;
+
+const CANONICAL_DUE_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** A deadline is canonical only when it round-trips to the exact ISO value. */
+export function isCanonicalTaskDueAt(value: unknown): value is string {
+  if (typeof value !== "string" || !CANONICAL_DUE_AT.test(value)) return false;
+  const instant = new Date(value);
+  return Number.isFinite(instant.getTime()) && instant.toISOString() === value;
+}
+
+export function isFrozenLegacyTask(task: { legacyEvidence?: unknown; dueAt?: unknown }) {
+  // UI/executable filtering is deliberately fail-closed. The database owns
+  // marker validity and its private ledger; any persisted marker presence must
+  // remain hidden until an authorized transaction removes the field entirely.
+  return task.legacyEvidence !== undefined;
+}
+
+/** Only these rows are allowed into the executable To Do queue. */
+export function isExecutableOpenTask(task: Pick<OpsTask, "status" | "dueAt" | "legacyEvidence">) {
+  return task.status !== "done" && !isFrozenLegacyTask(task) && isCanonicalTaskDueAt(task.dueAt);
+}
 
 export interface RuleBoundTask extends OpsTask {
   ruleKey: string;
@@ -67,6 +99,14 @@ export const TRIAL_SHORT_NOTICE_TASK_RULES = [
   "trial.lp-review",
   "trial.prep",
 ] as const;
+
+/** Payment reminders are reconciled from the locked LP/student/booking rows. */
+export const TRIAL_PAYMENT_TASK_RULES = [
+  "trial.payment-n2",
+  "trial.payment-urgent",
+] as const;
+
+export type TrialPaymentTaskRuleKey = (typeof TRIAL_PAYMENT_TASK_RULES)[number];
 
 /** Every trial rule managed by reconciliation, including mutually exclusive rules. */
 export const TRIAL_MANAGED_TASK_RULES = [
@@ -94,6 +134,25 @@ export const TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT = "家长已回复，
 export type TrialEscalationTaskRuleKey =
   | (typeof TRIAL_ESCALATION_TASK_RULES)[number]
   | `trial.parent-progress-sync.${number}`;
+
+function taskSeedHash(seed: string, initial: number) {
+  let hash = initial >>> 0;
+  for (const character of seed) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0").toUpperCase();
+}
+
+/** Stable, ASCII-safe identity for generated LP/trial escalation tasks. */
+export function deterministicTaskId(anchorBookingId: string, ruleKey: string) {
+  const anchor = anchorBookingId.trim();
+  const rule = ruleKey.trim();
+  if (!anchor) throw new TypeError("anchorBookingId is required");
+  if (!rule) throw new TypeError("ruleKey is required");
+  const seed = `${anchor}\u001f${rule}`;
+  return `TSK-LP-${taskSeedHash(seed, 0x811c9dc5)}-${taskSeedHash(`${seed}\u001fLP`, 0x9e3779b9)}`;
+}
 
 export function isTrialEscalationTaskRule(ruleKey: string | undefined): ruleKey is TrialEscalationTaskRuleKey {
   return Boolean(
@@ -154,6 +213,18 @@ export interface TrialBookingTaskInput {
   timeZone?: string;
   sameDayHour?: number;
   idFactory?: (ruleKey: TrialTaskRuleKey, anchorBookingId: string) => string;
+}
+
+export interface TrialPaymentTaskInput {
+  anchorBookingId: string;
+  studentId: string;
+  planner: string;
+  trialStartsAt: Date | string;
+  /** Missing/null is unknown authority and must never be treated as chargeable. */
+  trialPaymentMethod?: string | null;
+  now: Date | string;
+  timeZone?: string;
+  idFactory?: (ruleKey: TrialPaymentTaskRuleKey, anchorBookingId: string) => string;
 }
 
 export interface TrialEscalationTaskInput {
@@ -267,6 +338,23 @@ function formatDue(instant: Date, timeZone: string) {
   return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day
     .toString()
     .padStart(2, "0")} ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Format the canonical deadline instant that drives a task.  `due` is kept on
+ * legacy records as descriptive copy, so it must never be used as a source of
+ * truth for an operator-facing deadline.  Task workflows are calculated in
+ * Melbourne time unless an explicit business timezone is supplied.
+ */
+export function formatTaskDeadline(
+  dueAt: string | undefined,
+  timeZone = MELBOURNE_TIME_ZONE,
+) {
+  if (!isCanonicalTaskDueAt(dueAt)) return undefined;
+  const instant = new Date(dueAt);
+  if (!Number.isFinite(instant.getTime())) return undefined;
+  const { year, month, day, hour, minute } = localParts(instant, timeZone);
+  return `${year}年${month}月${day}日 ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
 }
 
 export function statusForDueAt(
@@ -461,12 +549,16 @@ export function generateTrialEscalationTasks(input: TrialEscalationTaskInput): R
       };
     }),
   ];
-  const idFactory = input.idFactory ?? ((ruleKey, anchorBookingId) => `TSK:${anchorBookingId}:${ruleKey}`);
+  const idFactory = input.idFactory ?? deterministicTaskId;
 
   return definitions.map((definition) => {
     const dueAt = new Date(requestedAt.getTime() + definition.hoursAfterRequest * TASK_SPACING_MS);
     return {
-      id: idFactory(definition.ruleKey, input.anchorBookingId),
+      // Parent-progress IDs must not depend on a browser-generated random id;
+      // two clients reconciling the same LP/cycle need the same identity.
+      id: definition.ruleKey.startsWith("trial.parent-progress-sync.")
+        ? deterministicTaskId(input.anchorBookingId, definition.ruleKey)
+        : idFactory(definition.ruleKey, input.anchorBookingId),
       title: definition.title,
       owner: input.owner,
       ...automaticTaskRecipients(input.owner),
@@ -484,43 +576,31 @@ export function generateTrialEscalationTasks(input: TrialEscalationTaskInput): R
 }
 
 /**
- * Keep an already-due request deadline as history. Only a still-open request
- * deadline is clamped, and every clamped instant remains strictly before the
- * lesson. `reservedAfterNow` leaves the earliest millisecond for short notice.
+ * Keep an already-due request deadline as history. A future request deadline
+ * that no longer fits before the lesson becomes due at the real reconciliation
+ * instant. Multiple immediate tasks may share that timestamp; uniqueness is
+ * carried by their rule keys, never by fabricated millisecond offsets.
  */
 function requestDeadlinesForBooking(
   idealTimes: readonly Date[],
   now: Date,
   trialStartsAt: Date,
-  reservedAfterNow = 0,
 ) {
   const nowTime = now.getTime();
   const trialTime = trialStartsAt.getTime();
   if (trialTime <= nowTime) throw new RangeError("trialStartsAt must be after now");
 
-  const futureIndexes = idealTimes
-    .map((ideal, index) => ({ ideal, index }))
-    .filter(({ ideal }) => ideal.getTime() > nowTime);
-  if (trialTime - nowTime <= futureIndexes.length + reservedAfterNow) {
-    throw new RangeError("trialStartsAt is too close to now to represent task deadlines");
-  }
-
-  const result = idealTimes.map((ideal) => new Date(ideal));
-  let previous = nowTime + reservedAfterNow;
-  futureIndexes.forEach(({ ideal, index }, futureIndex) => {
-    const remaining = futureIndexes.length - futureIndex - 1;
-    const latest = trialTime - remaining - 1;
-    const scheduled = Math.min(Math.max(ideal.getTime(), previous + 1), latest);
-    result[index] = new Date(scheduled);
-    previous = scheduled;
+  return idealTimes.map((ideal) => {
+    const idealTime = ideal.getTime();
+    if (idealTime <= nowTime || idealTime < trialTime) return new Date(ideal);
+    return new Date(now);
   });
-  return result;
 }
 
 /**
  * Create the two request-stage tasks before a lesson has been booked. Ideal
- * deadlines are retained unless already stale, in which case they are moved to
- * the first representable instants after `now`.
+ * deadlines are retained unless already stale, in which case the newly-created
+ * tasks are due at the exact creation instant.
  */
 export function generateTrialRequestTasks(input: TrialRequestTaskInput): RuleBoundTask[] {
   const timeZone = input.timeZone ?? MELBOURNE_TIME_ZONE;
@@ -538,12 +618,9 @@ export function generateTrialRequestTasks(input: TrialRequestTaskInput): RuleBou
     atLocalHour(requestedAt, FIXED_REMINDER_RULES.parentSpecifiedContentDaysAfterRequest, sameDayHour, timeZone),
     new Date(requestedAt.getTime() + FIXED_REMINDER_RULES.schedulingFeedbackHoursAfterRequest * TASK_SPACING_MS),
   ];
-  let previous = now.getTime();
-  const scheduledTimes = idealTimes.map((ideal) => {
-    const scheduled = new Date(Math.max(ideal.getTime(), previous + 1));
-    previous = scheduled.getTime();
-    return scheduled;
-  });
+  const scheduledTimes = idealTimes.map((ideal) =>
+    new Date(Math.max(ideal.getTime(), now.getTime())),
+  );
   const idFactory = input.idFactory ?? ((ruleKey, anchorBookingId) => `TSK:${anchorBookingId}:${ruleKey}`);
 
   return TRIAL_REQUEST_TASK_RULES.map((ruleKey, index) => {
@@ -557,6 +634,65 @@ export function generateTrialRequestTasks(input: TrialRequestTaskInput): RuleBou
       due: formatDue(dueAt, timeZone),
       dueAt: dueAt.toISOString(),
       status: statusForDueAt(dueAt, now, timeZone),
+      ruleKey,
+      anchorBookingId: input.anchorBookingId,
+    };
+  });
+}
+
+const FEE_REQUIRED_TRIAL_PAYMENT_METHODS = new Set([
+  "后置付费试听",
+  "付费试听（已付费）",
+  "付费试听（未付费）",
+  "在读学生付费试听",
+]);
+
+/**
+ * Generate the server-parity payment reminders for one scheduled trial. The
+ * LP value is the only payment authority: an unknown or missing value emits no
+ * reminder, while only the explicit 已付费 value is considered paid.
+ */
+export function generateTrialPaymentTasks(input: TrialPaymentTaskInput): RuleBoundTask[] {
+  const timeZone = input.timeZone ?? MELBOURNE_TIME_ZONE;
+  const now = asDate(input.now, "now");
+  const trialStartsAt = asDate(input.trialStartsAt, "trialStartsAt");
+  if (!input.anchorBookingId.trim()) throw new TypeError("anchorBookingId is required");
+  if (!input.studentId.trim()) throw new TypeError("studentId is required");
+  if (!input.planner.trim()) throw new TypeError("planner is required");
+  if (typeof input.trialPaymentMethod !== "string"
+      || !FEE_REQUIRED_TRIAL_PAYMENT_METHODS.has(input.trialPaymentMethod)) return [];
+
+  const paid = input.trialPaymentMethod === "付费试听（已付费）";
+  const n2DueAt = atLocalHour(trialStartsAt, -2, 18, timeZone);
+  const leadTime = trialStartsAt.getTime() - now.getTime();
+  const rules: TrialPaymentTaskRuleKey[] = [];
+  if (leadTime > 0 && leadTime < 72 * TASK_SPACING_MS) {
+    rules.push("trial.payment-n2");
+  }
+  if (!paid && trialStartsAt.getTime() > now.getTime()
+      && leadTime < 24 * TASK_SPACING_MS) {
+    rules.push("trial.payment-urgent");
+  }
+  const idFactory = input.idFactory ?? deterministicTaskId;
+  return rules.map((ruleKey) => {
+    const dueAt = ruleKey === "trial.payment-n2" ? n2DueAt : new Date(trialStartsAt.getTime() - 24 * TASK_SPACING_MS);
+    const done = paid;
+    return {
+      id: idFactory(ruleKey, input.anchorBookingId),
+      title: ruleKey === "trial.payment-n2" ? "确认试听收费" : "试听不足 24 小时仍未付款",
+      owner: input.planner,
+      assignees: [input.planner],
+      watchers: [DEFAULT_TEACHING_CONTROL_WATCHER],
+      studentId: input.studentId,
+      due: formatDue(dueAt, timeZone),
+      dueAt: dueAt.toISOString(),
+      status: done ? "done" : statusForDueAt(dueAt, now, timeZone),
+      tone: done ? "green" : ruleKey === "trial.payment-urgent" ? "red" : "amber",
+      category: "试听",
+      trigger: ruleKey === "trial.payment-n2"
+        ? "试听前 N-2 确认收费状态"
+        : "试听距开课不足 24 小时且仍未付款",
+      ...(done ? { result: "试听已付费，收费提醒自动关闭" } : {}),
       ruleKey,
       anchorBookingId: input.anchorBookingId,
     };
@@ -587,13 +723,12 @@ export function generateTrialBookingTasks(input: TrialBookingTaskInput): RuleBou
     requestIdealTimes,
     now,
     trialStartsAt,
-    shortNotice ? 2 : 0,
   );
   const activeRules: readonly TrialTaskRuleKey[] = shortNotice
     ? TRIAL_SHORT_NOTICE_TASK_RULES
     : TRIAL_STANDARD_TASK_RULES;
   const scheduledTimes = shortNotice
-    ? [...requestTimes, new Date(now.getTime() + 1), new Date(now.getTime() + 2)]
+    ? [...requestTimes, new Date(now), new Date(now)]
     : [
         ...requestTimes,
         atLocalHour(trialStartsAt, -FIXED_REMINDER_RULES.lpReviewDaysBeforeTrial, 18, timeZone),
@@ -806,5 +941,80 @@ export function closeTasksForBooking<T extends OpsTask>(
   return tasks.map((task) => {
     if (task.anchorBookingId !== anchorBookingId || task.status === "done") return { ...task };
     return { ...task, status: "done", tone: "green", result, closedAt: closed };
+  });
+}
+
+// LP parent-progress reconciliation lives in a server-usable service module,
+// but is re-exported here so existing task workflow callers can adopt it
+// without importing a second task API surface.
+export {
+  LP_PARENT_PROGRESS_AUTO_ADVANCED_RESULT,
+  LP_PARENT_PROGRESS_CLOSED_RESULT,
+  LP_PARENT_PROGRESS_INTERVAL_MS,
+  LP_PARENT_PROGRESS_SYNC_RULE,
+  isCredibleLpActualBooking,
+  reconcileAllLpParentProgressTasks,
+  reconcileLpParentProgressTask,
+  reconcileLpParentProgressTasks,
+} from "./lp-parent-progress-service";
+
+/**
+ * Workflow types that can satisfy the first student handover task.  Teacher
+ * maintenance, substitution, and change-of-teacher workflows are deliberately
+ * excluded: they are follow-up workflows and must not close onboarding work
+ * before an actual first handover/trial has been recorded.
+ */
+export const INITIAL_HANDOVER_WORKFLOW_TYPES = [
+  "试听 LP",
+  "学生直报（无试听）",
+  "学生报名交接",
+] as const;
+
+export type InitialHandoverWorkflowType = (typeof INITIAL_HANDOVER_WORKFLOW_TYPES)[number];
+
+export interface CloseStudentLpLifecycleTasksInput {
+  studentId: string;
+  workflowType: string;
+  /** Must be true only when this is the student's first persisted LP workflow. */
+  isFirstWorkflow: boolean;
+  closedAt: Date | string;
+  result?: string;
+}
+
+/**
+ * Close the onboarding tasks satisfied by a successfully persisted LP.
+ *
+ * Matching intentionally uses only studentId + ruleKey.  This handles legacy
+ * anchors and duplicate open copies safely, while preserving completed history,
+ * other students, and every unrelated rule.  The caller supplies the audited
+ * `isFirstWorkflow` flag so a later LP cannot prematurely close initial
+ * handover work.
+ */
+export function closeStudentLpLifecycleTasks<T extends OpsTask>(
+  tasks: readonly T[],
+  input: CloseStudentLpLifecycleTasksInput,
+): T[] {
+  if (!input.studentId.trim()) throw new TypeError("studentId is required");
+  if (!input.workflowType.trim()) throw new TypeError("workflowType is required");
+  const closedAt = asDate(input.closedAt, "closedAt").toISOString();
+  const closesInitialHandover = input.isFirstWorkflow
+    && (INITIAL_HANDOVER_WORKFLOW_TYPES as readonly string[]).includes(input.workflowType);
+  const result = input.result?.trim() || "LP 工作流已创建，任务自动关闭";
+
+  return tasks.map((task) => {
+    const closesCreateLp = task.ruleKey === "student.create-lp";
+    const closesInitial = closesInitialHandover && task.ruleKey === "student.initial-handover";
+    if (
+      task.studentId !== input.studentId
+      || task.status === "done"
+      || (!closesCreateLp && !closesInitial)
+    ) return { ...task };
+    return {
+      ...task,
+      status: "done",
+      tone: "green",
+      result,
+      closedAt,
+    };
   });
 }

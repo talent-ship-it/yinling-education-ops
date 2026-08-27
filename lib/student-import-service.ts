@@ -994,6 +994,35 @@ export function parseStudentImportSourceSnapshot(value: unknown): StudentImportS
 }
 
 /**
+ * Reads only the authoritative Tencent master portion of a server-owned
+ * source snapshot.  Offline Jiaowubao Excel supplements do not depend on a
+ * legacy normalized JWB/API source being present: Tencent alone decides
+ * whether a static record may attach to an existing formal student.
+ */
+export function parseStudentImportMasterSourceSnapshot(value: unknown): Readonly<{
+  sourceId: string;
+  revision: string;
+  rowsSha256: string;
+  rows: readonly MasterStudentImportRow[];
+}> {
+  if (!isRecord(value)) {
+    throw new StudentImportServiceError("invalid_source_snapshot", "Student import source snapshot is missing.");
+  }
+  const master = sourceIdentity(value.master, "Master");
+  if (!isRecord(value.master)
+    || typeof value.master.rowsSha256 !== "string"
+    || !/^[a-f0-9]{64}$/i.test(value.master.rowsSha256)) {
+    throw new StudentImportServiceError("invalid_source_snapshot", "Tencent master source hash is invalid.");
+  }
+  return {
+    sourceId: master.sourceId,
+    revision: master.revision,
+    rowsSha256: value.master.rowsSha256.toLowerCase(),
+    rows: masterRows(value.master, { allowBlankDuplicateStatus: true }),
+  };
+}
+
+/**
  * Parses one explicitly uploaded source file. This never infers the source,
  * revision or freshness and never accepts a mixed master/JWB payload.
  */
@@ -1176,7 +1205,7 @@ function assertCurrentLessonPackages(student: RecordValue) {
     const purchaseIds = new Set<string>();
     for (const purchaseValue of packageValue.purchaseRecords) {
       if (!isRecord(purchaseValue)
-        || Object.keys(purchaseValue).some((field) => !["id", "purchasedAt", "hours", "note"].includes(field))
+        || Object.keys(purchaseValue).some((field) => !["id", "purchasedAt", "hours", "purchasedHours", "bonusHours", "note"].includes(field))
         || typeof purchaseValue.id !== "string"
         || !purchaseValue.id.trim()
         || purchaseValue.id.trim().length > 240
@@ -1190,6 +1219,21 @@ function assertCurrentLessonPackages(student: RecordValue) {
         || (purchaseValue.note !== undefined
           && (typeof purchaseValue.note !== "string" || purchaseValue.note.length > 1_000))) {
         throw new StudentImportServiceError("invalid_students_state", "Student lesson package purchases are invalid.");
+      }
+      const hasPurchasedHours = Object.hasOwn(purchaseValue, "purchasedHours");
+      const hasBonusHours = Object.hasOwn(purchaseValue, "bonusHours");
+      if (hasPurchasedHours !== hasBonusHours
+        || (hasPurchasedHours && (
+          typeof purchaseValue.purchasedHours !== "number"
+          || !Number.isFinite(purchaseValue.purchasedHours)
+          || purchaseValue.purchasedHours < 0
+          || typeof purchaseValue.bonusHours !== "number"
+          || !Number.isFinite(purchaseValue.bonusHours)
+          || purchaseValue.bonusHours < 0
+          || Math.round((purchaseValue.purchasedHours + purchaseValue.bonusHours) * 1_000_000)
+            !== Math.round(purchaseValue.hours * 1_000_000)
+        ))) {
+        throw new StudentImportServiceError("invalid_students_state", "Student lesson package purchase breakdown is invalid.");
       }
       const purchaseId = purchaseValue.id.trim();
       if (purchaseIds.has(purchaseId)) {

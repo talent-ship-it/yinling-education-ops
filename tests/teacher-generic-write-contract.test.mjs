@@ -48,7 +48,7 @@ test("payroll UI can only select an imported teacher and intake UI blocks zero c
   assert.doesNotMatch(submit, /newTeacherName|setTeachers|id\("TEA"\)/);
   const payrollDialog = client.slice(client.indexOf('{modal === "payrollNew"'), client.indexOf('{modal === "payrollEdit"'));
   assert.doesNotMatch(payrollDialog, /newTeacherName|新老师姓名/);
-  assert.match(payrollDialog, /老师档案只能通过正式教师导入建立/);
+  assert.match(payrollDialog, /name="teacherId"[\s\S]*现有老师/);
 
   const toggle = client.slice(client.indexOf("const toggleTeacherAvailability"), client.indexOf("const submitTeacherCapacity"));
   assert.match(toggle, /Number\.isSafeInteger\(teacher\.newStudentCapacity\)/);

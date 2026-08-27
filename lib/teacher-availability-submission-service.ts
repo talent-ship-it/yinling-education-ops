@@ -126,7 +126,7 @@ export function parseTeacherAvailabilitySubmitRequest(
       || typeof slot.end !== "string"
       || !TIME.test(slot.start)
       || !TIME.test(slot.end)
-      || slot.end <= slot.start) {
+      || slot.end === slot.start) {
       fail("invalid_slots", `slots[${index}] is invalid.`);
     }
     return { day: slot.day as number, start: slot.start, end: slot.end };

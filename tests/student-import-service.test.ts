@@ -12,6 +12,7 @@ import {
   parseStudentIdentityManualReviewRequest,
   parseStudentIdentityReviewClearRequest,
   parseStudentIdentityReviewRequest,
+  parseStudentImportMasterSourceSnapshot,
   parseStudentImportCommitRequest,
   parseStudentImportSourceIngestRequest,
   parseStudentImportSourceUnavailableDetail,
@@ -290,8 +291,7 @@ test("identity review is globally unique, fail-closed and never trusts browser r
 
 test("prepared identity review uses the parsed current link set and students version", () => {
   const snapshot = sourceSnapshot();
-  // Keep this review fixture focused on its one deliberate master/JWB pair;
-  // the default inactive roster row is now correctly importable too.
+  // Keep this review fixture focused on its one deliberate master/JWB pair.
   snapshot.master.rows = [snapshot.master.rows[0]];
   snapshot.master.rows[0].name = " Ｓample   Learner ";
   snapshot.jwb.rows[0].name = "sample learner";
@@ -482,6 +482,28 @@ function sourceSnapshot(input?: Readonly<{
   };
 }
 
+test("the static Excel path can read only the authoritative Tencent master snapshot", () => {
+  const source = sourceSnapshot();
+  const master = { ...source.master, rowsSha256: "a".repeat(64) };
+  const parsed = parseStudentImportMasterSourceSnapshot({ master });
+  assert.equal(parsed.sourceId, source.master.sourceId);
+  assert.equal(parsed.revision, source.master.revision);
+  assert.equal(parsed.rowsSha256, "a".repeat(64));
+  assert.deepEqual(parsed.rows, source.master.rows);
+
+  // Offline JWB workbooks must not be blocked merely because no legacy JWB
+  // API snapshot has been uploaded.
+  assert.doesNotThrow(() => parseStudentImportMasterSourceSnapshot({ master }));
+  assert.throws(
+    () => parseStudentImportMasterSourceSnapshot({ master: { ...master, rows: [{ sourceRow: 1, name: "Bad", status: "unknown" }] } }),
+    serviceError("invalid_source_snapshot"),
+  );
+  assert.throws(
+    () => parseStudentImportMasterSourceSnapshot({ master: source.master }),
+    serviceError("invalid_source_snapshot"),
+  );
+});
+
 test("rejects duplicate canonical JWB source rows before a formal preview", () => {
   const source = sourceSnapshot();
   const snapshot = {
@@ -635,11 +657,11 @@ test("builds a deterministic server-side dry run without exposing replacement st
   assert.match(first.response.planFingerprint, /^sha256:[a-f0-9]{64}$/);
   assert.equal(first.response.expectedStudentVersion, 7);
   assert.equal(first.response.canCommit, true);
-  assert.equal(first.response.summary.insert, 2);
-  assert.equal(first.response.summary.excluded, 0);
+  assert.equal(first.response.summary.insert, 1);
+  assert.equal(first.response.summary.excluded, 1);
   assert.equal("students" in first.response, false);
-  assert.deepEqual(first.response.excluded, []);
-  assert.deepEqual(first.response.unmatched.map((entry) => entry.sourceRow), [3]);
+  assert.deepEqual(first.response.excluded.map((entry) => entry.reason), ["inactive_no_hours"]);
+  assert.deepEqual(first.response.unmatched, []);
   assert.deepEqual(first.response.ambiguous, []);
 });
 
@@ -912,23 +934,20 @@ test("ambiguity blocks commit by default and is still returned in the dry run", 
   }, prepared), serviceError("ambiguous_plan"));
 });
 
-test("a named inactive Tencent roster row still creates a formal fallback student", () => {
+test("a named inactive/no-hours Tencent roster row is excluded from the formal import", () => {
   const snapshot = sourceSnapshot();
   snapshot.master.rows = [{ sourceRow: 1, name: "Excluded Learner", status: "不活跃 + 无课时" }];
   snapshot.jwb.rows = [];
   const prepared = prepareStudentImport({ sourceSnapshot: snapshot, studentsRow: studentsRow() });
 
-  assert.equal(prepared.plan.students.length, 1);
-  assert.equal(prepared.plan.students[0].status, "不活跃 + 无课时");
-  assert.equal(prepared.plan.students[0].jwbMatchStatus, "unmatched");
-  assert.equal(prepared.plan.students[0].studentNumber, "20260818001");
-  assert.equal(prepared.plan.students[0].studentNumberDateSource, "formal_import_date");
-  assert.equal(prepared.response.canCommit, true);
-  assert.equal(prepared.response.summary.excluded, 0);
-  assert.doesNotThrow(() => assertStudentImportCommit({
+  assert.equal(prepared.plan.students.length, 0);
+  assert.equal(prepared.response.canCommit, false);
+  assert.equal(prepared.response.summary.excluded, 1);
+  assert.deepEqual(prepared.response.excluded.map((entry) => entry.reason), ["inactive_no_hours"]);
+  assert.throws(() => assertStudentImportCommit({
     planFingerprint: prepared.response.planFingerprint,
     expectedStudentVersion: prepared.response.expectedStudentVersion,
-  }, prepared));
+  }, prepared), serviceError("empty_plan"));
 });
 
 test("JWB identity coverage remains diagnostic and never blocks named Tencent master rows", () => {
@@ -1037,7 +1056,7 @@ test("number provenance is fingerprinted and distinguishes JWB history from the 
     studentsRow: studentsRow(),
   });
   const fallbackSnapshot = sourceSnapshot();
-  fallbackSnapshot.master.rows = [fallbackSnapshot.master.rows[1]];
+  fallbackSnapshot.master.rows = [{ sourceRow: 2, name: "Formal Fallback", status: "在读" }];
   fallbackSnapshot.jwb.rows = [];
   const fallback = prepareStudentImport({
     sourceSnapshot: fallbackSnapshot,

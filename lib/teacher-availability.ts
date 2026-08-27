@@ -358,7 +358,13 @@ function timezoneOffsetMs(instant: Date, timezone: string): number {
   );
 }
 
-function localTimeToInstant(
+/**
+ * Resolves a local wall-clock date/time to a concrete instant with the same
+ * DST validation used by the AVA occurrence expander. Consumers that need a
+ * calendar boundary in another timezone must not approximate it with a fixed
+ * UTC offset.
+ */
+export function localTimeToInstant(
   date: string,
   time: string,
   timezone: string,

@@ -3,9 +3,22 @@ import {
   isDemoStaff,
   type DemoUser,
 } from "@/lib/demo-users";
+import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import { EXAM_RULE_NO_LONGER_APPLICABLE_RESULT } from "@/lib/exam-tasks";
+import {
+  projectManagedExamRecord,
+  type ManagedExamProjectionSnapshot,
+  type ManagedExamStudentProjection,
+} from "@/lib/managed-exam-refresh";
+import type {
+  ManagedTrialPaymentProjectionSnapshot,
+  ManagedTrialPaymentStudentProjection,
+} from "@/lib/managed-trial-payment";
 import type { OpsStateRow, OpsVersionRow } from "@/lib/ops-store";
+
+export type { ManagedExamProjectionSnapshot, ManagedExamStudentProjection } from "@/lib/managed-exam-refresh";
+export type { ManagedTrialPaymentProjectionSnapshot, ManagedTrialPaymentStudentProjection } from "@/lib/managed-trial-payment";
 
 type RecordValue = Record<string, unknown>;
 
@@ -23,6 +36,8 @@ export type OpsAccessContext = {
   studentOwnerById: Map<string, string>;
   studentPlannerById: Map<string, string>;
   studentExamIdsById: Map<string, Set<string>>;
+  /** Exact scheduled trial anchor -> student authority for payment tasks. */
+  trialBookingStudentById: Map<string, string>;
   teacherIds: Set<string>;
 };
 
@@ -70,6 +85,10 @@ function rowId(value: RecordValue) {
   return typeof value.id === "string" ? value.id : "";
 }
 
+function rowTeacherId(value: RecordValue) {
+  return typeof value.teacherId === "string" ? value.teacherId : "";
+}
+
 /**
  * Optional Task recipient fields support dual assignment without breaking the
  * legacy single-owner records already persisted in ops_state.
@@ -92,11 +111,40 @@ function taskAssignedTo(value: RecordValue, actor: string) {
     || taskRecipients(value, "assignees").some((recipient) => samePerson(recipient, actor));
 }
 
+function managedTrialPaymentTaskIdentity(value: RecordValue) {
+  const ruleKey = value.ruleKey;
+  const bookingId = value.anchorBookingId;
+  if (value.category !== "试听"
+    || (ruleKey !== "trial.payment-n2" && ruleKey !== "trial.payment-urgent")
+    || typeof bookingId !== "string" || !bookingId.trim()) return false;
+  return { bookingId, ruleKey } as const;
+}
+
+/**
+ * Cross-owner payment access is intentionally narrower than student scope:
+ * exact trial anchor, exact current planner, one assignee, and teaching-control
+ * as the only watcher. A student's operations owner does not inherit it.
+ */
+function managedTrialPaymentTaskMatchesStudent(context: OpsAccessContext, value: RecordValue) {
+  const identity = managedTrialPaymentTaskIdentity(value);
+  const studentId = rowStudentId(value);
+  if (!identity || !studentId || !context.allActiveStudentIds.has(studentId)
+    || context.trialBookingStudentById.get(identity.bookingId) !== studentId) return false;
+  const planner = context.studentPlannerById.get(studentId);
+  if (!isConfiguredRecipient(planner) || !samePerson(value.owner, planner!)) return false;
+  const assignees = taskRecipients(value, "assignees");
+  const watchers = taskRecipients(value, "watchers");
+  return assignees.length === 1
+    && samePerson(assignees[0], planner!)
+    && watchers.length === 1
+    && samePerson(watchers[0], DEMO_LIMITED_ADMIN_USER);
+}
+
 function managedExamTaskIdentity(value: RecordValue) {
   if (value.category !== "考试" || typeof value.ruleKey !== "string" || typeof value.anchorBookingId !== "string") return false;
-  const match = value.ruleKey.match(/^exam:([^:]+):(care|recall|results)$/);
+  const match = value.ruleKey.match(/^exam:([^:]+):(planning|care|recall|results)$/);
   if (!match || value.anchorBookingId !== `exam:${match[1]}`) return false;
-  return { examId: match[1], suffix: match[2] as "care" | "recall" | "results" };
+  return { examId: match[1], suffix: match[2] as "planning" | "care" | "recall" | "results" };
 }
 
 function isConfiguredRecipient(value: string | undefined) {
@@ -120,8 +168,10 @@ function managedExamTaskBelongsToKnownExam(context: OpsAccessContext, value: Rec
 function managedExamTaskMatchesStudent(context: OpsAccessContext, value: RecordValue) {
   const identity = managedExamTaskIdentity(value);
   const targetStudentId = rowStudentId(value);
-  if (!identity || !managedExamTaskBelongsToKnownExam(context, value)) return false;
-  const expectedOwner = identity.suffix === "results"
+  if (!identity
+    || !context.allActiveStudentIds.has(targetStudentId)
+    || !managedExamTaskBelongsToKnownExam(context, value)) return false;
+  const expectedOwner = identity.suffix === "results" || identity.suffix === "planning"
     ? context.studentPlannerById.get(targetStudentId)
     : context.studentOwnerById.get(targetStudentId);
   if (!isConfiguredRecipient(expectedOwner) || !samePerson(value.owner, expectedOwner!)) return false;
@@ -219,6 +269,11 @@ export function buildOpsAccessContext(
   const teachers = payloadRecords(rows, "teachers");
   const teacherIds = new Set(teachers.filter((item) => samePerson(item.name, actor)).map(rowId).filter(Boolean));
   const bookings = payloadRecords(rows, "bookings");
+  const trialBookingStudentById = new Map(
+    bookings
+      .filter((booking) => booking.kind === "试听" && rowId(booking) && rowStudentId(booking))
+      .map((booking) => [rowId(booking), rowStudentId(booking)]),
+  );
   const students = payloadRecords(rows, "students");
   const studentIds = new Set(
     students
@@ -227,7 +282,8 @@ export function buildOpsAccessContext(
         if (staff) return samePerson(student.owner, actor);
         if (!teacher) return false;
         return samePerson(student.teacher, actor)
-          || bookings.some((booking) => teacherIds.has(String(booking.teacherId ?? "")) && booking.studentId === student.id);
+          || bookings.some((booking) => booking.studentId === student.id
+            && bookingHasEffectiveTeacher(booking, teacherIds));
       })
       .map(rowId)
       .filter(Boolean),
@@ -272,6 +328,7 @@ export function buildOpsAccessContext(
     studentOwnerById,
     studentPlannerById,
     studentExamIdsById,
+    trialBookingStudentById,
     teacherIds,
   };
 }
@@ -321,6 +378,11 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   if (entity === "teachers") return context.staff || (context.teacher && context.teacherIds.has(rowId(value)));
   if (entity === "students") return canAccessStudent(context, rowId(value));
   if (entity === "tasks") {
+    if (managedTrialPaymentTaskIdentity(value)) {
+      return context.staff
+        && managedTrialPaymentTaskMatchesStudent(context, value)
+        && taskAssignedTo(value, context.actor);
+    }
     if (context.staff && managedExamTaskBelongsToKnownExam(context, value)) {
       if (canAccessStudent(context, rowStudentId(value))) return true;
       return managedExamTaskMatchesStudent(context, value) && taskAssignedTo(value, context.actor);
@@ -332,7 +394,7 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   if (["lpItems", "renewals"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
   if (entity === "bookings") {
     return context.teacher
-      ? context.teacherIds.has(String(value.teacherId ?? ""))
+      ? bookingHasEffectiveTeacher(value, context.teacherIds)
       : canAccessStudent(context, rowStudentId(value));
   }
   if (["operations", "messages", "files"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
@@ -345,6 +407,108 @@ export function filterOpsStateRows(rows: OpsStateRow[], context: OpsAccessContex
     if (context.fullAdmin || context.limitedAdmin || !Array.isArray(row.payload)) return [row];
     return [{ ...row, payload: row.payload.filter(isRecord).filter((value) => canReadRecord(context, row.entity, value)) }];
   });
+}
+
+/**
+ * Returns only the student identity and the exact structured exams addressed
+ * by a legitimate managed exam task for this staff actor. Admins do not need
+ * this side channel because their regular students payload is already global.
+ */
+export function managedExamStudentProjections(rows: OpsStateRow[], context: OpsAccessContext): ManagedExamStudentProjection[] {
+  if (!context.staff || context.fullAdmin || context.limitedAdmin) return [];
+  const students = payloadRecords(rows, "students");
+  const tasks = payloadRecords(rows, "tasks");
+  const examIdsByStudent = new Map<string, Set<string>>();
+  for (const task of tasks) {
+    if (context.studentIds.has(rowStudentId(task)) || !context.allActiveStudentIds.has(rowStudentId(task))) continue;
+    if (!managedExamTaskMatchesStudent(context, task) || !taskAssignedTo(task, context.actor)) continue;
+    const identity = managedExamTaskIdentity(task);
+    const studentId = rowStudentId(task);
+    if (!identity || !studentId) continue;
+    const examIds = examIdsByStudent.get(studentId) ?? new Set<string>();
+    examIds.add(identity.examId);
+    examIdsByStudent.set(studentId, examIds);
+  }
+  return students.flatMap((student) => {
+    const studentId = rowId(student);
+    const examIds = examIdsByStudent.get(studentId);
+    if (!studentId || !examIds) return [];
+    const exams = Array.isArray(student.exams)
+      ? student.exams
+          .filter(isRecord)
+          .filter((exam) => examIds.has(rowId(exam)))
+          .map(projectManagedExamRecord)
+          .filter((exam): exam is NonNullable<typeof exam> => exam !== null)
+      : [];
+    if (!exams.length) return [];
+    return [{
+      id: studentId,
+      name: typeof student.name === "string" ? student.name : "",
+      initials: typeof student.initials === "string" ? student.initials : "",
+      owner: typeof student.owner === "string" ? student.owner : "",
+      exams,
+    }];
+  });
+}
+
+/**
+ * Builds the projection and both authority versions from the same read. Missing
+ * or malformed authority rows fail closed instead of returning a misleading
+ * empty projection with no freshness proof.
+ */
+export function managedExamStudentProjectionSnapshot(
+  rows: OpsStateRow[],
+  context: OpsAccessContext,
+): ManagedExamProjectionSnapshot {
+  const versions = Object.fromEntries(["students", "tasks"].map((entity) => {
+    const row = rows.find((candidate) => candidate.entity === entity);
+    if (!row || !Number.isSafeInteger(row.version) || row.version < 1 || !Array.isArray(row.payload)) {
+      throw new OpsAccessError("考试提醒权威资料不可用。");
+    }
+    return [entity, row.version];
+  })) as { students: number; tasks: number };
+  return {
+    versions,
+    students: managedExamStudentProjections(rows, context),
+  };
+}
+
+/** Minimal identity side channel for a planner assigned to a cross-owner payment task. */
+export function managedTrialPaymentStudentProjections(
+  rows: OpsStateRow[],
+  context: OpsAccessContext,
+): ManagedTrialPaymentStudentProjection[] {
+  if (!context.staff || context.fullAdmin || context.limitedAdmin) return [];
+  const studentIds = new Set(payloadRecords(rows, "tasks").flatMap((task) => {
+    const studentId = rowStudentId(task);
+    if (context.studentIds.has(studentId)
+      || !managedTrialPaymentTaskMatchesStudent(context, task)
+      || !taskAssignedTo(task, context.actor)) return [];
+    return [studentId];
+  }));
+  return payloadRecords(rows, "students").flatMap((student) => {
+    const id = rowId(student);
+    if (!studentIds.has(id)) return [];
+    return [{
+      id,
+      name: typeof student.name === "string" ? student.name : "",
+      initials: typeof student.initials === "string" ? student.initials : "",
+    }];
+  });
+}
+
+export function managedTrialPaymentStudentProjectionSnapshot(
+  rows: OpsStateRow[],
+  context: OpsAccessContext,
+): ManagedTrialPaymentProjectionSnapshot {
+  const versions = Object.fromEntries(["bookings", "students", "tasks"].map((entity) => {
+    const row = rows.find((candidate) => candidate.entity === entity);
+    if (!row || !Number.isSafeInteger(row.version) || row.version < 1 || !Array.isArray(row.payload)) {
+      throw new OpsAccessError("试听收费提醒权威资料不可用。");
+    }
+    return [entity, row.version];
+  })) as { bookings: number; students: number; tasks: number };
+  return { versions, students: managedTrialPaymentStudentProjections(rows, context) };
 }
 
 export function filterOpsVersions(rows: OpsVersionRow[], context: OpsAccessContext) {
@@ -361,7 +525,7 @@ function canModifyRecord(context: OpsAccessContext, entity: string, value: Recor
   }
   if (entity === "bookings") {
     return context.teacher
-      ? context.teacherIds.has(String(value.teacherId ?? "")) && canOperateStudent(context, rowStudentId(value))
+      ? context.teacherIds.has(rowTeacherId(value)) && canOperateStudent(context, rowStudentId(value))
       : context.staff && canOperateStudent(context, rowStudentId(value));
   }
   if (entity === "tasks") {
@@ -406,6 +570,11 @@ export function mergeScopedPayload(input: {
     if (unchanged) return existing;
     const touchesManagedExamTask = entity === "tasks"
       && Boolean(managedExamTaskIdentity(existing) || managedExamTaskIdentity(replacement));
+    const touchesManagedTrialPaymentTask = entity === "tasks"
+      && Boolean(managedTrialPaymentTaskIdentity(existing) || managedTrialPaymentTaskIdentity(replacement));
+    if (touchesManagedTrialPaymentTask) {
+      throw new OpsAccessError("试听收费提醒只能通过专用确认流程完成。");
+    }
     if (touchesManagedExamTask && context.staff) {
       if (managedExamCoordinatorChangeAllowed(existing, replacement, context)
         || managedExamAssigneeChangeAllowed(existing, replacement, context)) return replacement;
@@ -420,6 +589,9 @@ export function mergeScopedPayload(input: {
   for (const replacement of submitted) {
     if (currentById.has(rowId(replacement))) continue;
     const managedExamIdentity = entity === "tasks" && managedExamTaskIdentity(replacement);
+    if (entity === "tasks" && managedTrialPaymentTaskIdentity(replacement)) {
+      throw new OpsAccessError("试听收费提醒只能由权威排课或定时流程创建。");
+    }
     const managedExamCreate = entity === "tasks"
       && context.staff
       && canOperateStudent(context, rowStudentId(replacement))

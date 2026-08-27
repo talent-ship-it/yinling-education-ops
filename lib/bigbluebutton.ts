@@ -36,6 +36,10 @@ const xmlParser = new XMLParser({
   trimValues: true,
 });
 
+/** BBB is an external boundary: never let a provider request hold a server
+ * request open indefinitely (or leave the UI waiting forever). */
+export const BBB_REQUEST_TIMEOUT_MS = 15_000;
+
 function configuration() {
   const rawUrl = process.env.BBB_API_URL?.trim();
   const secret = process.env.BBB_API_SECRET?.trim();
@@ -131,11 +135,26 @@ function meetingPassword(meetingId: string, role: "moderator" | "viewer") {
 }
 
 async function call(action: string, params: Record<string, string | number | boolean | undefined>) {
-  const response = await fetch(buildBigBlueButtonUrl(action, params), {
-    headers: { Accept: "application/xml,text/xml" },
-    cache: "no-store",
-  });
-  const raw = await response.text();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BBB_REQUEST_TIMEOUT_MS);
+  let response: Response;
+  let raw = "";
+  try {
+    response = await fetch(buildBigBlueButtonUrl(action, params), {
+      headers: { Accept: "application/xml,text/xml" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    raw = await response.text();
+  } catch (error) {
+    if (error instanceof BigBlueButtonError) throw error;
+    if (controller.signal.aborted) {
+      throw new BigBlueButtonError("在线教室服务请求超时，请稍后重试。", "timeout", 504);
+    }
+    throw new BigBlueButtonError("无法连接在线教室服务，请稍后重试。", "network_error", 502);
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     throw new BigBlueButtonError(`在线教室服务请求失败（${response.status}）。`, "http_error", 502);
   }
@@ -191,6 +210,36 @@ export async function createMeeting(input: {
     meetingId: text(result.meetingID) || meetingId,
     internalMeetingId: text(result.internalMeetingID),
     createTime: text(result.createTime),
+    duplicate: text(result.messageKey) === "duplicateWarning",
+  };
+}
+
+/**
+ * Creates a short-lived BBB room for product checks only.  It deliberately
+ * has no lesson, student, teacher, analytics callback or recording metadata:
+ * a temporary test must never be mistaken for a delivered class.
+ */
+export async function createTemporaryTestMeeting(input: {
+  meetingId: string;
+  logoutUrl: string;
+  durationMinutes?: number;
+}) {
+  const meetingId = normalizeMeetingId(input.meetingId);
+  const result = await call("create", {
+    name: "吟领教育 · 临时测试课堂",
+    meetingID: meetingId,
+    moderatorPW: meetingPassword(meetingId, "moderator"),
+    attendeePW: meetingPassword(meetingId, "viewer"),
+    record: false,
+    autoStartRecording: false,
+    allowStartStopRecording: false,
+    duration: Math.max(15, Math.min(360, Math.ceil(input.durationMinutes ?? 60))),
+    logoutURL: input.logoutUrl,
+    meetingExpireIfNoUserJoinedInMinutes: 45,
+    meetingExpireWhenLastUserLeftInMinutes: 10,
+  });
+  return {
+    meetingId: text(result.meetingID) || meetingId,
     duplicate: text(result.messageKey) === "duplicateWarning",
   };
 }

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   EXAM_VARIANT_LABELS,
+  ExamForm,
   parseExamFormData,
   parseFollowUpFormData,
   parseLessonPackageFormData,
@@ -125,6 +128,43 @@ test("exam parser accepts an optional date and recall flag", () => {
     examDate: "2026-10-18",
     includeRecall: "true",
   })).includeRecall, true);
+});
+
+test("exam form keeps the subject free-text while offering deduplicated safe datalist suggestions", () => {
+  const html = renderToStaticMarkup(<>
+    <ExamForm
+      initialSubject="Student-specific exam"
+      subjectOptions={[
+        { value: " English ", label: "英语" },
+        { value: "English", label: "重复英语" },
+        { value: "Mathematics" },
+      ]}
+    />
+    <ExamForm />
+  </>);
+  const labels = [...html.matchAll(/<label>考试科目([\s\S]*?)<\/label>/g)].map((match) => match[1]);
+  assert.equal(labels.length, 2);
+  assert.doesNotMatch(labels[0], /<select/);
+  assert.doesNotMatch(labels[1], /<select/);
+  assert.match(labels[0], /name="examSubject"[^>]*value="Student-specific exam"/);
+  assert.match(labels[0], /required/);
+  assert.match(labels[1], /name="examSubject"[^>]*value=""/);
+  assert.match(labels[1], /required/);
+
+  const ids = [...html.matchAll(/<datalist id="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(ids.length, 2);
+  assert.notEqual(ids[0], ids[1]);
+  assert.ok(ids.every((id) => /^[A-Za-z0-9_-]+$/.test(id)));
+  assert.match(labels[0], new RegExp(`list="${ids[0]}"`));
+  assert.equal((html.match(/<option value="English"/g) ?? []).length, 1);
+  assert.equal((html.match(/<option value="Mathematics"/g) ?? []).length, 1);
+
+  assert.equal(parseExamFormData(form({
+    examSubject: "A manually entered subject",
+    examType: "other",
+    examVariant: "other",
+    examMonth: "2026-09",
+  })).subject, "A manually entered subject");
 });
 
 test("exam parser requires a real date inside the selected month", () => {

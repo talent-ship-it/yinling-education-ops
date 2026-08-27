@@ -31,6 +31,15 @@ export type OpsStateRow = {
 
 export type OpsVersionRow = Omit<OpsStateRow, "payload">;
 
+export type OperationalAuditRecord = Readonly<{
+  id: string;
+  action: string;
+  actor: string;
+  target_type: string;
+  target_id: string;
+  created_at: string;
+}>;
+
 export type OpsSourceRow = {
   source_id: string;
   title: string;
@@ -60,6 +69,28 @@ export type StudentFuAttachmentAtomicCommitResult = Readonly<{
   attachment: FuAttachmentRow;
   files_row: OpsStateRow;
   students_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type RenewalFollowUpAtomicCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  renewal_id: string;
+  student_id: string;
+  attachment: FuAttachmentRow | null;
+  renewals_row: OpsStateRow;
+  students_row: OpsStateRow;
+  files_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type RenewalFollowUpCommandResult = Readonly<{
+  command_key: string;
+  renewal_id: string;
+  student_id: string;
+  attachment_id: string | null;
+  task_id: string | null;
   audit_entry_id: string;
 }>;
 
@@ -119,6 +150,15 @@ export type TeacherAvailabilitySubmissionRow = Readonly<{
   review_note: string | null;
 }>;
 
+/**
+ * Minimal monthly-completion presence result. It intentionally contains no
+ * submitted availability, city, notes, or reviewer data.
+ */
+export type TeacherAvailabilityCompletionPendingTeacherIds = Readonly<{
+  pending_teacher_ids: readonly string[];
+  overflowed: boolean;
+}>;
+
 export type TeacherAvailabilityReviewCommitResult = Readonly<{
   submission_id: number;
   status: "approved" | "rejected";
@@ -136,6 +176,222 @@ export type TeacherAvailabilitySubmitCommitResult = Readonly<{
   applied: boolean;
   submitted_at: string;
   audit_entry_id: string;
+}>;
+
+/** Curated read models only; raw Jiaowubao workbook evidence remains internal. */
+export type JiaowubaoDirectScheduleEvent = Readonly<{
+  eventId: string;
+  sourceDate: string;
+  startsAt: string;
+  endsAt: string;
+  courseName: string | null;
+  teacherId: string | null;
+  availabilityEffect: "display_only" | "blocks_teacher_ava";
+  visibleStudentIds: readonly string[];
+  /** The curated list stops at 100 authorized participants per class event. */
+  visibleStudentsTruncated: boolean;
+}>;
+
+export type JiaowubaoDirectScheduleCursor = Readonly<{
+  /** Six-digit UTC text is preserved exactly for keyset pagination. */
+  startsAt: string;
+  eventId: string;
+}>;
+
+export type JiaowubaoDirectScheduleWindow = Readonly<{
+  state: "absent" | "complete" | "reset";
+  events: readonly JiaowubaoDirectScheduleEvent[];
+  invalidTimeEventCount: number;
+  hasMore: boolean;
+  nextCursor: JiaowubaoDirectScheduleCursor | null;
+  /** Latest completed import that all pages in this response belong to. */
+  runToken: string | null;
+}>;
+
+export type JiaowubaoDirectSupplementalHistoryItem = Readonly<{
+  kind: "student_snapshot" | "quick_list" | "contract" | "hour_balance" | "class_membership";
+  courseName: string | null;
+  className: string | null;
+  classType: string | null;
+  studentType: string | null;
+  totalHours: string | null;
+  usedHours: string | null;
+  remainingHours: string | null;
+}>;
+
+export type JiaowubaoDirectLeaveMakeupHistoryItem = Readonly<{
+  date: string | null;
+  timeText: string | null;
+  kind: "leave" | "makeup" | "unknown";
+  courseName: string | null;
+}>;
+
+export type JiaowubaoDirectStudentHistory = Readonly<{
+  state: "absent" | "complete";
+  supplemental: Readonly<{
+    items: readonly JiaowubaoDirectSupplementalHistoryItem[];
+    truncated: boolean;
+  }>;
+  leaveMakeups: Readonly<{
+    items: readonly JiaowubaoDirectLeaveMakeupHistoryItem[];
+    truncated: boolean;
+  }>;
+}>;
+
+/**
+ * Admin-only, curated readiness evidence from the latest completed Jiaowubao
+ * direct import. It is deliberately read-only: these rows are not bookings,
+ * packages, tasks, operations, or online classrooms.
+ */
+export type JiaowubaoDirectOperationsReadiness = Readonly<{
+  state: "absent" | "complete";
+  /** Opaque token for the immutable completed source run, not a source key. */
+  runToken: string | null;
+  window: Readonly<{ startsAt: string; endsAt: string }>;
+  schedule: Readonly<{
+    summary: Readonly<{
+      /** Parsed schedule events falling inside the requested bounded window. */
+      windowEvents: number;
+      needsTeacherMapping: number;
+      needsCourseMapping: number;
+      readyForAvaReview: number;
+      /** Source-date count only; invalid records never become AVA blocks. */
+      invalidTime: number;
+    }>;
+    rows: readonly Readonly<{
+      eventId: string;
+      sourceDate: string;
+      startsAt: string;
+      endsAt: string;
+      courseName: string | null;
+      /** Current app teacher ID when the imported label matched exactly. */
+      teacherId: string | null;
+      /** Admin-only source label required to review teacher mapping. */
+      teacherLabel: string | null;
+      teacherResolution: "exact_name" | "unresolved" | "ambiguous" | "not_found";
+      subjectResolution: "exact_name" | "unresolved" | "ambiguous" | "not_found";
+      availabilityEffect: "display_only" | "blocks_teacher_ava";
+      attachedParticipantCount: number;
+      needsTeacherMapping: boolean;
+      needsCourseMapping: boolean;
+      readyForAvaReview: boolean;
+    }>[];
+    truncated: boolean;
+  }>;
+  leaveMakeups: Readonly<{
+    summary: Readonly<{ attached: number; leave: number; makeup: number; unknown: number }>;
+    rows: readonly Readonly<{
+      incidentId: string;
+      /** Current app student ID only; no source identity, name, or phone. */
+      studentId: string;
+      kind: "leave" | "makeup" | "unknown";
+      sourceDate: string | null;
+      timeText: string | null;
+      courseName: string | null;
+      className: string | null;
+      /** Admin-only source label, with no teacher identity link implied. */
+      teacherLabel: string | null;
+    }>[];
+    truncated: boolean;
+  }>;
+  renewalEvidence: Readonly<{
+    summary: Readonly<{ candidates: number; withContract: number; withHourBalance: number }>;
+    rows: readonly Readonly<{
+      studentId: string;
+      courseName: string | null;
+      hasContractEvidence: boolean;
+      hasHourBalanceEvidence: boolean;
+      totalHours: string | null;
+      usedHours: string | null;
+      remainingHours: string | null;
+    }>[];
+    truncated: boolean;
+  }>;
+}>;
+
+/**
+ * Admin-reviewed mapping overlay for one completed Jiaowubao source run.
+ * These are source-label decisions only, never operational bookings or AVA
+ * blocks. `mappingKey` and `nextCursor` are opaque database values.
+ */
+export type JiaowubaoDirectScheduleMappingReview = Readonly<{
+  state: "absent" | "complete";
+  runToken: string | null;
+  teachersVersion: number | null;
+  teachers: readonly Readonly<{
+    id: string;
+    name: string;
+    subjectIds: readonly string[];
+  }>[];
+  summary: Readonly<{
+    total: number;
+    unmapped: number;
+    confirmed: number;
+    revoked: number;
+    authorityChanged: number;
+  }>;
+  candidates: readonly Readonly<{
+    mappingKey: string;
+    teacherLabel: string;
+    courseLabel: string;
+    eventCount: number;
+    status: "unmapped" | "confirmed" | "revoked" | "authority_changed";
+    targetTeacherId: string | null;
+    targetTeacherName: string | null;
+    targetSubjectId: string | null;
+    decidedAt: string | null;
+  }>[];
+  nextCursor: string | null;
+}>;
+
+/**
+ * Current/future action queue derived from immutable mapping relevance days.
+ * `nextStartsAt` is a parsed source class start inside the requested canonical
+ * UTC window, not a booking or an inferred task deadline.
+ */
+export type JiaowubaoDirectScheduleMappingPriorityReview = Readonly<{
+  state: "absent" | "complete";
+  runToken: string | null;
+  teachersVersion: number | null;
+  teachers: readonly Readonly<{
+    id: string;
+    name: string;
+    subjectIds: readonly string[];
+  }>[];
+  window: Readonly<{ startsAt: string; endsAt: string }>;
+  summary: Readonly<{
+    /** Only human-actionable mappings: unmapped + authority changed. */
+    total: number;
+    unmapped: number;
+    authorityChanged: number;
+    /** Visible for audit only; revoked pairs cannot re-enter this queue. */
+    revokedInWindow: number;
+  }>;
+  candidates: readonly Readonly<{
+    mappingKey: string;
+    teacherLabel: string;
+    courseLabel: string;
+    /** All immutable source events in this label-pair candidate. */
+    eventCount: number;
+    status: "unmapped" | "authority_changed";
+    targetTeacherId: string | null;
+    targetTeacherName: string | null;
+    targetSubjectId: string | null;
+    decidedAt: string | null;
+    /** Exact parsed source start inside `window`; no relative-time guess. */
+    nextStartsAt: string;
+    windowEventCount: number;
+  }>[];
+  nextCursor: string | null;
+}>;
+
+export type JiaowubaoDirectScheduleMappingSaveResult = Readonly<{
+  mappingKey: string;
+  action: "confirm" | "revoke";
+  targetTeacherId: string | null;
+  targetSubjectId: string | null;
+  teachersVersion: number;
+  unchanged: boolean;
 }>;
 
 /**
@@ -329,26 +585,65 @@ export const LESSON_ATTENDANCE_EVIDENCE_PUT_RPC = "put_lesson_attendance_evidenc
 export const LESSON_ATTENDANCE_EVIDENCE_RPC = "get_lesson_attendance_evidence";
 export const LESSON_OCCURRENCE_ATOMIC_COMPLETE_RPC = "complete_lesson_occurrence_atomic";
 export const TEACHER_AVAILABILITY_SUBMISSIONS_RPC = "get_teacher_availability_submissions";
+export const TEACHER_AVAILABILITY_COMPLETION_PENDING_TEACHERS_RPC = "get_teacher_availability_completion_pending_teacher_ids";
 export const TEACHER_AVAILABILITY_ATOMIC_REVIEW_RPC = "review_teacher_availability_submission_atomic";
 export const TEACHER_AVAILABILITY_ATOMIC_SUBMIT_RPC = "submit_teacher_availability_atomic";
-export const BOOKING_CAPACITY_ATOMIC_MUTATION_RPC = "mutate_booking_capacity_atomic";
+export const BOOKING_CAPACITY_ATOMIC_MUTATION_RPC = "mutate_booking_projection_atomic";
+export const TEMPORARY_CLASSROOM_CAPABILITY_RPC = "get_temporary_classroom_capability";
+export const TEMPORARY_CLASSROOM_REQUEST_CLAIM_RPC = "claim_temporary_classroom_request";
+export const JIAOWUBAO_DIRECT_SCHEDULE_WINDOW_RPC = "get_jiaowubao_direct_schedule_window";
+export const JIAOWUBAO_DIRECT_STUDENT_HISTORY_RPC = "get_jiaowubao_direct_student_history";
+export const JIAOWUBAO_DIRECT_OPERATIONS_READINESS_RPC = "get_jiaowubao_direct_operations_readiness";
+export const JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_REVIEW_RPC = "get_jiaowubao_direct_schedule_mapping_review";
+export const JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_PRIORITY_REVIEW_RPC = "get_jiaowubao_direct_schedule_mapping_priority_review";
+export const JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_PUT_RPC = "put_jiaowubao_direct_schedule_label_mapping";
 export const OPERATION_CONFIRM_ATOMIC_RPC = "confirm_operation_occurrences_atomic";
-export const BOOKING_CAPACITY_COMMAND_RESULT_RPC = "get_booking_capacity_command_result";
+export const BOOKING_CAPACITY_COMMAND_RESULT_RPC = "get_booking_projection_command_result";
 export const OPERATION_CONFIRM_COMMAND_RESULT_RPC = "get_operation_confirmation_command_result";
 export const PERMANENT_TEACHER_REPLACEMENT_ATOMIC_RPC = "confirm_permanent_teacher_replacement_atomic";
 export const PERMANENT_TEACHER_REPLACEMENT_COMMAND_RESULT_RPC = "get_permanent_teacher_replacement_command_result";
 export const TEACHER_DEPARTURE_CREATION_ATOMIC_RPC = "create_teacher_departure_atomic";
 export const TEACHER_DEPARTURE_CREATION_COMMAND_RESULT_RPC = "get_teacher_departure_creation_command_result";
+export const TEACHER_ABSENCE_CREATION_ATOMIC_RPC = "create_teacher_absence_atomic";
+export const TEACHER_ABSENCE_CREATION_COMMAND_RESULT_RPC = "get_teacher_absence_creation_command_result";
 export const EXAM_SUBMISSION_ATOMIC_RPC = "submit_exam_atomic";
 export const EXAM_SUBMISSION_COMMAND_RESULT_RPC = "get_exam_submission_command_result";
 export const EXAM_FOLLOW_UP_ATOMIC_RPC = "mutate_exam_follow_up_atomic";
 export const EXAM_FOLLOW_UP_COMMAND_RESULT_RPC = "get_exam_follow_up_command_result";
 export const EXAM_FOLLOW_UP_COMPLETION_CONTEXT_RPC = "get_exam_follow_up_completion_context";
+export const LEGACY_TASK_DEADLINE_ATOMIC_RPC = "mutate_legacy_task_deadline_atomic";
+export const LEGACY_TASK_DEADLINE_COMMAND_RESULT_RPC = "get_legacy_task_deadline_command_result";
 export const STUDENT_FU_ATTACHMENT_ATOMIC_PUT_RPC = "put_student_fu_attachment_atomic";
+export const RENEWAL_FOLLOW_UP_ATOMIC_RPC = "put_renewal_follow_up_atomic";
+export const RENEWAL_FOLLOW_UP_CREATE_IF_MISSING_ATOMIC_RPC = "put_renewal_follow_up_create_if_missing_atomic";
+export const RENEWAL_FOLLOW_UP_COMMAND_RESULT_RPC = "get_renewal_follow_up_command_result";
+export const DIRECT_ENROLLMENT_ATOMIC_RPC = "create_student_direct_enrollment_atomic";
+export const DIRECT_ENROLLMENT_COMMAND_RESULT_RPC = "get_student_direct_enrollment_command_result";
+export const STUDENT_CREATION_ATOMIC_RPC = "create_student_with_tasks_atomic";
+export const STUDENT_CREATION_COMMAND_RESULT_RPC = "get_student_creation_command_result";
+export const LEGACY_OPERATION_TASK_ATOMIC_RPC = "mutate_legacy_operation_task_atomic";
+export const LEGACY_OPERATION_TASK_COMMAND_RESULT_RPC = "get_legacy_operation_task_command_result";
+export const LP_ATOMIC_RPC = "mutate_lp_atomic";
+export const LP_ATOMIC_COMMAND_RESULT_RPC = "get_lp_atomic_command_result";
 export const STUDENT_FILE_LINK_ATOMIC_PUT_RPC = "put_student_file_link_atomic";
 export const APP_ACCOUNT_AUTH_STATE_RPC = "read_app_account_auth_state";
 export const APP_ACCOUNT_CREDENTIAL_RPC = "read_app_account_credential";
 export const APP_ACCOUNT_CREDENTIAL_PUT_RPC = "put_app_account_credential_atomic";
+export const LP_PARENT_PROGRESS_SCHEDULER_BEGIN_RPC = "begin_lp_parent_progress_scheduler_run";
+export const LP_PARENT_PROGRESS_SCHEDULER_FINISH_RPC = "finish_lp_parent_progress_scheduler_run";
+export const LP_PARENT_PROGRESS_SCHEDULER_COMMIT_RPC = "put_lp_parent_progress_scheduler_tasks_authoritative";
+export const LP_PARENT_PROGRESS_SCHEDULER_RECOVER_RPC = "recover_stale_lp_parent_progress_scheduler_runs";
+export const TRIAL_PAYMENT_RECONCILE_RPC = "reconcile_trial_payment_tasks_authoritative";
+export const TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_atomic";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC = "begin_jiaowubao_open_api_schedule_snapshot_ingest";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC = "stage_jiaowubao_open_api_schedule_snapshot_page";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC = "complete_jiaowubao_open_api_schedule_snapshot_ingest";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_STATUS_RPC = "get_jiaowubao_open_api_schedule_snapshot_ingest_status";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_ABORT_RPC = "abort_jiaowubao_open_api_schedule_snapshot_ingest";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -359,6 +654,144 @@ export class OpsStoreError extends Error {
     super(message);
   }
 }
+
+/** Default bound for ordinary RPC calls; classroom routes may opt into a tighter bound. */
+export const OPS_RPC_TIMEOUT_MS = 15_000;
+
+/** Optional per-call bound used by routes with a shorter end-to-end budget. */
+export type OpsRpcOptions = Readonly<{
+  timeoutMs?: number;
+}>;
+
+export type DirectEnrollmentCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  student_id: string;
+  package_id: string;
+  purchase_id: string;
+  lp_item_id: string;
+  task_ids: readonly string[];
+  students_row: OpsStateRow | null;
+  lp_items_row: OpsStateRow | null;
+  tasks_row: OpsStateRow | null;
+  audit_entry_id: string;
+}>;
+
+export type DirectEnrollmentCommandResult = Readonly<{
+  command_key: string;
+  student_id: string;
+  package_id: string;
+  purchase_id: string;
+  lp_item_id: string;
+  task_ids: readonly string[];
+  students_row: OpsStateRow | null;
+  lp_items_row: OpsStateRow | null;
+  tasks_row: OpsStateRow | null;
+  audit_entry_id: string;
+}>;
+
+export type StudentCreationCommitResult = Readonly<{
+  command_key: string; applied: boolean; student_id: string; task_ids: readonly string[];
+  students_row: OpsStateRow | null; tasks_row: OpsStateRow | null; audit_entry_id: string;
+}>;
+export type StudentCreationCommandResult = Omit<StudentCreationCommitResult, "applied">;
+export type LegacyOperationTaskCommitResult = Readonly<{
+  command_key: string; applied: boolean; operation_ids: readonly string[]; affected_student_ids: readonly string[];
+  affected_occurrence_count?: number; generated_task_count?: number;
+  operations_row: OpsStateRow | null; tasks_row: OpsStateRow | null; audit_entry_id: string;
+}>;
+export type LegacyOperationTaskCommandResult = Omit<LegacyOperationTaskCommitResult, "applied">;
+
+export type LpAtomicCommitResult = Readonly<{
+  command_key: string;
+  operation: "create" | "revise";
+  applied: boolean;
+  student_id: string;
+  lp_item_id: string;
+  students_row: OpsStateRow | null;
+  lp_items_row: OpsStateRow | null;
+  tasks_row: OpsStateRow | null;
+  files_row: OpsStateRow | null;
+  audit_entry_id: string;
+}>;
+
+export type LpAtomicCommandResult = Omit<LpAtomicCommitResult, "applied">;
+
+export type TrialPaymentReconcileResult = Readonly<{
+  run_key: string;
+  applied: boolean;
+  changed_count: number;
+  bookings_row: OpsStateRow;
+  students_row: OpsStateRow;
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  teachers_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TrialPaymentCompletionResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  task_id: string;
+  booking_id: string;
+  student_id: string;
+  bookings_row: OpsStateRow;
+  students_row: OpsStateRow;
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  teachers_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type JiaowubaoOpenApiScheduleSnapshotReceipt = Readonly<{
+  runId: string;
+  state: "staging" | "complete" | "aborted";
+  revision?: string;
+  pageIndex?: number;
+  rowCount?: number;
+  pageCount?: number;
+  rowsSha256?: string;
+  payloadSha256?: string;
+  replayed?: boolean;
+}>;
+
+export type JiaowubaoOpenApiScheduleSnapshotPreflight = Readonly<{
+  apiSourceKey: string;
+  current: Readonly<{ revision: string }> | null;
+}>;
+
+export type JiaowubaoOpenApiScheduleSyncLease = Readonly<{
+  acquired: boolean;
+  runKey: string;
+  retryAfterSeconds: number;
+}>;
+
+/** Server-only raw receipt from the Open API source snapshot reader. */
+export type JiaowubaoOpenApiScheduleSnapshotWindow = Readonly<{
+  state: "absent" | "complete" | "stale" | "reset";
+  events: readonly Readonly<{
+    eventId: string;
+    sourceDate: string;
+    startsAt: string;
+    endsAt: string;
+    courseName: string | null;
+    sourceTeacherId: string | null;
+    sourceTeacherLabel: string | null;
+    sourceParticipants: readonly Readonly<{
+      memberId: string | null;
+      label: string | null;
+    }>[];
+    sourceStudentsTruncated: boolean;
+  }>[];
+  invalidTimeEventCount: number;
+  hasMore: boolean;
+  nextCursor: Readonly<{ startsAt: string; eventId: string }> | null;
+  revision: string | null;
+  publishedAt: string | null;
+  sourceWindow: Readonly<{ start: string; end: string }> | null;
+  freshness: "absent" | "fresh" | "stale";
+  empty: boolean;
+}>;
 
 function configuration() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -372,20 +805,35 @@ function configuration() {
   return { url: url.replace(/\/$/, ""), publishableKey, secret };
 }
 
-async function rpc<T>(name: string, body: Record<string, unknown>) {
+async function rpc<T>(name: string, body: Record<string, unknown>, options: OpsRpcOptions = {}) {
   const { url, publishableKey } = configuration();
-  const response = await fetch(`${url}/rest/v1/rpc/${name}`, {
-    method: "POST",
-    headers: {
-      apikey: publishableKey,
-      Authorization: `Bearer ${publishableKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? OPS_RPC_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  let payload: unknown;
+  try {
+    response = await fetch(`${url}/rest/v1/rpc/${name}`, {
+      method: "POST",
+      headers: {
+        apikey: publishableKey,
+        Authorization: `Bearer ${publishableKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    payload = await response.json().catch(() => null);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new OpsStoreError("数据库请求超时，请稍后用同一命令重试。", "timeout");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
-  const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const error = payload as { message?: string; code?: string; details?: string } | null;
     throw new OpsStoreError(error?.message || "Supabase 请求失败。", error?.code, error?.details);
@@ -394,11 +842,149 @@ async function rpc<T>(name: string, body: Record<string, unknown>) {
   return payload as T;
 }
 
-export function getOpsState(entities?: string[]) {
+export function getOpsState(entities?: string[], options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<OpsStateRow[]>("get_ops_state", {
     p_secret: secret,
     p_entities: entities?.length ? entities : null,
+  }, options);
+}
+
+export function getOperationalAudit(limit = 500) {
+  const { secret } = configuration();
+  return rpc<OperationalAuditRecord[]>("read_operational_contract_audit", {
+    p_secret: secret,
+    p_limit: limit,
+  });
+}
+
+/** The browser sends only the narrow direct-enrollment command. The RPC derives every array. */
+export function createStudentDirectEnrollmentAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  studentId: string;
+  fields: Readonly<Record<string, unknown>>;
+  purchasedHours: number;
+  bonusHours: number;
+  subject: string;
+  expectedVersions: Readonly<{ students: number; lpItems: number; tasks: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<DirectEnrollmentCommitResult[]>(DIRECT_ENROLLMENT_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_student_id: input.studentId,
+    p_lp_fields: input.fields,
+    p_purchased_hours: input.purchasedHours,
+    p_bonus_hours: input.bonusHours,
+    p_subject: input.subject,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+export function getStudentDirectEnrollmentCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<DirectEnrollmentCommandResult[]>(DIRECT_ENROLLMENT_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+/** Server derives the student row and initial tasks; this wrapper never accepts arrays. */
+export function createStudentWithTasksAtomic(input: {
+  commandKey: string; commandIntent: Readonly<Record<string, unknown>>;
+  studentFields: Readonly<Record<string, unknown>>;
+  expectedVersions: Readonly<{ students: number; tasks: number }>; actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentCreationCommitResult[]>(STUDENT_CREATION_ATOMIC_RPC, {
+    p_secret: secret, p_command_key: input.commandKey, p_command_intent: input.commandIntent,
+    p_student_fields: input.studentFields, p_expected_versions: input.expectedVersions, p_actor: input.actor,
+  });
+}
+
+export function getStudentCreationCommandResult(input: { commandKey: string; commandIntent: Readonly<Record<string, unknown>>; actor: string }) {
+  const { secret } = configuration();
+  return rpc<StudentCreationCommandResult[]>(STUDENT_CREATION_COMMAND_RESULT_RPC, {
+    p_secret: secret, p_command_key: input.commandKey, p_command_intent: input.commandIntent, p_actor: input.actor,
+  });
+}
+
+/** Legacy exception workflows append only server-derived rows in one transaction. */
+export function mutateLegacyOperationTaskAtomic(input: {
+  commandKey: string; commandIntent: Readonly<Record<string, unknown>>;
+  type: "学生请假" | "停课" | "换老师"; detail: string; studentId?: string; teacherId?: string;
+  eventStart: string; eventEnd: string; sourceBookingId?: string;
+  expectedVersions: Readonly<{ bookings: number; operations: number; students: number; tasks: number; teachers: number }>; actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<LegacyOperationTaskCommitResult[]>(LEGACY_OPERATION_TASK_ATOMIC_RPC, {
+    p_secret: secret, p_command_key: input.commandKey, p_command_intent: input.commandIntent,
+    p_type: input.type, p_detail: input.detail, p_student_id: input.studentId ?? null, p_teacher_id: input.teacherId ?? null,
+    p_event_start: input.eventStart, p_event_end: input.eventEnd, p_source_booking_id: input.sourceBookingId ?? null,
+    p_expected_versions: input.expectedVersions, p_actor: input.actor,
+  });
+}
+
+export function getLegacyOperationTaskCommandResult(input: { commandKey: string; commandIntent: Readonly<Record<string, unknown>>; actor: string }) {
+  const { secret } = configuration();
+  return rpc<LegacyOperationTaskCommandResult[]>(LEGACY_OPERATION_TASK_COMMAND_RESULT_RPC, {
+    p_secret: secret, p_command_key: input.commandKey, p_command_intent: input.commandIntent, p_actor: input.actor,
+  });
+}
+
+export function mutateLpAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  operation: "create" | "revise";
+  studentId?: string;
+  provisionalIntake?: Readonly<{ course: string; guardianWechat: string; owner: string; planner: string }>;
+  lpItemId?: string;
+  workflowType?: string;
+  fields: Readonly<Record<string, unknown>>;
+  revisionNote?: string;
+  authorizedAssignment: Readonly<{ owner: string; planner: string; mayReassign: boolean }>;
+  expectedVersions: Readonly<{ students: number; lpItems: number; tasks: number; files: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<LpAtomicCommitResult[]>(LP_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_operation: input.operation,
+    p_student_id: input.studentId ?? null,
+    p_provisional_intake: input.provisionalIntake ?? null,
+    p_lp_item_id: input.lpItemId ?? null,
+    p_workflow_type: input.workflowType ?? null,
+    p_fields: input.fields,
+    p_revision_note: input.revisionNote ?? null,
+    p_authorized_assignment: input.authorizedAssignment,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+export function getLpAtomicCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<LpAtomicCommandResult[]>(LP_ATOMIC_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
   });
 }
 
@@ -407,9 +993,359 @@ export function getOpsVersions() {
   return rpc<OpsVersionRow[]>("get_ops_versions", { p_secret: secret });
 }
 
+/** Database derives the complete payment reminder projection under five locks. */
+export function reconcileTrialPaymentTasksAuthoritative(input: {
+  runKey: string;
+  expectedVersions: Readonly<Record<"bookings" | "students" | "lpItems" | "tasks" | "teachers", number>>;
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentReconcileResult[]>(TRIAL_PAYMENT_RECONCILE_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_expected_versions: input.expectedVersions,
+    p_actor: "Trial Payment Scheduler",
+  });
+}
+
+/** Completes one exact planner-assigned payment task without a client task payload. */
+export function completeTrialPaymentTaskAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  taskId: string;
+  expectedVersions: Readonly<Record<"bookings" | "students" | "lpItems" | "tasks" | "teachers", number>>;
+  actor: string;
+  actorRole: "admin" | "limited-admin" | "staff" | "teacher";
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentCompletionResult[]>(TRIAL_PAYMENT_COMPLETE_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_task_id: input.taskId,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+    p_actor_role: input.actorRole,
+  });
+}
+
+/** Starts one server-owned LP scheduler attempt in the internal audit ledger. */
+export function beginLpParentProgressSchedulerRun(input: {
+  runKey: string;
+  sourceDigest: string;
+  sourceVersions: Readonly<Record<string, number>>;
+  taskVersionBefore: number;
+  targetTasks: readonly Record<string, unknown>[];
+  processedCount: number;
+  changedCount: number;
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ run_key: string; outcome: "running"; audit_entry_id: string }[]>>(
+    LP_PARENT_PROGRESS_SCHEDULER_BEGIN_RPC,
+    {
+      p_secret: secret,
+      p_run_key: input.runKey,
+      p_source_digest: input.sourceDigest,
+      p_source_versions: input.sourceVersions,
+      p_task_version_before: input.taskVersionBefore,
+      p_target_tasks: input.targetTasks,
+      p_processed_count: input.processedCount,
+      p_changed_count: input.changedCount,
+    },
+  );
+}
+
+/** Finishes one LP scheduler attempt. A duplicate finish is a safe replay. */
+export function finishLpParentProgressSchedulerRun(input: {
+  runKey: string;
+  outcome: "no_change" | "failed";
+  errorCode?: string;
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ run_key: string; outcome: string; audit_entry_id: string }[]>>(
+    LP_PARENT_PROGRESS_SCHEDULER_FINISH_RPC,
+    {
+      p_secret: secret,
+      p_run_key: input.runKey,
+      p_outcome: input.outcome,
+      p_error_code: input.errorCode ?? null,
+    },
+  );
+}
+
+/**
+ * Commits only the scheduler's derived task projection while locking the
+ * authoritative bookings/lpItems versions again in PostgreSQL.
+ */
+export function putLpParentProgressSchedulerTasks(input: {
+  runKey: string;
+  tasks: readonly Record<string, unknown>[];
+}) {
+  const { secret } = configuration();
+  return rpc<OpsStateRow[]>(LP_PARENT_PROGRESS_SCHEDULER_COMMIT_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_tasks: input.tasks,
+    p_actor: "LP Scheduler",
+  });
+}
+
+/** Converges old `running` attempts without ever inferring an applied write. */
+export function recoverStaleLpParentProgressSchedulerRuns() {
+  const { secret } = configuration();
+  return rpc<Readonly<{ recovered_no_change: number; recovered_failed: number }[]>>(
+    LP_PARENT_PROGRESS_SCHEDULER_RECOVER_RPC,
+    { p_secret: secret },
+  );
+}
+
 export function getOpsSources() {
   const { secret } = configuration();
   return rpc<OpsSourceRow[]>("get_ops_sources", { p_secret: secret });
+}
+
+/** Server-only source snapshot writer; callers are cron/management code, never browser code. */
+export function claimJiaowubaoOpenApiScheduleSyncLease(input: {
+  apiSourceKey: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSyncLease>(JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC, {
+    p_secret: secret,
+    p_api_source_key: input.apiSourceKey,
+    p_run_key: input.runKey,
+    p_actor: input.actor,
+  });
+}
+
+export function releaseJiaowubaoOpenApiScheduleSyncLease(input: {
+  apiSourceKey: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ released: boolean }>>(JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC, {
+    p_secret: secret,
+    p_api_source_key: input.apiSourceKey,
+    p_run_key: input.runKey,
+    p_actor: input.actor,
+  });
+}
+
+export function getJiaowubaoOpenApiScheduleSnapshotPreflight(input: {
+  apiSourceKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotPreflight>(JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC, {
+    p_secret: secret,
+    p_api_source_key: input.apiSourceKey,
+    p_actor: input.actor,
+  });
+}
+
+export function beginJiaowubaoOpenApiScheduleSnapshot(input: {
+  envelope: Readonly<Record<string, unknown>>;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC, {
+    p_secret: secret,
+    p_envelope: input.envelope,
+    p_actor: input.actor,
+  });
+}
+
+export function stageJiaowubaoOpenApiScheduleSnapshotPage(input: {
+  runId: string;
+  pageIndex: number;
+  rows: readonly Readonly<Record<string, unknown>>[];
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_page_index: input.pageIndex,
+    p_rows: input.rows,
+    p_actor: input.actor,
+  });
+}
+
+export function completeJiaowubaoOpenApiScheduleSnapshot(input: { runId: string; actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_actor: input.actor,
+  });
+}
+
+export function getJiaowubaoOpenApiScheduleSnapshotStatus(input: { runId: string; actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<Readonly<Record<string, unknown>>>(JIAOWUBAO_OPEN_API_SCHEDULE_STATUS_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Reads the immutable Open API source pointer. Source teacher/member keys are
+ * consumed by the server route and never returned to a browser DTO.
+ */
+export function getJiaowubaoOpenApiScheduleSnapshotWindow(input: {
+  windowStart: string;
+  windowEnd: string;
+  scope: "all" | "teacher" | "student" | "availability";
+  teacherLabels: readonly string[] | null;
+  studentMemberIds: readonly string[] | null;
+  studentNameKeys: readonly string[] | null;
+  limit: number;
+  cursor: Readonly<{ startsAt: string; eventId: string }> | null;
+  revision: string | null;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotWindow>(JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC, {
+    p_secret: secret,
+    p_window_start: input.windowStart,
+    p_window_end: input.windowEnd,
+    p_scope: input.scope,
+    p_scope_teacher_labels: input.teacherLabels,
+    p_scope_student_member_ids: input.studentMemberIds,
+    p_scope_student_name_keys: input.studentNameKeys,
+    p_limit: input.limit,
+    p_cursor_start: input.cursor?.startsAt ?? null,
+    p_cursor_event_id: input.cursor?.eventId ?? null,
+    p_snapshot_revision: input.revision,
+  });
+}
+
+/**
+ * Calendar-window reader for imported class events. The API route, not the
+ * browser, derives any teacher/student filter from the signed access scope.
+ */
+export function getJiaowubaoDirectScheduleWindow(input: {
+  windowStart: string;
+  windowEnd: string;
+  scope: "all" | "teacher" | "student" | "availability";
+  teacherIds: readonly string[] | null;
+  studentIds: readonly string[] | null;
+  /** The route fixes this to a safe page size; callers cannot enlarge it. */
+  limit: number;
+  cursor: JiaowubaoDirectScheduleCursor | null;
+  runToken: string | null;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectScheduleWindow>(JIAOWUBAO_DIRECT_SCHEDULE_WINDOW_RPC, {
+    p_secret: secret,
+    p_window_start: input.windowStart,
+    p_window_end: input.windowEnd,
+    p_scope: input.scope,
+    p_scope_teacher_ids: input.teacherIds,
+    p_scope_student_ids: input.studentIds,
+    p_limit: input.limit,
+    p_cursor_start: input.cursor?.startsAt ?? null,
+    p_cursor_event_id: input.cursor?.eventId ?? null,
+    p_run_token: input.runToken,
+  });
+}
+
+/** Curated supplemental history for one already-authorized formal student. */
+export function getJiaowubaoDirectStudentHistory(studentId: string, limit = 200) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectStudentHistory>(JIAOWUBAO_DIRECT_STUDENT_HISTORY_RPC, {
+    p_secret: secret,
+    p_student_id: studentId,
+    p_limit: limit,
+  });
+}
+
+/**
+ * Server-owned operations-readiness reader. Every limit is fixed by the API
+ * route; the browser cannot expand a queue or name a raw source scope.
+ */
+export function getJiaowubaoDirectOperationsReadiness(input: {
+  windowStart: string;
+  windowEnd: string;
+  scheduleLimit: number;
+  leaveMakeupLimit: number;
+  renewalLimit: number;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectOperationsReadiness>(JIAOWUBAO_DIRECT_OPERATIONS_READINESS_RPC, {
+    p_secret: secret,
+    p_window_start: input.windowStart,
+    p_window_end: input.windowEnd,
+    p_schedule_limit: input.scheduleLimit,
+    p_leave_makeup_limit: input.leaveMakeupLimit,
+    p_renewal_limit: input.renewalLimit,
+  });
+}
+
+/**
+ * Server-only, cursor-bounded mapping evidence reader. The browser cannot
+ * supply raw source labels, event IDs, run IDs, page limits or SQL filters.
+ */
+export function getJiaowubaoDirectScheduleMappingReview(input: {
+  cursor: string | null;
+  limit: number;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectScheduleMappingReview>(JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_REVIEW_RPC, {
+    p_secret: secret,
+    p_limit: input.limit,
+    p_after_mapping_key: input.cursor,
+  });
+}
+
+/**
+ * Server-only current/future queue.  The route fixes both the review window
+ * and page limit; callers cannot pass a run ID, raw source filter, or target.
+ */
+export function getJiaowubaoDirectScheduleMappingPriorityReview(input: {
+  windowStart: string;
+  windowEnd: string;
+  cursor: string | null;
+  limit: number;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectScheduleMappingPriorityReview>(
+    JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_PRIORITY_REVIEW_RPC,
+    {
+      p_secret: secret,
+      p_window_start: input.windowStart,
+      p_window_end: input.windowEnd,
+      p_limit: input.limit,
+      p_after_mapping_key: input.cursor,
+    },
+  );
+}
+
+/**
+ * Persists exactly one opaque source candidate decision. PostgreSQL resolves
+ * the candidate and current teacher/subject authority again under locks.
+ */
+export function putJiaowubaoDirectScheduleMapping(input: {
+  mappingKey: string;
+  commandKey: string;
+  action: "confirm" | "revoke";
+  targetTeacherId: string | null;
+  targetSubjectId: string | null;
+  expectedTeachersVersion: number;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoDirectScheduleMappingSaveResult>(JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_PUT_RPC, {
+    p_secret: secret,
+    p_mapping_key: input.mappingKey,
+    p_command_key: input.commandKey,
+    p_action: input.action,
+    p_target_teacher_id: input.targetTeacherId,
+    p_target_subject_id: input.targetSubjectId,
+    p_expected_teachers_version: input.expectedTeachersVersion,
+    p_actor: input.actor,
+  });
 }
 
 export function getTeacherAvailabilitySubmissions() {
@@ -417,6 +1353,25 @@ export function getTeacherAvailabilitySubmissions() {
   return rpc<TeacherAvailabilitySubmissionRow[]>(TEACHER_AVAILABILITY_SUBMISSIONS_RPC, {
     p_secret: secret,
   });
+}
+
+/**
+ * Server-only, bounded presence reader for the AVA completion surface. The
+ * route fixes the Melbourne month and cap; browser code never supplies either.
+ */
+export function getTeacherAvailabilityCompletionPendingTeacherIds(input: {
+  month: string;
+  limit: number;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherAvailabilityCompletionPendingTeacherIds[]>(
+    TEACHER_AVAILABILITY_COMPLETION_PENDING_TEACHERS_RPC,
+    {
+      p_secret: secret,
+      p_month: input.month,
+      p_limit: input.limit,
+    },
+  );
 }
 
 export function submitTeacherAvailabilityAtomic(input: {
@@ -824,7 +1779,14 @@ export type BookingCapacityCommitResult = Readonly<{
   action: "create" | "update" | "delete";
   applied: boolean;
   booking_id: string;
+  student_id: string;
+  previous_student_id: string;
+  teacher_id: string;
+  previous_teacher_id: string;
   bookings_row: OpsStateRow;
+  students_row: OpsStateRow;
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
   teachers_row: OpsStateRow;
   audit_entry_id: string;
 }>;
@@ -844,7 +1806,39 @@ export type BookingCapacityCommandResult = Readonly<{
   command_key: string;
   action: "create" | "update" | "delete";
   booking_id: string;
+  student_id: string;
+  previous_student_id: string;
+  teacher_id: string;
+  previous_teacher_id: string;
+  actor_role: "admin" | "limited-admin" | "staff" | "teacher";
+  booking_version: number;
+  student_version: number;
+  lp_item_version: number;
+  task_version: number;
+  teacher_version: number;
+  bookings_row: OpsStateRow;
+  students_row: OpsStateRow;
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  teachers_row: OpsStateRow;
   audit_entry_id: string;
+}>;
+
+export type TemporaryClassroomCapability = Readonly<{
+  available: boolean;
+  contract: string;
+}>;
+
+export type TemporaryClassroomRequestClaim = Readonly<{
+  request_identity: string;
+  request_key: string;
+  actor: string;
+  intent: Readonly<Record<string, unknown>>;
+  mode: "test" | "recorded";
+  booking_id: string | null;
+  occurrence_id: string | null;
+  meeting_id: string;
+  replayed: boolean;
 }>;
 
 export type OperationConfirmationCommandResult = Readonly<{
@@ -897,6 +1891,31 @@ export type TeacherDepartureCreationCommandResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type TeacherAbsenceCreationCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  source_teacher_id: string;
+  event_start: string;
+  event_end: string;
+  operation_ids: readonly string[];
+  affected_student_ids: readonly string[];
+  affected_occurrence_count: number;
+  generated_task_count: number;
+  operations_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TeacherAbsenceCreationCommandResult = Readonly<{
+  command_key: string;
+  source_teacher_id: string;
+  event_start: string;
+  event_end: string;
+  operation_ids: readonly string[];
+  affected_student_ids: readonly string[];
+  audit_entry_id: string;
+}>;
+
 export type ExamSubmissionCommitResult = Readonly<{
   command_key: string;
   action: "create" | "update";
@@ -923,7 +1942,7 @@ export type ExamFollowUpCommitResult = Readonly<{
   task_id: string;
   student_id: string;
   exam_id: string;
-  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_month_planning" | "exam_results_follow_up";
   completion_command_key: string;
   students_row: OpsStateRow;
   tasks_row: OpsStateRow;
@@ -936,7 +1955,7 @@ export type ExamFollowUpCommandResult = Readonly<{
   task_id: string;
   student_id: string;
   exam_id: string;
-  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_month_planning" | "exam_results_follow_up";
   completion_command_key: string;
   audit_entry_id: string;
 }>;
@@ -946,7 +1965,7 @@ export type ExamFollowUpCompletionContextResult = Readonly<{
   task_id: string;
   student_id: string;
   exam_id: string;
-  follow_up_kind: "exam_care" | "exam_recall" | "exam_results_follow_up";
+  follow_up_kind: "exam_care" | "exam_recall" | "exam_month_planning" | "exam_results_follow_up";
   prior_task: Record<string, unknown>;
   prior_follow_up_state_exists: boolean;
   prior_follow_up_state: Record<string, unknown> | null;
@@ -954,18 +1973,74 @@ export type ExamFollowUpCompletionContextResult = Readonly<{
   committed_follow_up_state: Record<string, unknown>;
 }>;
 
+/** Server-derived result for one explicit legacy/manual task deadline repair. */
+export type LegacyTaskDeadlineCommitResult = Readonly<{
+  command_key: string;
+  action: "set" | "clear";
+  applied: boolean;
+  task_id: string;
+  due_at: string | null;
+  task_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type LegacyTaskDeadlineCommandResult = Readonly<{
+  command_key: string;
+  action: "set" | "clear";
+  /** Whether the first execution actually changed dueAt (never repeated). */
+  applied: boolean;
+  task_id: string;
+  due_at: string | null;
+  audit_entry_id: string;
+}>;
+
 export function getBookingCapacityCommandResult(input: {
   commandKey: string;
   commandIntent: Readonly<Record<string, unknown>>;
   actor: string;
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<BookingCapacityCommandResult[]>(BOOKING_CAPACITY_COMMAND_RESULT_RPC, {
     p_secret: secret,
     p_command_key: input.commandKey,
     p_command_intent: input.commandIntent,
     p_actor: input.actor,
-  });
+  }, options);
+}
+
+/**
+ * Capability gate for the provider-first temporary classroom saga.  The route
+ * calls this before BBB so a missing/partial migration cannot create an
+ * external room that the app is unable to bind atomically.
+ */
+export function getTemporaryClassroomCapability(options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<TemporaryClassroomCapability[]>(TEMPORARY_CLASSROOM_CAPABILITY_RPC, {
+    p_secret: secret,
+  }, options);
+}
+
+/** Claims the actor + requestKey identity before the external provider call. */
+export function claimTemporaryClassroomRequest(input: {
+  requestKey: string;
+  intent: Readonly<Record<string, unknown>>;
+  mode: "test" | "recorded";
+  bookingId?: string;
+  occurrenceId?: string;
+  meetingId: string;
+  actor: string;
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<TemporaryClassroomRequestClaim[]>(TEMPORARY_CLASSROOM_REQUEST_CLAIM_RPC, {
+    p_secret: secret,
+    p_request_key: input.requestKey,
+    p_intent: input.intent,
+    p_mode: input.mode,
+    p_booking_id: input.bookingId ?? null,
+    p_occurrence_id: input.occurrenceId ?? null,
+    p_meeting_id: input.meetingId,
+    p_actor: input.actor,
+  }, options);
 }
 
 export function getOperationConfirmationCommandResult(input: {
@@ -1010,6 +2085,20 @@ export function getTeacherDepartureCreationCommandResult(input: {
   });
 }
 
+export function getTeacherAbsenceCreationCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherAbsenceCreationCommandResult[]>(TEACHER_ABSENCE_CREATION_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
 export function getExamSubmissionCommandResult(input: {
   commandKey: string;
   commandIntent: unknown;
@@ -1046,6 +2135,21 @@ export function getExamFollowUpCompletionContext(input: {
   return rpc<ExamFollowUpCompletionContextResult[]>(EXAM_FOLLOW_UP_COMPLETION_CONTEXT_RPC, {
     p_secret: secret,
     p_completion_command_key: input.completionCommandKey,
+    p_actor: input.actor,
+  });
+}
+
+/** Looks up an uncertain legacy deadline command without exposing task payloads. */
+export function getLegacyTaskDeadlineCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<LegacyTaskDeadlineCommandResult[]>(LEGACY_TASK_DEADLINE_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
     p_actor: input.actor,
   });
 }
@@ -1114,14 +2218,15 @@ export function mutateBookingCapacityAtomic(input: {
   commandIntent: Readonly<Record<string, unknown>>;
   action: "create" | "update" | "delete";
   bookingId: string;
-  expectedVersions: Readonly<{ bookings: number; students: number; teachers: number }>;
+  expectedVersions: Readonly<{ bookings: number; students: number; lpItems: number; tasks: number; teachers: number }>;
   bookings: readonly Record<string, unknown>[];
   teachers: readonly Record<string, unknown>[];
   changedTeacherIds: readonly string[];
   studentId: string;
   teacherId: string;
+  actorRole: "admin" | "limited-admin" | "staff" | "teacher";
   actor: string;
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<BookingCapacityCommitResult[]>(BOOKING_CAPACITY_ATOMIC_MUTATION_RPC, {
     p_secret: secret,
@@ -1135,8 +2240,9 @@ export function mutateBookingCapacityAtomic(input: {
     p_changed_teacher_ids: input.changedTeacherIds,
     p_student_id: input.studentId,
     p_teacher_id: input.teacherId,
+    p_actor_role: input.actorRole,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 /** Locks bookings, operations and teachers and commits one exact occurrence transition. */
@@ -1249,6 +2355,41 @@ export function createTeacherDepartureAtomic(input: {
   });
 }
 
+/** Locks all five state projections and atomically inserts teacher absence operations/tasks. */
+export function createTeacherAbsenceAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  sourceTeacherId: string;
+  eventStart: string;
+  eventEnd: string;
+  type: string;
+  detail: string;
+  expectedVersions: Readonly<{ bookings: number; operations: number; students: number; tasks: number; teachers: number }>;
+  operations: readonly Record<string, unknown>[];
+  tasks: readonly Record<string, unknown>[];
+  affectedGroups: readonly Readonly<{ studentId: string; operationId: string; affectedOccurrenceIds: readonly string[]; subjects: readonly string[]; firstAffectedAt: string }>[];
+  submittedAt: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TeacherAbsenceCreationCommitResult[]>(TEACHER_ABSENCE_CREATION_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_source_teacher_id: input.sourceTeacherId,
+    p_event_start: input.eventStart,
+    p_event_end: input.eventEnd,
+    p_type: input.type,
+    p_detail: input.detail,
+    p_expected_versions: input.expectedVersions,
+    p_operations: input.operations,
+    p_tasks: input.tasks,
+    p_affected_groups: input.affectedGroups,
+    p_submitted_at: input.submittedAt,
+    p_actor: input.actor,
+  });
+}
+
 /** Atomically stores one student exam and its complete managed reminder set. */
 export function submitExamAtomic(input: {
   commandKey: string;
@@ -1299,6 +2440,26 @@ export function mutateExamFollowUpAtomic(input: {
     p_students: input.students,
     p_tasks: input.tasks,
     p_prepared_at: input.preparedAt,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Atomically writes or clears only dueAt on a server-authorized legacy task.
+ * The browser never supplies the task projection or a UTC timestamp.
+ */
+export function mutateLegacyTaskDeadlineAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  expectedVersions: Readonly<{ students: number; tasks: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<LegacyTaskDeadlineCommitResult[]>(LEGACY_TASK_DEADLINE_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_expected_versions: input.expectedVersions,
     p_actor: input.actor,
   });
 }
@@ -1420,6 +2581,115 @@ export function putStudentFuAttachmentAtomic(input: {
     p_file_type: input.fileType,
     p_fu_category: input.fuCategory ?? null,
     p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically records one renewal follow-up, its student history entry and an optional screenshot. */
+export function putRenewalFollowUpAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  renewalId: string;
+  studentId: string;
+  packageId?: string;
+  businessStatus: string;
+  result: string;
+  attemptedAt: string;
+  note: string;
+  renewalDateNote: string;
+  attachment?: Readonly<{
+    fileName: string;
+    fileTitle: string;
+    contentType: string;
+    contentBase64: string;
+    sha256: string;
+  }>;
+  expectedVersions: Readonly<{ files: number; renewals: number; students: number; tasks: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<RenewalFollowUpAtomicCommitResult[]>(RENEWAL_FOLLOW_UP_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_renewal_id: input.renewalId,
+    p_student_id: input.studentId,
+    p_package_id: input.packageId ?? null,
+    p_business_status: input.businessStatus,
+    p_result: input.result,
+    p_attempted_at: input.attemptedAt,
+    p_note: input.note,
+    p_renewal_date_note: input.renewalDateNote,
+    p_file_name: input.attachment?.fileName ?? null,
+    p_file_content_type: input.attachment?.contentType ?? null,
+    p_file_content_base64: input.attachment?.contentBase64 ?? null,
+    p_file_title: input.attachment?.fileTitle ?? null,
+    p_file_sha256: input.attachment?.sha256 ?? null,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+/**
+ * Creates the exact automatic renewal projection inside the follow-up
+ * transaction when the shared renewal row has not been materialised yet.
+ * The database derives owner, package name and balance from students.payload;
+ * this wrapper intentionally accepts no client-provided projection fields.
+ */
+export function putRenewalFollowUpCreateIfMissingAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  renewalId: string;
+  studentId: string;
+  packageId: string;
+  businessStatus: string;
+  result: string;
+  attemptedAt: string;
+  note: string;
+  renewalDateNote: string;
+  attachment?: Readonly<{
+    fileName: string;
+    fileTitle: string;
+    contentType: string;
+    contentBase64: string;
+    sha256: string;
+  }>;
+  expectedVersions: Readonly<{ files: number; renewals: number; students: number; tasks: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<RenewalFollowUpAtomicCommitResult[]>(RENEWAL_FOLLOW_UP_CREATE_IF_MISSING_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_renewal_id: input.renewalId,
+    p_student_id: input.studentId,
+    p_package_id: input.packageId,
+    p_business_status: input.businessStatus,
+    p_result: input.result,
+    p_attempted_at: input.attemptedAt,
+    p_note: input.note,
+    p_renewal_date_note: input.renewalDateNote,
+    p_file_name: input.attachment?.fileName ?? null,
+    p_file_content_type: input.attachment?.contentType ?? null,
+    p_file_content_base64: input.attachment?.contentBase64 ?? null,
+    p_file_title: input.attachment?.fileTitle ?? null,
+    p_file_sha256: input.attachment?.sha256 ?? null,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+export function getRenewalFollowUpCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<RenewalFollowUpCommandResult[]>(RENEWAL_FOLLOW_UP_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
     p_actor: input.actor,
   });
 }

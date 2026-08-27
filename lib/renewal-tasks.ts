@@ -35,8 +35,12 @@ export interface RenewalPackageProjection {
   /** Human-readable evidence explaining which lesson consumes the shared package. */
   renewalDateNote?: string;
   owner: string;
-  /** Projected instant at which this package is exhausted. */
-  depletionAt: Date | string;
+  /**
+   * Projected instant at which this package is exhausted. A missing value is
+   * deliberate: low-balance evidence may remain visible, but an automatic
+   * task must not invent an immediate deadline.
+   */
+  depletionAt?: Date | string | null;
   status?: RenewalProjectionStatus;
 }
 
@@ -181,7 +185,9 @@ export function buildRenewalDateNote(input: RenewalDateNoteInput) {
 
 /**
  * Calculate the approved deadline. Without a configured lead time the package
- * exhaustion instant itself is used; a stale deadline becomes immediately due.
+ * exhaustion instant itself is used. A stale, but exact, depletion remains
+ * stale so the task can be shown as overdue; it is never replaced with a
+ * fabricated `now + 1ms` deadline.
  */
 export function calculateRenewalTaskDueAt(
   depletionAt: Date | string,
@@ -192,9 +198,9 @@ export function calculateRenewalTaskDueAt(
     throw new RangeError("leadDaysBeforeDepletion must be a non-negative integer");
   }
   const depletion = asDate(depletionAt, "depletionAt");
-  const current = asDate(now, "now");
+  asDate(now, "now");
   const idealTime = depletion.getTime() - leadDaysBeforeDepletion * DAY_MS;
-  return new Date(Math.max(idealTime, current.getTime() + 1));
+  return new Date(idealTime);
 }
 
 function formatDue(instant: Date, timeZone: string) {
@@ -222,7 +228,9 @@ function validateProjection(projection: RenewalPackageProjection) {
   if (projection.renewalDateNote !== undefined && !projection.renewalDateNote.trim()) {
     throw new TypeError("renewalDateNote must not be empty");
   }
-  asDate(projection.depletionAt, "depletionAt");
+  if (projection.depletionAt !== undefined && projection.depletionAt !== null) {
+    asDate(projection.depletionAt, "depletionAt");
+  }
   return projectionState(projection.status);
 }
 
@@ -232,6 +240,7 @@ export function generateRenewalTask(
   options: RenewalTaskOptions,
 ): RenewalRuleTask | null {
   if (validateProjection(projection) !== "active") return null;
+  if (projection.depletionAt === undefined || projection.depletionAt === null) return null;
   const now = asDate(options.now, "now");
   const timeZone = options.timeZone ?? MELBOURNE_TIME_ZONE;
   const dueAt = calculateRenewalTaskDueAt(
@@ -334,6 +343,35 @@ function closeRenewalTask(
 }
 
 /**
+ * Close a previously generated automatic task when its exact depletion
+ * evidence disappears. The renewal row remains available for low-balance
+ * evidence, but the stale task is not left with a misleading deadline.
+ */
+function closeRenewalTaskWithoutDue(
+  tasks: readonly OpsTask[],
+  projection: RenewalPackageProjection,
+  now: Date,
+) {
+  const identity = `${RENEWAL_TASK_RULE_KEY}\u0000${renewalTaskAnchor(projection.studentId, projection.packageId)}`;
+  const matching = tasks.filter((task) => taskRuleIdentity(task) === identity);
+  if (!matching.length) return [...tasks];
+  const existing = matching.find((task) => task.status === "done" && !isAutomaticRenewalClosure(task))
+    ?? matching.find((task) => task.status === "done")
+    ?? matching[0];
+  if (existing.status === "done" && !isAutomaticRenewalClosure(existing)) return [...tasks];
+  return upsertTaskByRule(tasks, {
+    ...existing,
+    owner: projection.owner,
+    assignees: [projection.owner],
+    watchers: [DEFAULT_TEACHING_CONTROL_WATCHER],
+    status: "done",
+    tone: "green",
+    result: RENEWAL_NOT_DUE_RESULT,
+    closedAt: now.toISOString(),
+  });
+}
+
+/**
  * Reconcile one stable task per student/package. When `scopeStudentIds` is
  * supplied, projections are the complete set for that scope and a missing
  * package closes only its unfinished automatic task.
@@ -357,7 +395,8 @@ export function reconcileRenewalTasks<T extends OpsTask>(
     const state = projectionState(projection.status);
     if (state !== "active") return closeRenewalTask(current, projection, state, now);
 
-    const incoming = generateRenewalTask(projection, options)!;
+    const incoming = generateRenewalTask(projection, options);
+    if (!incoming) return closeRenewalTaskWithoutDue(current, projection, now);
     const identity = taskRuleIdentity(incoming);
     const prepared = current.map((task) => taskRuleIdentity(task) === identity && isAutomaticRenewalClosure(task)
       ? { ...task, status: "waiting" as const, result: undefined, closedAt: undefined }

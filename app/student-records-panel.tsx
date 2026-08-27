@@ -16,6 +16,7 @@ import {
   type StudentFollowUp,
   type StudentLessonPackage,
 } from "@/lib/student-records";
+import { scheduleDateInTimezone } from "@/lib/schedule-calendar";
 
 export const STUDENT_RECORD_PANEL_SECTIONS = [
   "lp",
@@ -28,6 +29,10 @@ export const STUDENT_RECORD_PANEL_SECTIONS = [
 
 export type StudentRecordPanelSection = (typeof STUDENT_RECORD_PANEL_SECTIONS)[number];
 export type StudentRecordFileSection = Extract<StudentRecordPanelSection, "lp" | "report" | "fu">;
+
+export function studentRecordsMelbourneMonth(instant: Date) {
+  return scheduleDateInTimezone(instant, "Australia/Melbourne").slice(0, 7);
+}
 
 export type StudentHistoricalJwbSnapshotFacts = Readonly<{
   lessonPackages?: readonly StudentLessonPackage[];
@@ -135,9 +140,87 @@ const SECTION_LABELS: Record<StudentRecordPanelSection, string> = {
 
 const REPORT_FILE_TYPES = new Set(["Report 资料", "成绩单"]);
 const FU_FILE_TYPES = new Set(["FU", "续课 FU", "课堂反馈"]);
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function runtimeText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isValidDateOrTimestamp(value: unknown) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return false;
+  if (!DATE_ONLY_PATTERN.test(value)) return true;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function safeFileUrl(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizePanelFile(file: StudentRecordsPanelFile): StudentRecordsPanelFile | null {
+  const value = file as unknown;
+  if (!isRuntimeRecord(value)) return null;
+  const id = runtimeText(value.id);
+  const studentId = runtimeText(value.studentId);
+  const title = runtimeText(value.title);
+  if (!id || !studentId || !title) return null;
+  const recordSection = value.recordSection === "lp" || value.recordSection === "report" || value.recordSection === "fu"
+    ? value.recordSection
+    : undefined;
+  const url = safeFileUrl(value.url);
+  const addedAt = runtimeText(value.addedAt);
+  return {
+    id,
+    studentId,
+    title,
+    type: runtimeText(value.type) ?? "资料",
+    source: runtimeText(value.source) ?? "未知来源",
+    addedAt: addedAt && isValidDateOrTimestamp(addedAt)
+      ? addedAt
+      : "日期待确认",
+    ...(url ? { url } : {}),
+    ...(recordSection ? { recordSection } : {}),
+  };
+}
+
+function normalizeFollowUpHistory(value: unknown): StudentFollowUp[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!isRuntimeRecord(candidate)) return [];
+    const id = runtimeText(candidate.id);
+    const followedUpAt = runtimeText(candidate.followedUpAt);
+    if (!id || !followedUpAt || !isValidDateOrTimestamp(followedUpAt)) return [];
+    if ((candidate.note !== undefined && typeof candidate.note !== "string")
+      || (candidate.recordedBy !== undefined && typeof candidate.recordedBy !== "string")) return [];
+    return [{
+      id,
+      followedUpAt,
+      ...(typeof candidate.note === "string" && candidate.note.trim() ? { note: candidate.note } : {}),
+      ...(typeof candidate.recordedBy === "string" && candidate.recordedBy.trim()
+        ? { recordedBy: candidate.recordedBy }
+        : {}),
+    }];
+  });
+}
 
 export function studentFileRecordSection(file: StudentRecordsPanelFile): StudentRecordFileSection {
-  if (file.recordSection) return file.recordSection;
+  // Shared JSON may contain a stale or forged grouping value even though the
+  // TypeScript caller is narrower. Fail safely to the file-type mapping
+  // instead of indexing groupedFiles with an unknown key and crashing the
+  // entire student record panel.
+  if (file.recordSection === "lp" || file.recordSection === "report" || file.recordSection === "fu") {
+    return file.recordSection;
+  }
   if (REPORT_FILE_TYPES.has(file.type)) return "report";
   if (FU_FILE_TYPES.has(file.type)) return "fu";
   return "lp";
@@ -165,8 +248,9 @@ function sortPurchases(lessonPackage: StudentLessonPackage) {
 }
 
 function legacyFollowUp(student: StudentRecordsPanelStudent): StudentFollowUp | null {
-  const followedUpAt = student.followUp?.trim();
-  if (!followedUpAt || ["未记录", "暂无记录", "待确认"].includes(followedUpAt)) return null;
+  const followedUpAt = runtimeText(student.followUp);
+  if (!followedUpAt || ["未记录", "暂无记录", "待确认"].includes(followedUpAt)
+    || !isValidDateOrTimestamp(followedUpAt)) return null;
   return { id: `legacy-follow-up:${student.id}`, followedUpAt };
 }
 
@@ -192,21 +276,49 @@ export function buildStudentRecordsPanelData(
     fu: [],
   };
   for (const file of files) {
-    if (file.studentId === student.id) groupedFiles[studentFileRecordSection(file)].push(file);
+    const normalized = normalizePanelFile(file);
+    if (normalized?.studentId === student.id) groupedFiles[studentFileRecordSection(normalized)].push(normalized);
   }
 
-  const structuredFollowUps = student.followUpHistory ?? [];
+  const structuredFollowUps = normalizeFollowUpHistory(student.followUpHistory);
   const fallbackFollowUp = structuredFollowUps.length ? null : legacyFollowUp(student);
   const followUps = fallbackFollowUp
     ? [fallbackFollowUp]
     : sortStudentFollowUpHistory(structuredFollowUps);
   const structuredExams = student.exams ?? [];
   const fallbackExam = structuredExams.length ? null : legacyExam(student);
+  const lessonPackages = (Array.isArray(student.lessonPackages) ? student.lessonPackages : []).flatMap((candidate) => {
+    try {
+      const balance = getLessonPackageBalance(candidate);
+      const purchaseRecords = sortPurchases(candidate).map((purchase) => ({
+        id: purchase.id,
+        purchasedAt: purchase.purchasedAt,
+        hours: purchase.hours,
+        ...(purchase.purchasedHours !== undefined ? { purchasedHours: purchase.purchasedHours } : {}),
+        ...(purchase.bonusHours !== undefined ? { bonusHours: purchase.bonusHours } : {}),
+        ...(typeof purchase.note === "string" ? { note: purchase.note } : {}),
+      }));
+      return [{
+        lessonPackage: {
+          id: candidate.id,
+          name: candidate.name,
+          subjectIds: [...candidate.subjectIds],
+          purchaseRecords,
+          consumedHours: candidate.consumedHours,
+        },
+        balance,
+      }];
+    } catch {
+      return [];
+    }
+  });
   return {
     jwbMatchStatus: student.jwbMatchStatus,
     hasHistoricalJwbFacts: student.historicalJwbSnapshot !== undefined,
     historicalJwbSnapshot: student.historicalJwbSnapshot,
-    packageCoverage: student.packageCoverage ?? (student.lessonPackages?.length ? "complete" : "none"),
+    packageCoverage: student.packageCoverage === "complete" || student.packageCoverage === "partial" || student.packageCoverage === "none"
+      ? student.packageCoverage
+      : lessonPackages.length ? "complete" : "none",
     files: {
       lp: sortFileHistory(groupedFiles.lp),
       report: sortFileHistory(groupedFiles.report),
@@ -214,14 +326,7 @@ export function buildStudentRecordsPanelData(
     },
     followUps,
     latestFollowUp: getLatestStudentFollowUp(followUps),
-    lessonPackages: (student.lessonPackages ?? []).map((lessonPackage) => ({
-      lessonPackage: {
-        ...lessonPackage,
-        subjectIds: [...lessonPackage.subjectIds],
-        purchaseRecords: sortPurchases(lessonPackage),
-      },
-      balance: getLessonPackageBalance(lessonPackage),
-    })),
+    lessonPackages,
     exams: fallbackExam
       ? [{ exam: fallbackExam, estimatedResultDate: null, followUpStatuses: null }]
       : sortStudentExams(structuredExams).map((exam) => ({
@@ -268,7 +373,6 @@ function FileHistory({ files, onOpen }: Readonly<{
           <span className="record-icon green" aria-hidden="true">{file.type.slice(0, 1)}</span>
           <div>
             <FileTitle file={file} onOpen={onOpen} />
-            <span>{file.source}</span>
           </div>
           <small>{file.addedAt}</small>
           <span>{file.type}</span>
@@ -281,25 +385,18 @@ function FileHistory({ files, onOpen }: Readonly<{
 function FollowUpHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) {
   if (!data.latestFollowUp) return <EmptyRecords />;
   return (
-    <>
-      <div className="detail-section">
-        <span>最近跟进</span>
-        <strong>{data.latestFollowUp.followedUpAt}</strong>
-        {data.latestFollowUp.note ? <p>{data.latestFollowUp.note}</p> : null}
-      </div>
-      <div className="timeline">
-        <div className="timeline-title"><strong>历史</strong><small>{data.followUps.length}</small></div>
-        {data.followUps.map((followUp) => (
-          <div className="timeline-item" key={followUp.id}>
-            <i className="green" aria-hidden="true" />
-            <span>
-              <strong>{followUp.followedUpAt}</strong>
-              {(followUp.note || followUp.recordedBy) ? <small>{[followUp.note, followUp.recordedBy].filter(Boolean).join(" · ")}</small> : null}
-            </span>
-          </div>
-        ))}
-      </div>
-    </>
+    <div className="timeline">
+      <div className="timeline-title"><strong>跟进记录</strong><small>{data.followUps.length}</small></div>
+      {data.followUps.map((followUp) => (
+        <div className="timeline-item" key={followUp.id}>
+          <i className="green" aria-hidden="true" />
+          <span>
+            <strong>{followUp.followedUpAt}</strong>
+            {followUp.note ? <small>{followUp.note}</small> : null}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -367,29 +464,17 @@ export function studentHistoricalJwbSnapshotEvidence(snapshot?: StudentHistorica
   return evidence;
 }
 
-function HistoricalJwbSnapshotEvidence({ snapshot }: Readonly<{ snapshot: StudentHistoricalJwbSnapshot }>) {
-  const evidence = studentHistoricalJwbSnapshotEvidence(snapshot);
-  return <div className="detail-section">
-    <span>教务宝历史资料</span>
-    <strong>历史待核验 · 不可用于排课或扣课</strong>
-    {evidence.length
-      ? evidence.map((item) => <p key={item}>{item}</p>)
-      : <p>已保留只读历史快照，待人工核验。</p>}
-  </div>;
-}
-
 function LessonPackageHistory({ data }: Readonly<{ data: StudentRecordsPanelData }>) {
   const notice = studentJwbPackageNotice(data);
-  if (!data.lessonPackages.length) return <>
-    {notice ? <div className="form-notice">{notice}</div> : null}
-    {data.historicalJwbSnapshot ? <HistoricalJwbSnapshotEvidence snapshot={data.historicalJwbSnapshot} /> : null}
-    <EmptyRecords />
-  </>;
+  const historicalEvidence = studentHistoricalJwbSnapshotEvidence(data.historicalJwbSnapshot);
   return (
     <>
-      {notice ? <div className="form-notice">{notice}</div> : null}
-      {data.historicalJwbSnapshot ? <HistoricalJwbSnapshotEvidence snapshot={data.historicalJwbSnapshot} /> : null}
-      <div className="record-list">
+      {notice ? <div className="form-notice" role="note">{notice}</div> : null}
+      {historicalEvidence.length ? <article className="detail-section" aria-label="历史教务宝只读资料">
+        <strong>历史待核验 · 不可用于排课或扣课</strong>
+        <ul>{historicalEvidence.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+      </article> : null}
+      {!data.lessonPackages.length ? <EmptyRecords /> : <div className="record-list">
       {data.lessonPackages.map(({ lessonPackage, balance }) => (
         <article className="detail-section" key={lessonPackage.id}>
           <strong>{lessonPackage.name}</strong>
@@ -402,14 +487,20 @@ function LessonPackageHistory({ data }: Readonly<{ data: StudentRecordsPanelData
                 <i className="blue" aria-hidden="true" />
                 <span>
                   <strong>+{purchase.hours} 课时</strong>
-                  <small>{[purchase.purchasedAt, purchase.note].filter(Boolean).join(" · ")}</small>
+                  <small>{[
+                    purchase.purchasedAt,
+                    purchase.purchasedHours !== undefined && purchase.bonusHours !== undefined
+                      ? `购买 ${purchase.purchasedHours} + 赠送 ${purchase.bonusHours}`
+                      : undefined,
+                    purchase.note,
+                  ].filter(Boolean).join(" · ")}</small>
                 </span>
               </div>
             ))}
           </div>
         </article>
       ))}
-      </div>
+      </div>}
     </>
   );
 }
@@ -470,6 +561,7 @@ export function filterStudentRecordExams(
 function FollowUpStatuses({ statuses }: Readonly<{ statuses: ExamFollowUpStatuses | null }>) {
   if (!statuses) return null;
   return <span className="exam-follow-up-statuses">
+    <small>月度规划 {FOLLOW_UP_LABELS[statuses.exam_month_planning]}</small>
     <small>关心 {FOLLOW_UP_LABELS[statuses.exam_care]}</small>
     <small>回忆 {FOLLOW_UP_LABELS[statuses.exam_recall]}</small>
     <small>出分 {FOLLOW_UP_LABELS[statuses.exam_results_follow_up]}</small>
@@ -544,7 +636,7 @@ export function StudentRecordsPanel({
   const [section, setSection] = useState<StudentRecordPanelSection>(initialSection);
   const panelId = useId();
   const data = buildStudentRecordsPanelData(student, files);
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = studentRecordsMelbourneMonth(new Date());
 
   return (
     <section className="panel collection-shell" aria-label={`${student.name} 学生资料`}>
@@ -554,24 +646,50 @@ export function StudentRecordsPanel({
             className={section === value ? "active" : ""}
             type="button"
             role="tab"
+            id={`${panelId}-${value}-tab`}
             aria-selected={section === value}
             aria-controls={`${panelId}-${value}`}
+            tabIndex={section === value ? 0 : -1}
             key={value}
             onClick={() => setSection(value)}
+            onKeyDown={(event) => {
+              const currentIndex = STUDENT_RECORD_PANEL_SECTIONS.indexOf(value);
+              let nextIndex = currentIndex;
+              if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % STUDENT_RECORD_PANEL_SECTIONS.length;
+              else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + STUDENT_RECORD_PANEL_SECTIONS.length) % STUDENT_RECORD_PANEL_SECTIONS.length;
+              else if (event.key === "Home") nextIndex = 0;
+              else if (event.key === "End") nextIndex = STUDENT_RECORD_PANEL_SECTIONS.length - 1;
+              else return;
+              event.preventDefault();
+              const nextSection = STUDENT_RECORD_PANEL_SECTIONS[nextIndex];
+              setSection(nextSection);
+              window.requestAnimationFrame(() => document.getElementById(`${panelId}-${nextSection}-tab`)?.focus());
+            }}
           >
-            {SECTION_LABELS[value]} {sectionCount(value, data)}
+            {SECTION_LABELS[value]}{sectionCount(value, data) > 0 ? ` ${sectionCount(value, data)}` : ""}
           </button>
         ))}
       </div>
-      <header className="panel-header">
-        <h2>{SECTION_LABELS[section]}</h2>
-        {canAdd ? <button className="secondary-button" type="button" onClick={() => callbacks.onAdd(section, student)}>
+      {canAdd ? <header className="panel-header">
+        <span aria-hidden="true" />
+        <button
+          className="secondary-button"
+          type="button"
+          aria-label={`新增${SECTION_LABELS[section]}`}
+          onClick={() => callbacks.onAdd(section, student)}
+        >
           + 新增
-        </button> : null}
-      </header>
-      <div id={`${panelId}-${section}`} role="tabpanel">
-        <SectionContent section={section} data={data} onOpenFile={callbacks.onOpenFile} currentMonth={currentMonth} onEditExam={callbacks.onEditExam} />
-      </div>
+        </button>
+      </header> : null}
+      {STUDENT_RECORD_PANEL_SECTIONS.map((value) => <div
+        id={`${panelId}-${value}`}
+        role="tabpanel"
+        aria-labelledby={`${panelId}-${value}-tab`}
+        hidden={section !== value}
+        key={value}
+      >
+        <SectionContent section={value} data={data} onOpenFile={callbacks.onOpenFile} currentMonth={currentMonth} onEditExam={callbacks.onEditExam} />
+      </div>)}
     </section>
   );
 }

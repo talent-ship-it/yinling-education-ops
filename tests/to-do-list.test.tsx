@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToDoList, ToDoFilter } from "../app/to-do-list";
+import { ToDoList, type ToDoFilter } from "../app/to-do-list";
 import { OpsTask, TaskCategory, TaskStatus } from "../lib/ops-tasks";
 
 function task(
@@ -13,13 +13,14 @@ function task(
   due: string,
   dueAt?: string,
 ): OpsTask {
+  const legacyCopy = /发布后立即|等待回复|规则文案/.test(due);
   return {
     id,
     title: `任务 ${id}`,
     owner: "Abby",
     studentId: `STU-${id}`,
     due,
-    dueAt,
+    dueAt: dueAt ?? (legacyCopy ? undefined : "2026-08-12T08:00:00.000Z"),
     status,
     tone: status === "overdue" ? "red" : status === "today" ? "amber" : "blue",
     category,
@@ -40,11 +41,27 @@ function render(tasks: OpsTask[], filter: ToDoFilter = "all") {
   );
 }
 
-test("renders the five compact category tabs and marks the controlled filter", () => {
+function renderWithOpenPolicy(tasks: OpsTask[], canOpen: (task: OpsTask) => boolean) {
+  return renderToStaticMarkup(
+    <ToDoList
+      tasks={tasks}
+      studentName={(studentId) => `学生 ${studentId}`}
+      filter="all"
+      onFilterChange={() => undefined}
+      onComplete={() => undefined}
+      onOpen={() => undefined}
+      canOpen={canOpen}
+    />,
+  );
+}
+
+test("renders the today and category tabs, marks the controlled filter, and exposes the collapse control", () => {
   const html = render([], "考试");
-  for (const label of ["全部", "LP", "考试", "续课", "请假代课"]) assert.match(html, new RegExp(`>${label}<`));
+  for (const label of ["全部", "今日", "LP", "考试", "续课", "请假代课"]) assert.match(html, new RegExp(`>${label}<`));
   assert.match(html, /aria-label="任务类别"/);
   assert.match(html, /class="active" type="button" aria-pressed="true">考试</);
+  assert.match(html, /aria-expanded="true" aria-controls="to-do-list-content">/);
+  assert.match(html, />收起</);
 });
 
 test("renders today, overdue, then remaining sections and sorts each section by dueAt", () => {
@@ -68,18 +85,43 @@ test("renders today, overdue, then remaining sections and sorts each section by 
     "其余任务",
     "任务 remaining-earlier",
     "任务 remaining-later",
-    "任务 legacy",
   ].map((text) => html.indexOf(text));
   assert.ok(positions.every((position) => position >= 0));
   assert.deepEqual(positions, [...positions].sort((left, right) => left - right));
 });
 
-test("shows the real due field and omits trigger/explanatory copy", () => {
+test("shows the canonical deadline as an exact date and time, not legacy workflow copy", () => {
   const html = render([task("due", "LP", "today", "试听前 N-3 · 18:00", "2026-08-12T08:00:00.000Z")]);
-  assert.match(html, />试听前 N-3 · 18:00</);
+  assert.match(html, />截止 2026年8月12日 18:00</);
+  assert.match(html, /<time[^>]+dateTime="2026-08-12T08:00:00\.000Z"/);
+  assert.match(html, /title="截止：2026年8月12日 18:00（墨尔本时间）"/);
+  assert.doesNotMatch(html, /试听前 N-3/);
   assert.doesNotMatch(html, /不应渲染的解释文字/);
   assert.doesNotMatch(html, /<small/);
-  assert.match(html, /学生 STU-due · Abby/);
+  assert.match(html, /学生 STU-due/);
+  assert.doesNotMatch(html, /Abby/);
+});
+
+test("does not present a descriptive legacy due string as an exact deadline", () => {
+  const html = render([task("unknown", "LP", "today", "发布后立即")]);
+  assert.match(html, /没有待处理事项/);
+  assert.doesNotMatch(html, /发布后立即/);
+});
+
+test("does not expose manual deadline repair controls in To Do List", () => {
+  const legacy = task("legacy-repair", "LP", "waiting", "发布后立即");
+  const managed = {
+    ...task("managed", "LP", "waiting", "规则文案"),
+    ruleKey: "trial.parent-follow-up",
+  };
+  const anchored = {
+    ...task("anchored", "LP", "waiting", "规则文案"),
+    anchorBookingId: "LES-1",
+  };
+  const html = render([legacy, managed, anchored]);
+  assert.doesNotMatch(html, /补时间/);
+  assert.doesNotMatch(html, /补充截止时间/);
+  assert.doesNotMatch(html, /调整截止时间/);
 });
 
 test("category filtering is exact and completed tasks stay hidden", () => {
@@ -96,8 +138,32 @@ test("category filtering is exact and completed tasks stay hidden", () => {
   assert.doesNotMatch(html, /任务 done-lp/);
 });
 
+test("today filter keeps only tasks due today", () => {
+  const html = render(
+    [
+      task("today", "LP", "today", "今天 10:00"),
+      task("overdue", "考试", "overdue", "昨天 10:00"),
+      task("upcoming", "续课", "upcoming", "明天 10:00"),
+    ],
+    "today",
+  );
+  assert.match(html, /任务 today/);
+  assert.doesNotMatch(html, /任务 overdue/);
+  assert.doesNotMatch(html, /任务 upcoming/);
+});
+
 test("renders a concise empty state without explanatory copy", () => {
   const html = render([], "all");
   assert.match(html, /没有待处理事项/);
   assert.doesNotMatch(html, /调整|筛选下|请调整/);
+});
+
+test("renders a cross-owner managed exam task identity as non-navigable text", () => {
+  const html = renderWithOpenPolicy([
+    task("managed-exam", "考试", "today", "今天 18:00"),
+  ], () => false);
+  assert.match(html, /task-copy task-copy-static/);
+  assert.match(html, /<span class="task-copy task-copy-static"><strong>任务 managed-exam<\/strong>/);
+  assert.doesNotMatch(html, /<button class="task-copy"/);
+  assert.match(html, /aria-label="完成：任务 managed-exam"/);
 });

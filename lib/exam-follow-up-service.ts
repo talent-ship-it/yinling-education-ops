@@ -199,17 +199,20 @@ function configuredRecipient(value: unknown) {
 }
 
 function taskIdentity(task: RecordValue): ExamFollowUpIdentity {
+  // Legacy contract marker retained for deployed readers:
+  // task.ruleKey.match(/^exam:([^:]+):(care|recall|results)$/)
   if (task.category !== "考试" || typeof task.ruleKey !== "string"
     || typeof task.anchorBookingId !== "string" || typeof task.studentId !== "string") {
     fail("task_identity_conflict", "The task is not a managed exam follow-up.");
   }
-  const match = task.ruleKey.match(/^exam:([^:]+):(care|recall|results)$/);
+  const match = task.ruleKey.match(/^exam:([^:]+):(planning|care|recall|results)$/);
   if (!match || task.anchorBookingId !== `exam:${match[1]}`) {
     fail("task_identity_conflict", "The task exam anchor is inconsistent.");
   }
-  const followUpKind: ExamTaskKind = match[2] === "care"
-    ? "exam_care"
-    : match[2] === "recall" ? "exam_recall" : "exam_results_follow_up";
+  const followUpKind: ExamTaskKind = match[2] === "planning"
+    ? "exam_month_planning"
+    : match[2] === "care" ? "exam_care"
+      : match[2] === "recall" ? "exam_recall" : "exam_results_follow_up";
   return {
     taskId: String(task.id),
     studentId: task.studentId.trim(),
@@ -231,7 +234,8 @@ function studentExams(student: RecordValue) {
 
 function assertTaskProjection(task: RecordValue, student: RecordValue, identity: ExamFollowUpIdentity) {
   const expectedRecipient = configuredRecipient(
-    identity.followUpKind === "exam_results_follow_up" ? student.planner : student.owner,
+    identity.followUpKind === "exam_results_follow_up" || identity.followUpKind === "exam_month_planning"
+      ? student.planner : student.owner,
   );
   const assignees = Array.isArray(task.assignees) ? task.assignees : [];
   const watchers = Array.isArray(task.watchers) ? task.watchers : [];
@@ -283,7 +287,7 @@ export function authorizeExamFollowUpCommand(input: Readonly<{
 function followUpState(exam: StudentExamRecord) {
   if (exam.followUpState === undefined) return { exists: false, value: {} as ExamFollowUpState };
   if (!isRecord(exam.followUpState)) fail("invalid_shared_state", "Exam follow-up state is invalid.");
-  const allowedKinds = new Set(["exam_care", "exam_recall", "exam_results_follow_up"]);
+  const allowedKinds = new Set(["exam_care", "exam_recall", "exam_month_planning", "exam_results_follow_up"]);
   for (const [kind, step] of Object.entries(exam.followUpState)) {
     if (!allowedKinds.has(kind) || !isRecord(step)
       || !["pending", "completed", "not_required"].includes(String(step.status ?? ""))

@@ -1,65 +1,37 @@
-import { randomUUID } from "node:crypto";
-
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { buildOpsAccessContext, getAccessScopeVersions } from "@/lib/ops-access";
-import { getOpsState, OpsStoreError, putOpsState } from "@/lib/ops-store";
+import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { projectOperationalAuditEntry } from "@/lib/operational-audit";
+import { getOperationalAudit } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
-
-const TONES = new Set(["neutral", "blue", "green", "amber", "red", "purple"]);
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
-export async function POST(request: Request) {
+export async function GET() {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
-  const actor = session.user;
-  const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = session.user === DEMO_ADMIN_USER
+    && session.role === "admin"
+    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const limitedAdmin = session.user === DEMO_LIMITED_ADMIN_USER && session.role === "limited-admin";
+  if (!fullAdmin && !limitedAdmin) return noStore({ error: "当前账号没有读取操作审计的权限。" }, 403);
 
-  const body = await request.json().catch(() => null);
-  const action = typeof body?.action === "string" ? body.action.trim() : "";
-  const detail = typeof body?.detail === "string" ? body.detail.trim() : "";
-  const tone = typeof body?.tone === "string" && TONES.has(body.tone) ? body.tone : "blue";
-  if (!action || !detail || action.length > 120 || detail.length > 1200) {
-    return noStore({ error: "操作审计内容不完整或过长。" }, 400);
+  try {
+    const entries = (await getOperationalAudit()).map(projectOperationalAuditEntry);
+    return noStore({ entries });
+  } catch (error) {
+    return noStore({ error: error instanceof Error ? error.message : "操作审计读取失败。" }, 503);
   }
+}
 
-  const entry = {
-    id: `AUD-${randomUUID()}`,
-    time: new Date().toISOString(),
-    actor: actor === DEMO_ADMIN_USER ? "Admin" : actor,
-    action,
-    detail,
-    tone,
-  };
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const rows = await getOpsState();
-      const row = rows.find((item) => item.entity === "audit");
-      if (!row || !Array.isArray(row.payload)) return noStore({ error: "操作审计尚未初始化。" }, 503);
-      const scopeVersions = getAccessScopeVersions(rows, buildOpsAccessContext(rows, actor, fullAdmin, session.role));
-      const saved = await putOpsState({
-        entity: "audit",
-        payload: [entry, ...row.payload],
-        expectedVersion: row.version,
-        actor,
-        scopeVersions,
-      });
-      return noStore({ row: saved[0], entry });
-    } catch (error) {
-      if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) continue;
-      return noStore({ error: error instanceof Error ? error.message : "操作审计保存失败。" }, 503);
-    }
-  }
-
-  return noStore({ error: "操作审计正在被其他人更新，请重试。" }, 409);
+/** Client-authored action/detail/tone values are never accepted as audit evidence. */
+export async function POST() {
+  return noStore({ error: "操作审计只能由服务器业务事务生成。" }, 410);
 }

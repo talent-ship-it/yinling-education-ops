@@ -4,10 +4,12 @@ import test from "node:test";
 
 const sourceUrl = new URL("../app/operations-client.tsx", import.meta.url);
 
-test("booking create, edit and delete await the atomic API before dependent writes", async () => {
+test("booking create, edit and delete accept only four authoritative remote rows", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  assert.match(source, /fetch\("\/api\/bookings\/mutate"/);
+  assert.match(source, /bookingMutationFetch\("\/api\/bookings\/mutate"/);
   assert.match(source, /bookingsShared\.applyRemote\(body\.bookingRow/);
+  assert.match(source, /studentsShared\.applyRemote\(body\.studentRow/);
+  assert.match(source, /tasksShared\.applyRemote\(body\.taskRow/);
   assert.match(source, /teachersShared\.applyRemote\(body\.teacherRow/);
   assert.match(source, /onConfirm: async \(\) => \{\s*await writeBookingCapacityMutation\(\{ action: "upsert"/);
   assert.match(source, /onConfirm: async \(\) => \{\s*await writeBookingCapacityMutation\(\{ action: "delete"/);
@@ -17,10 +19,12 @@ test("booking create, edit and delete await the atomic API before dependent writ
   const submitBody = source.slice(submitStart, submitEnd);
   const awaited = submitBody.indexOf("await writeBookingCapacityMutation");
   assert.ok(awaited > 0);
-  assert.ok(submitBody.indexOf("setTasks", awaited) > awaited);
-  assert.ok(submitBody.indexOf("setStudents", awaited) > awaited);
+  assert.doesNotMatch(submitBody.slice(awaited), /setTasks\(/);
+  assert.doesNotMatch(submitBody.slice(awaited), /setStudents\(/);
   assert.doesNotMatch(submitBody.slice(awaited), /setTeachers\(/);
   assert.doesNotMatch(submitBody.slice(awaited), /setBookings\(/);
+  assert.match(source, /readBookingProjectionPendingCommands/);
+  assert.match(source, /body: entry\.command/);
 });
 
 test("booking UI hard-selects a subject and requires a package outside trials", async () => {
@@ -51,20 +55,20 @@ test("booking and temporary-classroom forms require the authoritative teacher su
   assert.match(source, /!teacherSubjectId \|\| !teacher\.subjects\.includes\(teacherSubjectId\)/);
   assert.match(source, /teacherSubjectId: input\.booking\.teacherSubjectId/);
   assert.match(source, /teacherSubjectId,\s*\n\s*};/);
-  assert.match(source, /必须与所选老师所在的腾讯子表完全一致/);
+  assert.match(source, /必须与所选老师可教科目一致/);
 });
 
 test("teacher matching uses an explicit Tencent subject category and never invents a percentage", async () => {
   const source = await readFile(sourceUrl, "utf8");
   assert.match(source, /const teacherSubjectMatch = \(teacher: Teacher\) =>[\s\S]*teacherSubject !== "all"[\s\S]*teacher\.subjects\.includes\(teacherSubject\)/);
-  assert.match(source, /先选腾讯表科目（匹配必选）/);
+  assert.match(source, /先选科目（匹配必选）/);
   assert.match(source, /disabled=\{!visibleSelectedTeacherReadiness\?\.readyForNewStudentMatching \|\| !teacherSubjectMatch\(visibleSelectedTeacher\)\}/);
   assert.match(source, /系统不会从课程名称猜测/);
   assert.doesNotMatch(source, /const teacherMatch =/);
   assert.doesNotMatch(source, /teacherMatch\([^)]*\)\s*>?=\s*85/);
 });
 
-test("single occurrence editing cannot settle abnormalities or change teachers and atomically deletes a single lesson", async () => {
+test("occurrence editing cannot settle abnormalities or change teachers and has no generic state fallback", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const handler = source.slice(
     source.indexOf("const openBookingOccurrenceEditor ="),
@@ -73,7 +77,19 @@ test("single occurrence editing cannot settle abnormalities or change teachers a
   assert.match(handler, /\["completed", "abnormal", "leave"\]\.includes/);
   assert.doesNotMatch(handler, /data\.get\("teacherId"\)/);
   assert.match(handler, /const teacherId = bookingOccurrenceDraft\.teacherId/);
-  assert.match(handler, /status === "cancelled" && singleLesson[\s\S]*await writeBookingCapacityMutation\(\{[\s\S]*action: "delete"/);
+  const cancelledStart = handler.indexOf('if (status === "cancelled")');
+  const updateStart = handler.indexOf('action: "update_occurrence"', cancelledStart);
+  assert.ok(cancelledStart > 0 && updateStart > cancelledStart);
+  const cancelledBody = handler.slice(cancelledStart, updateStart);
+  const updateBody = handler.slice(updateStart, handler.indexOf("} catch", updateStart));
+  assert.match(cancelledBody, /action: singleLesson \? "delete" : "cancel_occurrence"/);
+  assert.match(cancelledBody, /occurrenceId: bookingOccurrenceDraft\.occurrenceKey/);
+  assert.doesNotMatch(cancelledBody, /setBookings\(/);
+  assert.doesNotMatch(cancelledBody, /updateBookingOccurrence\(/);
+  assert.match(updateBody, /action: "update_occurrence"/);
+  assert.match(updateBody, /occurrenceId: bookingOccurrenceDraft\.occurrenceKey/);
+  assert.doesNotMatch(updateBody, /setBookings\(/);
+  assert.doesNotMatch(updateBody, /updateBookingOccurrence\(/);
 
   const dialog = source.slice(
     source.indexOf('{modal === "bookingOccurrence"'),

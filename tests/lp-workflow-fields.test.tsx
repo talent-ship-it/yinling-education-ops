@@ -57,9 +57,8 @@ test("renders only non-empty schema fields and makes only http or https URL fiel
     }}
   />);
 
-  assert.match(html, /当前完整字段/);
-  assert.match(html, /所属教务/);
-  assert.match(html, /Abby/);
+  assert.match(html, /试听 LP 字段/);
+  assert.doesNotMatch(html, /当前完整字段|所属教务|>Abby</);
   assert.match(html, /是否知道学生姓名/);
   assert.match(html, />否</);
   assert.doesNotMatch(html, /specialNotes|stale hidden value|stale preferred time|hidden\.example|internalExplanation|must not render/);

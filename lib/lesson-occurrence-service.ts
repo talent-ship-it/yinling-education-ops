@@ -105,6 +105,13 @@ function numberValue(value: unknown, field: string) {
   return value;
 }
 
+function nonNegativeNumberValue(value: unknown, field: string) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new LessonOccurrenceServiceError("invalid_shared_state", `${field} is invalid.`);
+  }
+  return value;
+}
+
 function stringArray(value: unknown, field: string) {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.trim())) {
     throw new LessonOccurrenceServiceError("invalid_shared_state", `${field} is invalid.`);
@@ -118,10 +125,27 @@ function parsePackages(value: unknown): readonly StudentLessonPackage[] {
     if (!isRecord(item)) throw new LessonOccurrenceServiceError("invalid_shared_state", "lessonPackages is invalid.");
     const purchases = Array.isArray(item.purchaseRecords) ? item.purchaseRecords.map((purchase) => {
       if (!isRecord(purchase)) throw new LessonOccurrenceServiceError("invalid_shared_state", "purchaseRecords is invalid.");
+      const hours = numberValue(purchase.hours, "purchase hours");
+      const hasPurchasedHours = purchase.purchasedHours !== undefined;
+      const hasBonusHours = purchase.bonusHours !== undefined;
+      if (hasPurchasedHours !== hasBonusHours) {
+        throw new LessonOccurrenceServiceError("invalid_shared_state", "purchase breakdown is invalid.");
+      }
+      const purchasedHours = hasPurchasedHours
+        ? nonNegativeNumberValue(purchase.purchasedHours, "purchase purchasedHours")
+        : undefined;
+      const bonusHours = hasBonusHours
+        ? nonNegativeNumberValue(purchase.bonusHours, "purchase bonusHours")
+        : undefined;
+      if (purchasedHours !== undefined && Math.round((purchasedHours + bonusHours!) * 1_000_000)
+        !== Math.round(hours * 1_000_000)) {
+        throw new LessonOccurrenceServiceError("invalid_shared_state", "purchase breakdown is invalid.");
+      }
       return {
         id: requiredText(purchase.id, "purchase id"),
         purchasedAt: requiredText(purchase.purchasedAt, "purchase purchasedAt"),
-        hours: numberValue(purchase.hours, "purchase hours"),
+        hours,
+        ...(purchasedHours !== undefined ? { purchasedHours, bonusHours } : {}),
         ...(optionalText(purchase.note) ? { note: optionalText(purchase.note) } : {}),
       };
     }) : [];
@@ -154,6 +178,8 @@ function bookingSeries(value: RecordValue): LegacyLessonSeries {
     duration: numberValue(duration, "booking duration"),
     ...(value.recurring === true ? { recurring: true } : {}),
     ...(typeof value.repeatCount === "number" ? { repeatCount: value.repeatCount } : {}),
+    ...(typeof value.recurrenceIntervalDays === "number" ? { recurrenceIntervalDays: value.recurrenceIntervalDays } : {}),
+    ...(typeof value.recurrenceEndDate === "string" ? { recurrenceEndDate: value.recurrenceEndDate } : {}),
     ...(optionalText(value.studentId) ? { studentId: optionalText(value.studentId) } : {}),
     ...(optionalText(value.teacherId) ? { teacherId: optionalText(value.teacherId) } : {}),
     ...(optionalText(value.packageId) ? { packageId: optionalText(value.packageId) } : {}),

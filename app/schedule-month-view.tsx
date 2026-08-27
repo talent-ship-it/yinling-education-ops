@@ -61,12 +61,12 @@ export function ScheduleMonthView({
 
   return (
     <div className="month-board-scroll" data-month={month}>
-      <div className="month-board" role="grid" aria-label={language === "en-AU" ? `${month} month schedule` : `${month} 月课表`}>
-        {weekdays.map((weekday, index) => <div className="month-weekday" role="columnheader" key={`${weekday}-${index}`}>{weekday}</div>)}
+      <div className="month-board" role="region" aria-label={language === "en-AU" ? `${month} month schedule` : `${month} 月课表`}>
+        {weekdays.map((weekday, index) => <div className="month-weekday" aria-hidden="true" key={`${weekday}-${index}`}>{weekday}</div>)}
         {days.map((day) => (
           <section
             className={`month-day ${day.inMonth ? "" : "outside-month"} ${availabilityTeacherName && !(availabilityByDate.get(day.date)?.length) ? "outside-availability" : ""}`}
-            role="gridcell"
+            role="group"
             aria-label={day.date}
             key={day.date}
           >

@@ -77,7 +77,7 @@ test("lost-response reconciliation is read-only, actor-bound and freshly authori
   assert.match(submit, /setSelectedStudentId\(reconciled\.recovery\.studentId\)/);
   assert.match(submit, /setExamDraft\(reconciled\.recovery\.exam as StudentExamRecord\)/);
   assert.match(submit, /setExamFormResetToken\(\(current\) => current \+ 1\)/);
-  assert.match(client, /<ExamForm key=\{`\$\{selectedStudent\.id\}:\$\{examDraft\?\.id \?\? "new"\}:\$\{examFormResetToken\}`\}/,
+  assert.match(client, /<ExamForm key=\{`\$\{studentModalTargetStudent\.id\}:\$\{examDraft\?\.id \?\? "new"\}:\$\{examFormResetToken\}`\}/,
     "same-student same-exam recovery must remount uncontrolled form state");
 });
 
