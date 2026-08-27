@@ -52,6 +52,7 @@ function render(review: JiaowubaoScheduleMappingPriorityReview | null, isAdmin =
     timezone="Australia/Melbourne"
     busyMappingKey={null}
     onConfirm={() => undefined}
+    onDismiss={() => undefined}
     onLoadMore={() => undefined}
     onViewHistory={() => undefined}
   />);

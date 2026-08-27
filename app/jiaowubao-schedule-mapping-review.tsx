@@ -46,6 +46,7 @@ export type JiaowubaoScheduleMappingReviewPanelProps = Readonly<{
   busyMappingKey: string | null;
   onConfirm: (input: Readonly<{ mappingKey: string; teacherId: string; subjectId: string }>) => void;
   onRevoke: (mappingKey: string) => void;
+  onDismiss: (mappingKey: string) => void;
   onLoadMore: () => void;
 }>;
 
@@ -196,12 +197,14 @@ function MappingCandidateRow({
   busy,
   onConfirm,
   onRevoke,
+  onDismiss,
 }: Readonly<{
   candidate: JiaowubaoScheduleMappingReview["candidates"][number];
   teachers: JiaowubaoScheduleMappingReview["teachers"];
   busy: boolean;
   onConfirm: JiaowubaoScheduleMappingReviewPanelProps["onConfirm"];
   onRevoke: JiaowubaoScheduleMappingReviewPanelProps["onRevoke"];
+  onDismiss: JiaowubaoScheduleMappingReviewPanelProps["onDismiss"];
 }>) {
   const [expanded, setExpanded] = useState(false);
   const [teacherId, setTeacherId] = useState("");
@@ -234,29 +237,37 @@ function MappingCandidateRow({
         type="button"
         disabled={busy}
         onClick={() => onRevoke(candidate.mappingKey)}
-      ><Unlink2 size={15} />撤销这条映射</button> : <form className="jwb-mapping-form" onSubmit={onSubmit}>
-        <label>老师
-          <select
-            value={teacherId}
-            disabled={busy}
-            onChange={(event) => { setTeacherId(event.target.value); setSubjectId(""); }}
-          >
-            <option value="">请选择老师</option>
-            {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
-          </select>
-        </label>
-        <label>可教科目
-          <select
-            value={subjectId}
-            disabled={busy || !selectedTeacher}
-            onChange={(event) => setSubjectId(event.target.value)}
-          >
-            <option value="">请选择科目</option>
-            {selectedTeacher?.subjectIds.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
-          </select>
-        </label>
-        <button className="primary-button" type="submit" disabled={!canConfirm}><ShieldCheck size={15} />{busy ? "正在确认…" : "确认映射"}</button>
-      </form>}
+      ><Unlink2 size={15} />撤销这条映射</button> : <>
+        <form className="jwb-mapping-form" onSubmit={onSubmit}>
+          <label>老师
+            <select
+              value={teacherId}
+              disabled={busy}
+              onChange={(event) => { setTeacherId(event.target.value); setSubjectId(""); }}
+            >
+              <option value="">请选择老师</option>
+              {teachers.map((teacher) => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+            </select>
+          </label>
+          <label>可教科目
+            <select
+              value={subjectId}
+              disabled={busy || !selectedTeacher}
+              onChange={(event) => setSubjectId(event.target.value)}
+            >
+              <option value="">请选择科目</option>
+              {selectedTeacher?.subjectIds.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
+            </select>
+          </label>
+          <button className="primary-button" type="submit" disabled={!canConfirm}><ShieldCheck size={15} />{busy ? "正在确认…" : "确认映射"}</button>
+        </form>
+        {candidate.status !== "revoked" ? <button
+          className="text-button danger"
+          type="button"
+          disabled={busy}
+          onClick={() => onDismiss(candidate.mappingKey)}
+        ><Unlink2 size={15} />此组合无需映射</button> : null}
+      </>}
     </div> : null}
   </details>;
 }
@@ -274,6 +285,7 @@ export function JiaowubaoScheduleMappingReviewPanel({
   busyMappingKey,
   onConfirm,
   onRevoke,
+  onDismiss,
   onLoadMore,
 }: JiaowubaoScheduleMappingReviewPanelProps) {
   const showSummary = review?.state === "complete"
@@ -307,6 +319,7 @@ export function JiaowubaoScheduleMappingReviewPanel({
           busy={busyMappingKey === candidate.mappingKey}
           onConfirm={onConfirm}
           onRevoke={onRevoke}
+          onDismiss={onDismiss}
         />)}
       </div>}
       {review.nextCursor ? <footer className="jwb-mapping-footer">

@@ -82,6 +82,7 @@ import {
   rulesMatch,
   type Rules,
 } from "@/lib/ops-rules";
+import { opsSourceIsStale, partitionOpsSources } from "@/lib/ops-source-lifecycle";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel } from "@/lib/payroll-export";
 import {
@@ -1773,11 +1774,6 @@ function formatSourceTime(value?: string | null, preferences = defaultDisplayPre
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return `${formatDisplayDate(parsed, preferences.timezone, preferences)} ${formatClock(parsed, preferences.timezone, preferences)}`;
-}
-
-function sourceIsStale(source: SyncSource, now = Date.now()) {
-  const syncedAt = new Date(source.synced_at).getTime();
-  return !Number.isFinite(syncedAt) || now - syncedAt > 36 * 60 * 60 * 1000;
 }
 
 function formatAuditTime(value: string, preferences = defaultDisplayPreferences()) {
@@ -3558,13 +3554,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, "思佳", "Tiffany", "Abby", "Tara"])).filter(Boolean).sort(), [currentOperator, ownerOptions]);
-  const staleSources = useMemo(() => syncSources.filter((source) => sourceIsStale(source)), [syncSources]);
-  const latestSourceSync = useMemo(() => syncSources
+  const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
+  const activeSources = sourceGroups.active;
+  const archivedSources = sourceGroups.archived;
+  const staleSources = useMemo(() => activeSources.filter((source) => opsSourceIsStale(source)), [activeSources]);
+  const latestSourceSync = useMemo(() => activeSources
     .map((source) => new Date(source.synced_at))
     .filter((date) => Number.isFinite(date.getTime()))
-    .sort((left, right) => right.getTime() - left.getTime())[0], [syncSources]);
+    .sort((left, right) => right.getTime() - left.getTime())[0], [activeSources]);
   const sourceFreshnessLabel = !syncSources.length
     ? "未连接外部只读来源"
+    : !activeSources.length
+      ? `${archivedSources.length} 个历史来源已归档`
     : staleSources.length
       ? `${staleSources.length} 个来源已超过 36 小时未读取`
       : `外部来源截至 ${formatSourceTime(latestSourceSync?.toISOString(), displayPreferences)}`;
@@ -3841,17 +3842,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const saveJiaowubaoScheduleMappingPriority = async (mappingKey: string, targetTeacherId: string, targetSubjectId: string) => {
+  const saveJiaowubaoScheduleMappingPriority = async (
+    mappingKey: string,
+    action: "confirm" | "revoke",
+    targetTeacherId: string | null,
+    targetSubjectId: string | null,
+  ) => {
     const review = jiaowubaoScheduleMappingPriorityReview;
     if (!canUseAdminScope || !isAdminView || active !== "sync" || jiaowubaoScheduleMappingBusyKey
       || jiaowubaoScheduleMappingPriorityBusyKey || !review || review.state !== "complete"
       || review.teachersVersion === null || !review.candidates.some((candidate) => candidate.mappingKey === mappingKey)) return;
-    const targetTeacher = review.teachers.find((teacher) => teacher.id === targetTeacherId);
-    if (!targetTeacher || !targetTeacher.subjectIds.includes(targetSubjectId)) {
-      notify("当前老师或可教科目已变更，请刷新后重新确认。");
-      return;
+    if (action === "confirm") {
+      const targetTeacher = review.teachers.find((teacher) => teacher.id === targetTeacherId);
+      if (!targetTeacher || !targetSubjectId || !targetTeacher.subjectIds.includes(targetSubjectId)) {
+        notify("当前老师或可教科目已变更，请刷新后重新确认。");
+        return;
+      }
     }
-    const intent = JSON.stringify(["priority", review.runToken, review.window.startsAt, review.window.endsAt, mappingKey, targetTeacherId, targetSubjectId, review.teachersVersion]);
+    const intent = JSON.stringify(["priority", review.runToken, review.window.startsAt, review.window.endsAt, mappingKey, action, targetTeacherId, targetSubjectId, review.teachersVersion]);
     const commandKey = jiaowubaoScheduleMappingPriorityCommandKeysRef.current.get(intent) ?? crypto.randomUUID();
     jiaowubaoScheduleMappingPriorityCommandKeysRef.current.set(intent, commandKey);
     let commandSaved = false;
@@ -3860,14 +3868,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const response = await fetch("/api/jiaowubao-direct-import/schedule-mappings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mappingKey, commandKey, action: "confirm", targetTeacherId, targetSubjectId, expectedTeachersVersion: review.teachersVersion }),
+        body: JSON.stringify({ mappingKey, commandKey, action, targetTeacherId, targetSubjectId, expectedTeachersVersion: review.teachersVersion }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body || typeof body !== "object" || (body as Record<string, unknown>).saved !== true) throw new Error("当前教务宝映射确认失败。");
       commandSaved = true;
       await Promise.all([refreshJiaowubaoScheduleMappingPriorityReview(), refreshJiaowubaoScheduleMappingReview()]);
       jiaowubaoScheduleMappingPriorityCommandKeysRef.current.delete(intent);
-      notify("当前教务宝老师与课程映射已确认。");
+      notify(action === "confirm" ? "当前教务宝老师与课程映射已确认。" : "该组合已从待核对队列移除，可在历史组合中重新确认。");
     } catch {
       setJiaowubaoScheduleMappingPriorityReview(null);
       setJiaowubaoScheduleMappingPriorityError(true);
@@ -5827,9 +5835,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const payload = await fetchSupabaseSnapshot();
       const nextSources = Array.isArray(payload.syncSources) ? payload.syncSources : [];
       setSyncSources(nextSources);
-      const staleCount = nextSources.filter((source) => sourceIsStale(source)).length;
-      addAudit("检查外部只读来源", `${nextSources.length} 个来源 · ${staleCount} 个超过 36 小时未读取`, staleCount ? "amber" : "green");
-      notify(staleCount ? `状态已刷新：${staleCount} 个来源数据已过期` : "来源状态已刷新，页面资料没有被覆盖");
+      const nextGroups = partitionOpsSources(nextSources);
+      const staleCount = nextGroups.active.filter((source) => opsSourceIsStale(source)).length;
+      addAudit(
+        "检查外部只读来源",
+        `${nextGroups.active.length} 个当前来源 · ${nextGroups.archived.length} 个历史来源 · ${staleCount} 个超过 36 小时未读取`,
+        staleCount ? "amber" : "green",
+      );
+      notify(staleCount
+        ? `状态已刷新：${staleCount} 个当前来源数据已过期`
+        : nextGroups.active.length
+          ? "来源状态已刷新，页面资料没有被覆盖"
+          : `状态已刷新：${nextGroups.archived.length} 个历史来源已归档，当前数据由专用导入管线维护`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "来源状态刷新失败");
     } finally {
@@ -9575,7 +9592,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             timezone={scheduleTimezone}
             busyMappingKey={jiaowubaoScheduleMappingPriorityBusyKey}
             onConfirm={({ mappingKey, teacherId, subjectId }) => {
-              void saveJiaowubaoScheduleMappingPriority(mappingKey, teacherId, subjectId);
+              void saveJiaowubaoScheduleMappingPriority(mappingKey, "confirm", teacherId, subjectId);
+            }}
+            onDismiss={(mappingKey) => {
+              requestConfirmation({
+                title: "标记为无需映射",
+                detail: "该老师与课程组合会从当前待核对队列移除，并保留审计记录。之后仍可在历史组合中重新确认。",
+                items: ["不会创建排课或修改老师资料", "不会删除教务宝来源记录"],
+                confirmLabel: "移出队列",
+                tone: "primary",
+                onConfirm: () => {
+                  void saveJiaowubaoScheduleMappingPriority(mappingKey, "revoke", null, null);
+                },
+              });
             }}
             onLoadMore={() => {
               void loadMoreJiaowubaoScheduleMappingPriority();
@@ -9600,6 +9629,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             onRevoke={(mappingKey) => {
               void saveJiaowubaoScheduleMapping(mappingKey, "revoke", null, null);
             }}
+            onDismiss={(mappingKey) => {
+              requestConfirmation({
+                title: "标记为无需映射",
+                detail: "该历史组合会标记为已撤销，不再计入待确认；之后仍可重新选择老师和科目。",
+                items: ["保留来源证据与审计记录", "不会创建排课或修改老师资料"],
+                confirmLabel: "标记无需映射",
+                tone: "primary",
+                onConfirm: () => {
+                  void saveJiaowubaoScheduleMapping(mappingKey, "revoke", null, null);
+                },
+              });
+            }}
             onLoadMore={() => {
               void loadMoreJiaowubaoScheduleMappings();
             }}
@@ -9620,29 +9661,33 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           /> : null}
           {syncSources.length > 0 ? <SummaryCard
             icon={<RefreshCw size={19} />}
-            tone={staleSources.length ? "amber" : "green"}
+            tone={staleSources.length ? "amber" : activeSources.length ? "green" : "blue"}
             title={sourceFreshnessLabel}
-            text={`${syncSources.length} 个外部来源`}
+            text={activeSources.length
+              ? `${activeSources.length} 个当前来源${archivedSources.length ? ` · ${archivedSources.length} 个历史记录` : ""}`
+              : "当前资料由专用导入与教务宝管线维护"}
           /> : null}
         </section> : null}
         <section className="sync-layout">
           <aside className="panel source-panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">腾讯文档来源</p>
-                <h2>最近读取状态</h2>
+                <p className="eyebrow">外部来源</p>
+                <h2>当前管线与历史记录</h2>
               </div>
               <StatusPill
                 tone={
                   !syncSources.length || staleSources.length
                     ? "amber"
-                    : "green"
+                    : activeSources.length ? "green" : "blue"
                 }
               >
                 {syncSources.length
                   ? staleSources.length
                     ? `${staleSources.length} 个已过期`
-                    : `${syncSources.length} 个来源正常`
+                    : activeSources.length
+                      ? `${activeSources.length} 个来源正常`
+                      : `${archivedSources.length} 个历史来源`
                   : "等待首次读取"}
               </StatusPill>
             </div>
@@ -9658,12 +9703,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     </span>
                     <StatusPill
                       tone={
-                        source.status === "synced" && !sourceIsStale(source)
+                        source.status === "archived"
+                          ? "blue"
+                          : source.status === "synced" && !opsSourceIsStale(source)
                           ? "green"
                           : "amber"
                       }
                     >
-                      {sourceIsStale(source)
+                      {source.status === "archived"
+                        ? "已归档"
+                        : opsSourceIsStale(source)
                         ? "数据已过期"
                         : source.status === "synced"
                           ? "已读取"

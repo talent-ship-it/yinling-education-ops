@@ -8,6 +8,7 @@ import {
   LockKeyhole,
   RefreshCw,
   ShieldCheck,
+  Unlink2,
 } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 
@@ -62,6 +63,7 @@ export type JiaowubaoScheduleMappingPriorityReviewPanelProps = Readonly<{
   timezone?: string;
   busyMappingKey: string | null;
   onConfirm: (input: Readonly<{ mappingKey: string; teacherId: string; subjectId: string }>) => void;
+  onDismiss: (mappingKey: string) => void;
   onLoadMore: () => void;
   /** Lets the host open the separate all-history reader without coupling routing here. */
   onViewHistory?: () => void;
@@ -287,12 +289,14 @@ function PriorityCandidateRow({
   timezone,
   busy,
   onConfirm,
+  onDismiss,
 }: Readonly<{
   candidate: JiaowubaoScheduleMappingPriorityReview["candidates"][number];
   teachers: JiaowubaoScheduleMappingPriorityReview["teachers"];
   timezone: string;
   busy: boolean;
   onConfirm: JiaowubaoScheduleMappingPriorityReviewPanelProps["onConfirm"];
+  onDismiss: JiaowubaoScheduleMappingPriorityReviewPanelProps["onDismiss"];
 }>) {
   // Always begin blank: even an authority-changed historical target is shown
   // as evidence only and is never reused as a browser-side suggestion.
@@ -348,6 +352,12 @@ function PriorityCandidateRow({
           <ShieldCheck size={15} />{busy ? "正在确认…" : "确认映射"}
         </button>
       </form>
+      <button
+        className="text-button danger"
+        type="button"
+        disabled={busy}
+        onClick={() => onDismiss(candidate.mappingKey)}
+      ><Unlink2 size={15} />此组合无需映射</button>
     </div> : null}
   </details>;
 }
@@ -367,6 +377,7 @@ export function JiaowubaoScheduleMappingPriorityReviewPanel({
   timezone = "Australia/Melbourne",
   busyMappingKey,
   onConfirm,
+  onDismiss,
   onLoadMore,
   onViewHistory,
 }: JiaowubaoScheduleMappingPriorityReviewPanelProps) {
@@ -403,6 +414,7 @@ export function JiaowubaoScheduleMappingPriorityReviewPanel({
           timezone={timezone}
           busy={busyMappingKey === candidate.mappingKey}
           onConfirm={onConfirm}
+          onDismiss={onDismiss}
         />)}
       </div>}
       {review.nextCursor ? <footer className="jwb-mapping-footer">

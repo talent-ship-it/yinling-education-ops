@@ -46,6 +46,7 @@ function render(review: JiaowubaoScheduleMappingReview | null, isAdmin = true) {
     busyMappingKey={null}
     onConfirm={() => undefined}
     onRevoke={() => undefined}
+    onDismiss={() => undefined}
     onLoadMore={() => undefined}
   />);
 }
