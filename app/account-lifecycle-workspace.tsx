@@ -54,7 +54,7 @@ export function AccountLifecycleWorkspace({
 }: AccountLifecycleWorkspaceProps) {
   const [accounts, setAccounts] = useState<AccountDirectoryRecord[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryLoading, setDirectoryLoading] = useState(canManageAccounts);
   const [directoryBusy, setDirectoryBusy] = useState<string | null>(null);
   const [directoryError, setDirectoryError] = useState("");
   const [directoryNotice, setDirectoryNotice] = useState("");
@@ -333,6 +333,7 @@ export function AccountLifecycleWorkspace({
       selectedAccountId={selectedAccountId}
       currentAccountId={currentAccount?.account_id ?? null}
       permissionOptions={PERMISSION_OPTIONS}
+      loading={directoryLoading}
       busyAction={directoryBusy ?? (directoryLoading ? "all" : null)}
       error={directoryError}
       notice={directoryNotice}

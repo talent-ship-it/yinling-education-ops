@@ -1619,6 +1619,7 @@ body {
 .to-do-row .task-copy strong { font-size:13px; }
 .to-do-row .task-copy span,.to-do-row .due-label { font-size:11px; }
 .to-do-row .task-copy-static { cursor:default; }
+.to-do-row .complete-button { height:36px; width:36px; }
 .to-do-list + .text-button { margin:13px 15px; }
 .risk-row-static { cursor:default; grid-template-columns:29px 1fr; }
 .risk-row-static:hover { background:#fff; }

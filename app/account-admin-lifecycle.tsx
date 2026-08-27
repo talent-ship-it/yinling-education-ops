@@ -96,6 +96,7 @@ export type AccountAdminLifecycleProps = Readonly<{
   currentAccountId?: string | null;
   permissionOptions?: readonly AccountPermissionOption[];
   scopeOptions?: readonly AccountScopeOption[];
+  loading?: boolean;
   busyAction?: string | null;
   error?: string;
   notice?: string;
@@ -433,6 +434,7 @@ export function AccountAdminLifecycle({
   currentAccountId,
   permissionOptions = [],
   scopeOptions = DEFAULT_SCOPE_OPTIONS,
+  loading = false,
   busyAction,
   error,
   notice,
@@ -514,7 +516,7 @@ export function AccountAdminLifecycle({
           </label>
           <div className="toolbar-actions">
             <label style={{ alignItems: "center", display: "flex", gap: 6 }}><span style={{ color: "var(--muted)", fontSize: 11 }}>状态</span><select className="filter-select" aria-label="账号状态筛选" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as "all" | AccountStatus); setPage(1); }}><option value="all">全部</option><option value="active">正常</option><option value="invited">待接受</option><option value="disabled">已禁用</option></select></label>
-            <span aria-live="polite" style={{ color: "var(--muted)", fontSize: 12 }}>{filteredAccounts.length} 个账号</span>
+            <span aria-live="polite" style={{ color: "var(--muted)", fontSize: 12 }}>{loading ? "正在读取账号…" : `${filteredAccounts.length} 个账号`}</span>
           </div>
         </div>
         <div className="data-head account-grid-row" style={GRID_STYLE} role="row">
@@ -527,7 +529,7 @@ export function AccountAdminLifecycle({
               <span style={{ alignItems: "flex-start", display: "grid", gap: 4 }}><span className={`status-pill ${statusTone(account.status)}`}>{statusLabel(account.status)}</span><small>{account.mfa_enabled ? "MFA 已启用" : "MFA 未启用"}</small></span>
               <span style={{ display: "grid", gap: 3 }}><strong style={{ fontSize: 12 }}>{roleLabel(account.account_role)}</strong>{typeof account.active_session_count === "number" ? <small>{account.active_session_count} 个会话</small> : null}</span>
             </button>
-          </div>) : <div className="empty-inline" role="status"><Clock3 size={15} aria-hidden="true" />没有匹配的账号</div>}
+          </div>) : <div className="empty-inline" role="status"><Clock3 size={15} aria-hidden="true" />{loading ? "正在读取账号目录…" : "没有匹配的账号"}</div>}
         </div>
         {filteredAccounts.length > pageSize ? <footer className="pagination"><div><button type="button" aria-label="上一页" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>上一页</button><strong>第 {safePage} / {pageCount} 页</strong><button type="button" aria-label="下一页" disabled={safePage >= pageCount} onClick={() => setPage(safePage + 1)}>下一页</button></div></footer> : null}
       </article>
