@@ -72,16 +72,17 @@ begin
     raise exception using errcode = 'P0001', message = 'student_import_outer_projection_accumulator_function_missing';
   end if;
 
-  anchor := $outer_declaration_anchor$  safe_identity_links jsonb := '[]'::jsonb;
-  result jsonb := '[]'::jsonb;
-$outer_declaration_anchor$;
+  -- Keep every wrapper declaration that earlier/later migrations own
+  -- (including effective_identity_links and either lookup-map naming) and
+  -- replace only the result accumulator declaration.  20260822000700 puts
+  -- its maps between safe_identity_links and result, so the old contiguous
+  -- declaration anchor was not forward-safe.
+  anchor := '  result jsonb := ''[]''::jsonb;';
   count_anchor := (length(definition) - length(replace(definition, anchor, ''))) / length(anchor);
   if count_anchor <> 1 then
     raise exception using errcode = 'P0001', message = 'student_import_outer_projection_accumulator_declaration_anchor_mismatch';
   end if;
-  definition := replace(definition, anchor, $outer_declaration_replacement$  safe_identity_links jsonb := '[]'::jsonb;
-  projection_items jsonb[] := array[]::jsonb[];
-$outer_declaration_replacement$);
+  definition := replace(definition, anchor, '  projection_items jsonb[] := array[]::jsonb[];');
 
   anchor := '      result := result || jsonb_build_array(base_student);';
   count_anchor := (length(definition) - length(replace(definition, anchor, ''))) / length(anchor);

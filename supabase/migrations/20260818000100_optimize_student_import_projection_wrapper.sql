@@ -27,6 +27,25 @@ begin
     raise exception using errcode = 'P0001', message = 'student_import_projection_wrapper_missing';
   end if;
 
+  -- 20260822000700 is a later deployment path that already installed the
+  -- equivalent source/student maps and removed both per-row scans.  When a
+  -- production database has that shape, this historical optimization is
+  -- already satisfied; do not require its pre-map declaration anchor.
+  if (
+    (
+      position('current_student_by_id jsonb := ''{}''::jsonb' in definition) > 0
+      and position('matched_jwb_by_source jsonb := ''{}''::jsonb' in definition) > 0
+    )
+    or (
+      position('student_by_id jsonb := ''{}''::jsonb' in definition) > 0
+      and position('jwb_by_source jsonb := ''{}''::jsonb' in definition) > 0
+    )
+  )
+  and position('select student into existing_student' in definition) = 0
+  and position('select jwb into matched_jwb' in definition) = 0 then
+    return;
+  end if;
+
   anchor := $projection_declarations$  source_contract numeric;
   safe_identity_links jsonb := '[]'::jsonb;
 $projection_declarations$;

@@ -15,6 +15,27 @@ begin
     raise exception using errcode = 'P0001', message = 'student_import_projection_wrapper_missing';
   end if;
 
+  -- The chronological fresh path is already optimized by 20260818000100:
+  -- it has the equivalent lookup maps under the current_* names and no old
+  -- scans left to replace.  Production may instead already have this
+  -- migration's student_by_id/jwb_by_source names.  Both shapes are safe
+  -- no-ops here; the guard prevents this later migration from colliding with
+  -- the accumulator declaration rewrite in 20260818000200.
+  if (
+    (
+      position('current_student_by_id jsonb := ''{}''::jsonb' in definition) > 0
+      and position('matched_jwb_by_source jsonb := ''{}''::jsonb' in definition) > 0
+    )
+    or (
+      position('student_by_id jsonb := ''{}''::jsonb' in definition) > 0
+      and position('jwb_by_source jsonb := ''{}''::jsonb' in definition) > 0
+    )
+  )
+  and position('select student into existing_student' in definition) = 0
+  and position('select jwb into matched_jwb' in definition) = 0 then
+    return;
+  end if;
+
   anchor := '  result jsonb := ''[]''::jsonb;';
   replacement := $decl$  jwb_by_source jsonb := '{}'::jsonb;
   student_by_id jsonb := '{}'::jsonb;

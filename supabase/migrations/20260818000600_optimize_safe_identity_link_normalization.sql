@@ -11,13 +11,34 @@ do $student_import_safe_link_normalization$
 declare
   definition text;
   anchor text;
+  replacement text;
   count_anchor integer;
+  identity_links_source text;
 begin
   select pg_catalog.pg_get_functiondef(
     'internal.student_import_canonical_projection(text,jsonb,jsonb,jsonb,jsonb,jsonb)'::regprocedure
   ) into definition;
   if definition is null then
     raise exception using errcode = 'P0001', message = 'student_import_safe_link_normalization_wrapper_missing';
+  end if;
+
+  -- 20260818001200 may already have introduced the filtered effective-link
+  -- array before this pending optimization is replayed on production.  Use
+  -- that array for the CTE input so excluded-row removal and identity-link
+  -- semantics remain intact; a fresh replay still uses p_identity_links.
+  identity_links_source := case
+    when position('effective_identity_links jsonb := ''[]''::jsonb' in definition) > 0
+      then 'effective_identity_links'
+    else 'p_identity_links'
+  end;
+
+  -- A repeated application of this migration is already converged and must
+  -- not depend on the pre-normalization CTE anchor.
+  if position('master_source_values as materialized' in definition) > 0
+     and position('jwb_source_values as materialized' in definition) > 0
+     and position('master_rows.name_key as master_name_key' in definition) > 0
+     and position('jwb_rows.annotation_key as jwb_annotation_key' in definition) > 0 then
+    return;
   end if;
 
   anchor := $safe_link_cte_anchor$  with links as (
@@ -64,11 +85,7 @@ begin
     from jsonb_array_elements(p_jwb_rows) jwb(value)
     group by internal.student_import_jwb_annotation_relaxed_name_key(jwb.value ->> 'name')
   ), evaluated_links as ($safe_link_cte_anchor$;
-  count_anchor := (length(definition) - length(replace(definition, anchor, ''))) / length(anchor);
-  if count_anchor <> 1 then
-    raise exception using errcode = 'P0001', message = 'student_import_safe_link_normalization_cte_anchor_mismatch';
-  end if;
-  definition := replace(definition, anchor, $safe_link_cte_replacement$  with links as (
+  replacement := $safe_link_cte_replacement$  with links as (
     select link.value as raw_link,
       link.ordinality as ordinal,
       internal.student_import_source_key(link.value -> 'masterSourceRow') as master_key,
@@ -143,7 +160,16 @@ begin
       count(*)::integer as row_count
     from jwb_normalized
     group by coalesce(nullif(annotation_key, ''), name_key)
-  ), evaluated_links as ($safe_link_cte_replacement$);
+  ), evaluated_links as ($safe_link_cte_replacement$;
+  if identity_links_source = 'effective_identity_links' then
+    anchor := replace(anchor, 'p_identity_links', identity_links_source);
+    replacement := replace(replacement, 'p_identity_links', identity_links_source);
+  end if;
+  count_anchor := (length(definition) - length(replace(definition, anchor, ''))) / length(anchor);
+  if count_anchor <> 1 then
+    raise exception using errcode = 'P0001', message = 'student_import_safe_link_normalization_cte_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
 
   anchor := $safe_link_key_lookup_anchor$      internal.student_import_name_key(master_rows.row_value ->> 'name') as master_name_key,
       internal.student_import_name_key(jwb_rows.row_value ->> 'name') as jwb_name_key,
@@ -173,6 +199,10 @@ begin
      or position('jwb_rows.annotation_key as jwb_annotation_key' in definition) = 0
      or position(anchor in definition) <> 0 then
     raise exception using errcode = 'P0001', message = 'student_import_safe_link_normalization_patch_verification_failed';
+  end if;
+  if identity_links_source = 'effective_identity_links'
+     and position('jsonb_array_elements(effective_identity_links) with ordinality link(value, ordinality)' in definition) = 0 then
+    raise exception using errcode = 'P0001', message = 'student_import_safe_link_normalization_effective_links_verification_failed';
   end if;
 end;
 $student_import_safe_link_normalization$;
