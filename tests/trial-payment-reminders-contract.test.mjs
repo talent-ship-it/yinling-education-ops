@@ -23,12 +23,13 @@ test("urgent reminders have a secret-gated fixed-frequency server reconciler", a
 });
 
 test("planner completion is a replay-first narrow command and never accepts a task replacement", async () => {
-  const [route, service, store, migration, hardening] = await Promise.all([
+  const [route, service, store, migration, hardening, legacyRevoke] = await Promise.all([
     read("app/api/tasks/trial-payment/route.ts"),
     read("lib/trial-payment-task-service.ts"),
     read("lib/ops-store.ts"),
     read("supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql"),
     read("supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql"),
+    read("supabase/migrations/20260827000910_revoke_legacy_trial_payment_atomic.sql"),
   ]);
   assert.match(route, /parseTrialPaymentCompletionCommand\(body\)/);
   assert.match(route, /getTrialPaymentCompletionCommandResult\(/);
@@ -88,7 +89,9 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.match(hardened, /p_actor_role <> 'admin'[\s\S]*trial_payment_planner_forbidden/);
   assert.match(hardened, /item\.value ->> 'id' = p_task_id/);
   assert.match(hardened, /p_actor_role = 'admin' or/);
-  assert.match(hardening, /revoke all on function public\.complete_trial_payment_task_atomic/);
+  assert.doesNotMatch(hardening, /complete_trial_payment_task_atomic/);
+  assert.match(legacyRevoke, /revoke all on function public\.complete_trial_payment_task_atomic/);
+  assert.equal((legacyRevoke.match(/;/g) ?? []).length, 1);
   assert.match(store, /TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx"/);
   const receiptStart = hardening.indexOf("create or replace function public.get_trial_payment_completion_command_result(");
   const receiptEnd = hardening.indexOf("$$;", receiptStart);

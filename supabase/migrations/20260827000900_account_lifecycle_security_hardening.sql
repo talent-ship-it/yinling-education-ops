@@ -1616,8 +1616,6 @@ begin
 end;
 $function$;
 
-revoke all on function public.complete_trial_payment_task_atomic(text, text, jsonb, text, jsonb, text, text)
-  from public, anon, authenticated, service_role;
 revoke all on function public.complete_trial_payment_task_tx(text, text, jsonb, text, jsonb, text, text)
   from public, anon, authenticated, service_role;
 grant execute on function public.complete_trial_payment_task_tx(text, text, jsonb, text, jsonb, text, text)
