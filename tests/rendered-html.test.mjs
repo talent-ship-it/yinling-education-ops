@@ -114,7 +114,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(demoLogin, /maxAge: 0/);
   assert.match(demoLogin, /resolveTeacherIdentity/);
   assert.match(demoLogin, /pinned && pinned\.role !== "staff"/);
-  assert.match(demoLogin, /resolveTeacherIdentity\(candidate, teacherRow\.payload\)/);
+  assert.match(demoLogin, /resolveTeacherIdentity\(candidate, teachersPayload\)/);
   assert.match(demoSession, /getCurrentDemoSession/);
   assert.match(demoLogout, /DEMO_COOKIE_NAME/);
   assert.match(demoLogout, /NIXON_COOKIE_NAME/);

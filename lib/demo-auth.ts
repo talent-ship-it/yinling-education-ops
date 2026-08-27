@@ -15,11 +15,13 @@ export { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS } from "@/li
 export type { DemoUser } from "@/lib/demo-users";
 import {
   createDemoSessionToken,
+  normaliseDemoIdentity,
   parseDemoSessionToken,
   type DemoSessionIdentity,
 } from "@/lib/demo-session-token";
 import { validateTeacherSession } from "@/lib/demo-teacher-login";
-import { getOpsState } from "@/lib/ops-store";
+import { accountIdentityKey } from "@/lib/account-credentials";
+import { getAppAccountAuthState, getOpsState } from "@/lib/ops-store";
 export { normaliseDemoIdentity } from "@/lib/demo-session-token";
 export type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 
@@ -64,18 +66,54 @@ export function getDemoSession(value: string | undefined, now = new Date()): Dem
 }
 
 export type CurrentDemoSessionResolution =
-  | { session: DemoSessionIdentity }
-  | { error: string; status: 401 | 503 };
+  | { session: DemoSessionIdentity; mustChangePassword: boolean }
+  | { error: string; status: 401 | 403 | 503 };
+
+type CurrentDemoSessionOptions = Readonly<{
+  /** Only the session-status and self-service password routes may opt in. */
+  allowPasswordChangeRequired?: boolean;
+}>;
 
 /**
  * Validates a signed session against mutable server-owned identity state.
  * Fixed application identities need only their signature; roster-backed
  * teacher identities must still exist exactly once on every protected request.
  */
-export async function getCurrentDemoSession(value: string | undefined): Promise<CurrentDemoSessionResolution> {
+export async function getCurrentDemoSession(
+  value: string | undefined,
+  options: CurrentDemoSessionOptions = {},
+): Promise<CurrentDemoSessionResolution> {
   const session = getDemoSession(value);
   if (!session) return { error: "请先输入访问密码。", status: 401 };
-  if (session.role !== "teacher") return { session };
+
+  let mustChangePassword = false;
+  try {
+    const identityKey = accountIdentityKey(session.user, session.role);
+    const authState = await getAppAccountAuthState(identityKey);
+    if (authState) {
+      const identityMatches = authState.identity_key === identityKey
+        && authState.account_role === session.role
+        && normaliseDemoIdentity(authState.account_name) === normaliseDemoIdentity(session.user);
+      if (!identityMatches || !authState.enabled || session.credentialVersion !== authState.credential_version) {
+        return { error: "账号登录状态已失效，请重新登录。", status: 401 };
+      }
+      mustChangePassword = authState.must_change_password;
+    } else if (session.credentialVersion !== undefined) {
+      return { error: "账号登录状态已失效，请重新登录。", status: 401 };
+    }
+  } catch {
+    // Deploy the database contract before the application. Once this code is
+    // live, never treat an unavailable credential reader as "no credential":
+    // that would revive a legacy password after a reset or rotation.
+    return { error: "账号登录状态暂时无法核对，请稍后重试。", status: 503 };
+  }
+
+  if (session.role !== "teacher") {
+    if (mustChangePassword && !options.allowPasswordChangeRequired) {
+      return { error: "请先修改管理员重置的临时密码。", status: 403 };
+    }
+    return { session, mustChangePassword };
+  }
 
   try {
     const rows = await getOpsState(["teachers"]);
@@ -84,9 +122,18 @@ export async function getCurrentDemoSession(value: string | undefined): Promise<
       return { error: "老师登录状态已失效，请重新登录。", status: 401 };
     }
     const current = validateTeacherSession(session, teacherRow.payload);
-    return "identity" in current
-      ? { session: current.identity }
-      : { error: current.error, status: current.status === 503 ? 503 : 401 };
+    if (!("identity" in current)) {
+      return { error: current.error, status: current.status === 503 ? 503 : 401 };
+    }
+    if (mustChangePassword && !options.allowPasswordChangeRequired) {
+      return { error: "请先修改管理员重置的临时密码。", status: 403 };
+    }
+    return {
+      session: { ...current.identity, ...(session.credentialVersion === undefined
+        ? {}
+        : { credentialVersion: session.credentialVersion }) },
+      mustChangePassword,
+    };
   } catch {
     return { error: "老师名册暂时无法核对，请稍后重试。", status: 503 };
   }

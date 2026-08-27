@@ -226,10 +226,16 @@ type Section =
   | "audit";
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentReport" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "bookingOccurrence" | "temporaryClassroom" | "lessonSettlement" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherAvailabilitySubmit" | "teacherCapacity" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "studentReport" | "studentRecords" | "studentFollowUp" | "lessonPackage" | "exam" | "task" | "booking" | "bookingOccurrence" | "temporaryClassroom" | "lessonSettlement" | "operation" | "renewal" | "file" | "template" | "lp" | "lpRevision" | "ava" | "teacherAvailabilitySubmit" | "teacherCapacity" | "payrollNew" | "payrollEdit" | "accountPasswordChange" | "accountPasswordReset" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
+type AccountPasswordResetTarget = Readonly<{
+  user: string;
+  role: DemoSessionRole;
+  label: string;
+  login: string;
+}>;
 
 function operatorProfile(operator: string, teacherNames: ReadonlySet<string> = new Set()): OperatorProfile {
   if (operator === "Nixon") return { role: "超级管理员", scope: "全部资料、薪资和系统设置", tone: "purple" };
@@ -1505,8 +1511,14 @@ function AuthStatusScreen({ title, detail }: { title: string; detail: string }) 
   );
 }
 
-function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: string) => void; loading: boolean; error: string }) {
+function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (credentials: { username: string; password: string }) => void; loading: boolean; error: string }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const usernameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 761px) and (pointer: fine)").matches) usernameInputRef.current?.focus();
+  }, []);
 
   return (
     <main className="login-shell">
@@ -1514,22 +1526,125 @@ function AuthLoginScreen({ onSubmit, loading, error }: { onSubmit: (password: st
         <div className="brand-mark">吟</div>
         <p className="eyebrow">内部教务系统</p>
         <h1>吟领教务</h1>
-        <p className="login-copy">请输入登录密码进入对应工作视图。</p>
+        <p className="login-copy">使用账号或姓名与密码进入对应工作视图。</p>
         <form
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
-            onSubmit(password);
+            onSubmit({ username, password });
           }}
         >
+          <label htmlFor="username">账号 / 姓名</label>
+          <input ref={usernameInputRef} id="username" name="username" value={username} type="text" autoComplete="username" placeholder="例如 Nixon、Abby 教务或老师姓名" maxLength={160} onChange={(event) => setUsername(event.target.value)} />
           <label htmlFor="password">登录密码</label>
-          <input id="password" value={password} type="password" autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required autoFocus />
-          {error ? <span className="login-error">{error}</span> : null}
-          <button type="submit" disabled={loading}>{loading ? "正在进入..." : "进入系统"}</button>
+          <input id="password" name="password" value={password} type="password" autoComplete="current-password" maxLength={256} aria-invalid={Boolean(error)} aria-describedby={error ? "login-error" : undefined} onChange={(event) => setPassword(event.target.value)} required />
+          <small className="login-hint">尚未设置独立密码的账号可暂时留空“账号 / 姓名”，沿用原登录方式。</small>
+          {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
+          <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
         </form>
       </section>
     </main>
   );
+}
+
+function AccountPasswordForm({
+  accountLabel,
+  forced = false,
+  onChanged,
+  onCancel,
+  onLogout,
+  logoutBusy = false,
+}: {
+  accountLabel: string;
+  forced?: boolean;
+  onChanged: () => void;
+  onCancel?: () => void;
+  onLogout?: () => void;
+  logoutBusy?: boolean;
+}) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const commandRef = useRef<{ intent: string; commandKey: string } | null>(null);
+  const currentPasswordRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!forced || !window.matchMedia("(min-width: 761px) and (pointer: fine)").matches) return;
+    const frame = window.requestAnimationFrame(() => currentPasswordRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [forced]);
+
+  const resetIntent = () => {
+    commandRef.current = null;
+    setError("");
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    setError("");
+    if (newPassword !== confirmation) {
+      setError("两次输入的新密码不一致。");
+      return;
+    }
+    const intent = JSON.stringify([currentPassword, newPassword]);
+    const commandKey = commandRef.current?.intent === intent
+      ? commandRef.current.commandKey
+      : "account-credential:" + crypto.randomUUID();
+    commandRef.current = { intent, commandKey };
+    setBusy(true);
+    try {
+      const response = await fetch("/api/account/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commandKey, currentPassword, newPassword }),
+      });
+      const body = await response.json().catch(() => null) as { error?: string; changed?: boolean } | null;
+      if (!response.ok || !body?.changed) {
+        setError(body?.error || "修改密码失败，请稍后重试。");
+        return;
+      }
+      commandRef.current = null;
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmation("");
+      onChanged();
+    } catch {
+      setError("网络暂时不可用，请保持页面打开后重试。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <form className="form-grid account-password-form" onSubmit={submit}>
+    {forced && <div className="form-notice span-2"><KeyRound size={16} /> 管理员已重置此账号密码。请先设置只有你知道的新密码，再继续使用系统。</div>}
+    <div className="account-password-identity span-2"><small>当前账号</small><strong>{accountLabel}</strong></div>
+    <label className="span-2">当前密码<input ref={currentPasswordRef} name="currentPassword" data-dialog-autofocus="true" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); resetIntent(); }} maxLength={256} required /></label>
+    <label className="span-2">新密码<input name="newPassword" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); resetIntent(); }} minLength={12} maxLength={128} required /></label>
+    <label className="span-2">再次输入新密码<input name="confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => { setConfirmation(event.target.value); resetIntent(); }} minLength={12} maxLength={128} required /></label>
+    <p className="form-footnote span-2">至少 12 个字符，同时包含字母和数字；不要使用账号名称。</p>
+    {error && <div className="form-error span-2" role="alert">{error}</div>}
+    <footer>
+      {forced && onLogout
+        ? <button className="secondary-button" type="button" disabled={busy || logoutBusy} onClick={onLogout}><LogOut size={15} />{logoutBusy ? "正在退出" : "退出登录"}</button>
+        : onCancel ? <button className="secondary-button" type="button" disabled={busy} onClick={onCancel}>取消</button> : null}
+      <button className="primary-button" type="submit" disabled={busy}><KeyRound size={16} />{busy ? "正在更新…" : "更新密码"}</button>
+    </footer>
+  </form>;
+}
+
+function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy }: { user: string; onChanged: () => void; onLogout: () => void; logoutBusy: boolean }) {
+  return <main className="login-shell password-change-shell">
+    <section className="login-panel password-change-panel">
+      <div className="brand-mark">吟</div>
+      <p className="eyebrow">账号安全</p>
+      <h1>请先设置新密码</h1>
+      <p className="login-copy">完成后会自动加载你的工作视图。</p>
+      <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} />
+    </section>
+  </main>;
 }
 
 async function fetchSupabaseSnapshot() {
@@ -1548,6 +1663,8 @@ export default function OperationsApp() {
   const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
   const [sessionUser, setSessionUser] = useState("");
   const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
+  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(false);
+  const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
@@ -1559,6 +1676,7 @@ export default function OperationsApp() {
         setAuthenticated(Boolean(body.ok));
         setSessionUser(typeof body.user === "string" ? body.user : "");
         setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
+        setSessionMustChangePassword(body.mustChangePassword === true);
       })
       .catch(() => {
         if (active) setAuthenticated(false);
@@ -1574,6 +1692,7 @@ export default function OperationsApp() {
 
   useEffect(() => {
     if (!authenticated) return;
+    if (sessionMustChangePassword) return;
 
     let active = true;
     Promise.all([
@@ -1600,15 +1719,15 @@ export default function OperationsApp() {
     return () => {
       active = false;
     };
-  }, [authenticated]);
+  }, [authenticated, sessionMustChangePassword]);
 
-  const submitPassword = async (password: string) => {
+  const submitPassword = async ({ username, password }: { username: string; password: string }) => {
     setLoginLoading(true);
     setLoginError("");
     const response = await fetch("/api/demo-login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
     });
     const body = await response.json().catch(() => ({}));
 
@@ -1620,10 +1739,24 @@ export default function OperationsApp() {
     setAuthenticated(true);
     setSessionUser(typeof body.user === "string" ? body.user : "");
     setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
+    setSessionMustChangePassword(body.mustChangePassword === true);
+  };
+
+  const logoutFromPasswordChange = async () => {
+    if (passwordLogoutBusy) return;
+    setPasswordLogoutBusy(true);
+    try {
+      const response = await fetch("/api/demo-logout", { method: "POST" });
+      if (!response.ok) throw new Error("logout failed");
+      window.location.reload();
+    } catch {
+      setPasswordLogoutBusy(false);
+    }
   };
 
   if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
   if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} />;
+  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={sessionUser} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
@@ -1807,6 +1940,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [renewalUploadBusy, setRenewalUploadBusy] = useState(false);
   const [evidenceUploadBusy, setEvidenceUploadBusy] = useState(false);
   const [reportUploadBusy, setReportUploadBusy] = useState(false);
+  const [fileLinkBusy, setFileLinkBusy] = useState(false);
+  const [fileStorageMode, setFileStorageMode] = useState<"link" | "upload">("link");
+  const [fileUploadType, setFileUploadType] = useState<"Report 资料" | "FU" | "续课 FU">("Report 资料");
   const attachmentCommandKeysRef = useRef(new Map<string, { intent: string; commandKey: string }>());
   const commandKeyForAttachment = useCallback((flow: "evidence" | "report" | "renewal", studentId: string, file: File, metadata: readonly string[]) => {
     const scope = `${flow}:${studentId}`;
@@ -1819,6 +1955,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, []);
   const clearAttachmentCommandKey = useCallback((flow: "evidence" | "report" | "renewal", studentId: string) => {
     attachmentCommandKeysRef.current.delete(`${flow}:${studentId}`);
+  }, []);
+  const fileLinkCommandKeysRef = useRef(new Map<string, { intent: string; commandKey: string }>());
+  const commandKeyForFileLink = useCallback((studentId: string, metadata: readonly string[]) => {
+    const intent = JSON.stringify([studentId, ...metadata]);
+    const existing = fileLinkCommandKeysRef.current.get(studentId);
+    if (existing?.intent === intent) return existing.commandKey;
+    const commandKey = `file-link:${crypto.randomUUID()}`;
+    fileLinkCommandKeysRef.current.set(studentId, { intent, commandKey });
+    return commandKey;
+  }, []);
+  const clearFileLinkCommandKey = useCallback((studentId: string) => {
+    fileLinkCommandKeysRef.current.delete(studentId);
   }, []);
   const [payrollFilter, setPayrollFilter] = useState("all");
   const [payrollCurrency, setPayrollCurrency] = useState("all");
@@ -1893,6 +2041,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [auditFilter, setAuditFilter] = useState("all");
   const [auditPage, setAuditPage] = useState(1);
   const [selectedAccountName, setSelectedAccountName] = useState<string>("admin:Nixon");
+  const [accountPasswordResetTarget, setAccountPasswordResetTarget] = useState<AccountPasswordResetTarget | null>(null);
+  const [accountPasswordResetBusy, setAccountPasswordResetBusy] = useState(false);
+  const [accountPasswordResetError, setAccountPasswordResetError] = useState("");
+  const accountPasswordResetCommandRef = useRef<{ intent: string; commandKey: string } | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
@@ -2037,7 +2189,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     () => [...scopedStudents, ...scopedArchivedStudents],
     [scopedArchivedStudents, scopedStudents],
   );
+  // Interactive file writes are restricted to the signed actor's active scope.
+  // Archived students remain readable but can never become a new file target.
+  const scopedActiveStudents = useMemo(
+    () => scopedStudents.filter(isActiveStudent),
+    [scopedStudents],
+  );
   const scopedStudentIds = useMemo(() => new Set(scopedStudents.map((student) => student.id)), [scopedStudents]);
+  const scopedActiveStudentIds = useMemo(() => new Set(scopedActiveStudents.map((student) => student.id)), [scopedActiveStudents]);
   const readableScopedStudentIds = useMemo(() => new Set(readableScopedStudents.map((student) => student.id)), [readableScopedStudents]);
   const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => {
     const addressedManagedExamTask = initialRole === "staff"
@@ -6052,6 +6211,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
   };
 
+  const hasScopedActiveStudentRecords = scopedActiveStudents.length > 0;
+
   const renderMessages = () => {
     const visibleMessages = scopedMessages.filter((message) => {
       const matchesQuery =
@@ -6348,9 +6509,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <button
               className="primary-button"
               type="button"
-              onClick={() => setModal("file")}
+              onClick={() => { setFileStorageMode("link"); setFileUploadType("Report 资料"); setModal("file"); }}
             >
-              <FilePlus2 size={17} /> 登记资料链接
+              <FilePlus2 size={17} /> 添加资料
             </button>
           : undefined}
         />
@@ -7860,17 +8021,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renderAccounts = () => {
     const teacherLoginNames = new Set(recordTeachers.map((teacher) => normaliseDemoUserName(teacher.name)));
     const accounts = [
-      { id: "admin:Nixon", name: "Admin", operator: "Nixon", login: "独立密码", role: "超级管理员", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
-      { id: `limited-admin:${DEMO_LIMITED_ADMIN_USER}`, name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, login: "独立密码", role: "运营管理员", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
+      { id: "admin:Nixon", name: "Admin", operator: "Nixon", login: "Nixon", sessionRole: "admin" as const, role: "超级管理员", permissions: ["全局学生与老师", "排课与运营", "课时与薪资", "账号与权限"] },
+      { id: `limited-admin:${DEMO_LIMITED_ADMIN_USER}`, name: DEMO_LIMITED_ADMIN_USER, operator: DEMO_LIMITED_ADMIN_USER, login: DEMO_LIMITED_ADMIN_USER, sessionRole: "limited-admin" as const, role: "运营管理员", permissions: ["全局学生与老师", "排课与运营", "同步来源", "账号与权限"] },
       ...DEMO_STAFF_USERS.map((name) => ({
         id: `staff:${name}`,
         name,
         operator: name,
         login: teacherLoginNames.has(normaliseDemoUserName(name)) ? demoStaffLoginAlias(name) : name,
+        sessionRole: "staff" as const,
         role: "教务账号",
         permissions: ["负责学生", "老师与排课", "LP 与续课", "文件与消息"],
       })),
-      ...recordTeachers.map((teacher) => ({ id: `teacher:${teacher.id}`, name: teacher.name, operator: teacher.name, login: teacher.name, role: "老师账号", permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"] })),
+      ...recordTeachers.map((teacher) => ({ id: `teacher:${teacher.id}`, name: teacher.name, operator: teacher.name, login: teacher.name, sessionRole: "teacher" as const, role: "老师账号", permissions: ["自己的学生", "自己的排课", "网上教室", "学生资料只读"] })),
     ];
     const selectedAccount =
       accounts.find((account) => account.id === selectedAccountName) ??
@@ -7958,6 +8120,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 </div>
               </div>
               <div className="account-actions">
+                <div className="form-notice"><KeyRound size={15} /> 登录时填写“{selectedAccount.login}”和密码。账号首次设置独立密码后，原有简易登录不再生效。</div>
+                {isAdminSession && !(selectedAccount.operator === sessionOperator && selectedAccount.sessionRole === initialRole) && <button
+                  className="secondary-button full"
+                  type="button"
+                  onClick={() => {
+                    setAccountPasswordResetTarget({
+                      user: selectedAccount.operator,
+                      role: selectedAccount.sessionRole,
+                      label: selectedAccount.name,
+                      login: selectedAccount.login,
+                    });
+                    setAccountPasswordResetError("");
+                    accountPasswordResetCommandRef.current = null;
+                    setModal("accountPasswordReset");
+                  }}
+                >
+                  <KeyRound size={16} /> 重置此账号密码
+                </button>}
                 <button
                   className="primary-button full"
                   type="button"
@@ -9568,12 +9748,144 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const submitFile = (event: FormEvent<HTMLFormElement>) => {
+  const closeAccountPasswordReset = () => {
+    if (accountPasswordResetBusy) return;
+    setModal(null);
+    setAccountPasswordResetTarget(null);
+    setAccountPasswordResetError("");
+    accountPasswordResetCommandRef.current = null;
+  };
+
+  const submitAccountPasswordReset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!isAdminSession || !accountPasswordResetTarget || accountPasswordResetBusy) return;
+    const data = new FormData(event.currentTarget);
+    const newPassword = String(data.get("newPassword") ?? "");
+    const confirmation = String(data.get("confirmation") ?? "");
+    setAccountPasswordResetError("");
+    if (newPassword !== confirmation) {
+      setAccountPasswordResetError("两次输入的新密码不一致。");
+      return;
+    }
+    const intent = JSON.stringify([
+      accountPasswordResetTarget.user,
+      accountPasswordResetTarget.role,
+      newPassword,
+    ]);
+    const commandKey = accountPasswordResetCommandRef.current?.intent === intent
+      ? accountPasswordResetCommandRef.current.commandKey
+      : `account-credential:${crypto.randomUUID()}`;
+    accountPasswordResetCommandRef.current = { intent, commandKey };
+    setAccountPasswordResetBusy(true);
+    try {
+      const response = await fetch("/api/accounts/password-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commandKey,
+          targetUser: accountPasswordResetTarget.user,
+          targetRole: accountPasswordResetTarget.role,
+          newPassword,
+        }),
+      });
+      const body = await response.json().catch(() => null) as { error?: string; reset?: boolean } | null;
+      if (!response.ok || !body?.reset) {
+        setAccountPasswordResetError(body?.error || "密码重置失败，请稍后重试。");
+        return;
+      }
+      const label = accountPasswordResetTarget.label;
+      accountPasswordResetCommandRef.current = null;
+      setAccountPasswordResetTarget(null);
+      setModal(null);
+      notify(`${label} 的密码已重置；对方登录后需要立即设置新密码`);
+    } catch {
+      setAccountPasswordResetError("网络暂时不可用，请保持窗口打开后重试。");
+    } finally {
+      setAccountPasswordResetBusy(false);
+    }
+  };
+
+  const submitFile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isTeacherView) { notify("老师账号只能查看学生资料"); return; }
-    const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const title = String(data.get("title") ?? "").trim(); if (!title) return;
-    const file: FileRecord = { id: id("FIL"), studentId, title, type: String(data.get("type") ?? "其他") as FileRecord["type"], source: String(data.get("source") ?? "人工登记") || "人工登记", addedAt: `今天 ${nowLabel()}` };
-    setFiles((current) => [file, ...current]); setStudents((current) => current.map((student) => student.id === studentId ? { ...student, files: student.files + 1 } : student)); addAudit("登记资料链接", `${title} · ${studentById(studentId)?.name}`, "blue"); setModal(null); notify("已在文件索引中登记资料");
+    const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id).trim();
+    if (!scopedActiveStudentIds.has(studentId)) { notify("当前身份只能为当前范围的活跃学生登记资料。"); return; }
+    const title = String(data.get("title") ?? "").trim(); if (!title) return;
+    const fileType = String(data.get("type") ?? "其他").trim() as FileRecord["type"];
+    let requestStarted = false;
+    setFileLinkBusy(true);
+    try {
+      if (fileStorageMode === "upload") {
+        const attachment = data.get("attachment");
+        if (!(attachment instanceof File) || !attachment.size) throw new Error("请选择需要上传的文件");
+        const fuCategory = fileType === "续课 FU"
+          ? "renewal_update"
+          : fileType === "FU" ? String(data.get("fuCategory") ?? "parent_communication") : "";
+        const flow = fileType === "Report 资料" ? "report" : "evidence";
+        const upload = new FormData();
+        upload.set("commandKey", commandKeyForAttachment(flow, studentId, attachment, [title, fileType, fuCategory, "file-center"]));
+        upload.set("studentId", studentId);
+        upload.set("file", attachment);
+        upload.set("fileTitle", title);
+        upload.set("fileType", fileType);
+        if (fuCategory) upload.set("fuCategory", fuCategory);
+        requestStarted = true;
+        const response = await fetch("/api/fu-attachments", { method: "POST", body: upload });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.id || !body.filesRow || !body.studentsRow) {
+          throw new Error(body.error || "资料上传失败");
+        }
+        filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+        studentsShared.applyRemote(body.studentsRow as RemoteStateRow<Student[]>);
+        clearAttachmentCommandKey(flow, studentId);
+        addAudit("上传学生资料", `${title} · ${studentById(studentId)?.name}`, "green");
+        setModal(null);
+        notify("文件已安全归档到学生资料");
+        return;
+      }
+
+      const source = String(data.get("source") ?? "").trim();
+      let parsedSource: URL;
+      try {
+        parsedSource = new URL(source);
+      } catch {
+        throw new Error("请输入完整的 HTTPS 云盘或腾讯文档链接");
+      }
+      if (parsedSource.protocol !== "https:") throw new Error("资料链接必须使用 HTTPS");
+      const commandKey = commandKeyForFileLink(studentId, [title, fileType, parsedSource.href]);
+      const expectedVersions = { files: filesShared.version, students: studentsShared.version };
+      requestStarted = true;
+      const response = await fetch("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commandKey,
+          studentId,
+          fileTitle: title,
+          fileType,
+          source: parsedSource.href,
+          expectedVersions,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.committed !== true || body.commandKey !== commandKey || !body.fileRecord) {
+        throw new Error(body.error || "资料登记失败");
+      }
+      if (!body.filesRow || !body.studentsRow) throw new Error("资料已保存但服务器未返回文件和学生权威回执。");
+      // Do not construct local records or counters. The dedicated RPC owns
+      // both projections and these are the authoritative rows for this actor.
+      filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+      studentsShared.applyRemote(body.studentsRow as RemoteStateRow<Student[]>);
+      clearFileLinkCommandKey(studentId);
+      addAudit("登记资料链接", `${title} · ${studentById(studentId)?.name}`, "blue");
+      setModal(null);
+      notify("已在文件索引中登记资料");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "资料保存失败";
+      notify(`${detail}${requestStarted ? "；结果未确认时可安全重试，系统会复用同一命令" : ""}`);
+    } finally {
+      setFileLinkBusy(false);
+    }
   };
 
   const submitTemplate = (event: FormEvent<HTMLFormElement>) => {
@@ -9630,6 +9942,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   })}
                 </div>
                 <footer className="operator-menu-footer">
+                  <button className="operator-password" type="button" onClick={() => { setModal("accountPasswordChange"); setOperatorMenuOpen(false); }}><KeyRound size={15} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
                   <button className="operator-preferences" type="button" onClick={() => { setDisplayPreferencesOpen(true); setOperatorMenuOpen(false); }}><Settings size={15} aria-hidden="true" />{interfaceText.profilePreferences}</button>
                   <button className="operator-logout" type="button" disabled={logoutBusy} onClick={() => void logout()}><LogOut size={15} aria-hidden="true" />{logoutBusy ? (displayPreferences.language === "en-AU" ? "Signing out" : "正在退出") : interfaceText.logOut}</button>
                 </footer>
@@ -9657,6 +9970,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               return <button className={active === item.id ? "active" : ""} type="button" key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{displayTerm(item.group === "work" ? "学生与教务" : "运营与系统", displayPreferences.language)}</small></span><ChevronRight size={16} /></button>;
             })}
           </div>
+          <button className="mobile-password-button" type="button" onClick={() => { setModal("accountPasswordChange"); setMobileMenuOpen(false); }}><KeyRound size={18} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
           <button className="mobile-preferences-button" type="button" onClick={() => { setDisplayPreferencesOpen(true); setMobileMenuOpen(false); }}><Settings size={18} aria-hidden="true" />{interfaceText.profilePreferences}</button>
           <button className="mobile-logout-button" type="button" disabled={logoutBusy} onClick={() => void logout()}><LogOut size={18} aria-hidden="true" />{logoutBusy ? (displayPreferences.language === "en-AU" ? "Signing out" : "正在退出") : interfaceText.logOut}</button>
         </section>
@@ -9983,13 +10297,47 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
-      {modal === "file" && <Dialog title="登记资料链接" onClose={() => setModal(null)}>
-        <form className="form-grid" onSubmit={submitFile}>
-          <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="file-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
-          <label>资料类型<select name="type" defaultValue={studentRecordKind === "lp" ? "Learning Plan" : studentRecordKind === "report" ? "Report 资料" : studentRecordKind === "fu" ? "FU" : "资料链接"}><option>Learning Plan</option><option>学校资料</option><option>Report 资料</option><option>成绩单</option><option>FU</option><option>课堂反馈</option><option>续课 FU</option><option>资料链接</option><option>其他</option></select></label>
-          <label className="span-2">资料名称<input name="title" autoFocus placeholder="例如 2026 Semester 2 Learning Plan" required /></label>
-          <label className="span-2">来源链接或说明<input name="source" placeholder="例如 Google Drive · https://..." /></label>
-          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><FilePlus2 size={16} /> 登记资料</button></footer>
+      {modal === "accountPasswordChange" && <Dialog title={displayPreferences.language === "en-AU" ? "Change password" : "修改密码"} onClose={() => setModal(null)}>
+        <AccountPasswordForm
+          accountLabel={operatorLabel(sessionOperator)}
+          onChanged={() => {
+            setModal(null);
+            notify(displayPreferences.language === "en-AU" ? "Password updated. Other signed-in sessions are now invalid." : "密码已更新，其他旧登录状态已失效");
+          }}
+          onCancel={() => setModal(null)}
+        />
+      </Dialog>}
+
+      {modal === "accountPasswordReset" && isAdminSession && accountPasswordResetTarget && <Dialog title={`重置 ${accountPasswordResetTarget.label} 的密码`} onClose={closeAccountPasswordReset}>
+        <form className="form-grid account-password-reset-form" onSubmit={submitAccountPasswordReset}>
+          <div className="form-notice span-2"><KeyRound size={16} /> 登录账号：{accountPasswordResetTarget.login}。重置后，旧密码和旧登录状态都会失效；用户首次登录必须改成自己的密码。</div>
+          <label className="span-2">新临时密码<input name="newPassword" data-dialog-autofocus="true" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+          <label className="span-2">再次输入临时密码<input name="confirmation" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+          <p className="form-footnote span-2">至少 12 个字符，同时包含字母和数字，且不能与账号名称相同。请通过现有安全渠道告知本人，系统不会显示或发送密码。</p>
+          {accountPasswordResetError && <div className="form-error span-2" role="alert">{accountPasswordResetError}</div>}
+          <footer><button className="secondary-button" type="button" disabled={accountPasswordResetBusy} onClick={closeAccountPasswordReset}>取消</button><button className="primary-button" type="submit" disabled={accountPasswordResetBusy}><KeyRound size={16} /> {accountPasswordResetBusy ? "正在重置…" : "确认重置"}</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "file" && hasScopedActiveStudentRecords && !isTeacherView && <Dialog title="添加资料" onClose={() => setModal(null)}>
+        <form className="form-grid file-storage-form" onSubmit={submitFile}>
+          <div className="file-storage-picker span-2" role="group" aria-label="资料保存方式">
+            <button className={fileStorageMode === "link" ? "active" : ""} type="button" aria-pressed={fileStorageMode === "link"} onClick={() => setFileStorageMode("link")}><Link2 size={16} /> 云盘 / 腾讯文档链接<span>推荐，不占系统空间</span></button>
+            <button className={fileStorageMode === "upload" ? "active" : ""} type="button" aria-pressed={fileStorageMode === "upload"} onClick={() => { setFileStorageMode("upload"); setFileUploadType(studentRecordKind === "fu" ? "FU" : "Report 资料"); }}><FilePlus2 size={16} /> 小文件上传<span>仅 PDF 或图片，最大 4MB</span></button>
+          </div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> {fileStorageMode === "link" ? "推荐沿用现有腾讯文档、Google Drive 或 OneDrive；系统只保存链接，不复制云盘文件。" : "上传文件会存入系统私有数据库，仅适合小型 Report PDF 或 FU 截图。大型文件请改用云盘链接。"}</div>
+          <label>关联学生<input name="studentId" list="file-student-options" defaultValue={selectedStudent.id} placeholder="输入学生姓名搜索" required /><datalist id="file-student-options">{scopedActiveStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
+          {fileStorageMode === "link"
+            ? <label>资料类型<select name="type" defaultValue={studentRecordKind === "lp" ? "Learning Plan" : studentRecordKind === "report" ? "Report 资料" : studentRecordKind === "fu" ? "FU" : "资料链接"}><option>Learning Plan</option><option>学校资料</option><option>Report 资料</option><option>成绩单</option><option>FU</option><option>课堂反馈</option><option>续课 FU</option><option>资料链接</option><option>其他</option></select></label>
+            : <label>资料类型<select name="type" value={fileUploadType} onChange={(event) => setFileUploadType(event.target.value as typeof fileUploadType)}><option>Report 资料</option><option>FU</option><option>续课 FU</option></select></label>}
+          <label className="span-2">资料名称<input name="title" data-dialog-autofocus="true" placeholder="例如 2026 Semester 2 Learning Plan" required maxLength={180} /></label>
+          {fileStorageMode === "link"
+            ? <label className="span-2">HTTPS 资料链接<input name="source" type="url" inputMode="url" autoComplete="url" placeholder="https://docs.qq.com/..." required maxLength={500} /></label>
+            : <>
+              {fileUploadType === "FU" && <label className="span-2">FU 分类<select name="fuCategory" defaultValue="parent_communication">{FU_ATTACHMENT_CATEGORIES.filter((category) => category !== "renewal_update").map((category) => <option value={category} key={category}>{FU_ATTACHMENT_CATEGORY_LABELS[category]}</option>)}</select></label>}
+              <label className="span-2 upload-field">选择文件<input name="attachment" type="file" accept={fileUploadType === "Report 资料" ? "application/pdf" : "image/png,image/jpeg,image/webp"} required /><small>{fileUploadType === "Report 资料" ? "仅 PDF，最大 4MB" : "仅 PNG、JPG 或 WebP，最大 4MB"}</small></label>
+            </>}
+          <footer><button className="secondary-button" type="button" disabled={fileLinkBusy} onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={fileLinkBusy}><FilePlus2 size={16} /> {fileLinkBusy ? "正在保存…" : fileStorageMode === "link" ? "登记链接" : "上传并归档"}</button></footer>
         </form>
       </Dialog>}
 

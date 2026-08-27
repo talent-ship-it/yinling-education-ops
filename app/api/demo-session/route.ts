@@ -7,7 +7,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const cookieStore = await cookies();
-  const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
+  const resolved = await getCurrentDemoSession(
+    cookieStore.get(DEMO_COOKIE_NAME)?.value,
+    { allowPasswordChangeRequired: true },
+  );
   if (!("session" in resolved)) {
     return NextResponse.json(
       { ok: false, user: null, role: null, error: resolved.error },
@@ -17,7 +20,12 @@ export async function GET() {
   const { session } = resolved;
 
   return NextResponse.json(
-    { ok: true, user: session.user, role: session.role },
+    {
+      ok: true,
+      user: session.user,
+      role: session.role,
+      mustChangePassword: resolved.mustChangePassword,
+    },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

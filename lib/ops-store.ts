@@ -63,6 +63,40 @@ export type StudentFuAttachmentAtomicCommitResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type StudentFileLinkAtomicCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  file_record: Record<string, unknown>;
+  files_row: OpsStateRow;
+  students_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type AppAccountAuthState = Readonly<{
+  identity_key: string;
+  account_name: string;
+  account_role: "admin" | "limited-admin" | "staff" | "teacher";
+  credential_version: number;
+  must_change_password: boolean;
+  enabled: boolean;
+}>;
+
+export type AppAccountCredential = AppAccountAuthState & Readonly<{
+  password_algorithm: "scrypt-v1";
+  password_hash: string;
+  password_salt: string;
+}>;
+
+export type AppAccountCredentialCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  identity_key: string;
+  credential_version: number;
+  must_change_password: boolean;
+  enabled: boolean;
+  audit_entry_id: string;
+}>;
+
 export type StudentFuAttachmentReferenceSnapshot = Readonly<{
   studentIds: readonly string[];
   fingerprint: string;
@@ -311,6 +345,10 @@ export const EXAM_FOLLOW_UP_ATOMIC_RPC = "mutate_exam_follow_up_atomic";
 export const EXAM_FOLLOW_UP_COMMAND_RESULT_RPC = "get_exam_follow_up_command_result";
 export const EXAM_FOLLOW_UP_COMPLETION_CONTEXT_RPC = "get_exam_follow_up_completion_context";
 export const STUDENT_FU_ATTACHMENT_ATOMIC_PUT_RPC = "put_student_fu_attachment_atomic";
+export const STUDENT_FILE_LINK_ATOMIC_PUT_RPC = "put_student_file_link_atomic";
+export const APP_ACCOUNT_AUTH_STATE_RPC = "read_app_account_auth_state";
+export const APP_ACCOUNT_CREDENTIAL_RPC = "read_app_account_credential";
+export const APP_ACCOUNT_CREDENTIAL_PUT_RPC = "put_app_account_credential_atomic";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -1280,6 +1318,80 @@ export function putOpsState(input: {
     p_expected_version: input.expectedVersion,
     p_actor: input.actor,
     p_scope_versions: input.scopeVersions ?? null,
+  });
+}
+
+/** Atomically registers a normal file-center link and updates the student count. */
+export function putStudentFileLinkAtomic(input: {
+  commandKey: string;
+  studentId: string;
+  fileTitle: string;
+  fileType: string;
+  source: string;
+  expectedVersions: Readonly<{ files: number; students: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<StudentFileLinkAtomicCommitResult[]>(STUDENT_FILE_LINK_ATOMIC_PUT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_student_id: input.studentId,
+    p_file_title: input.fileTitle,
+    p_file_type: input.fileType,
+    p_source: input.source,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+  });
+}
+
+/** Minimal per-request state; password material is never returned by this reader. */
+export async function getAppAccountAuthState(identityKey: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AppAccountAuthState[]>(APP_ACCOUNT_AUTH_STATE_RPC, {
+    p_secret: secret,
+    p_identity_key: identityKey,
+  });
+  return rows[0] ?? null;
+}
+
+/** Server-only credential material used solely for password verification. */
+export async function getAppAccountCredential(identityKey: string) {
+  const { secret } = configuration();
+  const rows = await rpc<AppAccountCredential[]>(APP_ACCOUNT_CREDENTIAL_RPC, {
+    p_secret: secret,
+    p_identity_key: identityKey,
+  });
+  return rows[0] ?? null;
+}
+
+/** Creates or rotates one independent account password with optimistic concurrency. */
+export function putAppAccountCredentialAtomic(input: {
+  commandKey: string;
+  identityKey: string;
+  accountName: string;
+  accountRole: AppAccountAuthState["account_role"];
+  passwordAlgorithm: "scrypt-v1";
+  passwordHash: string;
+  passwordSalt: string;
+  expectedVersion: number;
+  mustChangePassword: boolean;
+  action: "self_change" | "admin_reset";
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<AppAccountCredentialCommitResult[]>(APP_ACCOUNT_CREDENTIAL_PUT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_identity_key: input.identityKey,
+    p_account_name: input.accountName,
+    p_account_role: input.accountRole,
+    p_password_algorithm: input.passwordAlgorithm,
+    p_password_hash: input.passwordHash,
+    p_password_salt: input.passwordSalt,
+    p_expected_version: input.expectedVersion,
+    p_must_change_password: input.mustChangePassword,
+    p_action: input.action,
+    p_actor: input.actor,
   });
 }
 

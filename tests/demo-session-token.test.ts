@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -8,6 +9,19 @@ import {
 
 const SECRET = "test-only-session-secret";
 const NOW = new Date("2026-08-13T08:00:00.000Z");
+
+function legacyV3Token(user: string, role: "admin" | "limited-admin" | "staff" | "teacher") {
+  const payload = Buffer.from(JSON.stringify({
+    v: 3,
+    user,
+    role,
+    exp: Math.floor(NOW.getTime() / 1000) + 60 * 60 * 24 * 7,
+  }), "utf8").toString("base64url");
+  const signature = createHmac("sha256", SECRET)
+    .update(`yinling-demo-session-v3:${payload}`)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
 
 test("signed session restores a teacher outside the seeded demo list", () => {
   const token = createDemoSessionToken({ user: "Derek Jiang", role: "teacher" }, SECRET, NOW);
@@ -43,4 +57,32 @@ test("expired session cookies are rejected", () => {
   const token = createDemoSessionToken({ user: "Derek Jiang", role: "teacher" }, SECRET, NOW);
   assert.ok(token);
   assert.equal(parseDemoSessionToken(token, SECRET, new Date("2026-08-21T08:00:01.000Z")), null);
+});
+
+test("credential version is signed into migrated account sessions", () => {
+  const token = createDemoSessionToken(
+    { user: "Derek Jiang", role: "teacher", credentialVersion: 7 },
+    SECRET,
+    NOW,
+  );
+  assert.ok(token);
+  assert.deepEqual(parseDemoSessionToken(token, SECRET, NOW), {
+    user: "Derek Jiang",
+    role: "teacher",
+    credentialVersion: 7,
+  });
+  assert.equal(createDemoSessionToken(
+    { user: "Derek Jiang", role: "teacher", credentialVersion: 0 },
+    SECRET,
+    NOW,
+  ), null);
+});
+
+test("valid version 3 sessions remain usable until the account adopts a credential version", () => {
+  const token = legacyV3Token("Nixon", "admin");
+  assert.deepEqual(parseDemoSessionToken(token, SECRET, NOW), {
+    user: "Nixon",
+    role: "admin",
+  });
+  assert.equal(parseDemoSessionToken(token, "wrong-secret", NOW), null);
 });
