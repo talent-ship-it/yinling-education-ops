@@ -88,9 +88,11 @@ function text(value: unknown) {
 }
 
 function canonicalInstant(value: unknown, field: string) {
-  const source = text(value);
+  const source = value instanceof Date ? value.valueOf() : text(value);
   const parsed = new Date(source);
-  if (!source || Number.isNaN(parsed.valueOf())) throw new TypeError(`${field} must be a valid timestamp`);
+  if ((typeof source === "string" && !source) || Number.isNaN(parsed.valueOf())) {
+    throw new TypeError(`${field} must be a valid timestamp`);
+  }
   return parsed.toISOString();
 }
 

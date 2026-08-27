@@ -85,6 +85,18 @@ test("matches a trial LP to real schedule evidence by full course-title name and
   assert.equal(matches[0]?.link.source, "jiaowubao-open-api");
 });
 
+test("accepts the live browser Date used when matching a freshly loaded schedule", () => {
+  const matchedAt = new Date("2026-08-28T03:00:00.000Z");
+  const matches = matchTrialScheduleEvents({
+    lpItems: [],
+    students: [],
+    teachers: [],
+    events: [],
+    matchedAt,
+  });
+  assert.deepEqual(matches, []);
+});
+
 test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", () => {
   const intake = trialIntakeFromFields(extendedFields);
   const tasks = generateTrialManualRequestTasks({
