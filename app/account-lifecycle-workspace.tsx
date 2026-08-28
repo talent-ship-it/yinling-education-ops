@@ -314,6 +314,7 @@ export function AccountLifecycleWorkspace({
   return <div className="account-lifecycle-stack">
     <AccountSecurityPanel
       accountLabel={currentUser === "Nixon" ? "Admin" : currentUser}
+      accountLogin={currentUser}
       mfaEnabled={mfaEnabled}
       mfaSetup={mfaSetup}
       sessions={selfSessions}

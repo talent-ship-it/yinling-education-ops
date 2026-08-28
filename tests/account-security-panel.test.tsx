@@ -8,6 +8,7 @@ import { AccountSecurityPanel, type AccountSecurityPanelProps } from "../app/acc
 
 const baseProps: AccountSecurityPanelProps = {
   accountLabel: "QA Admin",
+  accountLogin: "qa-admin",
   mfaEnabled: false,
   sessions: [],
   onChangePassword: () => undefined,
@@ -22,6 +23,9 @@ test("keeps the MFA setup password inside the form that submits it", () => {
   const beginForm = html.match(/<form class="account-security-actions">([\s\S]*?)<\/form>/)?.[1] ?? "";
 
   assert.match(beginForm, /type="password"/);
+  assert.match(beginForm, /name="username"/);
+  assert.match(beginForm, /autoComplete="username"/);
+  assert.match(beginForm, /value="qa-admin"/);
   assert.match(beginForm, /name="currentPassword"/);
   assert.match(beginForm, /type="submit"[^>]*disabled/);
   assert.doesNotMatch(html.replace(`<form class="account-security-actions">${beginForm}</form>`, ""), /type="password"/);
@@ -35,6 +39,9 @@ test("keeps the setup-confirmation password inside the MFA verification form", (
   const verificationForm = html.match(/<form class="form-grid account-mfa-form">([\s\S]*?)<\/form>/)?.[1] ?? "";
 
   assert.match(verificationForm, /type="password"/);
+  assert.match(verificationForm, /name="username"/);
+  assert.match(verificationForm, /autoComplete="username"/);
+  assert.match(verificationForm, /value="qa-admin"/);
   assert.match(verificationForm, /name="currentPassword"/);
   assert.match(verificationForm, /autoComplete="one-time-code"/);
   assert.doesNotMatch(html.replace(`<form class="form-grid account-mfa-form">${verificationForm}</form>`, ""), /type="password"/);

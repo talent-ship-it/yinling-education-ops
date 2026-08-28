@@ -318,5 +318,13 @@ test("account UI wires real password, MFA, session and authorization actions wit
   assert.match(securityPanel, /修改密码/);
   assert.match(securityPanel, /设置 MFA/);
   assert.match(securityPanel, /退出所有设备/);
+  assert.match(securityPanel, /accountLogin: string/);
+  assert.match(securityPanel, /<PasswordUsernameContext login=\{accountLogin\} \/>/);
+  assert.match(workspace, /accountLogin=\{currentUser\}/);
+  assert.match(operationsClient, /function PasswordUsernameContext\(\{ login \}: \{ login: string \}\)/);
+  assert.match(operationsClient, /name="username"[\s\S]*autoComplete="username"|autoComplete="username"[\s\S]*name="username"/);
+  assert.match(operationsClient, /accountLogin=\{user\}/);
+  assert.match(operationsClient, /accountLogin=\{sessionOperator\}/);
+  assert.match(operationsClient, /<PasswordUsernameContext login=\{accountPasswordResetTarget\.login\} \/>/);
   assert.doesNotMatch(`${workspace}\n${adminLifecycle}\n${securityPanel}`, /临时密码[:：]\s*\{/);
 });

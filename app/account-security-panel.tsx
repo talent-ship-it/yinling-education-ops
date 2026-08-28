@@ -29,6 +29,7 @@ export type AccountMfaSetup = Readonly<{
 
 export type AccountSecurityPanelProps = Readonly<{
   accountLabel: string;
+  accountLogin: string;
   mfaEnabled: boolean;
   mfaSetup?: AccountMfaSetup | null;
   sessions: readonly AccountSecuritySession[];
@@ -54,8 +55,22 @@ function formatDate(value: string) {
   }).format(date);
 }
 
+function PasswordUsernameContext({ login }: { login: string }) {
+  return <input
+    aria-label="登录账号"
+    autoComplete="username"
+    className="visually-hidden"
+    name="username"
+    readOnly
+    tabIndex={-1}
+    type="text"
+    value={login}
+  />;
+}
+
 export function AccountSecurityPanel({
   accountLabel,
+  accountLogin,
   mfaEnabled,
   mfaSetup,
   sessions,
@@ -107,6 +122,7 @@ export function AccountSecurityPanel({
       event.preventDefault();
       if (currentPassword) onBeginMfa(currentPassword);
     }}>
+      <PasswordUsernameContext login={accountLogin} />
       <button className="secondary-button" type="button" onClick={onChangePassword}>
         <KeyRound size={16} aria-hidden="true" />修改密码
       </button>
@@ -131,7 +147,10 @@ export function AccountSecurityPanel({
     </div> : null}
 
     {(mfaEnabled || mfaSetup) ? <form className="form-grid account-mfa-form" onSubmit={submitMfa}>
-      {!mfaEnabled ? <label className="span-2">当前密码<input name="currentPassword" type="password" autoComplete="current-password" value={currentPassword} maxLength={256} onChange={(event) => setCurrentPassword(event.target.value)} required /></label> : null}
+      {!mfaEnabled ? <>
+        <PasswordUsernameContext login={accountLogin} />
+        <label className="span-2">当前密码<input name="currentPassword" type="password" autoComplete="current-password" value={currentPassword} maxLength={256} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+      </> : null}
       <label className="span-2">验证器验证码<input value={code} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required /></label>
       <p className="form-footnote span-2">{mfaEnabled ? "验证后会停用 MFA，并撤销当前账号所有会话。" : "确认后会启用 MFA，并要求重新登录。"}</p>
       <footer><button className={mfaEnabled ? "danger-button" : "primary-button"} type="submit" disabled={!validCode || (!mfaEnabled && !currentPassword) || Boolean(busyAction)}>{mfaEnabled ? <ShieldOff size={15} /> : <ShieldCheck size={15} />}{busyAction === "mfa-verify" || busyAction === "mfa-disable" ? "正在验证…" : mfaEnabled ? "验证并停用 MFA" : "验证并启用 MFA"}</button></footer>

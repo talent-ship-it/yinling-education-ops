@@ -2184,8 +2184,22 @@ function AuthLoginScreen({ onSubmit, loading, error, mfaRequired }: { onSubmit: 
   );
 }
 
+function PasswordUsernameContext({ login }: { login: string }) {
+  return <input
+    aria-label="登录账号"
+    autoComplete="username"
+    className="visually-hidden"
+    name="username"
+    readOnly
+    tabIndex={-1}
+    type="text"
+    value={login}
+  />;
+}
+
 function AccountPasswordForm({
   accountLabel,
+  accountLogin,
   forced = false,
   onChanged,
   onCancel,
@@ -2194,6 +2208,7 @@ function AccountPasswordForm({
   logoutError = "",
 }: {
   accountLabel: string;
+  accountLogin: string;
   forced?: boolean;
   onChanged: () => void;
   onCancel?: () => void;
@@ -2262,6 +2277,7 @@ function AccountPasswordForm({
   };
 
   return <form className="form-grid account-password-form" onSubmit={submit}>
+    <PasswordUsernameContext login={accountLogin} />
     {forced && <div className="form-notice span-2"><KeyRound size={16} /> 管理员已重置此账号密码。请先设置只有你知道的新密码，再继续使用系统。</div>}
     <div className="account-password-identity span-2"><small>当前账号</small><strong>{accountLabel}</strong></div>
     <label className="span-2">当前密码<input ref={currentPasswordRef} name="currentPassword" data-dialog-autofocus="true" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); resetIntent(); }} maxLength={256} required /></label>
@@ -2286,7 +2302,7 @@ function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy, logou
       <p className="eyebrow">账号安全</p>
       <h1>请先设置新密码</h1>
       <p className="login-copy">完成后会自动加载你的工作视图。</p>
-      <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} logoutError={logoutError} />
+      <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} accountLogin={user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} logoutError={logoutError} />
     </section>
   </main>;
 }
@@ -13559,6 +13575,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "accountPasswordChange" && <Dialog title={displayPreferences.language === "en-AU" ? "Change password" : "修改密码"} onClose={() => setModal(null)}>
         <AccountPasswordForm
           accountLabel={operatorLabel(sessionOperator)}
+          accountLogin={sessionOperator}
           onChanged={() => {
             setModal(null);
             notify(displayPreferences.language === "en-AU" ? "Password updated. Other signed-in sessions are now invalid." : "密码已更新，其他旧登录状态已失效");
@@ -13569,6 +13586,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "accountPasswordReset" && isAdminSession && accountPasswordResetTarget && <Dialog title={`重置 ${accountPasswordResetTarget.label} 的密码`} onClose={closeAccountPasswordReset}>
         <form className="form-grid account-password-reset-form" onSubmit={submitAccountPasswordReset}>
+          <PasswordUsernameContext login={accountPasswordResetTarget.login} />
           <div className="form-notice span-2"><KeyRound size={16} /> 登录账号：{accountPasswordResetTarget.login}。重置后，旧密码和旧登录状态都会失效；用户首次登录必须改成自己的密码。</div>
           <label className="span-2">新临时密码<input name="newPassword" data-dialog-autofocus="true" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
           <label className="span-2">再次输入临时密码<input name="confirmation" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
