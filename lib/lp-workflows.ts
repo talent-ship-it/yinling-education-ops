@@ -19,6 +19,11 @@ export type PreparationFollowUp = (typeof PREPARATION_FOLLOW_UP_OPTIONS)[number]
 export const LP_CONTACT_OPTIONS = ["家长", "学生本人"] as const;
 export type LpContact = (typeof LP_CONTACT_OPTIONS)[number];
 
+export const TRIAL_OPERATIONS = ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"] as const;
+export type TrialOperations = (typeof TRIAL_OPERATIONS)[number];
+
+export const TRIAL_LOCATION_OPTIONS = ["VIC", "NSW", "QLD", "WA", "SA", "NZ", "国内"] as const;
+
 export const TRIAL_PAYMENT_METHODS = [
   "后置付费试听",
   "付费试听（已付费）",
@@ -563,6 +568,7 @@ export function validateLpDate(value: string, field = "date") {
 /** Validates the minimum system handover fields for a workflow type. */
 export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldValues) {
   requireText(fields, "responsibleOperations");
+  if (type === "试听 LP") requireOneOf(fields, "responsibleOperations", TRIAL_OPERATIONS);
   requireOneOf(fields, "specifiedContentStatus", SPECIFIED_CONTENT_STATUSES);
   requireOneOf(fields, "preparationFollowUp", PREPARATION_FOLLOW_UP_OPTIONS);
   requireBoolean(fields, "isUniversityStudent");

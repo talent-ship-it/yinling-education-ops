@@ -7,6 +7,8 @@ import {
   LP_WORKFLOW_TYPES,
   PREPARATION_FOLLOW_UP_OPTIONS,
   SPECIFIED_CONTENT_STATUSES,
+  TRIAL_LOCATION_OPTIONS,
+  TRIAL_OPERATIONS,
   TRIAL_PAYMENT_METHODS,
   getLpWorkflowSchema,
   type DirectEnrollmentLpFields,
@@ -445,6 +447,9 @@ export function parseLpWorkflowFormData(formData: FormData): ParsedLpWorkflowFor
 
 export type LpFormOption = Readonly<{ value: string; label?: string }>;
 
+const trialOperationsOptions = TRIAL_OPERATIONS.map((value) => Object.freeze({ value }));
+const trialLocationOptions = TRIAL_LOCATION_OPTIONS.map((value) => Object.freeze({ value }));
+
 export type LpWorkflowFieldsProps = Readonly<{
   initialType?: LpWorkflowType;
   initialValues?: Partial<TrialLpFields> & Partial<
@@ -586,7 +591,7 @@ export function LpWorkflowFields({
       <SelectOrInput
         name={LP_WORKFLOW_FORM_NAMES.responsibleOperations}
         defaultValue={initialValues.responsibleOperations}
-        options={responsibleOperationsOptions}
+        options={workflowType === "试听 LP" ? trialOperationsOptions : responsibleOperationsOptions}
       />
     </label>
 
@@ -619,7 +624,7 @@ export function LpWorkflowFields({
         <DatalistInput
           name={LP_WORKFLOW_FORM_NAMES.locationTimezone}
           defaultValue={initialValues.locationTimezone}
-          options={timezoneOptions}
+          options={workflowType === "试听 LP" ? trialLocationOptions : timezoneOptions}
         />
       </label>
       {workflowType === "试听 LP" ? <fieldset className="span-2 lp-inline-options"><legend>对接对象（可多选）</legend>

@@ -411,3 +411,23 @@ test("renders each dedicated workflow with hard options and strict URL/date cont
   assert.match(enrollment, /<select name="planner"/);
   assert.match(enrollment, /<select name="coursePackage"/);
 });
+
+test("renders the exact trial operations list and seven customisable location suggestions", () => {
+  const html = renderToStaticMarkup(<LpWorkflowFields
+    initialType="试听 LP"
+    responsibleOperationsOptions={[{ value: "Nixon" }]}
+    timezoneOptions={[{ value: "Australia/Melbourne" }]}
+  />);
+  const operations = html.match(/<select name="responsibleOperations"[\s\S]*?<\/select>/)?.[0] ?? "";
+  const locations = html.match(/<datalist id="lp-options-locationTimezone"[\s\S]*?<\/datalist>/)?.[0] ?? "";
+
+  for (const name of ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"]) {
+    assert.match(operations, new RegExp(`value="${name}"`));
+  }
+  assert.doesNotMatch(operations, /Nixon/);
+  for (const location of ["VIC", "NSW", "QLD", "WA", "SA", "NZ", "国内"]) {
+    assert.match(locations, new RegExp(`value="${location}"`));
+  }
+  assert.match(html, /<input(?=[^>]*name="locationTimezone")(?=[^>]*list="lp-options-locationTimezone")[^>]*>/);
+  assert.doesNotMatch(locations, /Australia\/Melbourne/);
+});

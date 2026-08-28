@@ -10,6 +10,8 @@ import {
   LP_RESULT_STATUSES,
   LP_WORKFLOW_SCHEMAS,
   LP_WORKFLOW_TYPES,
+  TRIAL_LOCATION_OPTIONS,
+  TRIAL_OPERATIONS,
   PREPARATION_FOLLOW_UP_OPTIONS,
   reviseLpWorkflow,
   SPECIFIED_CONTENT_STATUSES,
@@ -46,6 +48,23 @@ test("defines exactly the seven LP workflow types requested in the feedback", ()
     "学生报名交接",
   ]);
   assert.deepEqual(Object.keys(LP_WORKFLOW_SCHEMAS), LP_WORKFLOW_TYPES);
+});
+
+test("uses the handbook's exact trial operations and location choices", () => {
+  assert.deepEqual(TRIAL_OPERATIONS, ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"]);
+  assert.deepEqual(TRIAL_LOCATION_OPTIONS, ["VIC", "NSW", "QLD", "WA", "SA", "NZ", "国内"]);
+  assert.throws(() => validateLpWorkflowFields("试听 LP", {
+    ...commonFields(),
+    responsibleOperations: "Nixon",
+    assignedTeacher: "A",
+    subject: "English",
+    oneSentenceDescription: "Year 8 English",
+    locationTimezone: "VIC",
+    contactPerson: "家长",
+    timeMentioned: false,
+    studentNameKnown: true,
+    trialPaymentMethod: "免费试听",
+  }), /allowed options/);
 });
 
 test("uses the confirmed common fields and retains the historical specified-content value", () => {
