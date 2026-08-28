@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const migration = readFileSync(
+  new URL("../supabase/migrations/20260828000200_trial_manual_tasks_atomic.sql", import.meta.url),
+  "utf8",
+);
+const client = readFileSync(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
+
+test("trial handbook intake and task projection stay inside the LP transaction", () => {
+  assert.match(migration, /rename to mutate_lp_atomic_before_trial_manual_tasks/i);
+  assert.match(migration, /create or replace function public\.mutate_lp_atomic\(/i);
+  assert.match(migration, /p_command_intent -> 'fields' is distinct from p_fields/i);
+  assert.match(migration, /delegated_fields := \([\s\S]*p_fields - array\[/i);
+  assert.match(migration, /specifiedContentStatus' = '需教务跟进'[\s\S]*specifiedContentStatus', '需要跟进'/i);
+  assert.match(migration, /select \* into delegated[\s\S]*mutate_lp_atomic_before_trial_manual_tasks/i);
+  assert.match(migration, /select \* into l from public\.ops_state where entity = 'lpItems' for update/i);
+  assert.match(migration, /select \* into t from public\.ops_state where entity = 'tasks' for update/i);
+  assert.match(migration, /'fields', full_fields,[\s\S]*'requestedAt',[\s\S]*'trialIntake', trial_intake/i);
+  assert.match(migration, /update public\.ops_state[\s\S]*where entity = 'lpItems'/i);
+  assert.match(migration, /update public\.ops_state[\s\S]*where entity = 'tasks'/i);
+  assert.match(migration, /insert into internal\.trial_lp_atomic_intents/i);
+});
+
+test("the atomic projection removes open legacy rules and creates the complete handbook chain", () => {
+  for (const rule of [
+    "trial.parent-follow-up",
+    "trial.scheduling",
+    "trial.parent-no-reply-follow-up",
+    "trial.teaching-control-escalation",
+    "trial.parent-progress-sync.1",
+  ]) assert.match(migration, new RegExp(rule.replaceAll(".", "\\.")));
+
+  for (const rule of [
+    "trial.manual-request.specified-content",
+    "trial.manual-request.writing",
+    "trial.manual-request.paper-send",
+    "trial.manual-request.paper-receive",
+    "trial.manual-request.parent-progress-24h",
+    "trial.manual-request.scheduling-alert-36h",
+    "trial.manual-request.parent-progress-48h",
+  ]) assert.match(migration, new RegExp(rule.replaceAll(".", "\\.")));
+
+  assert.match(migration, /request_at \+ interval '24 hours'/i);
+  assert.match(migration, /request_at \+ interval '36 hours'/i);
+  assert.match(migration, /request_at \+ interval '48 hours'/i);
+  assert.match(migration, /specifiedContentStatus' in \('需要跟进', '需教务跟进'\)/i);
+  assert.match(migration, /internal\.trial_manual_task_id\(delegated\.lp_item_id, rule\)/i);
+});
+
+test("the browser sends one complete command and performs no post-commit trial repair", () => {
+  assert.match(client, /const fields = parsedLp\.fields as LpFieldValues/);
+  assert.doesNotMatch(client, /trialAtomicFields/);
+  assert.doesNotMatch(client, /generateTrialManualRequestTasks/);
+
+  const submitLp = client.slice(
+    client.indexOf("const submitLp = async"),
+    client.indexOf("const submitLpRevision = async"),
+  );
+  const applied = submitLp.slice(
+    submitLp.indexOf("studentsShared.applyRemote(body.studentsRow"),
+    submitLp.indexOf("lpAtomicCommandKeysRef.current = removeLpAtomicPendingCommand"),
+  );
+  assert.doesNotMatch(applied, /mutateAndCommit/);
+});

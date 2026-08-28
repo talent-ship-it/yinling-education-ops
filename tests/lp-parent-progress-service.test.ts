@@ -314,6 +314,16 @@ test("scheduler eligibility excludes every non-trial LP workflow even with an ex
   const records = [
     { ...lp, workflowType: "试听 LP" },
     { ...lp, id: "LP-REPLACEMENT", workflowType: "换老师试听" },
+    {
+      ...lp,
+      id: "LP-HANDBOOK",
+      workflowType: "试听 LP",
+      trialIntake: {
+        requestSentAt: "2026-08-10T00:00:00.000Z",
+        contactParents: true,
+        contactStudent: false,
+      },
+    },
     { ...lp, id: "LP-DIRECT", workflowType: "学生直报（无试听）" },
     { ...lp, id: "LP-RENEWAL", workflowType: "续课" },
     { ...lp, id: "LP-MISSING" },

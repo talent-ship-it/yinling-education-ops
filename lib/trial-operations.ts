@@ -147,14 +147,6 @@ export function trialIntakeFromFields(fields: LpFieldValues): TrialIntake {
   });
 }
 
-/** Removes fields unsupported by the historical atomic LP RPC. */
-export function trialAtomicFields(fields: LpFieldValues): LpFieldValues {
-  const intakeKeys = new Set<string>(TRIAL_INTAKE_FIELD_KEYS);
-  return Object.freeze(Object.fromEntries(
-    Object.entries(fields).filter(([key]) => !intakeKeys.has(key)),
-  ));
-}
-
 /** Maps the three generic 教务宝 trial accounts to their course planners. */
 export function trialPlannerHintFromParticipants(
   participants: readonly Readonly<{ label: string | null }>[],

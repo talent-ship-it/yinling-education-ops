@@ -1,0 +1,200 @@
+\set ON_ERROR_STOP on
+
+-- Disposable local execution contract for 20260828000200. Never run this
+-- fixture against production.
+drop schema if exists internal cascade;
+drop schema if exists extensions cascade;
+drop table if exists public.ops_mutation_log cascade;
+drop table if exists public.ops_state cascade;
+
+create schema internal;
+create schema extensions;
+create extension if not exists pgcrypto with schema extensions;
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if;
+end;
+$$;
+
+create table public.ops_state (
+  entity text primary key,
+  payload jsonb not null,
+  version bigint not null,
+  updated_at timestamptz not null default now(),
+  updated_by text not null
+);
+create table public.ops_mutation_log (entity text not null, version bigint not null, actor text not null);
+create table internal.operational_contract_audit (
+  id uuid primary key default extensions.gen_random_uuid(),
+  action text not null,
+  actor text not null,
+  target_type text not null,
+  target_id text not null,
+  metadata jsonb not null,
+  created_at timestamptz not null default now()
+);
+create function internal.verify_ops_secret(p_secret text)
+returns boolean language sql immutable set search_path = ''
+as $$ select p_secret = 'trial-manual-fixture-secret' $$;
+create function internal.append_operational_contract_audit(
+  p_action text, p_actor text, p_target_type text, p_target_id text, p_metadata jsonb default '{}'::jsonb
+) returns uuid language plpgsql set search_path = '' as $$
+declare saved uuid;
+begin
+  insert into internal.operational_contract_audit(action, actor, target_type, target_id, metadata)
+  values (p_action, p_actor, p_target_type, p_target_id, p_metadata)
+  returning id into saved;
+  return saved;
+end;
+$$;
+
+\ir ../../supabase/migrations/20260819101600_lp_create_revision_atomic.sql
+\ir ../../supabase/migrations/20260827000200_enforce_complete_lp_submission.sql
+\ir ../../supabase/migrations/20260828000200_trial_manual_tasks_atomic.sql
+
+insert into public.ops_state(entity, payload, version, updated_by) values
+  ('students', '[{"id":"STU-1","name":"Atomic Trial","owner":"Abby","planner":"Tara","files":0}]', 1, 'fixture'),
+  ('lpItems', '[]', 1, 'fixture'),
+  ('tasks', '[]', 1, 'fixture'),
+  ('files', '[]', 1, 'fixture');
+
+do $trial_manual_runtime$
+declare
+  fields jsonb := '{
+    "responsibleOperations":"Abby",
+    "specifiedContentStatus":"需教务跟进",
+    "specialNotes":"",
+    "preparationFollowUp":"否",
+    "isUniversityStudent":false,
+    "universityMajor":"",
+    "universityYear":"",
+    "assignedTeacher":"Grace",
+    "subject":"English",
+    "oneSentenceDescription":"Atomic trial",
+    "locationTimezone":"Australia/Melbourne",
+    "contactPerson":"家长",
+    "timeMentioned":false,
+    "preferredTime":"",
+    "studentNameKnown":true,
+    "trialPaymentMethod":"免费试听",
+    "planner":"Tara",
+    "requestSentAt":"2099-08-28T02:00:00.000Z",
+    "contactParents":true,
+    "contactStudent":false,
+    "contactNote":"Parent first",
+    "writingRequired":true,
+    "writingNote":"Essay",
+    "paperRequired":true,
+    "paperNote":"PDF",
+    "preparationNote":"Prepare materials",
+    "studentName":"Atomic Trial",
+    "trialDurationMinutes":60,
+    "trialDurationNote":"Standard"
+  }';
+  expected jsonb := '{"students":1,"lpItems":1,"tasks":1,"files":1}';
+  intent jsonb;
+  receipt record;
+  replay record;
+  lookup record;
+  lp jsonb;
+  rules text[];
+  caught_state text;
+  caught_message text;
+begin
+  intent := jsonb_build_object(
+    'operation','create','studentId','STU-1','workflowType','试听 LP',
+    'fields',fields,'expectedVersions',expected
+  );
+  select * into receipt from public.mutate_lp_atomic(
+    'trial-manual-fixture-secret','00000000-0000-4000-8000-000000000101',intent,
+    'create','STU-1',null,null,'试听 LP',fields,null,
+    '{"owner":"Abby","planner":"Tara","mayReassign":false}',expected,'Abby'
+  );
+  if not receipt.applied
+     or (receipt.students_row).version <> 2
+     or (receipt.lp_items_row).version <> 3
+     or (receipt.tasks_row).version <> 3
+     or (receipt.files_row).version <> 1 then
+    raise exception 'trial_manual_atomic_versions_failed';
+  end if;
+
+  select value into lp
+  from jsonb_array_elements((receipt.lp_items_row).payload)
+  where value ->> 'id' = receipt.lp_item_id;
+  if lp ->> 'requestedAt' <> '2099-08-28T02:00:00.000Z'
+     or lp -> 'trialIntake' ->> 'planner' <> 'Tara'
+     or lp -> 'trialIntake' ->> 'paperRequired' <> 'true'
+     or lp -> 'fields' ->> 'specifiedContentStatus' <> '需教务跟进'
+     or lp -> 'fields' ->> 'requestSentAt' <> '2099-08-28T02:00:00.000Z'
+     or lp -> 'revisions' -> 0 -> 'after' ->> 'requestSentAt' <> '2099-08-28T02:00:00.000Z' then
+    raise exception 'trial_manual_lp_projection_failed';
+  end if;
+
+  select array_agg(task ->> 'ruleKey' order by task ->> 'ruleKey') into rules
+  from jsonb_array_elements((receipt.tasks_row).payload) task
+  where task ->> 'anchorBookingId' = receipt.lp_item_id;
+  if rules is distinct from array[
+    'lp.handover',
+    'trial.manual-request.paper-receive',
+    'trial.manual-request.paper-send',
+    'trial.manual-request.parent-progress-24h',
+    'trial.manual-request.parent-progress-48h',
+    'trial.manual-request.scheduling-alert-36h',
+    'trial.manual-request.specified-content',
+    'trial.manual-request.writing'
+  ] then
+    raise exception 'trial_manual_rule_projection_failed: %', rules;
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements((receipt.tasks_row).payload) task
+    where task ->> 'anchorBookingId' = receipt.lp_item_id
+      and task ->> 'ruleKey' in (
+        'trial.parent-follow-up','trial.scheduling','trial.parent-no-reply-follow-up',
+        'trial.teaching-control-escalation','trial.parent-progress-sync.1'
+      )
+  ) then
+    raise exception 'trial_legacy_rules_remained';
+  end if;
+  if internal.trial_manual_task_id(receipt.lp_item_id, 'trial.manual-request.writing')
+     <> (select task ->> 'id' from jsonb_array_elements((receipt.tasks_row).payload) task
+         where task ->> 'ruleKey' = 'trial.manual-request.writing') then
+    raise exception 'trial_manual_task_id_failed';
+  end if;
+
+  select * into replay from public.mutate_lp_atomic(
+    'trial-manual-fixture-secret','00000000-0000-4000-8000-000000000101',intent,
+    'create','STU-1',null,null,'试听 LP',fields,null,
+    '{"owner":"Abby","planner":"Tara","mayReassign":false}',expected,'Abby'
+  );
+  if replay.applied
+     or (replay.lp_items_row).version <> (receipt.lp_items_row).version
+     or (replay.tasks_row).version <> (receipt.tasks_row).version
+     or replay.audit_entry_id <> receipt.audit_entry_id then
+    raise exception 'trial_manual_replay_failed';
+  end if;
+
+  select * into lookup from public.get_lp_atomic_command_result(
+    'trial-manual-fixture-secret','00000000-0000-4000-8000-000000000101',intent,'Abby'
+  );
+  if lookup.lp_item_id <> receipt.lp_item_id or lookup.audit_entry_id <> receipt.audit_entry_id then
+    raise exception 'trial_manual_lookup_failed';
+  end if;
+
+  begin
+    perform public.mutate_lp_atomic(
+      'trial-manual-fixture-secret','00000000-0000-4000-8000-000000000101',
+      intent || jsonb_build_object('fields', fields || '{"paperNote":"Different"}'::jsonb),
+      'create','STU-1',null,null,'试听 LP',fields || '{"paperNote":"Different"}'::jsonb,null,
+      '{"owner":"Abby","planner":"Tara","mayReassign":false}',expected,'Abby'
+    );
+    raise exception 'trial_manual_idempotency_conflict_missing';
+  exception when others then
+    get stacked diagnostics caught_state = returned_sqlstate, caught_message = message_text;
+    if caught_state <> '23505' or caught_message <> 'lp_idempotency_conflict' then raise; end if;
+  end;
+end;
+$trial_manual_runtime$;
+
+select 'trial_manual_lp_atomic_runtime_ok' as result;

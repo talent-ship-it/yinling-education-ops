@@ -75,15 +75,26 @@ export type LpParentProgressRecord = Readonly<{
 }>;
 
 /**
- * Only trial LP workflows participate in the recurring parent-progress rule.
- * Keep this guard in the server-usable service layer so a caller cannot pass
- * every lpItems row and accidentally create reminders for unrelated flows.
+ * Only legacy trial LP workflows participate in the recurring progress rule.
+ * Handbook trial intake already owns explicit 24h/48h tasks, so feeding those
+ * LPs into this scheduler would recreate the superseded duplicate chain.
  */
 export function eligibleLpParentProgressRecords(records: readonly unknown[]): LpParentProgressRecord[] {
   return records.filter((record): record is LpParentProgressRecord => {
     if (!record || typeof record !== "object" || Array.isArray(record)) return false;
-    const workflowType = (record as Record<string, unknown>).workflowType;
-    return workflowType === "试听 LP" || workflowType === "换老师试听";
+    const candidate = record as Record<string, unknown>;
+    const workflowType = candidate.workflowType;
+    const trialIntake = candidate.trialIntake;
+    const usesHandbookProgressChain = Boolean(
+      trialIntake
+      && typeof trialIntake === "object"
+      && !Array.isArray(trialIntake)
+      && typeof (trialIntake as Record<string, unknown>).requestSentAt === "string"
+      && typeof (trialIntake as Record<string, unknown>).contactParents === "boolean"
+      && typeof (trialIntake as Record<string, unknown>).contactStudent === "boolean",
+    );
+    return (workflowType === "试听 LP" || workflowType === "换老师试听")
+      && !usesHandbookProgressChain;
   });
 }
 

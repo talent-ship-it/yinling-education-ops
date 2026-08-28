@@ -7,7 +7,6 @@ import {
   generateJiaowubaoTrialTasks,
   generateTrialManualRequestTasks,
   matchTrialScheduleEvents,
-  trialAtomicFields,
   trialIntakeFromFields,
   trialPlannerHintFromParticipants,
 } from "../lib/trial-operations";
@@ -41,18 +40,12 @@ const extendedFields = {
   trialDurationNote: "标准试听",
 } as const satisfies LpFieldValues;
 
-test("separates the manual trial intake from the legacy atomic LP field contract", () => {
+test("normalizes the complete manual trial intake for atomic persistence", () => {
   const intake = trialIntakeFromFields(extendedFields);
   assert.equal(intake.planner, "Tara");
   assert.equal(intake.trialDurationMinutes, 60);
   assert.equal(intake.contactParents, true);
   assert.equal(intake.contactStudent, true);
-
-  const atomic = trialAtomicFields(extendedFields);
-  assert.equal(atomic.subject, "English");
-  assert.equal(atomic.planner, undefined);
-  assert.equal(atomic.requestSentAt, undefined);
-  assert.equal(atomic.paperRequired, undefined);
 });
 
 test("maps only one unambiguous 教务宝 trial account to its planner", () => {

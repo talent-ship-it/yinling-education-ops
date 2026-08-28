@@ -335,10 +335,8 @@ import {
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_MANUAL_REQUEST_RULE_PREFIX,
   generateJiaowubaoTrialTasks,
-  generateTrialManualRequestTasks,
   matchTrialScheduleEvents,
   replaceRuleTasks,
-  trialAtomicFields,
   trialIntakeFromFields,
   type TrialIntake,
   type TrialScheduleLink,
@@ -11855,9 +11853,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
       if (lpAtomicBusyRef.current) return;
-      const fields = workflowType === "试听 LP"
-        ? trialAtomicFields(parsedLp.fields as LpFieldValues)
-        : parsedLp.fields as LpFieldValues;
+      const fields = parsedLp.fields as LpFieldValues;
       const expectedVersions = {
         students: studentsShared.version,
         lpItems: lpShared.version,
@@ -11899,38 +11895,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
         filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
         const committedStudentId = typeof body.studentId === "string" ? body.studentId : studentId;
-        if (workflowType === "试听 LP" && trialIntake && typeof body.lpItemId === "string") {
-          const lpItemId = body.lpItemId;
-          await lpShared.mutateAndCommit((current) => current.map((item) => item.id === lpItemId ? {
-            ...item,
-            requestedAt: trialIntake!.requestSentAt,
-            trialIntake,
-          } : item));
-          const studentName = trialIntake.studentName || workflowStudent?.name || "试听学员（姓名未提到）";
-          const generated = generateTrialManualRequestTasks({
-            lpItemId,
-            studentId: committedStudentId,
-            studentName,
-            owner,
-            specifiedContentStatus: String(fields.specifiedContentStatus ?? ""),
-            intake: trialIntake,
-            now: new Date(),
-          });
-          const legacyRequestRules = new Set([
-            "trial.parent-follow-up",
-            "trial.scheduling",
-            "trial.parent-no-reply-follow-up",
-            "trial.teaching-control-escalation",
-            "trial.parent-progress-sync.1",
-          ]);
-          await tasksShared.mutateAndCommit((current) => {
-            const withoutLegacy = current.filter((task) => !(task.anchorBookingId === lpItemId && legacyRequestRules.has(task.ruleKey ?? "")));
-            return sortTasksByDueAt(replaceRuleTasks(withoutLegacy, generated, {
-              anchor: lpItemId,
-              rulePrefixes: [TRIAL_MANUAL_REQUEST_RULE_PREFIX],
-            }));
-          });
-        }
         lpAtomicCommandKeysRef.current = removeLpAtomicPendingCommand(lpAtomicCommandKeysRef.current.values(), intent);
         persistLpAtomicPendingCommands(directEnrollmentStorage, sessionOperator, lpAtomicCommandKeysRef.current.values());
         setSelectedStudentId(committedStudentId);
