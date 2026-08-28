@@ -417,14 +417,14 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
     task({
       ...shared,
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
-      title: `《教务+教统》【发送试听 LP 与资料交接】<${input.studentName} · ${input.link.teacherName}>`,
+      title: `《教务+教统》【LP发给老师 + 资料对接】<${input.studentName} · ${input.link.teacherName}>`,
       dueAt: localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE),
       category: "LP",
     }),
     task({
       ...shared,
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
-      title: `《教务+教统》【跟进老师备课】<${input.studentName} · ${input.link.teacherName}>`,
+      title: `《教务+教统》【跟进老师备课内容】<${input.studentName} · ${input.link.teacherName}>`,
       dueAt: localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE),
       category: "LP",
     }),

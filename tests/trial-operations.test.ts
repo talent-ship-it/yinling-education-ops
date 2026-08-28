@@ -137,6 +137,11 @@ test("materializes N-2, N-1, payment and same-day tasks from one real 教务宝 
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
   assert.equal(tasks.length, 4);
   assert.ok(tasks.every((task) => task.ruleKey?.startsWith(TRIAL_JWB_RULE_PREFIX)));
-  assert.ok(tasks.some((task) => task.title.includes("今日试听") && task.title.includes("Grace Lin")));
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.title,
+    "《教务+教统》【LP发给老师 + 资料对接】<Heather孙晓琳 · Grace Lin>");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("prep-n1"))?.title,
+    "《教务+教统》【跟进老师备课内容】<Heather孙晓琳 · Grace Lin>");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.title,
+    "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 墨尔本 19:00 结束>");
   assert.ok(tasks.some((task) => task.title.includes("收取试听费") && task.owner === "Tara"));
 });
