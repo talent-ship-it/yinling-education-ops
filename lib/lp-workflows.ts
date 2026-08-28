@@ -391,20 +391,22 @@ export const LP_STAGES = ["待资料", "写作中", "待审核", "需修改", "�
 export type LpStage = (typeof LP_STAGES)[number];
 
 /** Business outcome is deliberately independent from the production stage. */
-export const LP_RESULT_STATUSES = [
+export const TRIAL_LEDGER_RESULT_STATUSES = [
   "试听成功",
   "试听失败",
   "有希望报名",
   "试听未进行",
   "在读试听成功",
   "在读试听失败",
+] as const;
+
+export const LP_RESULT_STATUSES = [
+  ...TRIAL_LEDGER_RESULT_STATUSES,
   "已完成",
   "已取消",
 ] as const;
 export type LpResultStatus = (typeof LP_RESULT_STATUSES)[number];
 
-const TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["试听成功", "试听失败", "有希望报名", "试听未进行"]);
-const ENROLLED_TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["在读试听成功", "在读试听失败"]);
 /** Non-trial LPs report whether the workflow itself was completed or cancelled. */
 const NON_TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["已完成", "已取消"]);
 const NON_TRIAL_WORKFLOW_TYPES = new Set<LpWorkflowType>([
@@ -416,8 +418,7 @@ const NON_TRIAL_WORKFLOW_TYPES = new Set<LpWorkflowType>([
 ]);
 
 export function allowedLpResultStatuses(type: LpWorkflowType): readonly LpResultStatus[] {
-  if (type === "试听 LP") return LP_RESULT_STATUSES.filter((status) => TRIAL_RESULT_STATUSES.has(status));
-  if (type === "换老师试听") return LP_RESULT_STATUSES.filter((status) => ENROLLED_TRIAL_RESULT_STATUSES.has(status));
+  if (type === "试听 LP" || type === "换老师试听") return TRIAL_LEDGER_RESULT_STATUSES;
   if (NON_TRIAL_WORKFLOW_TYPES.has(type)) return LP_RESULT_STATUSES.filter((status) => NON_TRIAL_RESULT_STATUSES.has(status));
   return [];
 }
