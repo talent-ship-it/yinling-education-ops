@@ -35,6 +35,17 @@ test("keeps the 900px workspace inside the viewport instead of restoring the 112
   assert.match(css, /\.app-shell\s*\{[^}]*grid-template-columns:236px minmax\(0,1fr\)/);
 });
 
+test("reveals the main-content skip link for keyboard focus", async () => {
+  const [client, css] = await Promise.all([
+    read("../app/operations-client.tsx"),
+    read("../app/globals.css"),
+  ]);
+
+  assert.match(client, /className="skip-link" href="#main-content"/);
+  assert.match(client, /<main className="content" id="main-content" tabIndex=\{-1\}>/);
+  assert.match(css, /\.skip-link:focus,\s*\.skip-link:focus-visible\s*\{\s*transform:translateY\(0\);\s*\}/);
+});
+
 test("lets desktop operators collapse the sidebar to an accessible icon rail", async () => {
   const [client, css] = await Promise.all([
     read("../app/operations-client.tsx"),
