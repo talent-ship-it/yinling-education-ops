@@ -131,6 +131,26 @@ function normalize(value: unknown) {
     .replace(/[\s\p{P}\p{S}_]+/gu, "");
 }
 
+const UNPROVEN_TEACHER_KEYS = new Set([
+  "",
+  "待核对",
+  "待核对老师映射",
+  "待定",
+  "未知",
+  "未知老师",
+  "未安排",
+  "未填写",
+  "na",
+  "none",
+  "tba",
+  "unknown",
+]);
+
+function provenTeacherKey(value: unknown) {
+  const key = normalize(value);
+  return UNPROVEN_TEACHER_KEYS.has(key) ? null : key;
+}
+
 function compactTrialStudentName(value: string) {
   return value.trim().replace(/([\p{Script=Latin}\p{N}])[\s\p{P}\p{S}_]+(?=\p{Script=Han})/gu, "$1");
 }
@@ -238,7 +258,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     workflowType?: string;
     stage?: string;
     requestedAt?: string;
-    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown }>;
+    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown }>;
     trialIntake?: TrialIntake;
   }>[];
   students: readonly Readonly<{ id: string; name: string; owner: string; planner?: string }>[];
@@ -253,15 +273,20 @@ export function matchTrialScheduleEvents(input: Readonly<{
   const matches: TrialScheduleMatch[] = [];
 
   const candidatesByLp = input.lpItems
-    .filter((candidate) => candidate.workflowType === "试听 LP" && candidate.stage !== "完成")
+    .filter((candidate) => (
+      candidate.workflowType === "试听 LP" || candidate.workflowType === "换老师试听"
+    ) && candidate.stage !== "完成")
     .flatMap((item) => {
       const student = students.get(item.studentId);
       if (!student) return [];
+      const teacherChangeTrial = item.workflowType === "换老师试听";
+      const expectedTeacherKey = teacherChangeTrial ? provenTeacherKey(item.fields?.newTeacher) : null;
+      if (teacherChangeTrial && !expectedTeacherKey) return [];
       const existingStudentName = item.trialIntake?.studentName || student.name;
       const nameKey = normalize(existingStudentName);
       if (!nameKey) return [];
       const plannerName = planner(item.trialIntake?.planner) || planner(student.planner) || "";
-      const paymentMethod = trialPaymentMethod(item.fields?.trialPaymentMethod);
+      const paymentMethod = teacherChangeTrial ? undefined : trialPaymentMethod(item.fields?.trialPaymentMethod);
       const requestTime = requestedAt(item);
       const candidates = input.events.filter((event) => {
         const start = new Date(event.startsAt).valueOf();
@@ -270,7 +295,9 @@ export function matchTrialScheduleEvents(input: Readonly<{
         const titleMatch = normalize(event.courseName).includes(nameKey);
         const hint = event.trialPlannerHint ?? null;
         const plannerMatches = !hint || normalize(hint) === normalize(plannerName);
-        return directStudentMatch || titleMatch && Boolean(hint) && plannerMatches;
+        const teacherMatches = !teacherChangeTrial
+          || provenTeacherKey(event.teacherName) === expectedTeacherKey;
+        return teacherMatches && (directStudentMatch || titleMatch && Boolean(hint) && plannerMatches);
       }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
       return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates }];
     });
@@ -496,7 +523,7 @@ export function completeTrialSchedulingReminderTasks(
   input: Readonly<{ lpItemId: string; eventId: string; completedAt: Date | string }>,
 ): OpsTask[] {
   const closedAt = new Date(input.completedAt).toISOString();
-  const managedRules: readonly string[] = TRIAL_SCHEDULING_REMINDER_RULE_KEYS;
+  const managedRules: readonly string[] = [...TRIAL_SCHEDULING_REMINDER_RULE_KEYS, "trial.scheduling"];
   return current.map((task) => task.anchorBookingId === input.lpItemId
     && typeof task.ruleKey === "string"
     && managedRules.includes(task.ruleKey)

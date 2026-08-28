@@ -141,6 +141,69 @@ test("keeps the proven student name when a directly linked event has a generic c
   assert.equal(matches[0]?.studentName, "Heather孙晓琳");
 });
 
+test("matches a teacher-change trial only when the raw Jiaowubao teacher exactly proves the requested new teacher", () => {
+  const base = {
+    lpItems: [{
+      id: "LP-TEACHER-CHANGE",
+      studentId: "STU-1",
+      workflowType: "换老师试听",
+      requestedAt: "2026-08-28T02:00:00.000Z",
+      fields: { newTeacher: "Zara Baker", preparationFollowUp: "是" },
+    }],
+    students: [{ id: "STU-1", name: "Heather 孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-2", name: "Zara Baker" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  } as const;
+  const event = {
+    eventId: "evt-teacher-change",
+    startsAt: "2026-08-30T03:00:00.000Z",
+    endsAt: "2026-08-30T04:00:00.000Z",
+    courseName: "Year 9 English",
+    teacherId: "TEA-2",
+    teacherName: "Zara Baker",
+    visibleStudentIds: ["STU-1"],
+    trialPlannerHint: "Tara" as const,
+  };
+
+  const matches = matchTrialScheduleEvents({ ...base, events: [event] });
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.link.teacherName, "Zara Baker");
+  assert.equal(matches[0]?.trialPaymentMethod, undefined);
+
+  for (const teacherName of [null, "待核对老师映射", "Grace Lin"] as const) {
+    assert.deepEqual(matchTrialScheduleEvents({
+      ...base,
+      events: [{ ...event, teacherName }],
+    }), [], `teacher evidence ${String(teacherName)} must fail closed`);
+  }
+});
+
+test("does not match a teacher-change trial when the requested new teacher is missing", () => {
+  const matches = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-TEACHER-CHANGE-MISSING",
+      studentId: "STU-1",
+      workflowType: "换老师试听",
+      requestedAt: "2026-08-28T02:00:00.000Z",
+      fields: { preparationFollowUp: "是" },
+    }],
+    students: [{ id: "STU-1", name: "Heather 孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-2", name: "Zara Baker" }],
+    events: [{
+      eventId: "evt-teacher-change-missing",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "Year 9 English",
+      teacherId: "TEA-2",
+      teacherName: "Zara Baker",
+      visibleStudentIds: ["STU-1"],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(matches, []);
+});
+
 test("takes a complete English-Chinese student name from a directly linked 教务宝 course title", () => {
   const provisionalFields = { ...extendedFields, studentName: "Daisy" };
   const matches = matchTrialScheduleEvents({
@@ -246,7 +309,13 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
     id: "TASK-FOREIGN",
     anchorBookingId: "LP-2",
   };
-  const current = manualTasks.concat(alreadyDone, frozen, foreign);
+  const legacyScheduling = {
+    ...manualTasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))!,
+    id: "TASK-LEGACY-SCHEDULING",
+    ruleKey: "trial.scheduling",
+    title: "完成试听排课",
+  };
+  const current = manualTasks.concat(alreadyDone, frozen, foreign, legacyScheduling);
 
   const completed = completeTrialSchedulingReminderTasks(current, {
     lpItemId: "LP-1",
@@ -268,6 +337,7 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
   assert.deepEqual(completed.find((task) => task.id === frozen.id)?.legacyEvidence, frozen.legacyEvidence);
   assert.notEqual(completed.find((task) => task.ruleKey?.endsWith("paper-receive"))?.status, "done");
   assert.equal(completed.find((task) => task.id === foreign.id)?.status, foreign.status);
+  assert.equal(completed.find((task) => task.id === legacyScheduling.id)?.status, "done");
 });
 
 test("materializes N-2, N-1, pending-payment and same-day tasks from one real 教务宝 event", () => {

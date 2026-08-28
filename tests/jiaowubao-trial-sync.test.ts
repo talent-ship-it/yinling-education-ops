@@ -84,6 +84,51 @@ function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?
   ];
 }
 
+function teacherChangeFixtureRows() {
+  return [
+    row("students", [{
+      id: "STU-TRIAL-1",
+      name: "Heather孙晓琳",
+      owner: "Ella",
+      planner: "Tara",
+      teacher: "Grace Lin",
+      jwbSourceRow: "member-1",
+    }]),
+    row("teachers", [
+      { id: "TEA-1", name: "Grace Lin" },
+      { id: "TEA-2", name: "Zara Baker" },
+    ]),
+    row("bookings", []),
+    row("lpItems", [{
+      id: "LP-TRIAL-1",
+      studentId: "STU-TRIAL-1",
+      title: "换老师试听",
+      workflowType: "换老师试听",
+      stage: "待跟进",
+      owner: "Ella",
+      due: "2026-08-29",
+      requestedAt: "2026-08-28T02:00:00.000Z",
+      fields: { newTeacher: "Zara Baker", preparationFollowUp: "是" },
+    }], 7),
+    row("tasks", [{
+      id: "TASK-LEGACY-SCHEDULING",
+      title: "完成试听排课",
+      owner: "Ella",
+      assignees: ["Ella"],
+      watchers: ["Ops Admin"],
+      studentId: "STU-TRIAL-1",
+      due: "2026-08-29 12:00",
+      dueAt: "2026-08-29T02:00:00.000Z",
+      status: "upcoming",
+      tone: "red",
+      category: "排课",
+      trigger: "试听 LP 创建后自动生成",
+      ruleKey: "trial.scheduling",
+      anchorBookingId: "LP-TRIAL-1",
+    }], 11),
+  ];
+}
+
 const rawEvent = {
   eventId: "evt-trial-1",
   sourceDate: "2026-09-03",
@@ -166,6 +211,41 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
     studentId: "STU-TRIAL-1",
     paymentManagedByBooking: false,
   }]);
+});
+
+test("links a teacher-change trial only to its requested teacher and never creates a payment task", () => {
+  const rows = teacherChangeFixtureRows();
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows,
+    references: command.matches,
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  const lp = projection.nextLpItems[0]!;
+  const student = (rows[0]!.payload as Record<string, unknown>[])[0]!;
+  assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
+  assert.equal(lp.trialIntake, undefined);
+  assert.equal((lp.fields as Record<string, unknown>).newTeacher, "Zara Baker");
+  assert.equal(student.teacher, "Grace Lin");
+  const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
+  assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
+    "trial.jiaowubao.lp-materials-n2",
+    "trial.jiaowubao.prep-n1",
+    "trial.jiaowubao.today",
+  ]);
+  assert.equal(projection.nextTasks.find((task) => task.id === "TASK-LEGACY-SCHEDULING")?.status, "done");
+  assert.ok(!projection.nextTasks.some((task) => task.ruleKey === "trial.jiaowubao.payment-n2"));
+});
+
+test("rejects a teacher-change trial when the Jiaowubao teacher differs from the requested new teacher", () => {
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({
+    rows: teacherChangeFixtureRows(),
+    references: command.matches,
+    rawEvents: [{ ...rawEvent, sourceTeacherLabel: "Grace Lin" }],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  }), /不能再无歧义匹配/);
 });
 
 test("rejects a browser reference when the complete source window makes the LP match ambiguous", () => {
