@@ -66,7 +66,7 @@ test("matches a trial LP to real schedule evidence by full course-title name and
       eventId: "evt-1",
       startsAt: "2026-08-30T03:00:00.000Z",
       endsAt: "2026-08-30T04:00:00.000Z",
-      courseName: "English试听 Heather孙晓琳",
+      courseName: "English试听 · Heather 孙晓琳",
       teacherId: "TEA-1",
       visibleStudentIds: [],
       trialPlannerHint: "Tara",
@@ -74,9 +74,56 @@ test("matches a trial LP to real schedule evidence by full course-title name and
     matchedAt: "2026-08-28T03:00:00.000Z",
   });
   assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.studentName, "Heather孙晓琳");
   assert.equal(matches[0]?.link.teacherName, "Grace Lin");
   assert.equal(matches[0]?.link.plannerHint, "Tara");
   assert.equal(matches[0]?.link.source, "jiaowubao-open-api");
+});
+
+test("keeps the proven student name when a directly linked event has a generic course title", () => {
+  const matches = matchTrialScheduleEvents({
+    lpItems: [{ id: "LP-GENERIC-TITLE", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) }],
+    students: [{ id: "STU-1", name: "Heather 孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-generic-title",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "Year 9 English",
+      teacherId: "TEA-1",
+      visibleStudentIds: ["STU-1"],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+
+  assert.equal(matches[0]?.studentName, "Heather孙晓琳");
+});
+
+test("takes a complete English-Chinese student name from a directly linked 教务宝 course title", () => {
+  const provisionalFields = { ...extendedFields, studentName: "Daisy" };
+  const matches = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-PROVISIONAL-NAME",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      trialIntake: trialIntakeFromFields(provisionalFields),
+    }],
+    students: [{ id: "STU-1", name: "Daisy", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-source-name",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "Heather 孙晓琳",
+      teacherId: "TEA-1",
+      visibleStudentIds: ["STU-1"],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+
+  assert.equal(matches[0]?.studentName, "Heather孙晓琳");
 });
 
 test("accepts the live browser Date used when matching a freshly loaded schedule", () => {

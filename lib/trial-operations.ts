@@ -112,6 +112,42 @@ function normalize(value: unknown) {
     .replace(/[\s\p{P}\p{S}_]+/gu, "");
 }
 
+function compactTrialStudentName(value: string) {
+  return value.trim().replace(/([\p{Script=Latin}\p{N}])[\s\p{P}\p{S}_]+(?=\p{Script=Han})/gu, "$1");
+}
+
+function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, directStudentMatch: boolean) {
+  const source = text(courseName).normalize("NFKC");
+  const expected = Array.from(normalize(expectedName));
+  if (!source) return undefined;
+
+  const searchable: string[] = [];
+  const spans: Array<Readonly<{ start: number; end: number }>> = [];
+  for (let offset = 0; offset < source.length;) {
+    const start = offset;
+    const codePoint = String.fromCodePoint(source.codePointAt(offset)!);
+    offset += codePoint.length;
+    for (const unit of codePoint.toLocaleLowerCase("en-AU")) {
+      if (/[\s\p{P}\p{S}_]/u.test(unit)) continue;
+      searchable.push(unit);
+      spans.push({ start, end: offset });
+    }
+  }
+
+  const matchAt = expected.length
+    ? searchable.findIndex((_, start) => expected.every((unit, index) => searchable[start + index] === unit))
+    : -1;
+  if (matchAt < 0) {
+    const compactSource = compactTrialStudentName(source);
+    const combinedEnglishChineseName = /^[\p{Script=Latin}\p{M}'’.-]+(?:\s+[\p{Script=Latin}\p{M}'’.-]+){0,3}\p{Script=Han}{2,8}$/u;
+    return directStudentMatch && combinedEnglishChineseName.test(compactSource) ? compactSource : undefined;
+  }
+  const first = spans[matchAt];
+  const last = spans[matchAt + expected.length - 1];
+  if (!first || !last) return undefined;
+  return compactTrialStudentName(source.slice(first.start, last.end));
+}
+
 function planner(value: unknown): TrialPlanner | null {
   const key = normalize(value);
   return TRIAL_PLANNERS.find((candidate) => normalize(candidate) === key) ?? null;
@@ -200,8 +236,8 @@ export function matchTrialScheduleEvents(input: Readonly<{
   for (const item of input.lpItems.filter((candidate) => candidate.workflowType === "试听 LP" && candidate.stage !== "完成")) {
     const student = students.get(item.studentId);
     if (!student) continue;
-    const studentName = item.trialIntake?.studentName || student.name;
-    const nameKey = normalize(studentName);
+    const existingStudentName = item.trialIntake?.studentName || student.name;
+    const nameKey = normalize(existingStudentName);
     if (!nameKey) continue;
     const plannerName = item.trialIntake?.planner || student.planner || "";
     const requestTime = requestedAt(item);
@@ -217,6 +253,11 @@ export function matchTrialScheduleEvents(input: Readonly<{
     }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
     const event = candidates[0];
     if (!event) continue;
+    const studentName = studentNameFromCourseTitle(
+      event.courseName,
+      existingStudentName,
+      event.visibleStudentIds.includes(student.id),
+    ) ?? existingStudentName;
     claimedEvents.add(event.eventId);
     matches.push(Object.freeze({
       lpItemId: item.id,
