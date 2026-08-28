@@ -785,6 +785,8 @@ export const LEGACY_OPERATION_TASK_ATOMIC_RPC = "mutate_legacy_operation_task_at
 export const LEGACY_OPERATION_TASK_COMMAND_RESULT_RPC = "get_legacy_operation_task_command_result";
 export const LP_ATOMIC_RPC = "mutate_lp_atomic";
 export const LP_ATOMIC_COMMAND_RESULT_RPC = "get_lp_atomic_command_result";
+export const TRIAL_LEDGER_ATOMIC_RPC = "mutate_trial_ledger_field_atomic";
+export const TRIAL_LEDGER_COMMAND_RESULT_RPC = "get_trial_ledger_command_result";
 export const STUDENT_FILE_LINK_ATOMIC_PUT_RPC = "put_student_file_link_atomic";
 export const APP_ACCOUNT_AUTH_STATE_RPC = "read_app_account_auth_state";
 export const APP_ACCOUNT_CREDENTIAL_RPC = "read_app_account_credential";
@@ -906,6 +908,18 @@ export type LpAtomicCommitResult = Readonly<{
 }>;
 
 export type LpAtomicCommandResult = Omit<LpAtomicCommitResult, "applied">;
+
+export type TrialLedgerCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  lp_item_id: string;
+  student_id: string;
+  field: string;
+  lp_items_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TrialLedgerCommandResult = Omit<TrialLedgerCommitResult, "applied">;
 
 export type TrialPaymentReconcileResult = Readonly<{
   run_key: string;
@@ -1190,6 +1204,44 @@ export function getLpAtomicCommandResult(input: {
 }) {
   const { secret } = configuration();
   return rpc<LpAtomicCommandResult[]>(LP_ATOMIC_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
+  });
+}
+
+/** Applies one manual trial-ledger field with field-level OCC under the LP row lock. */
+export function mutateTrialLedgerFieldAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  lpItemId: string;
+  field: string;
+  expectedValue: string | boolean | null;
+  value: string | boolean | null;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TrialLedgerCommitResult[]>(TRIAL_LEDGER_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_lp_item_id: input.lpItemId,
+    p_field: input.field,
+    p_expected_value: input.expectedValue,
+    p_value: input.value,
+    p_actor: input.actor,
+  });
+}
+
+/** Recovers the authoritative receipt for an already committed ledger edit. */
+export function getTrialLedgerCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TrialLedgerCommandResult[]>(TRIAL_LEDGER_COMMAND_RESULT_RPC, {
     p_secret: secret,
     p_command_uuid: input.commandKey,
     p_command_intent: input.commandIntent,

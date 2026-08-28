@@ -28,6 +28,7 @@ import {
   type LpResultStatus,
   type LpWorkflowType,
 } from "./lp-workflows";
+import { isTrialLedgerWorkflow } from "./trial-ledger";
 import {
   assertValidTeacherAvailability,
   expandTeacherAvailability,
@@ -1122,6 +1123,18 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
   }
   for (const item of next) {
     const existing = currentById.get(requiredText(item.id, "lpItem.id"));
+    if (existing && (isTrialLedgerWorkflow(existing) || isTrialLedgerWorkflow(item))) {
+      const dedicatedFields = [
+        "resultStatus",
+        "trialLedgerOverrides",
+        "trialPaid",
+        "trialLedgerNote",
+        "trialLedgerAudit",
+      ] as const;
+      if (dedicatedFields.some((field) => !same(existing[field], item[field]))) {
+        forbidden("试听复盘台账只能由专用字段级原子流程修改。");
+      }
+    }
     if ((!existing || !same(existing.resultStatus, item.resultStatus)) && item.resultStatus !== undefined) {
       if (typeof item.workflowType !== "string"
         || !(LP_WORKFLOW_TYPES as readonly string[]).includes(item.workflowType)

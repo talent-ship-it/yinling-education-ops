@@ -873,12 +873,12 @@ test("student follow-up and LP revision/audit histories are append-only", () => 
   assert.throws(() => transition("lpItems", [lp], [{ ...lp, revisionNumber: 0 }], lpRows), rejected);
 });
 
-test("generic LP saves enforce the workflow-specific result status allow-list", () => {
+test("generic non-trial LP saves enforce the workflow-specific result status allow-list", () => {
   const lp = {
     id: "LP-RESULT-1",
     studentId: "S-1",
-    title: "Trial LP",
-    workflowType: "试听 LP",
+    title: "Teacher LP",
+    workflowType: "老师新 LP",
     stage: "待审核",
     owner: "Abby",
     revisions: [],
@@ -888,13 +888,43 @@ test("generic LP saves enforce the workflow-specific result status allow-list", 
   };
   const rows = [...fixtureRows(), row("lpItems", [lp])];
 
-  assert.doesNotThrow(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "在读试听成功" }], rows));
-  assert.throws(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "报名成功" }], rows), rejected);
+  assert.doesNotThrow(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "已完成" }], rows));
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "试听成功" }], rows), rejected);
   assert.throws(() => transition("lpItems", [lp], [{
     ...lp,
-    workflowType: "老师新 LP",
+    workflowType: "试听 LP",
     resultStatus: "试听成功",
   }], rows), rejected);
+});
+
+test("generic LP saves cannot bypass the field-level trial ledger transaction", () => {
+  const lp = {
+    id: "LP-LEDGER-ATOMIC",
+    studentId: "S-1",
+    title: "Trial LP",
+    workflowType: "试听 LP",
+    stage: "待审核",
+    owner: "Abby",
+    revisions: [],
+    stageAudit: [],
+    resultAudit: [],
+    trialLedgerAudit: [],
+    revisionNumber: 0,
+  };
+  const rows = [...fixtureRows(), row("lpItems", [lp])];
+  const dedicated = /试听复盘台账只能由专用字段级原子流程修改/u;
+
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "试听成功" }], rows), dedicated);
+  assert.throws(() => transition("lpItems", [lp], [{
+    ...lp,
+    trialLedgerOverrides: { teacher: "Zara Baker" },
+  }], rows), dedicated);
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialPaid: false }], rows), dedicated);
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialLedgerNote: "Review" }], rows), dedicated);
+  assert.throws(() => transition("lpItems", [lp], [{
+    ...lp,
+    trialLedgerAudit: [{ id: "TLG-AUD-1", workflowId: lp.id }],
+  }], rows), dedicated);
 });
 
 test("generic LP saves cannot forge, edit, remove or prewrite Jiaowubao trial links", () => {
