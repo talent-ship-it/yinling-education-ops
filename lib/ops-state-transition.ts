@@ -21,6 +21,13 @@ import {
   type StudentLessonPackage,
 } from "./student-records";
 import {
+  LP_RESULT_STATUSES,
+  LP_WORKFLOW_TYPES,
+  validateLpResultStatus,
+  type LpResultStatus,
+  type LpWorkflowType,
+} from "./lp-workflows";
+import {
   assertValidTeacherAvailability,
   expandTeacherAvailability,
   type TeacherAvailabilityWindow,
@@ -1118,6 +1125,19 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
   }
   for (const item of next) {
     const existing = currentById.get(requiredText(item.id, "lpItem.id"));
+    if ((!existing || !same(existing.resultStatus, item.resultStatus)) && item.resultStatus !== undefined) {
+      if (typeof item.workflowType !== "string"
+        || !(LP_WORKFLOW_TYPES as readonly string[]).includes(item.workflowType)
+        || typeof item.resultStatus !== "string"
+        || !(LP_RESULT_STATUSES as readonly string[]).includes(item.resultStatus)) {
+        invalid("LP 业务结果或工作流类型不正确。");
+      }
+      try {
+        validateLpResultStatus(item.workflowType as LpWorkflowType, item.resultStatus as LpResultStatus);
+      } catch {
+        invalid("LP 业务结果不适用于当前工作流类型。");
+      }
+    }
     if (!existing) continue;
     for (const field of ["revisions", "stageAudit", "resultAudit"] as const) {
       assertAppendOnlyHistory(history(existing, field), history(item, field), `LP ${field}`);

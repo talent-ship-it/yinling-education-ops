@@ -873,6 +873,30 @@ test("student follow-up and LP revision/audit histories are append-only", () => 
   assert.throws(() => transition("lpItems", [lp], [{ ...lp, revisionNumber: 0 }], lpRows), rejected);
 });
 
+test("generic LP saves enforce the workflow-specific result status allow-list", () => {
+  const lp = {
+    id: "LP-RESULT-1",
+    studentId: "S-1",
+    title: "Trial LP",
+    workflowType: "试听 LP",
+    stage: "待审核",
+    owner: "Abby",
+    revisions: [],
+    stageAudit: [],
+    resultAudit: [],
+    revisionNumber: 0,
+  };
+  const rows = [...fixtureRows(), row("lpItems", [lp])];
+
+  assert.doesNotThrow(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "在读试听成功" }], rows));
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, resultStatus: "报名成功" }], rows), rejected);
+  assert.throws(() => transition("lpItems", [lp], [{
+    ...lp,
+    workflowType: "老师新 LP",
+    resultStatus: "试听成功",
+  }], rows), rejected);
+});
+
 test("generic saves cannot change import archive markers or mutate any archived-student business record", () => {
   const archivedStudent = {
     ...student,
