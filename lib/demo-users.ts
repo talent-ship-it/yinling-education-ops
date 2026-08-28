@@ -1,10 +1,12 @@
 export const DEMO_ADMIN_USER = "Nixon";
 export const DEMO_LIMITED_ADMIN_USER = "Ops Admin";
 export const DEMO_STAFF_USERS = ["Abby", "Ella", "Erin", "Molly", "Thea", "Tiffany", "Tara", "Eileen", "思佳"] as const;
+export const DEMO_OPERATIONS_USERS = [DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS] as const;
 export const DEMO_TEACHER_USERS = ["Helen Ceperkovic", "Shirley Li", "Anna Zhang", "Nixon（测试）"] as const;
 
 export type DemoLimitedAdminUser = typeof DEMO_LIMITED_ADMIN_USER;
 export type DemoStaffUser = (typeof DEMO_STAFF_USERS)[number];
+export type DemoOperationsUser = (typeof DEMO_OPERATIONS_USERS)[number];
 export type DemoTeacherUser = (typeof DEMO_TEACHER_USERS)[number];
 /**
  * Session identities can include any teacher currently present in the
@@ -36,6 +38,14 @@ export function resolveDemoStaffName(candidate: unknown): DemoStaffUser | null {
   const normalizedCandidate = normaliseDemoUserName(candidate);
   return DEMO_STAFF_USERS.find(
     (staff) => normaliseDemoUserName(staff) === normalizedCandidate,
+  ) ?? null;
+}
+
+export function resolveDemoOperationsName(candidate: unknown): DemoOperationsUser | null {
+  if (typeof candidate !== "string" || !candidate.trim()) return null;
+  const normalizedCandidate = normaliseDemoUserName(candidate);
+  return DEMO_OPERATIONS_USERS.find(
+    (operator) => normaliseDemoUserName(operator) === normalizedCandidate,
   ) ?? null;
 }
 

@@ -92,6 +92,18 @@ test("provisional trial intake is strict, canonical, and has no browser-generate
   }), /当前有效人员/);
 });
 
+test("provisional trial intake accepts a canonical approved admin owner", () => {
+  const command = parseLpAtomicCommand({
+    commandKey: "88888888-8888-4888-8888-888888888888",
+    operation: "create",
+    workflowType: "试听 LP",
+    fields: { ...fields, responsibleOperations: "Nixon" },
+    provisionalIntake: { course: "Year 8 English", guardianWechat: "Daisy", owner: "nixon", planner: "tara" },
+    expectedVersions: versions,
+  });
+  assert.deepEqual(command.provisionalIntake, { course: "Year 8 English", guardianWechat: "Daisy", owner: "Nixon", planner: "Tara" });
+});
+
 function stateRows(student: Record<string, unknown>): OpsStateRow[] {
   const updated = "2026-08-20T00:00:00.000Z";
   return [
@@ -101,6 +113,20 @@ function stateRows(student: Record<string, unknown>): OpsStateRow[] {
     { entity: "files", payload: [], version: versions.files, updated_at: updated, updated_by: "seed" },
   ];
 }
+
+test("full admin can create an LP for a student owned by an approved admin account", () => {
+  const rows = stateRows({ id: "STU-1", owner: "Nixon", planner: "Tara" });
+  const command = parseLpAtomicCommand({
+    commandKey: "99999999-9999-4999-8999-999999999999",
+    operation: "create",
+    studentId: "STU-1",
+    workflowType: "试听 LP",
+    fields: { ...fields, responsibleOperations: "Nixon" },
+    expectedVersions: versions,
+  });
+  const prepared = prepareLpAtomicCommand({ command, rows, canOperateStudent: true, actor: "Nixon", fullAdmin: true });
+  assert.deepEqual(prepared.authorizedAssignment, { owner: "Nixon", planner: "Tara", mayReassign: true });
+});
 
 test("ordinary staff cannot transfer LP ownership and handover planner is authoritative", () => {
   const rows = stateRows({ id: "STU-1", owner: "Abby", planner: "Tara" });

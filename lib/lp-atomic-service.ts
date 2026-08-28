@@ -1,5 +1,5 @@
 import type { OpsStateRow } from "@/lib/ops-store";
-import { resolveDemoStaffName } from "@/lib/demo-users";
+import { resolveDemoOperationsName, resolveDemoStaffName } from "@/lib/demo-users";
 import {
   LP_WORKFLOW_TYPES,
   type LpFieldValues,
@@ -106,7 +106,7 @@ function parseFields(value: unknown, operation: LpAtomicOperation, workflowType?
 function provisionalIntake(value: unknown): LpProvisionalIntake {
   if (!record(value)) throw new LpAtomicError("invalid_command", "provisionalIntake 必须是对象。");
   exactKeys(value, ["course", "guardianWechat", "owner", "planner"], "provisionalIntake");
-  const owner = resolveDemoStaffName(text(value.owner, "provisionalIntake.owner", 120));
+  const owner = resolveDemoOperationsName(text(value.owner, "provisionalIntake.owner", 120));
   const planner = resolveDemoStaffName(text(value.planner, "provisionalIntake.planner", 120));
   if (!owner || !planner) throw new LpAtomicError("invalid_assignment", "临时学生的教务和规划老师必须是当前有效人员。");
   return {
@@ -226,7 +226,7 @@ export function prepareLpAtomicCommand(input: { command: LpAtomicCommand; rows: 
   const requestedPlanner = input.command.workflowType === "学生报名交接" && typeof input.command.fields.planner === "string"
     ? input.command.fields.planner.trim()
     : lockedPlanner;
-  const owner = input.fullAdmin ? resolveDemoStaffName(requestedOwner) : requestedOwner === lockedOwner ? lockedOwner : null;
+  const owner = input.fullAdmin ? resolveDemoOperationsName(requestedOwner) : requestedOwner === lockedOwner ? lockedOwner : null;
   const planner = input.command.workflowType === "学生报名交接"
     ? input.fullAdmin ? resolveDemoStaffName(requestedPlanner) : requestedPlanner === lockedPlanner ? resolveDemoStaffName(lockedPlanner) : null
     : lockedPlanner;
