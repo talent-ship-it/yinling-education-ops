@@ -258,6 +258,21 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
   assert.equal((filterOpsStateRows(cannotRows, cannotPlanner)
     .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
     .some((task) => task.id === "TASK-TRIAL-PAYMENT"), true);
+  const editedCannot = {
+    ...cannotTask,
+    completionNote: "已联系家长，暂未得到答复",
+    result: "无法完成：已联系家长，暂未得到答复",
+  };
+  const editedCannotPayload = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: cannotPayload,
+    submittedPayload: [editedCannot],
+    context: cannotPlanner,
+  }) as Array<Record<string, unknown>>;
+  assert.equal(
+    editedCannotPayload.find((task) => task.id === "TASK-TRIAL-PAYMENT")?.result,
+    "无法完成：已联系家长，暂未得到答复",
+  );
   const reopenedTask = Object.fromEntries(Object.entries(cannotTask)
     .filter(([key]) => !["closedAt", "completionOutcome", "result"].includes(key))) as Record<string, unknown>;
   reopenedTask.status = "overdue";

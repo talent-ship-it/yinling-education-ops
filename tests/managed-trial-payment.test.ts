@@ -182,6 +182,21 @@ test("managed payment lifecycle permits notes and Can't Do without permitting pa
     closedAt: "2026-08-28T01:00:00.000Z",
   };
   assert.equal(managedTrialPaymentTaskLifecycleChange(noted, cannot), "cannot_do");
+  const editedCannot = {
+    ...cannot,
+    completionNote: "已联系家长，暂未得到答复",
+    result: "无法完成：已联系家长，暂未得到答复",
+  };
+  assert.equal(managedTrialPaymentTaskLifecycleChange(cannot, editedCannot), "note");
+  assert.equal(managedTrialPaymentTaskLifecycleChange(cannot, {
+    ...cannot,
+    completionNote: "已联系家长，暂未得到答复",
+  }), null);
+  assert.equal(managedTrialPaymentTaskLifecycleChange(cannot, {
+    ...cannot,
+    completionNote: undefined,
+    result: undefined,
+  }), null);
   assert.equal(managedTrialPaymentTaskLifecycleChange(cannot, noted), "reopen");
   assert.equal(managedTrialPaymentTaskLifecycleChange(task, {
     ...task,

@@ -4781,8 +4781,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return;
     }
     const trimmed = note.trim();
+    const cannotDo = task.status === "done" && task.completionOutcome === "cannot_do";
+    if (cannotDo && !trimmed) {
+      notify("无法完成原因不能为空");
+      return;
+    }
     void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId
-      ? { ...item, completionNote: trimmed || undefined }
+      ? {
+          ...item,
+          completionNote: trimmed || undefined,
+          ...(cannotDo ? { result: `无法完成：${trimmed}` } : {}),
+        }
       : item)).then(() => notify(trimmed ? "任务备注已保存" : "任务备注已清除"))
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "任务备注保存失败"));
   };

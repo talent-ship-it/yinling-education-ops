@@ -211,7 +211,25 @@ export function managedTrialPaymentTaskLifecycleChange(
     || JSON.stringify(stableTaskFields(existingValue)) !== JSON.stringify(stableTaskFields(replacementValue))
     || !validCompletionNote(replacementValue.completionNote)) return null;
 
-  if (sameLifecycleFieldsExceptNote(existingValue, replacementValue)
+  const existingCannotDo = existingValue.status === "done"
+    && existingValue.tone === "red"
+    && existingValue.completionOutcome === "cannot_do"
+    && validCompletionNote(existingValue.completionNote, true)
+    && existingValue.result === `无法完成：${existingValue.completionNote}`
+    && canonicalInstant(existingValue.closedAt);
+  if (existingCannotDo
+    && replacementValue.status === "done"
+    && replacementValue.tone === "red"
+    && replacementValue.completionOutcome === "cannot_do"
+    && validCompletionNote(replacementValue.completionNote, true)
+    && replacementValue.result === `无法完成：${replacementValue.completionNote}`
+    && replacementValue.closedAt === existingValue.closedAt
+    && replacementValue.completionNote !== existingValue.completionNote) {
+    return "note";
+  }
+
+  if (!existingCannotDo
+    && sameLifecycleFieldsExceptNote(existingValue, replacementValue)
     && JSON.stringify(existingValue.completionNote) !== JSON.stringify(replacementValue.completionNote)) {
     return "note";
   }

@@ -478,6 +478,16 @@ test("trial payment reminders allow only note, Can't Do and reopen outside the d
     closedAt: "2026-08-20T01:00:00.000Z",
   };
   transition("tasks", [noted], [cannot]);
+  const editedCannot = {
+    ...cannot,
+    completionNote: "已联系家长，暂未得到答复",
+    result: "无法完成：已联系家长，暂未得到答复",
+  };
+  transition("tasks", [cannot], [editedCannot]);
+  assert.throws(() => transition("tasks", [cannot], [{
+    ...cannot,
+    completionNote: "已联系家长，暂未得到答复",
+  }]), rejected);
   transition("tasks", [cannot], [noted]);
   assert.throws(() => transition("tasks", [paymentTask], []), rejected);
   assert.throws(() => transition("tasks", [paymentTask], [{
