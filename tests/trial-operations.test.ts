@@ -271,3 +271,34 @@ test("compresses N-2, N-1 and payment reminders onto intake day for a next-day t
     ]);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.dueAt, "2026-09-03T08:00:00.000Z");
 });
+
+test("uses the bounded 教务宝 teacher label even before an internal teacher ID mapping exists", () => {
+  const match = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-SOURCE-TEACHER",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields: extendedFields,
+      trialIntake: trialIntakeFromFields(extendedFields),
+    }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [],
+    events: [{
+      eventId: "evt-source-teacher",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "Heather孙晓琳",
+      teacherId: null,
+      teacherName: "Zara Baker",
+      visibleStudentIds: ["STU-1"],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  })[0]!;
+
+  assert.equal(match.link.teacherId, null);
+  assert.equal(match.link.teacherName, "Zara Baker");
+  assert.ok(generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" })
+    .filter((task) => !task.ruleKey?.endsWith("payment-n2"))
+    .every((task) => task.title.includes("Zara Baker")));
+});

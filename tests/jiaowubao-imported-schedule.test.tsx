@@ -250,6 +250,7 @@ test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", 
       endsAt: "2026-08-22T01:00:00.000Z",
       courseName: "Year 9 Maths",
       teacherId: "TEA-001",
+      teacherName: "Zara Baker",
       availabilityEffect: "blocks_teacher_ava",
       visibleStudentIds: ["STU-001"],
       visibleStudentsTruncated: false,
@@ -260,6 +261,7 @@ test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", 
   });
   assert.equal(page.state, "stale");
   assert.equal(page.hasMore, true);
+  assert.equal(page.events[0]?.teacherName, "Zara Baker");
   const freshPage = parseJiaowubaoImportedSchedulePage({ ...page, state: "complete", freshness: "fresh" });
   assert.equal(freshPage.state, "complete");
   assert.equal(freshPage.freshness, "fresh");

@@ -17,6 +17,7 @@ export type JiaowubaoImportedScheduleEvent = Readonly<{
   endsAt: string;
   courseName: string | null;
   teacherId: string | null;
+  teacherName?: string | null;
   trialPlannerHint: JiaowubaoTrialPlannerHint;
   availabilityEffect: "display_only" | "blocks_teacher_ava";
   visibleStudentIds: readonly string[];
@@ -59,7 +60,7 @@ const SOURCE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SOURCE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCE_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const PAGE_FIELDS = new Set(["state", "events", "invalidTimeEventCount", "hasMore", "nextCursor", "freshness", "empty"]);
-const EVENT_FIELDS = new Set(["eventId", "sourceDate", "startsAt", "endsAt", "courseName", "teacherId", "trialPlannerHint", "availabilityEffect", "visibleStudentIds", "visibleStudentsTruncated"]);
+const EVENT_FIELDS = new Set(["eventId", "sourceDate", "startsAt", "endsAt", "courseName", "teacherId", "teacherName", "trialPlannerHint", "availabilityEffect", "visibleStudentIds", "visibleStudentsTruncated"]);
 const CURSOR_FIELDS = new Set(["token"]);
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -109,6 +110,10 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
     }
     if (event.courseName !== null && typeof event.courseName !== "string") throw new Error("教务宝同步课表课程格式无效。");
     if (event.teacherId !== null && typeof event.teacherId !== "string") throw new Error("教务宝同步课表老师格式无效。");
+    if (event.teacherName !== undefined && event.teacherName !== null
+      && (typeof event.teacherName !== "string" || !event.teacherName.trim() || event.teacherName.length > 240)) {
+      throw new Error("教务宝同步课表老师姓名格式无效。");
+    }
     const trialPlannerHint = event.trialPlannerHint ?? null;
     if (trialPlannerHint !== null && !["Tara", "Eileen", "Abby"].includes(String(trialPlannerHint))) {
       throw new Error("教务宝同步课表试听账号映射无效。");
@@ -127,6 +132,7 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
       endsAt: event.endsAt,
       courseName: event.courseName,
       teacherId: event.teacherId,
+      ...(event.teacherName !== undefined ? { teacherName: event.teacherName as string | null } : {}),
       trialPlannerHint: trialPlannerHint as JiaowubaoTrialPlannerHint,
       availabilityEffect: event.availabilityEffect,
       visibleStudentIds: event.visibleStudentIds,

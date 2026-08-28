@@ -45,7 +45,9 @@ test("API route keeps source mapping server-only and separates session/reader/up
   assert.doesNotMatch(route, /importSource !== "" && importSource !== "master"/);
   assert.match(mapping, /normalizeStudentImportName\(participant\.label\)[\s\S]*studentImportAutomaticJwbNameKey\(participant\.label\)/);
   assert.match(route, /mapJiaowubaoSnapshotParticipants\(\s*event\.sourceParticipants/);
-  assert.doesNotMatch(route, /price_mem|\bprice\b|sourceStudentMemberIds.*return|sourceTeacherLabel.*return/);
+  assert.doesNotMatch(route, /price_mem|\bprice\b|sourceStudentMemberIds.*return/);
+  assert.match(route, /context\.scope === "trial" \? \{ teacherName: event\.sourceTeacherLabel \} : \{\}/);
+  assert.doesNotMatch(route, /sourceTeacherLabel:/);
   assert.match(opsStore, /p_scope_student_name_keys: input\.studentNameKeys/);
   assert.match(opsStore, /Server-only raw receipt from the Open API source snapshot reader/);
 });

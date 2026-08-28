@@ -67,6 +67,7 @@ export type TrialScheduleEventLike = Readonly<{
   endsAt: string;
   courseName: string | null;
   teacherId: string | null;
+  teacherName?: string | null;
   visibleStudentIds: readonly string[];
   trialPlannerHint?: JiaowubaoTrialPlannerHint;
 }>;
@@ -232,7 +233,9 @@ export function matchTrialScheduleEvents(input: Readonly<{
         endsAt: canonicalInstant(event.endsAt, "endsAt"),
         courseName: event.courseName,
         teacherId: event.teacherId,
-        teacherName: event.teacherId ? teachers.get(event.teacherId) ?? "待核对老师映射" : "待核对老师映射",
+        teacherName: optionalText(event.teacherName)
+          ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)
+          ?? "待核对老师映射",
         plannerHint: event.trialPlannerHint ?? null,
         matchedAt,
       }),

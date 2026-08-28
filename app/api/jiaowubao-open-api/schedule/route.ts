@@ -460,6 +460,11 @@ function publicPage(
       endsAt: event.endsAt,
       courseName: context.scope === "availability" ? null : event.courseName,
       teacherId,
+      // Trial handover wording must use the teacher name exactly as 教务宝
+      // supplied it. Expose only this bounded display label, only after the
+      // event has passed the authenticated trial/student scope check above;
+      // raw source IDs and participant records remain server-only.
+      ...(context.scope === "trial" ? { teacherName: event.sourceTeacherLabel } : {}),
       trialPlannerHint: context.scope === "availability"
         ? null
         : trialPlannerHintFromParticipants(event.sourceParticipants),
