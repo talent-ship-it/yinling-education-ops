@@ -163,6 +163,7 @@ function TaskRows({
             <label>{editing.mode === "cannot" ? "无法完成原因（必填）" : "任务备注"}
               <textarea
                 autoFocus
+                maxLength={1000}
                 rows={2}
                 required={editing.mode === "cannot"}
                 value={editing.value}

@@ -45,6 +45,18 @@ const JIAOWUBAO_ANCHOR = /^JWB:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const LP_ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 
 type RecordValue = Record<string, unknown>;
+export type ManagedTrialPaymentTaskLifecycleChange = "note" | "cannot_do" | "reopen";
+
+const MANAGED_TASK_LIFECYCLE_FIELDS = new Set([
+  "closedAt",
+  "completionNote",
+  "completionOutcome",
+  "result",
+  "status",
+  "tone",
+]);
+const OPEN_TASK_STATUSES = new Set(["overdue", "today", "upcoming", "waiting"]);
+const CANONICAL_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 function isRecord(value: unknown): value is RecordValue {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -159,6 +171,74 @@ export function managedTrialPaymentTaskKind(
 
 export function isManagedTrialPaymentTask(task: PaymentTaskCandidate) {
   return managedTrialPaymentTaskKind(task) !== null;
+}
+
+function stableTaskFields(value: RecordValue) {
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !MANAGED_TASK_LIFECYCLE_FIELDS.has(key)));
+}
+
+function validCompletionNote(value: unknown, required = false) {
+  if (value === undefined) return !required;
+  return typeof value === "string"
+    && value === value.trim()
+    && value.length >= 1
+    && value.length <= 1_000;
+}
+
+function canonicalInstant(value: unknown) {
+  if (typeof value !== "string" || !CANONICAL_INSTANT.test(value)) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.valueOf()) && parsed.toISOString() === value;
+}
+
+function sameLifecycleFieldsExceptNote(existing: RecordValue, replacement: RecordValue) {
+  const fields = ["closedAt", "completionOutcome", "result", "status", "tone"] as const;
+  return fields.every((field) => JSON.stringify(existing[field]) === JSON.stringify(replacement[field]));
+}
+
+/**
+ * Allows only note/Can't Do/reopen edits while keeping payment confirmation,
+ * task identity, recipients and every authority-owned field immutable.
+ */
+export function managedTrialPaymentTaskLifecycleChange(
+  existingValue: unknown,
+  replacementValue: unknown,
+): ManagedTrialPaymentTaskLifecycleChange | null {
+  if (!isRecord(existingValue) || !isRecord(replacementValue)
+    || !isManagedTrialPaymentTask(existingValue)
+    || managedTrialPaymentTaskKind(existingValue) !== managedTrialPaymentTaskKind(replacementValue)
+    || JSON.stringify(stableTaskFields(existingValue)) !== JSON.stringify(stableTaskFields(replacementValue))
+    || !validCompletionNote(replacementValue.completionNote)) return null;
+
+  if (sameLifecycleFieldsExceptNote(existingValue, replacementValue)
+    && JSON.stringify(existingValue.completionNote) !== JSON.stringify(replacementValue.completionNote)) {
+    return "note";
+  }
+
+  const note = replacementValue.completionNote;
+  if (OPEN_TASK_STATUSES.has(String(existingValue.status))
+    && replacementValue.status === "done"
+    && replacementValue.tone === "red"
+    && replacementValue.completionOutcome === "cannot_do"
+    && validCompletionNote(note, true)
+    && replacementValue.result === `无法完成：${note}`
+    && canonicalInstant(replacementValue.closedAt)) {
+    return "cannot_do";
+  }
+
+  if (existingValue.status === "done"
+    && existingValue.completionOutcome === "cannot_do"
+    && OPEN_TASK_STATUSES.has(String(replacementValue.status))
+    && ["red", "amber", "blue"].includes(String(replacementValue.tone))
+    && replacementValue.completionOutcome === undefined
+    && replacementValue.result === undefined
+    && replacementValue.closedAt === undefined
+    && JSON.stringify(existingValue.completionNote) === JSON.stringify(replacementValue.completionNote)) {
+    return "reopen";
+  }
+
+  return null;
 }
 
 /** Client-side defense in depth; the server projection remains authoritative. */

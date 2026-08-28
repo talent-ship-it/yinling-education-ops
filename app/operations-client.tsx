@@ -4719,16 +4719,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "任务完成保存失败"));
   };
 
-  const taskUsesDedicatedCompletion = (task: Task) => Boolean(
-    task.category === "考试" && task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/)
-      || isManagedTrialPaymentTask(task),
+  const taskUsesDedicatedLifecycle = (task: Task) => Boolean(
+    task.category === "考试" && task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/),
   );
 
   const cannotDoTask = (taskId: string, reason: string) => {
     const task = tasks.find((item) => item.id === taskId);
     const note = reason.trim();
     if (!task || task.status === "done" || !note) return;
-    if (taskUsesDedicatedCompletion(task)) {
+    if (taskUsesDedicatedLifecycle(task)) {
       notify("该任务由专用业务流程管理，不能直接标记为无法完成");
       return;
     }
@@ -4750,7 +4749,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const reopenTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "done") return;
-    if (taskUsesDedicatedCompletion(task)) {
+    if (taskUsesDedicatedLifecycle(task)
+      || isManagedTrialPaymentTask(task) && task.completionOutcome !== "cannot_do") {
       notify("该任务需要从对应业务流程撤销，不能直接恢复");
       return;
     }
@@ -4776,7 +4776,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const updateTaskNote = (taskId: string, note: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task) return;
-    if (taskUsesDedicatedCompletion(task)) {
+    if (taskUsesDedicatedLifecycle(task)) {
       notify("该任务由专用业务流程管理，暂不能直接修改备注");
       return;
     }

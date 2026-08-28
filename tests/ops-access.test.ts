@@ -228,6 +228,47 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
   assert.deepEqual(managedTrialPaymentStudentProjections(paymentRows, unassigned), []);
 
   const taskPayload = paymentRows.find((item) => item.entity === "tasks")!.payload as Array<Record<string, unknown>>;
+  const paymentTask = taskPayload.find((task) => task.id === "TASK-TRIAL-PAYMENT")!;
+  const notedTask = { ...paymentTask, completionNote: "等待家长确认" };
+  const notedPayload = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: taskPayload,
+    submittedPayload: [notedTask],
+    context: planner,
+  }) as Array<Record<string, unknown>>;
+  assert.equal(notedPayload.find((task) => task.id === "TASK-TRIAL-PAYMENT")?.completionNote, "等待家长确认");
+  const cannotTask = {
+    ...notedTask,
+    status: "done",
+    tone: "red",
+    completionOutcome: "cannot_do",
+    result: "无法完成：等待家长确认",
+    closedAt: "2026-08-28T01:00:00.000Z",
+  };
+  const cannotPayload = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: taskPayload,
+    submittedPayload: [cannotTask],
+    context: planner,
+  }) as Array<Record<string, unknown>>;
+  const cannotRows = paymentRows.map((item) => item.entity === "tasks"
+    ? { ...item, payload: cannotPayload }
+    : item);
+  const cannotPlanner = buildOpsAccessContext(cannotRows, "Tara", false, "staff");
+  assert.equal((filterOpsStateRows(cannotRows, cannotPlanner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+    .some((task) => task.id === "TASK-TRIAL-PAYMENT"), true);
+  const reopenedTask = Object.fromEntries(Object.entries(cannotTask)
+    .filter(([key]) => !["closedAt", "completionOutcome", "result"].includes(key))) as Record<string, unknown>;
+  reopenedTask.status = "overdue";
+  reopenedTask.tone = "red";
+  const reopenedPayload = mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: cannotPayload,
+    submittedPayload: [reopenedTask],
+    context: cannotPlanner,
+  }) as Array<Record<string, unknown>>;
+  assert.equal(reopenedPayload.find((task) => task.id === "TASK-TRIAL-PAYMENT")?.status, "overdue");
   assert.throws(() => mergeScopedPayload({
     entity: "tasks",
     currentPayload: taskPayload,

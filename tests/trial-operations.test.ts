@@ -9,6 +9,7 @@ import {
   generateJiaowubaoTrialTasks,
   generateTrialManualRequestTasks,
   matchTrialScheduleEvents,
+  replaceRuleTasks,
   trialIntakeFromFields,
   trialPlannerHintFromParticipants,
 } from "../lib/trial-operations";
@@ -403,6 +404,39 @@ test("Jiaowubao payment reminders follow LP authority and defer to a linked book
   assert.equal(hasPayment("免费试听"), false);
   assert.equal(hasPayment("付费试听（已付费）"), false);
   assert.equal(hasPayment("付费试听（未付费）", true), false);
+});
+
+test("Jiaowubao task reconciliation preserves an operator note", () => {
+  const generated = generateJiaowubaoTrialTasks({
+    lpItemId: "LP-NOTE",
+    studentId: "STU-NOTE",
+    studentName: "备注测试学生",
+    owner: "Ella",
+    planner: "Tara",
+    preparationFollowUp: false,
+    trialPaymentMethod: "付费试听（未付费）",
+    requestSentAt: "2026-08-28T02:00:00.000Z",
+    link: {
+      source: "jiaowubao-open-api",
+      eventId: "evt-note",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "备注测试学生",
+      teacherId: "TEA-1",
+      teacherName: "Grace Lin",
+      plannerHint: "Tara",
+      matchedAt: "2026-08-28T03:00:00.000Z",
+    },
+    now: "2026-08-28T03:00:00.000Z",
+  });
+  const current = generated.map((task) => task.ruleKey === "trial.jiaowubao.payment-n2"
+    ? { ...task, completionNote: "等待家长确认" }
+    : task);
+  const reconciled = replaceRuleTasks(current, generated, {
+    anchor: "JWB:evt-note",
+    rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
+  });
+  assert.equal(reconciled.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.completionNote, "等待家长确认");
 });
 
 test("omits the N-1 teacher-preparation task when the handover explicitly says no", () => {

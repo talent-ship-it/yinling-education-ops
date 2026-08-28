@@ -11,9 +11,10 @@ import {
   type ManagedExamProjectionSnapshot,
   type ManagedExamStudentProjection,
 } from "@/lib/managed-exam-refresh";
-import type {
-  ManagedTrialPaymentProjectionSnapshot,
-  ManagedTrialPaymentStudentProjection,
+import {
+  managedTrialPaymentTaskLifecycleChange,
+  type ManagedTrialPaymentProjectionSnapshot,
+  type ManagedTrialPaymentStudentProjection,
 } from "@/lib/managed-trial-payment";
 import type { OpsStateRow, OpsVersionRow } from "@/lib/ops-store";
 
@@ -144,9 +145,10 @@ function managedTrialPaymentTaskIdentity(value: RecordValue) {
 function managedTrialPaymentTaskMatchesStudent(context: OpsAccessContext, value: RecordValue) {
   const identity = managedTrialPaymentTaskIdentity(value);
   const studentId = rowStudentId(value);
-  const openStatus = typeof value.status === "string"
-    && ["overdue", "today", "upcoming", "waiting"].includes(value.status);
-  if (!identity || !openStatus || !studentId || !context.allActiveStudentIds.has(studentId)) return false;
+  const actionableStatus = typeof value.status === "string"
+    && (["overdue", "today", "upcoming", "waiting"].includes(value.status)
+      || value.status === "done" && value.completionOutcome === "cannot_do");
+  if (!identity || !actionableStatus || !studentId || !context.allActiveStudentIds.has(studentId)) return false;
   const planner = identity.kind === "booking"
     ? context.studentPlannerById.get(studentId)
     : context.trialLpPlannerById.get(identity.lpItemId);
@@ -762,6 +764,12 @@ export function mergeScopedPayload(input: {
     const touchesManagedTrialPaymentTask = entity === "tasks"
       && Boolean(managedTrialPaymentTaskIdentity(existing) || managedTrialPaymentTaskIdentity(replacement));
     if (touchesManagedTrialPaymentTask) {
+      if (context.staff
+        && managedTrialPaymentTaskLifecycleChange(existing, replacement)
+        && managedTrialPaymentTaskMatchesStudent(context, existing)
+        && managedTrialPaymentTaskMatchesStudent(context, replacement)
+        && taskAssignedTo(existing, context.actor)
+        && taskAssignedTo(replacement, context.actor)) return replacement;
       throw new OpsAccessError("试听收费提醒只能通过专用确认流程完成。");
     }
     if (touchesManagedExamTask && context.staff) {

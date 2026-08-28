@@ -5,7 +5,10 @@ import {
 } from "./booking-capacity-service";
 import type { OpsAccessContext } from "./ops-access";
 import type { OpsStateRow } from "./ops-store";
-import { isManagedTrialPaymentTask } from "./managed-trial-payment";
+import {
+  isManagedTrialPaymentTask,
+  managedTrialPaymentTaskLifecycleChange,
+} from "./managed-trial-payment";
 import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
   isCanonicalTaskDueAt,
@@ -762,6 +765,11 @@ function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
     if ((!existing && isManagedTrialPaymentTask(task))
       || (existing && !same(existing, task)
         && (isManagedTrialPaymentTask(existing) || isManagedTrialPaymentTask(task)))) {
+      if (existing && managedTrialPaymentTaskLifecycleChange(existing, task)) {
+        assertTaskDeadline(task);
+        assertTaskWatchers(task);
+        continue;
+      }
       forbidden("试听收费提醒只能由专用收费流程创建、完成或恢复。");
     }
     // This narrow no-op exception lets application code and the one-time

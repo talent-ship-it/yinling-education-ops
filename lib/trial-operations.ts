@@ -655,7 +655,10 @@ export function replaceRuleTasks(
   const next = current.filter((item) => !managed(item) || item.status === "done" && !generatedById.has(item.id));
   for (const candidate of generated) {
     const existing = current.find((item) => item.id === candidate.id);
-    next.push(existing?.status === "done" ? existing : candidate);
+    const candidateWithNote = existing?.completionNote
+      ? { ...candidate, completionNote: existing.completionNote }
+      : candidate;
+    next.push(existing?.status === "done" ? existing : candidateWithNote);
   }
   return next;
 }

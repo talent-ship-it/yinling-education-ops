@@ -7,6 +7,7 @@ import {
   managedTrialPaymentTaskKind,
   managedTrialPaymentSnapshotCanReplace,
   managedTrialPaymentSnapshotIsCurrent,
+  managedTrialPaymentTaskLifecycleChange,
   parseManagedTrialPaymentCompletionReceipt,
   parseManagedTrialPaymentAuthorityVersions,
   parseManagedTrialPaymentProjectionSnapshot,
@@ -153,4 +154,41 @@ test("payment authority versions and exact planner recipient fail closed", () =>
   assert.equal(isManagedTrialPaymentTaskRecipient(jiaowubaoTask, "tara"), true);
   assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, requestAnchorBookingId: "" }), false);
   assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, anchorBookingId: "JWB:event/1" }), false);
+});
+
+test("managed payment lifecycle permits notes and Can't Do without permitting payment confirmation", () => {
+  const task = {
+    id: "TASK-PAY-LIFECYCLE",
+    title: "确认试听收费",
+    studentId: "STU-1",
+    category: "试听",
+    ruleKey: "trial.payment-urgent",
+    anchorBookingId: "BOOK-1",
+    owner: "Tara",
+    assignees: ["Tara"],
+    watchers: ["Ops Admin"],
+    status: "today",
+    tone: "red",
+    dueAt: "2026-08-28T00:00:00.000Z",
+  };
+  const noted = { ...task, completionNote: "家长晚些回复" };
+  assert.equal(managedTrialPaymentTaskLifecycleChange(task, noted), "note");
+  const cannot = {
+    ...noted,
+    status: "done",
+    tone: "red",
+    completionOutcome: "cannot_do",
+    result: "无法完成：家长晚些回复",
+    closedAt: "2026-08-28T01:00:00.000Z",
+  };
+  assert.equal(managedTrialPaymentTaskLifecycleChange(noted, cannot), "cannot_do");
+  assert.equal(managedTrialPaymentTaskLifecycleChange(cannot, noted), "reopen");
+  assert.equal(managedTrialPaymentTaskLifecycleChange(task, {
+    ...task,
+    status: "done",
+    tone: "green",
+    result: "已由规划老师确认试听付款",
+  }), null);
+  assert.equal(managedTrialPaymentTaskLifecycleChange(task, { ...noted, owner: "Abby" }), null);
+  assert.equal(managedTrialPaymentTaskLifecycleChange(task, { ...task, completionNote: "x".repeat(1001) }), null);
 });

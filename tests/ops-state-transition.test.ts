@@ -451,7 +451,7 @@ test("generic task writes require unique legal watchers and preserve Ops Admin e
   assert.throws(() => transition("tasks", [validTask], [{ ...validTask, title: "Updated", watchers: undefined }]), rejected);
 });
 
-test("trial payment reminders are immutable outside the dedicated payment flow", () => {
+test("trial payment reminders allow only note, Can't Do and reopen outside the dedicated payment flow", () => {
   const paymentTask = {
     id: "TASK-TRIAL-PAYMENT",
     studentId: "S-1",
@@ -467,12 +467,29 @@ test("trial payment reminders are immutable outside the dedicated payment flow",
     dueAt: "2026-08-20T00:00:00.000Z",
   };
   transition("tasks", [paymentTask], [paymentTask]);
+  const noted = { ...paymentTask, completionNote: "等待家长确认" };
+  transition("tasks", [paymentTask], [noted]);
+  const cannot = {
+    ...noted,
+    status: "done",
+    tone: "red",
+    completionOutcome: "cannot_do",
+    result: "无法完成：等待家长确认",
+    closedAt: "2026-08-20T01:00:00.000Z",
+  };
+  transition("tasks", [noted], [cannot]);
+  transition("tasks", [cannot], [noted]);
   assert.throws(() => transition("tasks", [paymentTask], []), rejected);
   assert.throws(() => transition("tasks", [paymentTask], [{
     ...paymentTask,
     status: "done",
     tone: "green",
     result: "已由规划老师确认试听付款",
+  }]), rejected);
+  assert.throws(() => transition("tasks", [paymentTask], [{
+    ...paymentTask,
+    completionNote: "等待家长确认",
+    owner: "Abby",
   }]), rejected);
   assert.throws(() => transition("tasks", [], [paymentTask]), rejected);
 });
