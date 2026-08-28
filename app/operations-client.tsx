@@ -2669,6 +2669,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [selectedTeacherId, setSelectedTeacherId] = useState(defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
   const [taskFilter, setTaskFilter] = useState<ToDoFilter>("all");
+  const [skipLinkFocused, setSkipLinkFocused] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [legacyTaskDeadlineDraft, setLegacyTaskDeadlineDraft] = useState<Task | null>(null);
   const [legacyTaskDeadlineBusy, setLegacyTaskDeadlineBusy] = useState(false);
@@ -13103,7 +13104,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   return (
     <div ref={interfaceRootRef} className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`} data-interface-language={displayPreferences.language} data-text-size={displayPreferences.textSize} data-list-density={displayPreferences.density} data-motion-preference={displayPreferences.motion}>
-      <a className="skip-link" href="#main-content">{displayPreferences.language === "en-AU" ? "Skip to main content" : "跳到主要内容"}</a>
+      <a
+        className={`skip-link${skipLinkFocused ? " is-focused" : ""}`}
+        href="#main-content"
+        onBlur={() => setSkipLinkFocused(false)}
+        onFocus={() => setSkipLinkFocused(true)}
+      >{displayPreferences.language === "en-AU" ? "Skip to main content" : "跳到主要内容"}</a>
       <aside className={`sidebar${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
         <div className="sidebar-header">
           <div className="brand"><span className="brand-mark">吟</span><div><strong>吟领教务</strong></div></div>
