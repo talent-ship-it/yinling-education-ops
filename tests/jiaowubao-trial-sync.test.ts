@@ -1,0 +1,265 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  JiaowubaoTrialSyncError,
+  jiaowubaoTrialSyncPendingDisposition,
+  jiaowubaoTrialSyncScope,
+  parseJiaowubaoTrialSyncCommand,
+  persistJiaowubaoTrialSyncPendingCommands,
+  readJiaowubaoTrialSyncPendingCommands,
+  upsertJiaowubaoTrialSyncPendingCommand,
+} from "../lib/jiaowubao-trial-sync";
+import { prepareJiaowubaoTrialSyncProjection } from "../lib/jiaowubao-trial-sync-projection";
+import type { OpsStateRow } from "../lib/ops-store";
+
+const revision = `sha256:${"a".repeat(64)}`;
+const command = {
+  commandKey: "0f849d3a-af99-48dc-a504-50539b24cdb1",
+  snapshotRevision: revision,
+  window: {
+    startsAt: "2026-08-28T00:00:00.000Z",
+    endsAt: "2026-09-29T00:00:00.000Z",
+  },
+  matches: [{ lpItemId: "LP-TRIAL-1", eventId: "evt-trial-1", startsAt: "2026-09-03T08:00:00.000Z" }],
+  expectedVersions: { lpItems: 7, tasks: 11 },
+} as const;
+
+function row(entity: string, payload: unknown, version = 1): OpsStateRow {
+  return { entity, payload, version, updated_at: "2026-08-28T00:00:00.000Z", updated_by: "fixture" };
+}
+
+function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?: unknown } = {}) {
+  const intake = {
+    planner: "Tara",
+    requestSentAt: "2026-08-28T02:00:00.000Z",
+    contactParents: true,
+    contactStudent: false,
+    writingRequired: true,
+    paperRequired: true,
+    studentName: "Heather孙晓琳",
+    trialDurationMinutes: 60,
+  };
+  const lp = {
+    id: "LP-TRIAL-1",
+    studentId: "STU-TRIAL-1",
+    title: "试听 LP",
+    workflowType: "试听 LP",
+    stage: "待跟进",
+    owner: "Ella",
+    due: "2026-08-29",
+    requestedAt: intake.requestSentAt,
+    fields: { preparationFollowUp: "是", trialPaymentMethod: "付费试听（未付费）" },
+    trialIntake: intake,
+    ...(extra.schedule ? { trialSchedule: extra.schedule } : {}),
+  };
+  const manualReminder = {
+    id: "TASK-MANUAL-24H",
+    title: "《教务+教统》【向家长交待排课进度】<Heather孙晓琳> <QA家长>",
+    owner: "Ella",
+    assignees: ["Ella", "Ops Admin"],
+    watchers: ["Ops Admin"],
+    studentId: "STU-TRIAL-1",
+    due: "2026-08-29 12:00",
+    dueAt: "2026-08-29T02:00:00.000Z",
+    status: "upcoming",
+    tone: "blue",
+    category: "试听",
+    trigger: "试听 LP 信息交接后按手册自动生成",
+    ruleKey: "trial.manual-request.parent-progress-24h",
+    anchorBookingId: "LP-TRIAL-1",
+  };
+  return [
+    row("students", [{
+      id: "STU-TRIAL-1",
+      name: "Heather孙晓琳",
+      owner: "Ella",
+      planner: "Tara",
+      jwbSourceRow: "member-1",
+    }]),
+    row("teachers", [{ id: "TEA-1", name: "Zara Baker" }]),
+    row("bookings", extra.bookings ?? []),
+    row("lpItems", [lp], 7),
+    row("tasks", [manualReminder, ...(extra.tasks ?? [])], 11),
+  ];
+}
+
+const rawEvent = {
+  eventId: "evt-trial-1",
+  sourceDate: "2026-09-03",
+  startsAt: "2026-09-03T08:00:00.000Z",
+  endsAt: "2026-09-03T09:00:00.000Z",
+  courseName: "English试听 Heather 孙晓琳",
+  sourceTeacherId: "source-teacher-9",
+  sourceTeacherLabel: "Zara Baker",
+  sourceParticipants: [
+    { memberId: "member-1", label: "Heather孙晓琳" },
+    { memberId: null, label: "试听学员A" },
+  ],
+  sourceStudentsTruncated: false,
+} as const;
+
+test("accepts only canonical bounded trial-sync commands", () => {
+  assert.deepEqual(parseJiaowubaoTrialSyncCommand(command), command);
+  assert.throws(() => parseJiaowubaoTrialSyncCommand({ ...command, extra: true }), JiaowubaoTrialSyncError);
+  assert.throws(() => parseJiaowubaoTrialSyncCommand({
+    ...command,
+    matches: [...command.matches, { ...command.matches[0], eventId: "evt-2" }],
+  }), /同一 LP/);
+  assert.throws(() => parseJiaowubaoTrialSyncCommand({
+    ...command,
+    matches: [{ ...command.matches[0], startsAt: "2026-09-03T08:00:00Z" }],
+  }), /身份或时间无效/);
+  assert.throws(() => parseJiaowubaoTrialSyncCommand({
+    ...command,
+    window: { ...command.window, endsAt: "2026-12-01T00:00:00.000Z" },
+  }), /超出允许范围/);
+  assert.throws(() => parseJiaowubaoTrialSyncCommand({
+    ...command,
+    window: { startsAt: "2026-09-04T00:00:00.000Z", endsAt: "2026-09-05T00:00:00.000Z" },
+  }), /不在固定课表窗口/);
+});
+
+test("keeps actor-scoped pending commands for unknown results and clears terminal outcomes", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+  const scope = jiaowubaoTrialSyncScope(command);
+  const pending = { scope, ...command };
+  const entries = upsertJiaowubaoTrialSyncPendingCommand([], pending);
+  persistJiaowubaoTrialSyncPendingCommands(storage, "Ella", entries.values());
+  assert.deepEqual(readJiaowubaoTrialSyncPendingCommands(storage, "Ella").get(scope), pending);
+  assert.equal(readJiaowubaoTrialSyncPendingCommands(storage, "Tara").size, 0);
+  assert.equal(jiaowubaoTrialSyncPendingDisposition({ status: 503, committed: false, hasAuthoritativeRows: false }), "retain");
+  assert.equal(jiaowubaoTrialSyncPendingDisposition({ status: 409, committed: false, hasAuthoritativeRows: false }), "clear");
+  assert.equal(jiaowubaoTrialSyncPendingDisposition({ status: 200, committed: true, hasAuthoritativeRows: true }), "clear");
+});
+
+test("derives linked LP evidence and the complete handbook task chain from raw JWB evidence", () => {
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows(),
+    references: command.matches,
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  const lp = projection.nextLpItems[0]!;
+  assert.equal((lp.trialSchedule as Record<string, unknown>).eventId, "evt-trial-1");
+  assert.equal((lp.trialSchedule as Record<string, unknown>).sourceRevision, command.snapshotRevision);
+  assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
+  const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
+  assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
+    "trial.jiaowubao.lp-materials-n2",
+    "trial.jiaowubao.payment-n2",
+    "trial.jiaowubao.prep-n1",
+    "trial.jiaowubao.today",
+  ]);
+  assert.ok(jwbTasks.every((task) => task.requestAnchorBookingId === "LP-TRIAL-1"));
+  assert.equal(jwbTasks.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.owner, "Tara");
+  assert.equal(projection.nextTasks.find((task) => task.id === "TASK-MANUAL-24H")?.status, "done");
+  assert.deepEqual(projection.evidence, [{
+    lpItemId: "LP-TRIAL-1",
+    eventId: "evt-trial-1",
+    studentId: "STU-TRIAL-1",
+    paymentManagedByBooking: false,
+  }]);
+});
+
+test("rejects a browser reference when the complete source window makes the LP match ambiguous", () => {
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows(),
+    references: command.matches,
+    rawEvents: [rawEvent, {
+      ...rawEvent,
+      eventId: "evt-trial-2",
+      startsAt: "2026-09-04T08:00:00.000Z",
+      endsAt: "2026-09-04T09:00:00.000Z",
+    }],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  }), /不能再无歧义匹配/);
+});
+
+test("rejects a browser-selected event that is not the server-recomputed source match", () => {
+  const unrelated = {
+    ...rawEvent,
+    eventId: "evt-unrelated",
+    startsAt: "2026-09-04T08:00:00.000Z",
+    endsAt: "2026-09-04T09:00:00.000Z",
+    courseName: "Year 8 Science",
+    sourceParticipants: [{ memberId: "unknown-member", label: "试听学员B" }],
+  } as const;
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows(),
+    references: [{ lpItemId: "LP-TRIAL-1", eventId: unrelated.eventId, startsAt: unrelated.startsAt }],
+    rawEvents: [rawEvent, unrelated],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  }), /不能再无歧义匹配/);
+});
+
+test("rejects a referenced source event whose participant evidence was truncated", () => {
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows(),
+    references: command.matches,
+    rawEvents: [{ ...rawEvent, sourceStudentsTruncated: true }],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  }), /不能再无歧义匹配/);
+});
+
+test("defers payment to a real linked trial booking and removes an obsolete open JWB reminder", () => {
+  const existingSchedule = {
+    source: "jiaowubao-open-api",
+    sourceRevision: command.snapshotRevision,
+    eventId: "evt-trial-1",
+    startsAt: rawEvent.startsAt,
+    endsAt: rawEvent.endsAt,
+    courseName: rawEvent.courseName,
+    teacherId: "TEA-1",
+    teacherName: "Zara Baker",
+    plannerHint: "Tara",
+    matchedAt: "2026-08-27T03:00:00.000Z",
+  };
+  const bookingPayment = {
+    id: "TASK-BOOKING-PAYMENT",
+    title: "试听收费",
+    owner: "Tara",
+    studentId: "STU-TRIAL-1",
+    due: "2026-09-01",
+    dueAt: "2026-09-01T08:00:00.000Z",
+    status: "upcoming",
+    tone: "amber",
+    category: "试听",
+    trigger: "试听排课",
+    ruleKey: "trial.payment-n2",
+    anchorBookingId: "BOOKING-TRIAL-1",
+    requestAnchorBookingId: "LP-TRIAL-1",
+  };
+  const obsoleteJwbPayment = {
+    ...bookingPayment,
+    id: "TASK-OLD-JWB-PAYMENT",
+    ruleKey: "trial.jiaowubao.payment-n2",
+    anchorBookingId: "JWB:evt-trial-1",
+    requestAnchorBookingId: undefined,
+  };
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows({
+      schedule: existingSchedule,
+      bookings: [{ id: "BOOKING-TRIAL-1", kind: "试听", studentId: "STU-TRIAL-1" }],
+      tasks: [bookingPayment, obsoleteJwbPayment],
+    }),
+    references: command.matches,
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.equal(projection.evidence[0]?.paymentManagedByBooking, true);
+  assert.ok(!projection.nextTasks.some((task) => task.ruleKey === "trial.jiaowubao.payment-n2"));
+  assert.ok(projection.nextTasks.some((task) => task.id === "TASK-BOOKING-PAYMENT"));
+  assert.equal((projection.nextLpItems[0]!.trialSchedule as Record<string, unknown>).matchedAt,
+    "2026-08-27T03:00:00.000Z");
+});

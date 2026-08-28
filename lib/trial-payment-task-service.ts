@@ -1,4 +1,8 @@
 import type { DemoSessionRole } from "@/lib/demo-session-token";
+import {
+  isManagedTrialPaymentTaskRecipient,
+  managedTrialPaymentTaskKind,
+} from "@/lib/managed-trial-payment";
 import type { OpsStateRow } from "@/lib/ops-store";
 
 type RecordValue = Record<string, unknown>;
@@ -32,6 +36,18 @@ function fail(code: TrialPaymentTaskServiceError["code"], message: string): neve
 
 function isRecord(value: unknown): value is RecordValue {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const REMINDER_PAYMENT_METHODS = new Set([
+  "后置付费试听",
+  "付费试听（未付费）",
+  "在读学生付费试听",
+]);
+
+function canonicalTrialPlanner(value: unknown) {
+  if (typeof value !== "string") return "";
+  const key = value.trim().toLocaleLowerCase("en-AU");
+  return ["Tara", "Eileen", "Abby"].find((planner) => planner.toLocaleLowerCase("en-AU") === key) ?? "";
 }
 
 function records(rows: readonly OpsStateRow[], entity: string) {
@@ -78,23 +94,56 @@ export function authorizeTrialPaymentTaskCompletion(input: {
   const matches = tasks.filter((task) => task.id === input.command.taskId);
   if (matches.length !== 1) fail("task_not_found", "没有找到这项试听收费提醒。");
   const task = matches[0];
+  const kind = managedTrialPaymentTaskKind(task);
   const bookingId = typeof task.anchorBookingId === "string" ? task.anchorBookingId : "";
   const studentId = typeof task.studentId === "string" ? task.studentId : "";
-  if ((task.ruleKey !== "trial.payment-n2" && task.ruleKey !== "trial.payment-urgent")
-    || task.category !== "试听"
-    || task.owner !== input.actor
-    || !Array.isArray(task.assignees) || task.assignees.length !== 1 || task.assignees[0] !== input.actor
-    || !Array.isArray(task.watchers) || task.watchers.length !== 1 || task.watchers[0] !== "Ops Admin") {
+  if (!kind || !isManagedTrialPaymentTaskRecipient(task, input.actor)) {
     fail("task_forbidden", "这项试听收费提醒没有分配给当前规划老师。");
   }
-  const booking = records(input.rows, "bookings").filter((candidate) => candidate.id === bookingId
-    && candidate.studentId === studentId && candidate.kind === "试听");
-  const student = records(input.rows, "students").filter((candidate) => candidate.id === studentId
-    && candidate.importArchived !== true && candidate.planner === input.actor);
-  if (booking.length !== 1 || student.length !== 1) {
-    fail("task_forbidden", "试听排课或规划老师分配已经变化，请刷新后重试。");
+  const students = records(input.rows, "students").filter((candidate) => candidate.id === studentId
+    && candidate.importArchived !== true);
+  if (students.length !== 1) {
+    fail("task_forbidden", "试听学生或规划老师分配已经变化，请刷新后重试。");
   }
-  records(input.rows, "lpItems");
+  const student = students[0]!;
+  const lpItems = records(input.rows, "lpItems");
   records(input.rows, "teachers");
-  return { task, booking: booking[0], student: student[0] };
+  if (kind === "booking") {
+    const booking = records(input.rows, "bookings").filter((candidate) => candidate.id === bookingId
+      && candidate.studentId === studentId && candidate.kind === "试听");
+    if (booking.length !== 1 || student.planner !== input.actor) {
+      fail("task_forbidden", "试听排课或规划老师分配已经变化，请刷新后重试。");
+    }
+    return { kind, task, booking: booking[0], student } as const;
+  }
+
+  records(input.rows, "bookings");
+  const lpItemId = typeof task.requestAnchorBookingId === "string" ? task.requestAnchorBookingId : "";
+  const eventId = bookingId.startsWith("JWB:") ? bookingId.slice(4) : "";
+  const lpMatches = lpItems.filter((candidate) => candidate.id === lpItemId
+    && candidate.studentId === studentId
+    && candidate.workflowType === "试听 LP"
+    && candidate.stage !== "完成");
+  if (lpMatches.length !== 1) {
+    fail("task_forbidden", "教务宝试听 LP 已变化，请刷新后重试。");
+  }
+  const lpItem = lpMatches[0]!;
+  const schedule = isRecord(lpItem.trialSchedule) ? lpItem.trialSchedule : null;
+  const intake = isRecord(lpItem.trialIntake) ? lpItem.trialIntake : null;
+  const fields = isRecord(lpItem.fields) ? lpItem.fields : null;
+  const planner = canonicalTrialPlanner(
+    typeof intake?.planner === "string" && intake.planner.trim()
+      ? intake.planner
+      : student.planner,
+  );
+  if (schedule?.source !== "jiaowubao-open-api"
+    || typeof schedule.sourceRevision !== "string"
+    || !/^sha256:[a-f0-9]{64}$/.test(schedule.sourceRevision)
+    || schedule.eventId !== eventId
+    || !planner
+    || planner !== input.actor
+    || !REMINDER_PAYMENT_METHODS.has(String(fields?.trialPaymentMethod ?? ""))) {
+    fail("task_forbidden", "教务宝试听排课或规划老师分配已经变化，请刷新后重试。");
+  }
+  return { kind, task, lpItem, student } as const;
 }

@@ -80,6 +80,47 @@ test("matches a trial LP to real schedule evidence by full course-title name and
   assert.equal(matches[0]?.link.source, "jiaowubao-open-api");
 });
 
+test("does not match when two source events are equally valid for one trial LP", () => {
+  const event = {
+    startsAt: "2026-08-30T03:00:00.000Z",
+    endsAt: "2026-08-30T04:00:00.000Z",
+    courseName: "English试听 · Heather 孙晓琳",
+    teacherId: "TEA-1",
+    visibleStudentIds: [] as string[],
+    trialPlannerHint: "Tara" as const,
+  };
+  const matches = matchTrialScheduleEvents({
+    lpItems: [{ id: "LP-AMBIGUOUS", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) }],
+    students: [{ id: "STU-1", name: "Heather 孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{ ...event, eventId: "evt-1" }, { ...event, eventId: "evt-2", startsAt: "2026-08-31T03:00:00.000Z", endsAt: "2026-08-31T04:00:00.000Z" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(matches, []);
+});
+
+test("does not assign one source event to the first of two competing trial LPs", () => {
+  const matches = matchTrialScheduleEvents({
+    lpItems: [
+      { id: "LP-COMPETING-1", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) },
+      { id: "LP-COMPETING-2", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) },
+    ],
+    students: [{ id: "STU-1", name: "Heather 孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-only",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "English试听 · Heather 孙晓琳",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(matches, []);
+});
+
 test("keeps the proven student name when a directly linked event has a generic course title", () => {
   const matches = matchTrialScheduleEvents({
     lpItems: [{ id: "LP-GENERIC-TITLE", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) }],

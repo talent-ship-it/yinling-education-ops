@@ -14,6 +14,7 @@ import {
 } from "../app/jiaowubao-imported-schedule.tsx";
 
 const opaqueCursor = `${"a".repeat(32)}.${"b".repeat(32)}`;
+const snapshotRevision = `sha256:${"c".repeat(64)}`;
 
 const feed: JiaowubaoImportedScheduleFeed = {
   state: "complete",
@@ -32,6 +33,7 @@ const feed: JiaowubaoImportedScheduleFeed = {
   ],
   invalidTimeEventCount: 2,
   paginationComplete: true,
+  revision: snapshotRevision,
 };
 
 test("renders imported schedule events as a separate, clearly read-only source panel", () => {
@@ -202,6 +204,7 @@ test("only produces an AVA-eligible feed after every opaque cursor page is prese
     invalidTimeEventCount: 2,
     hasMore: true,
     nextCursor: { token: "opaque-page-1" },
+    revision: snapshotRevision,
   };
   const secondPage: JiaowubaoImportedSchedulePage = {
     state: "complete",
@@ -219,11 +222,13 @@ test("only produces an AVA-eligible feed after every opaque cursor page is prese
     invalidTimeEventCount: 0,
     hasMore: false,
     nextCursor: null,
+    revision: snapshotRevision,
   };
 
   const completed = completeJiaowubaoImportedSchedulePages([firstPage, secondPage]);
   assert.equal(completed.paginationComplete, true);
   assert.equal(completed.invalidTimeEventCount, 2);
+  assert.equal(completed.revision, snapshotRevision);
   assert.deepEqual(completed.events.map((event) => event.eventId), ["JWB-EVT-001-opaque", "JWB-EVT-002-opaque"]);
   assert.equal(jiaowubaoImportedAvailabilityBlocksForTeacher(completed, "TEA-001").length, 2);
   assert.equal("runToken" in completed, false);
@@ -237,6 +242,10 @@ test("only produces an AVA-eligible feed after every opaque cursor page is prese
   assert.throws(() => completeJiaowubaoImportedSchedulePages([firstPage]), /尚未读取完成/);
   assert.throws(() => completeJiaowubaoImportedSchedulePages([{ ...firstPage, state: "reset", hasMore: false, nextCursor: null }]), /已重置/);
   assert.throws(() => completeJiaowubaoImportedSchedulePages([firstPage, { ...secondPage, invalidTimeEventCount: 1 }]), /异常时间计数不一致/);
+  assert.throws(() => completeJiaowubaoImportedSchedulePages([
+    firstPage,
+    { ...secondPage, revision: `sha256:${"d".repeat(64)}` },
+  ]), /分页版本不一致/);
   assert.throws(() => completeJiaowubaoImportedSchedulePages([
     firstPage,
     { ...secondPage, hasMore: true, nextCursor: { token: "opaque-page-1" } },
@@ -259,6 +268,7 @@ test("only produces an AVA-eligible feed after every opaque cursor page is prese
 test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", () => {
   const page = parseJiaowubaoImportedSchedulePage({
     state: "stale",
+    revision: snapshotRevision,
     freshness: "stale",
     empty: false,
     events: [{
@@ -280,9 +290,11 @@ test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", 
   assert.equal(page.state, "stale");
   assert.equal(page.hasMore, true);
   assert.equal(page.events[0]?.teacherName, "Zara Baker");
+  assert.equal(page.revision, snapshotRevision);
   const freshPage = parseJiaowubaoImportedSchedulePage({ ...page, state: "complete", freshness: "fresh" });
   assert.equal(freshPage.state, "complete");
   assert.equal(freshPage.freshness, "fresh");
+  assert.throws(() => parseJiaowubaoImportedSchedulePage({ ...page, revision: "sha256:not-a-hash" }), /版本无效/);
   assert.throws(() => parseJiaowubaoImportedSchedulePage({
     state: "complete",
     events: [{

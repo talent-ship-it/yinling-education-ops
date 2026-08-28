@@ -436,6 +436,7 @@ function publicPage(
       invalidTimeEventCount: page.invalidTimeEventCount,
       hasMore: false,
       nextCursor: null,
+      ...(page.revision ? { revision: page.revision } : {}),
       freshness: page.freshness,
       empty: true,
     };
@@ -497,6 +498,7 @@ function publicPage(
     invalidTimeEventCount: page.invalidTimeEventCount,
     hasMore: page.hasMore,
     nextCursor,
+    ...(page.revision ? { revision: page.revision } : {}),
     freshness: page.freshness,
     empty: page.empty,
   };

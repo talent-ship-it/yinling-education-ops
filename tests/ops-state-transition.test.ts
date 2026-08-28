@@ -897,6 +897,43 @@ test("generic LP saves enforce the workflow-specific result status allow-list", 
   }], rows), rejected);
 });
 
+test("generic LP saves cannot forge, edit, remove or prewrite Jiaowubao trial links", () => {
+  const trialSchedule = {
+    source: "jiaowubao-open-api",
+    sourceRevision: `sha256:${"a".repeat(64)}`,
+    eventId: "event-1",
+    startsAt: "2026-09-03T08:00:00.000Z",
+    endsAt: "2026-09-03T09:00:00.000Z",
+    courseName: "QA试听学员",
+    teacherId: "TEA-1",
+    teacherName: "Grace Lin",
+    plannerHint: "Tara",
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  };
+  const linked = {
+    id: "LP-JWB-LINKED",
+    studentId: "S-1",
+    title: "Trial LP",
+    workflowType: "试听 LP",
+    stage: "待资料",
+    owner: "Abby",
+    trialSchedule,
+  };
+  const rows = [...fixtureRows(), row("lpItems", [linked])];
+  assert.doesNotThrow(() => transition("lpItems", [linked], [{ ...linked, title: "Safe edit" }], rows));
+  assert.throws(() => transition("lpItems", [linked], [{
+    ...linked,
+    trialSchedule: { ...trialSchedule, eventId: "event-2" },
+  }], rows), rejected);
+  const removed = { ...linked };
+  Reflect.deleteProperty(removed, "trialSchedule");
+  assert.throws(() => transition("lpItems", [linked], [removed], rows), rejected);
+  assert.throws(() => transition("lpItems", [], [{ ...linked, id: "LP-JWB-FORGED" }], [
+    ...fixtureRows(),
+    row("lpItems", []),
+  ]), rejected);
+});
+
 test("generic saves cannot change import archive markers or mutate any archived-student business record", () => {
   const archivedStudent = {
     ...student,

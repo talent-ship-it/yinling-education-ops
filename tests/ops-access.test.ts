@@ -62,6 +62,20 @@ const rows: OpsStateRow[] = [
     ],
   },
   {
+    entity: "lpItems",
+    version: 5,
+    updated_at: "2026-07-28T00:00:00.000Z",
+    updated_by: "Admin",
+    payload: [{
+      id: "LP-ABBY",
+      studentId: "STU-ABBY",
+      workflowType: "试听 LP",
+      stage: "待资料",
+      trialIntake: { planner: "Tara" },
+      fields: { trialPaymentMethod: "付费试听（未付费）" },
+    }],
+  },
+  {
     entity: "tasks",
     version: 1,
     updated_at: "2026-07-28T00:00:00.000Z",
@@ -178,6 +192,7 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
         anchorBookingId: "BOOK-ABBY",
         title: "试听不足 24 小时仍未付款",
         dueAt: "2026-08-20T00:00:00.000Z",
+        status: "overdue",
       }],
     };
     return item;
@@ -193,7 +208,7 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
     initials: "",
   }]);
   assert.deepEqual(managedTrialPaymentStudentProjectionSnapshot(paymentRows, planner), {
-    versions: { bookings: 2, students: 4, tasks: 1 },
+    versions: { bookings: 2, students: 4, lpItems: 5, tasks: 1 },
     students: [{ id: "STU-ABBY", name: "Abby student", initials: "" }],
   });
   assert.deepEqual(Object.keys(managedTrialPaymentStudentProjections(paymentRows, planner)[0]).sort(), [
@@ -221,6 +236,108 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
       : task),
     context: planner,
   }), /专用确认流程/);
+});
+
+test("cross-owner Jiaowubao payment access is bound to the current LP, event and planner", () => {
+  const paymentRows = rows.map((item) => {
+    if (item.entity === "lpItems") return {
+      ...item,
+      payload: (item.payload as Array<Record<string, unknown>>).map((lpItem) => ({
+        ...lpItem,
+        trialSchedule: {
+          source: "jiaowubao-open-api",
+          sourceRevision: `sha256:${"a".repeat(64)}`,
+          eventId: "event-1",
+        },
+      })),
+    };
+    if (item.entity === "tasks") return {
+      ...item,
+      payload: [...(item.payload as Array<Record<string, unknown>>), {
+        id: "TASK-JWB-TRIAL-PAYMENT",
+        studentId: "STU-ABBY",
+        owner: "Tara",
+        assignees: ["Tara"],
+        watchers: ["Ops Admin"],
+        category: "试听",
+        ruleKey: "trial.jiaowubao.payment-n2",
+        anchorBookingId: "JWB:event-1",
+        requestAnchorBookingId: "LP-ABBY",
+        title: "提醒规划老师收取试听费",
+        dueAt: "2026-08-20T00:00:00.000Z",
+        status: "overdue",
+      }],
+    };
+    return item;
+  });
+
+  const planner = buildOpsAccessContext(paymentRows, "Tara", false, "staff");
+  const plannerTasks = filterOpsStateRows(paymentRows, planner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>;
+  assert.equal(plannerTasks.some((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"), true);
+  assert.deepEqual(managedTrialPaymentStudentProjections(paymentRows, planner), [{
+    id: "STU-ABBY",
+    name: "Abby student",
+    initials: "",
+  }]);
+
+  const operationsOwner = buildOpsAccessContext(paymentRows, "Abby", false, "staff");
+  assert.equal((filterOpsStateRows(paymentRows, operationsOwner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+    .some((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"), false);
+
+  const withLpChange = (change: (lpItem: Record<string, unknown>) => Record<string, unknown>) =>
+    paymentRows.map((item) => item.entity === "lpItems" ? {
+      ...item,
+      payload: (item.payload as Array<Record<string, unknown>>).map(change),
+    } : item);
+  for (const driftedRows of [
+    withLpChange((lpItem) => ({ ...lpItem, stage: "完成" })),
+    withLpChange((lpItem) => ({ ...lpItem, trialIntake: { planner: "Eileen" } })),
+    withLpChange((lpItem) => ({ ...lpItem, trialSchedule: {
+      source: "jiaowubao-open-api",
+      sourceRevision: `sha256:${"a".repeat(64)}`,
+      eventId: "event-2",
+    } })),
+    withLpChange((lpItem) => ({ ...lpItem, trialSchedule: {
+      source: "manual",
+      sourceRevision: `sha256:${"a".repeat(64)}`,
+      eventId: "event-1",
+    } })),
+    withLpChange((lpItem) => ({ ...lpItem, trialSchedule: {
+      source: "jiaowubao-open-api",
+      sourceRevision: "sha256:stale",
+      eventId: "event-1",
+    } })),
+  ]) {
+    const driftedPlanner = buildOpsAccessContext(driftedRows, "Tara", false, "staff");
+    assert.equal((filterOpsStateRows(driftedRows, driftedPlanner)
+      .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+      .some((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"), false);
+    assert.deepEqual(managedTrialPaymentStudentProjections(driftedRows, driftedPlanner), []);
+  }
+
+  const taskPayload = paymentRows.find((item) => item.entity === "tasks")!.payload as Array<Record<string, unknown>>;
+  assert.throws(() => mergeScopedPayload({
+    entity: "tasks",
+    currentPayload: taskPayload,
+    submittedPayload: taskPayload.map((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"
+      ? { ...task, status: "done" }
+      : task),
+    context: planner,
+  }), /专用确认流程/);
+
+  const completedRows = paymentRows.map((item) => item.entity === "tasks" ? {
+    ...item,
+    payload: (item.payload as Array<Record<string, unknown>>).map((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"
+      ? { ...task, status: "done", result: "已由规划老师确认试听付款" }
+      : task),
+  } : item);
+  const completedPlanner = buildOpsAccessContext(completedRows, "Tara", false, "staff");
+  assert.equal((filterOpsStateRows(completedRows, completedPlanner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+    .some((task) => task.id === "TASK-JWB-TRIAL-PAYMENT"), false);
+  assert.deepEqual(managedTrialPaymentStudentProjections(completedRows, completedPlanner), []);
 });
 
 test("archiving a cross-owner exam student removes both the managed task and minimal projection", () => {

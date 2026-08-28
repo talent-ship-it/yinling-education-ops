@@ -84,8 +84,9 @@ export async function GET(request: NextRequest) {
       return noStore({ error: "考试提醒刷新必须同时读取学生和任务权威版本。" }, 400);
     }
     if (includeManagedTrialPaymentSnapshot
-      && (!entities?.includes("bookings") || !entities.includes("students") || !entities.includes("tasks"))) {
-      return noStore({ error: "试听收费提醒刷新必须同时读取排课、学生和任务权威版本。" }, 400);
+      && (!entities?.includes("bookings") || !entities.includes("students")
+        || !entities.includes("lpItems") || !entities.includes("tasks"))) {
+      return noStore({ error: "试听收费提醒刷新必须同时读取排课、学生、LP 和任务权威版本。" }, 400);
     }
     const rows = await getOpsState();
     const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.identity);

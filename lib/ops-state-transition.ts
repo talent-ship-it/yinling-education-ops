@@ -5,6 +5,7 @@ import {
 } from "./booking-capacity-service";
 import type { OpsAccessContext } from "./ops-access";
 import type { OpsStateRow } from "./ops-store";
+import { isManagedTrialPaymentTask } from "./managed-trial-payment";
 import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
   isCanonicalTaskDueAt,
@@ -735,10 +736,6 @@ function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
     && typeof task.ruleKey === "string"
     && /^exam:[^:]+:(planning|care|recall|results)$/.test(task.ruleKey)
     && task.anchorBookingId === `exam:${task.ruleKey.split(":")[1]}`;
-  const managedTrialPaymentTask = (task: RecordValue) => task.category === "试听"
-    && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent")
-    && typeof task.anchorBookingId === "string"
-    && Boolean(task.anchorBookingId.trim());
   const nextIds = new Set(next.map((task) => requiredText(task.id, "task.id")));
   for (const [taskId, task] of current) {
     if (isFrozenLegacyTask(task) && !nextIds.has(taskId)) {
@@ -747,7 +744,7 @@ function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
     if (managedExamTask(task) && !nextIds.has(taskId)) {
       forbidden("考试提醒只能由专用考试流程删除或关闭。");
     }
-    if (managedTrialPaymentTask(task) && !nextIds.has(taskId)) {
+    if (isManagedTrialPaymentTask(task) && !nextIds.has(taskId)) {
       forbidden("试听收费提醒只能由专用收费流程删除或关闭。");
     }
   }
@@ -761,9 +758,9 @@ function assertTasksTransition(currentPayload: unknown, nextPayload: unknown) {
       || (existing && !same(existing, task) && (managedExamTask(existing) || managedExamTask(task)))) {
       forbidden("考试提醒只能由专用考试流程创建、完成或恢复。");
     }
-    if ((!existing && managedTrialPaymentTask(task))
+    if ((!existing && isManagedTrialPaymentTask(task))
       || (existing && !same(existing, task)
-        && (managedTrialPaymentTask(existing) || managedTrialPaymentTask(task)))) {
+        && (isManagedTrialPaymentTask(existing) || isManagedTrialPaymentTask(task)))) {
       forbidden("试听收费提醒只能由专用收费流程创建、完成或恢复。");
     }
     // This narrow no-op exception lets application code and the one-time
@@ -1139,6 +1136,9 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
       }
     }
     if (!existing) continue;
+    if (!same(existing.trialSchedule, item.trialSchedule)) {
+      forbidden("教务宝试听排课关联只能由专用原子同步流程修改。");
+    }
     for (const field of ["revisions", "stageAudit", "resultAudit"] as const) {
       assertAppendOnlyHistory(history(existing, field), history(item, field), `LP ${field}`);
     }
@@ -1146,6 +1146,11 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
     const nextRevision = item.revisionNumber ?? 0;
     if (!Number.isSafeInteger(currentRevision) || !Number.isSafeInteger(nextRevision) || (nextRevision as number) < (currentRevision as number)) {
       forbidden("LP 修订版本号不能回退。");
+    }
+  }
+  for (const item of next) {
+    if (!currentById.has(requiredText(item.id, "lpItem.id")) && item.trialSchedule !== undefined) {
+      forbidden("新增 LP 不能预写教务宝试听排课关联。");
     }
   }
 }

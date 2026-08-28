@@ -281,6 +281,7 @@ import {
   type ManagedExamStudentProjection,
 } from "@/lib/managed-exam-refresh";
 import {
+  isManagedTrialPaymentTask,
   isManagedTrialPaymentTaskRecipient,
   MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES,
   managedTrialPaymentSnapshotCanReplace,
@@ -332,15 +333,21 @@ import {
   type SharedStateRow,
 } from "@/lib/shared-state-recovery";
 import {
-  TRIAL_JWB_RULE_PREFIX,
-  completeTrialSchedulingReminderTasks,
-  generateJiaowubaoTrialTasks,
   matchTrialScheduleEvents,
-  replaceRuleTasks,
   trialIntakeFromFields,
   type TrialIntake,
   type TrialScheduleLink,
 } from "@/lib/trial-operations";
+import {
+  jiaowubaoTrialSyncPendingDisposition,
+  jiaowubaoTrialSyncScope,
+  persistJiaowubaoTrialSyncPendingCommands,
+  readJiaowubaoTrialSyncPendingCommands,
+  removeJiaowubaoTrialSyncPendingCommand,
+  upsertJiaowubaoTrialSyncPendingCommand,
+  type JiaowubaoTrialSyncCommand,
+  type JiaowubaoTrialSyncPendingCommand,
+} from "@/lib/jiaowubao-trial-sync";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
@@ -2624,6 +2631,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     versions: {
       bookings: versionFor("bookings"),
       students: versionFor("students"),
+      lpItems: versionFor("lpItems"),
       tasks: versionFor("tasks"),
     },
     students: [],
@@ -2791,6 +2799,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoImportedScheduleLoadedKey, setJiaowubaoImportedScheduleLoadedKey] = useState<string | null>(null);
   const [trialScheduleSyncing, setTrialScheduleSyncing] = useState(false);
   const trialScheduleAutoSyncRef = useRef("");
+  const trialScheduleSyncRunRef = useRef(false);
+  const trialSchedulePendingRecoveryAttemptedRef = useRef(new Set<string>());
   const [teacherAvailabilityCompletion, setTeacherAvailabilityCompletion] = useState<TeacherAvailabilityCompletionInbox | null>(null);
   const [teacherAvailabilityCompletionLoading, setTeacherAvailabilityCompletionLoading] = useState(false);
   const [teacherAvailabilityCompletionError, setTeacherAvailabilityCompletionError] = useState(false);
@@ -3522,9 +3532,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     [...examStudents, ...managedTrialPaymentStudents].map((student) => [student.id, student.name]),
   ), [examStudents, managedTrialPaymentStudents]);
   const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => {
-    const managedTrialPaymentTask = task.category === "试听"
-      && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent")
-      && Boolean(task.anchorBookingId?.trim());
+    const managedTrialPaymentTask = isManagedTrialPaymentTask(task);
     if (managedTrialPaymentTask) {
       return initialRole === "staff"
         && currentOperator === sessionOperator
@@ -3550,6 +3558,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     students: recordStudents,
     teachers: recordTeachers,
     events: currentJiaowubaoImportedSchedule?.events ?? [],
+    sourceRevision: currentJiaowubaoImportedSchedule?.revision,
     matchedAt: new Date(),
   }), [currentJiaowubaoImportedSchedule, recordStudents, recordTeachers, scopedLpItems]);
   const trialScheduleMatchByLpId = useMemo(
@@ -3859,72 +3868,135 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [displayPreferences.language]);
 
   const syncTrialSchedulesFromJiaowubao = async () => {
-    if (trialScheduleSyncing) return;
-    if (!currentJiaowubaoImportedSchedule || currentJiaowubaoImportedSchedule.state !== "complete") {
-      notify(currentJiaowubaoImportedSchedule?.state === "stale" ? "教务宝课表快照已过期，暂不写入试听任务" : "教务宝真实课表尚未读取完成");
-      return;
-    }
-    if (!trialScheduleMatches.length) {
-      notify("当前没有可无歧义匹配的试听排课；请核对学生姓名和 A/B/C 规划老师");
-      return;
-    }
+    if (trialScheduleSyncRunRef.current) return;
+    trialScheduleSyncRunRef.current = true;
     setTrialScheduleSyncing(true);
-    const syncedAt = new Date();
     try {
-      await lpShared.mutateAndCommit((current) => current.map((item) => {
-        const match = trialScheduleMatches.find((candidate) => candidate.lpItemId === item.id);
-        return match ? { ...item, trialSchedule: { ...match.link, matchedAt: syncedAt.toISOString() } } : item;
-      }));
-      await tasksShared.mutateAndCommit((current) => {
-        let next = [...current];
-        for (const match of trialScheduleMatches) {
-          const paymentManagedByBooking = next.some((task) =>
-            task.requestAnchorBookingId === match.lpItemId
-            && Boolean(task.anchorBookingId)
-            && !task.anchorBookingId?.startsWith("JWB:"));
-          const generated = generateJiaowubaoTrialTasks({
-            ...match,
-            now: syncedAt,
-            paymentManagedByBooking,
-          });
-          next = replaceRuleTasks(next, generated, {
-            anchor: `JWB:${match.link.eventId}`,
-            rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
-          });
-          next = completeTrialSchedulingReminderTasks(next, {
-            lpItemId: match.lpItemId,
-            eventId: match.link.eventId,
-            completedAt: syncedAt,
-          });
+      const storage = browserSessionStorage();
+      let pending = readJiaowubaoTrialSyncPendingCommands(storage, currentOperator);
+      const submit = async (command: JiaowubaoTrialSyncCommand, scope: string) => {
+        const requestCommand: JiaowubaoTrialSyncCommand = {
+          commandKey: command.commandKey,
+          snapshotRevision: command.snapshotRevision,
+          window: command.window,
+          matches: command.matches,
+          expectedVersions: command.expectedVersions,
+        };
+        const response = await fetch("/api/operations/jiaowubao-trial-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestCommand),
+        });
+        const body = await response.json().catch(() => ({}));
+        const hasAuthoritativeRows = Boolean(body.lpItemsRow && body.tasksRow);
+        const disposition = jiaowubaoTrialSyncPendingDisposition({
+          status: response.status,
+          committed: body.committed === true,
+          hasAuthoritativeRows,
+        });
+        if (disposition === "clear") {
+          pending = removeJiaowubaoTrialSyncPendingCommand(pending.values(), scope);
+          persistJiaowubaoTrialSyncPendingCommands(storage, currentOperator, pending.values());
         }
-        return sortTasksByDueAt(next);
-      });
+        if (!response.ok || body.committed !== true || !hasAuthoritativeRows) {
+          throw new Error(body.error || "试听原子同步没有返回完整权威状态");
+        }
+        lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
+        tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
+      };
+
+      // Unknown-result commands are replayed before inspecting the current
+      // browser snapshot. A committed write therefore remains recoverable even
+      // when the source pointer or local OCC versions have since advanced.
+      for (const entry of [...pending.values()]) {
+        await submit(entry, entry.scope);
+      }
+
+      if (!currentJiaowubaoImportedSchedule || currentJiaowubaoImportedSchedule.state !== "complete") {
+        notify(currentJiaowubaoImportedSchedule?.state === "stale" ? "教务宝课表快照已过期，暂不写入试听任务" : "教务宝真实课表尚未读取完成");
+        return;
+      }
+      if (!currentJiaowubaoImportedSchedule.revision) {
+        notify("教务宝课表缺少可验证版本，请刷新后重试");
+        return;
+      }
+      if (!trialScheduleMatches.length) {
+        notify("当前没有可无歧义匹配的试听排课；请核对学生姓名和 A/B/C 规划老师");
+        return;
+      }
+      const matchRefs = trialScheduleMatches.map((match) => ({
+        lpItemId: match.lpItemId,
+        eventId: match.link.eventId,
+        startsAt: match.link.startsAt,
+      })).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId) || left.eventId.localeCompare(right.eventId));
+      const command: JiaowubaoTrialSyncCommand = {
+        commandKey: crypto.randomUUID(),
+        snapshotRevision: currentJiaowubaoImportedSchedule.revision,
+        window: {
+          startsAt: trialScheduleWindow.startsAt,
+          endsAt: trialScheduleWindow.endsAt,
+        },
+        matches: matchRefs,
+        expectedVersions: {
+          lpItems: lpShared.getCurrentVersion(),
+          tasks: tasksShared.getCurrentVersion(),
+        },
+      };
+      const scope = jiaowubaoTrialSyncScope(command);
+      const existing = pending.get(scope);
+      const pendingCommand: JiaowubaoTrialSyncPendingCommand = existing ?? { scope, ...command };
+      pending = upsertJiaowubaoTrialSyncPendingCommand(pending.values(), pendingCommand);
+      persistJiaowubaoTrialSyncPendingCommands(storage, currentOperator, pending.values());
+      await submit(pendingCommand, scope);
       addAudit("同步教务宝试听排课", `${trialScheduleMatches.length} 条试听排课与任务已更新`, "green");
       notify(`已从教务宝真实快照匹配 ${trialScheduleMatches.length} 条试听，并生成 N-2 / N-1 / 当日任务`);
     } catch (error) {
       notify(error instanceof Error ? `试听排课同步失败：${error.message}` : "试听排课同步失败，可安全重试");
     } finally {
+      trialScheduleSyncRunRef.current = false;
       setTrialScheduleSyncing(false);
     }
   };
 
   useEffect(() => {
+    if (active !== "lp") return;
+    const recoveryKey = currentOperator.trim().toLocaleLowerCase();
+    if (!recoveryKey || trialSchedulePendingRecoveryAttemptedRef.current.has(recoveryKey)) return;
+    trialSchedulePendingRecoveryAttemptedRef.current.add(recoveryKey);
+    if (readJiaowubaoTrialSyncPendingCommands(browserSessionStorage(), currentOperator).size) {
+      void syncTrialSchedulesFromJiaowubao();
+    }
+    // Recovery is intentionally once per signed actor and calls the same
+    // idempotent command path before any source revalidation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, currentOperator]);
+
+  useEffect(() => {
     if (active !== "lp" || trialScheduleSyncing
       || currentJiaowubaoImportedSchedule?.state !== "complete"
+      || !currentJiaowubaoImportedSchedule.revision
       || !trialScheduleMatches.length) return;
-    const fingerprint = trialScheduleMatches
-      .map((match) => `${match.lpItemId}:${match.link.eventId}`)
-      .sort()
-      .join("|");
-    const alreadyLinked = trialScheduleMatches.every((match) =>
-      scopedLpItems.find((item) => item.id === match.lpItemId)?.trialSchedule?.eventId === match.link.eventId);
-    if (alreadyLinked || trialScheduleAutoSyncRef.current === fingerprint) return;
+    const fingerprint = JSON.stringify({
+      revision: currentJiaowubaoImportedSchedule.revision,
+      matches: trialScheduleMatches.map((match) => ({
+        lpItemId: match.lpItemId,
+        eventId: match.link.eventId,
+        startsAt: match.link.startsAt,
+        endsAt: match.link.endsAt,
+        teacherId: match.link.teacherId,
+        teacherName: match.link.teacherName,
+        planner: match.planner,
+        preparationFollowUp: match.preparationFollowUp,
+        trialPaymentMethod: match.trialPaymentMethod ?? null,
+      })).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId)),
+    });
+    if (trialScheduleAutoSyncRef.current === fingerprint) return;
     trialScheduleAutoSyncRef.current = fingerprint;
     void syncTrialSchedulesFromJiaowubao();
     // The fingerprint owns this one idempotent external-snapshot projection;
     // adding the function object would re-run it on every shared-state render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, currentJiaowubaoImportedSchedule?.state, scopedLpItems, trialScheduleMatches, trialScheduleSyncing]);
+  }, [active, currentJiaowubaoImportedSchedule?.revision, currentJiaowubaoImportedSchedule?.state, trialScheduleMatches, trialScheduleSyncing]);
 
   const refreshJiaowubaoScheduleMappingReview = async () => {
     const review = await readJiaowubaoScheduleMappingReview();
@@ -4459,7 +4531,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         let receipt: ReturnType<typeof parseManagedTrialPaymentCompletionReceipt> | null = null;
         if (response.ok) {
           try {
-            receipt = parseManagedTrialPaymentCompletionReceipt(body, currentPending.taskId, sessionOperator);
+            receipt = parseManagedTrialPaymentCompletionReceipt(
+              body,
+              currentPending.taskId,
+              sessionOperator,
+              isAdminSession ? "admin" : "staff",
+            );
           } catch {
             // A 2xx without both authoritative rows (or an explicit receipt-only
             // shape) is not enough evidence to discard the original command.
@@ -4527,6 +4604,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         const latestVersions = {
           bookings: getCurrentBookingsVersion(),
           students: getCurrentStudentsVersion(),
+          lpItems: getCurrentLpItemsVersion(),
           tasks: getCurrentTasksVersion(),
         };
         if (managedTrialPaymentSnapshotCanReplace(snapshot, latestVersions)) {
@@ -4556,6 +4634,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     replaceManagedTrialPaymentProjection,
     sessionOperator,
     applyRemoteTrialPaymentTasks,
+    isAdminSession,
   ]);
 
   useEffect(() => {
@@ -4576,12 +4655,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const completeTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === "done") return;
-    if (task.category === "试听"
-      && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent")
-      && task.anchorBookingId) {
-      if (initialRole !== "staff"
-        || currentOperator !== sessionOperator
-        || !isManagedTrialPaymentTaskRecipient(task, sessionOperator)) {
+    if (isManagedTrialPaymentTask(task)) {
+      const plannerCanComplete = initialRole === "staff"
+        && currentOperator === sessionOperator
+        && isManagedTrialPaymentTaskRecipient(task, sessionOperator);
+      const adminCanComplete = isAdminSession && isAdminView && currentOperator === sessionOperator;
+      if (!plannerCanComplete && !adminCanComplete) {
         notify("只有任务指定的规划老师可以确认试听付款");
         return;
       }
@@ -4611,7 +4690,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const taskUsesDedicatedCompletion = (task: Task) => Boolean(
     task.category === "考试" && task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/)
-      || task.category === "试听" && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent"),
+      || isManagedTrialPaymentTask(task),
   );
 
   const cannotDoTask = (taskId: string, reason: string) => {
@@ -4851,6 +4930,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         const currentManagedTrialPaymentVersions = {
           bookings: getCurrentBookingsVersion(),
           students: getCurrentStudentsVersion(),
+          lpItems: getCurrentLpItemsVersion(),
           tasks: getCurrentTasksVersion(),
         };
         if (!managedTrialPaymentSnapshotCanReplace(
@@ -4924,6 +5004,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             const latestClientVersions = {
               bookings: getCurrentBookingsVersion(),
               students: getCurrentStudentsVersion(),
+              lpItems: getCurrentLpItemsVersion(),
               tasks: getCurrentTasksVersion(),
             };
             if (!managedTrialPaymentSnapshotIsCurrent(
@@ -4981,6 +5062,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     clearManagedExamProjection,
     clearManagedTrialPaymentProjection,
     getCurrentBookingsVersion,
+    getCurrentLpItemsVersion,
     getCurrentStudentsVersion,
     getCurrentTasksVersion,
     replaceManagedExamProjection,

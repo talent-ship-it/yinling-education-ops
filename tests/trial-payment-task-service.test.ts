@@ -69,6 +69,14 @@ function command() {
   });
 }
 
+function jiaowubaoCommand() {
+  return parseTrialPaymentCompletionCommand({
+    commandKey: "trial-payment-complete:123e4567-e89b-42d3-a456-426614174001",
+    taskId: "TASK-JWB-PAY-1",
+    expectedVersions: VERSIONS,
+  });
+}
+
 function forbidden(action: () => unknown) {
   assert.throws(action, (error: unknown) => error instanceof TrialPaymentTaskServiceError
     && error.code === "task_forbidden");
@@ -140,6 +148,87 @@ test("payment completion fails closed when any task, booking or planner authorit
   for (const rows of variants) {
     forbidden(() => authorizeTrialPaymentTaskCompletion({
       command: command(),
+      rows,
+      actor: "Tara",
+      role: "staff",
+    }));
+  }
+});
+
+test("Jiaowubao payment completion is bound to the exact current LP schedule and intake planner", () => {
+  const jiaowubaoRows = fixtureRows().map((candidate) => {
+    if (candidate.entity === "lpItems") return {
+      ...candidate,
+      payload: [{
+        id: "LP-PAY-1",
+        studentId: "STU-ABBY",
+        workflowType: "试听 LP",
+        stage: "待资料",
+        trialIntake: { planner: "Tara" },
+        trialSchedule: {
+          source: "jiaowubao-open-api",
+          sourceRevision: `sha256:${"a".repeat(64)}`,
+          eventId: "event-1",
+        },
+        fields: { trialPaymentMethod: "付费试听（未付费）" },
+      }],
+    };
+    if (candidate.entity === "tasks") return {
+      ...candidate,
+      payload: [{
+        id: "TASK-JWB-PAY-1",
+        studentId: "STU-ABBY",
+        owner: "Tara",
+        assignees: ["Tara"],
+        watchers: ["Ops Admin"],
+        category: "试听",
+        ruleKey: "trial.jiaowubao.payment-n2",
+        anchorBookingId: "JWB:event-1",
+        requestAnchorBookingId: "LP-PAY-1",
+        status: "today",
+      }],
+    };
+    return candidate;
+  });
+  const authorized = authorizeTrialPaymentTaskCompletion({
+    command: jiaowubaoCommand(),
+    rows: jiaowubaoRows,
+    actor: "Tara",
+    role: "staff",
+  });
+  assert.equal(authorized.kind, "jiaowubao");
+  assert.equal("lpItem" in authorized && authorized.lpItem.id, "LP-PAY-1");
+
+  const mutateLp = (change: (lpItem: Record<string, unknown>) => Record<string, unknown>) =>
+    jiaowubaoRows.map((candidate) => candidate.entity === "lpItems" ? {
+      ...candidate,
+      payload: (candidate.payload as Array<Record<string, unknown>>).map(change),
+    } : candidate);
+  const variants = [
+    mutateLp((lpItem) => ({ ...lpItem, stage: "完成" })),
+    mutateLp((lpItem) => ({ ...lpItem, trialIntake: { planner: "Eileen" } })),
+    mutateLp((lpItem) => ({ ...lpItem, trialSchedule: {
+      source: "jiaowubao-open-api",
+      sourceRevision: `sha256:${"a".repeat(64)}`,
+      eventId: "event-2",
+    } })),
+    mutateLp((lpItem) => ({ ...lpItem, trialSchedule: {
+      source: "jiaowubao-open-api",
+      sourceRevision: "sha256:stale",
+      eventId: "event-1",
+    } })),
+    mutateLp((lpItem) => ({ ...lpItem, fields: { trialPaymentMethod: "免费试听" } })),
+    jiaowubaoRows.map((candidate) => candidate.entity === "tasks" ? {
+      ...candidate,
+      payload: (candidate.payload as Array<Record<string, unknown>>).map((task) => ({
+        ...task,
+        requestAnchorBookingId: "LP-OTHER",
+      })),
+    } : candidate),
+  ];
+  for (const rows of variants) {
+    forbidden(() => authorizeTrialPaymentTaskCompletion({
+      command: jiaowubaoCommand(),
       rows,
       actor: "Tara",
       role: "staff",

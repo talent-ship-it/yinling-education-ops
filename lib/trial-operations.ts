@@ -55,6 +55,8 @@ export type JiaowubaoTrialPlannerHint = TrialPlanner | null;
 
 export type TrialScheduleLink = Readonly<{
   source: "jiaowubao-open-api";
+  /** Immutable publication used to derive this link; absent only on legacy rows. */
+  sourceRevision?: string;
   eventId: string;
   startsAt: string;
   endsAt: string;
@@ -243,40 +245,52 @@ export function matchTrialScheduleEvents(input: Readonly<{
   teachers: readonly Readonly<{ id: string; name: string }>[];
   events: readonly TrialScheduleEventLike[];
   matchedAt: Date | string;
+  sourceRevision?: string;
 }>): TrialScheduleMatch[] {
   const students = new Map(input.students.map((student) => [student.id, student]));
   const teachers = new Map(input.teachers.map((teacher) => [teacher.id, teacher.name]));
   const matchedAt = canonicalInstant(input.matchedAt, "matchedAt");
-  const claimedEvents = new Set<string>();
   const matches: TrialScheduleMatch[] = [];
 
-  for (const item of input.lpItems.filter((candidate) => candidate.workflowType === "试听 LP" && candidate.stage !== "完成")) {
-    const student = students.get(item.studentId);
-    if (!student) continue;
-    const existingStudentName = item.trialIntake?.studentName || student.name;
-    const nameKey = normalize(existingStudentName);
-    if (!nameKey) continue;
-    const plannerName = item.trialIntake?.planner || student.planner || "";
-    const paymentMethod = trialPaymentMethod(item.fields?.trialPaymentMethod);
-    const requestTime = requestedAt(item);
-    const candidates = input.events.filter((event) => {
-      if (claimedEvents.has(event.eventId)) return false;
-      const start = new Date(event.startsAt).valueOf();
-      if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
-      const directStudentMatch = event.visibleStudentIds.includes(student.id);
-      const titleMatch = normalize(event.courseName).includes(nameKey);
-      const hint = event.trialPlannerHint ?? null;
-      const plannerMatches = !hint || normalize(hint) === normalize(plannerName);
-      return directStudentMatch || titleMatch && Boolean(hint) && plannerMatches;
-    }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
-    const event = candidates[0];
-    if (!event) continue;
+  const candidatesByLp = input.lpItems
+    .filter((candidate) => candidate.workflowType === "试听 LP" && candidate.stage !== "完成")
+    .flatMap((item) => {
+      const student = students.get(item.studentId);
+      if (!student) return [];
+      const existingStudentName = item.trialIntake?.studentName || student.name;
+      const nameKey = normalize(existingStudentName);
+      if (!nameKey) return [];
+      const plannerName = planner(item.trialIntake?.planner) || planner(student.planner) || "";
+      const paymentMethod = trialPaymentMethod(item.fields?.trialPaymentMethod);
+      const requestTime = requestedAt(item);
+      const candidates = input.events.filter((event) => {
+        const start = new Date(event.startsAt).valueOf();
+        if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
+        const directStudentMatch = event.visibleStudentIds.includes(student.id);
+        const titleMatch = normalize(event.courseName).includes(nameKey);
+        const hint = event.trialPlannerHint ?? null;
+        const plannerMatches = !hint || normalize(hint) === normalize(plannerName);
+        return directStudentMatch || titleMatch && Boolean(hint) && plannerMatches;
+      }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
+      return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates }];
+    });
+  const candidateLpCountByEvent = new Map<string, number>();
+  for (const entry of candidatesByLp) {
+    for (const eventId of new Set(entry.candidates.map((event) => event.eventId))) {
+      candidateLpCountByEvent.set(eventId, (candidateLpCountByEvent.get(eventId) ?? 0) + 1);
+    }
+  }
+
+  for (const entry of candidatesByLp) {
+    if (entry.candidates.length !== 1) continue;
+    const event = entry.candidates[0]!;
+    if (candidateLpCountByEvent.get(event.eventId) !== 1) continue;
+    const { item, student, existingStudentName, plannerName, paymentMethod, requestTime } = entry;
     const studentName = studentNameFromCourseTitle(
       event.courseName,
       existingStudentName,
       event.visibleStudentIds.includes(student.id),
     ) ?? existingStudentName;
-    claimedEvents.add(event.eventId);
     matches.push(Object.freeze({
       lpItemId: item.id,
       studentId: student.id,
@@ -288,6 +302,10 @@ export function matchTrialScheduleEvents(input: Readonly<{
       ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
       link: Object.freeze({
         source: "jiaowubao-open-api",
+        ...(typeof input.sourceRevision === "string"
+          && /^sha256:[a-f0-9]{64}$/.test(input.sourceRevision)
+          ? { sourceRevision: input.sourceRevision }
+          : {}),
         eventId: event.eventId,
         startsAt: canonicalInstant(event.startsAt, "startsAt"),
         endsAt: canonicalInstant(event.endsAt, "endsAt"),
@@ -365,8 +383,9 @@ function task(input: Readonly<{
   category?: "试听" | "排课" | "LP";
   tone?: TaskTone;
   trigger: string;
+  requestAnchorBookingId?: string;
 }>): OpsTask {
-  const dueAt = input.dueAt.valueOf() < input.now.valueOf() ? input.now : input.dueAt;
+  const dueAt = input.dueAt;
   const canonical = dueAt.toISOString();
   return {
     id: deterministicTaskId(input.anchor, input.ruleKey),
@@ -383,6 +402,7 @@ function task(input: Readonly<{
     trigger: input.trigger,
     ruleKey: input.ruleKey,
     anchorBookingId: input.anchor,
+    ...(input.requestAnchorBookingId ? { requestAnchorBookingId: input.requestAnchorBookingId } : {}),
   };
 }
 
@@ -521,6 +541,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
     studentId: input.studentId,
     now,
     trigger: `教务宝真实课表匹配 · ${input.link.eventId}`,
+    requestAnchorBookingId: input.lpItemId,
   } as const;
   const endLabel = new Intl.DateTimeFormat("zh-CN", {
     timeZone: MELBOURNE_TIME_ZONE,

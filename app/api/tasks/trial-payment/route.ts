@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { managedTrialPaymentTaskKind } from "@/lib/managed-trial-payment";
 import {
   buildOpsAccessContext,
   canWriteOpsEntity,
@@ -10,6 +11,7 @@ import {
   managedTrialPaymentStudentProjectionSnapshot,
 } from "@/lib/ops-access";
 import {
+  completeJiaowubaoTrialPaymentTaskAtomic,
   completeTrialPaymentTaskAtomic,
   getTrialPaymentCompletionCommandResult,
   getOpsState,
@@ -96,7 +98,15 @@ export async function POST(request: Request) {
     const taskVisible = Array.isArray(visibleTasks)
       && visibleTasks.some((candidate) => candidate && typeof candidate === "object"
         && !Array.isArray(candidate) && (candidate as { id?: unknown }).id === command.taskId);
-    if (!canWriteOpsEntity(authorization, "tasks") || !taskVisible) {
+    const currentTasks = authorizationRows.find((row) => row.entity === "tasks")?.payload;
+    const matchingCurrentTasks = Array.isArray(currentTasks)
+      ? currentTasks.filter((candidate) => candidate && typeof candidate === "object"
+        && !Array.isArray(candidate) && (candidate as { id?: unknown }).id === command.taskId)
+      : [];
+    const paymentKind = matchingCurrentTasks.length === 1
+      ? managedTrialPaymentTaskKind(matchingCurrentTasks[0] as Record<string, unknown>)
+      : null;
+    if (!canWriteOpsEntity(authorization, "tasks") || !taskVisible || !paymentKind) {
       // A concurrent first request may have committed after the initial
       // receipt lookup but before this current-state authorization read.
       const lateReplay = await readCommandReceipt();
@@ -104,7 +114,10 @@ export async function POST(request: Request) {
       if (lateReplay[0]) return receiptOnly(lateReplay[0]);
       return noStore({ error: "这项试听收费提醒没有分配给当前账号。", code: "task_forbidden" }, 403);
     }
-    const saved = await completeTrialPaymentTaskAtomic({
+    const completePaymentTask = paymentKind === "jiaowubao"
+      ? completeJiaowubaoTrialPaymentTaskAtomic
+      : completeTrialPaymentTaskAtomic;
+    const saved = await completePaymentTask({
       commandKey: command.commandKey,
       commandIntent,
       taskId: command.taskId,

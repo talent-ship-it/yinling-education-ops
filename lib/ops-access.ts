@@ -42,6 +42,10 @@ export type OpsAccessContext = {
   studentExamIdsById: Map<string, Set<string>>;
   /** Exact scheduled trial anchor -> student authority for payment tasks. */
   trialBookingStudentById: Map<string, string>;
+  /** Exact current Jiaowubao-linked trial LP authority for payment tasks. */
+  trialLpStudentById: Map<string, string>;
+  trialLpPlannerById: Map<string, string>;
+  trialLpEventById: Map<string, string>;
   teacherIds: Set<string>;
 };
 
@@ -117,11 +121,19 @@ function taskAssignedTo(value: RecordValue, actor: string) {
 
 function managedTrialPaymentTaskIdentity(value: RecordValue) {
   const ruleKey = value.ruleKey;
-  const bookingId = value.anchorBookingId;
-  if (value.category !== "试听"
-    || (ruleKey !== "trial.payment-n2" && ruleKey !== "trial.payment-urgent")
-    || typeof bookingId !== "string" || !bookingId.trim()) return false;
-  return { bookingId, ruleKey } as const;
+  const anchor = typeof value.anchorBookingId === "string" ? value.anchorBookingId.trim() : "";
+  if (value.category !== "试听" || !anchor) return false;
+  if (ruleKey === "trial.payment-n2" || ruleKey === "trial.payment-urgent") {
+    return { kind: "booking", bookingId: anchor, ruleKey } as const;
+  }
+  const lpItemId = typeof value.requestAnchorBookingId === "string"
+    ? value.requestAnchorBookingId.trim()
+    : "";
+  const event = anchor.match(/^JWB:([A-Za-z0-9][A-Za-z0-9._:-]{0,199})$/);
+  if (ruleKey !== "trial.jiaowubao.payment-n2"
+    || !event
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(lpItemId)) return false;
+  return { kind: "jiaowubao", lpItemId, eventId: event[1]!, ruleKey } as const;
 }
 
 /**
@@ -132,9 +144,17 @@ function managedTrialPaymentTaskIdentity(value: RecordValue) {
 function managedTrialPaymentTaskMatchesStudent(context: OpsAccessContext, value: RecordValue) {
   const identity = managedTrialPaymentTaskIdentity(value);
   const studentId = rowStudentId(value);
-  if (!identity || !studentId || !context.allActiveStudentIds.has(studentId)
-    || context.trialBookingStudentById.get(identity.bookingId) !== studentId) return false;
-  const planner = context.studentPlannerById.get(studentId);
+  const openStatus = typeof value.status === "string"
+    && ["overdue", "today", "upcoming", "waiting"].includes(value.status);
+  if (!identity || !openStatus || !studentId || !context.allActiveStudentIds.has(studentId)) return false;
+  const planner = identity.kind === "booking"
+    ? context.studentPlannerById.get(studentId)
+    : context.trialLpPlannerById.get(identity.lpItemId);
+  const authorityMatches = identity.kind === "booking"
+    ? context.trialBookingStudentById.get(identity.bookingId) === studentId
+    : context.trialLpStudentById.get(identity.lpItemId) === studentId
+      && context.trialLpEventById.get(identity.lpItemId) === identity.eventId;
+  if (!authorityMatches) return false;
   if (!isConfiguredRecipient(planner) || !samePerson(value.owner, planner!)) return false;
   const assignees = taskRecipients(value, "assignees");
   const watchers = taskRecipients(value, "watchers");
@@ -154,6 +174,10 @@ function managedExamTaskIdentity(value: RecordValue) {
 function isConfiguredRecipient(value: string | undefined) {
   const recipient = value?.trim();
   return Boolean(recipient && !/^(?:待分配|待确认|未知|角色待配置[:：])/.test(recipient));
+}
+
+function canonicalTrialPlanner(value: string | undefined) {
+  return ["Tara", "Eileen", "Abby"].find((planner) => samePerson(value, planner));
 }
 
 function managedExamTaskBelongsToKnownExam(context: OpsAccessContext, value: RecordValue) {
@@ -376,6 +400,37 @@ export function buildOpsAccessContext(
       .filter(Boolean)));
   }
 
+  const lpCandidatesById = new Map<string, RecordValue[]>();
+  for (const lpItem of payloadRecords(rows, "lpItems")) {
+    const id = rowId(lpItem);
+    if (!id || lpItem.workflowType !== "试听 LP" || lpItem.stage === "完成") continue;
+    lpCandidatesById.set(id, [...(lpCandidatesById.get(id) ?? []), lpItem]);
+  }
+  const trialLpStudentById = new Map<string, string>();
+  const trialLpPlannerById = new Map<string, string>();
+  const trialLpEventById = new Map<string, string>();
+  for (const [id, candidates] of lpCandidatesById) {
+    if (candidates.length !== 1) continue;
+    const lpItem = candidates[0]!;
+    const studentId = rowStudentId(lpItem);
+    const intake = isRecord(lpItem.trialIntake) ? lpItem.trialIntake : null;
+    const schedule = isRecord(lpItem.trialSchedule) ? lpItem.trialSchedule : null;
+    const plannerCandidate = typeof intake?.planner === "string" && intake.planner.trim()
+      ? intake.planner.trim()
+      : studentPlannerById.get(studentId) ?? "";
+    const planner = canonicalTrialPlanner(plannerCandidate);
+    const eventId = typeof schedule?.eventId === "string" ? schedule.eventId.trim() : "";
+    const sourceRevision = typeof schedule?.sourceRevision === "string" ? schedule.sourceRevision.trim() : "";
+    if (!studentId
+      || schedule?.source !== "jiaowubao-open-api"
+      || !/^sha256:[a-f0-9]{64}$/.test(sourceRevision)
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(eventId)
+      || !planner) continue;
+    trialLpStudentById.set(id, studentId);
+    trialLpPlannerById.set(id, planner);
+    trialLpEventById.set(id, eventId);
+  }
+
   return {
     actor,
     role,
@@ -393,6 +448,9 @@ export function buildOpsAccessContext(
     studentPlannerById,
     studentExamIdsById,
     trialBookingStudentById,
+    trialLpStudentById,
+    trialLpPlannerById,
+    trialLpEventById,
     teacherIds,
   };
 }
@@ -625,13 +683,13 @@ export function managedTrialPaymentStudentProjectionSnapshot(
   rows: OpsStateRow[],
   context: OpsAccessContext,
 ): ManagedTrialPaymentProjectionSnapshot {
-  const versions = Object.fromEntries(["bookings", "students", "tasks"].map((entity) => {
+  const versions = Object.fromEntries(["bookings", "students", "lpItems", "tasks"].map((entity) => {
     const row = rows.find((candidate) => candidate.entity === entity);
     if (!row || !Number.isSafeInteger(row.version) || row.version < 1 || !Array.isArray(row.payload)) {
       throw new OpsAccessError("试听收费提醒权威资料不可用。");
     }
     return [entity, row.version];
-  })) as { bookings: number; students: number; tasks: number };
+  })) as { bookings: number; students: number; lpItems: number; tasks: number };
   return { versions, students: managedTrialPaymentStudentProjections(rows, context) };
 }
 

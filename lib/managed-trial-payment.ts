@@ -1,4 +1,4 @@
-export const MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES = ["bookings", "students", "tasks"] as const;
+export const MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES = ["bookings", "students", "lpItems", "tasks"] as const;
 export type ManagedTrialPaymentAuthorityEntity = (typeof MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES)[number];
 
 /** The complete cross-owner student surface exposed to an assigned planner. */
@@ -35,10 +35,14 @@ type PaymentTaskCandidate = Readonly<{
   category?: unknown;
   ruleKey?: unknown;
   anchorBookingId?: unknown;
+  requestAnchorBookingId?: unknown;
   owner?: unknown;
   assignees?: unknown;
   watchers?: unknown;
 }>;
+
+const JIAOWUBAO_ANCHOR = /^JWB:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+const LP_ANCHOR = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 
 type RecordValue = Record<string, unknown>;
 
@@ -135,14 +139,34 @@ function samePerson(left: unknown, right: string) {
     && left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
 }
 
+/** Identifies only payment reminders owned by a dedicated completion RPC. */
+export function managedTrialPaymentTaskKind(
+  task: PaymentTaskCandidate,
+): "booking" | "jiaowubao" | null {
+  if (task.category !== "试听" || typeof task.anchorBookingId !== "string"
+    || !task.anchorBookingId.trim()) return null;
+  if (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent") {
+    return "booking";
+  }
+  if (task.ruleKey === "trial.jiaowubao.payment-n2"
+    && JIAOWUBAO_ANCHOR.test(task.anchorBookingId)
+    && typeof task.requestAnchorBookingId === "string"
+    && LP_ANCHOR.test(task.requestAnchorBookingId)) {
+    return "jiaowubao";
+  }
+  return null;
+}
+
+export function isManagedTrialPaymentTask(task: PaymentTaskCandidate) {
+  return managedTrialPaymentTaskKind(task) !== null;
+}
+
 /** Client-side defense in depth; the server projection remains authoritative. */
 export function isManagedTrialPaymentTaskRecipient(
   task: PaymentTaskCandidate,
   recipient: string,
 ) {
-  return task.category === "试听"
-    && (task.ruleKey === "trial.payment-n2" || task.ruleKey === "trial.payment-urgent")
-    && typeof task.anchorBookingId === "string" && Boolean(task.anchorBookingId.trim())
+  return isManagedTrialPaymentTask(task)
     && samePerson(task.owner, recipient)
     && Array.isArray(task.assignees) && task.assignees.length === 1
     && samePerson(task.assignees[0], recipient)
@@ -159,6 +183,7 @@ export function parseManagedTrialPaymentCompletionReceipt(
   value: unknown,
   expectedTaskId: string,
   actor: string,
+  actorRole: "staff" | "admin" = "staff",
 ): ManagedTrialPaymentCompletionReceipt {
   const responseKeys = [
     "committed", "applied", "receiptOnly", "taskId", "taskRow",
@@ -201,10 +226,13 @@ export function parseManagedTrialPaymentCompletionReceipt(
   const matchingTasks = taskRow.payload.filter((candidate) => isRecord(candidate) && candidate.id === expectedTaskId);
   if (matchingTasks.length !== 1) throw new TypeError("managed trial payment completion task is missing or duplicated");
   const task = matchingTasks[0];
-  if (!isManagedTrialPaymentTaskRecipient(task, actor)
+  const actorEvidenceValid = actorRole === "admin"
+    ? isManagedTrialPaymentTask(task) && task.result === "已由管理员确认试听付款"
+    : isManagedTrialPaymentTaskRecipient(task, actor) && task.result === "已由规划老师确认试听付款";
+  if (!actorEvidenceValid
+    || !samePerson(taskRow.updated_by, actor)
     || task.status !== "done"
     || task.tone !== "green"
-    || task.result !== "已由规划老师确认试听付款"
     || typeof task.closedAt !== "string"
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(task.closedAt)
     || new Date(task.closedAt).toISOString() !== task.closedAt) {

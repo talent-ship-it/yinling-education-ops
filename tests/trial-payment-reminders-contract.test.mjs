@@ -23,13 +23,14 @@ test("urgent reminders have a secret-gated fixed-frequency server reconciler", a
 });
 
 test("planner completion is a replay-first narrow command and never accepts a task replacement", async () => {
-  const [route, service, store, migration, hardening, legacyRevoke] = await Promise.all([
+  const [route, service, store, migration, hardening, legacyRevoke, jiaowubaoCompletion] = await Promise.all([
     read("app/api/tasks/trial-payment/route.ts"),
     read("lib/trial-payment-task-service.ts"),
     read("lib/ops-store.ts"),
     read("supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql"),
     read("supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql"),
     read("supabase/migrations/20260827000910_revoke_legacy_trial_payment_atomic.sql"),
+    read("supabase/migrations/20260828000510_jiaowubao_trial_payment_completion.sql"),
   ]);
   assert.match(route, /parseTrialPaymentCompletionCommand\(body\)/);
   assert.match(route, /getTrialPaymentCompletionCommandResult\(/);
@@ -48,10 +49,13 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.equal((route.match(/buildOpsAccessContext\([^;]+fullAdmin/g) ?? []).length, 2);
   assert.ok(
     route.indexOf("canWriteOpsEntity(authorization, \"tasks\")")
-      < route.indexOf("completeTrialPaymentTaskAtomic({"),
+      < route.indexOf("const completePaymentTask ="),
     "current lifecycle permission and task scope must be checked before the atomic command",
   );
-  assert.match(route, /completeTrialPaymentTaskAtomic\(/);
+  assert.match(route, /completeTrialPaymentTaskAtomic/);
+  assert.match(route, /completeJiaowubaoTrialPaymentTaskAtomic/);
+  assert.match(route, /managedTrialPaymentTaskKind/);
+  assert.match(route, /paymentKind === "jiaowubao"/);
   assert.match(route, /actorRole: resolved\.session\.role/);
   assert.match(route, /receiptOnly: true/);
   assert.match(route, /taskRow: null/);
@@ -59,8 +63,9 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.doesNotMatch(route, /putOpsState|mergeScopedPayload/);
   assert.match(service, /Object\.keys\(value\)\.some\(\(key\) => !\["commandKey", "taskId", "expectedVersions"\]/);
   assert.match(service, /input\.role !== "staff"/);
-  assert.match(service, /task\.owner !== input\.actor/);
-  assert.match(service, /candidate\.planner === input\.actor/);
+  assert.match(service, /isManagedTrialPaymentTaskRecipient\(task, input\.actor\)/);
+  assert.match(service, /student\.planner !== input\.actor/);
+  assert.match(service, /trialSchedule/);
   assert.match(store, /p_command_intent: input\.commandIntent/);
   assert.match(store, /p_task_id: input\.taskId/);
   assert.match(store, /p_actor_role: input\.actorRole/);
@@ -93,6 +98,8 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.match(legacyRevoke, /revoke all on function public\.complete_trial_payment_task_atomic/);
   assert.equal((legacyRevoke.match(/;/g) ?? []).length, 1);
   assert.match(store, /TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx"/);
+  assert.match(store, /JIAOWUBAO_TRIAL_PAYMENT_COMPLETE_RPC = "complete_jiaowubao_trial_payment_task_tx"/);
+  assert.match(store, /export function completeJiaowubaoTrialPaymentTaskAtomic/);
   const receiptStart = hardening.indexOf("create or replace function public.get_trial_payment_completion_command_result(");
   const receiptEnd = hardening.indexOf("$$;", receiptStart);
   const receipt = hardening.slice(receiptStart, receiptEnd);
@@ -100,6 +107,36 @@ test("planner completion is a replay-first narrow command and never accepts a ta
   assert.match(receipt, /prior\.actor is distinct from trim\(p_actor\)/);
   assert.match(receipt, /prior\.command_sha256 is distinct from command_hash/);
   assert.doesNotMatch(receipt, /public\.ops_state|bookings_row|students_row/);
+
+  const jwbStart = jiaowubaoCompletion.indexOf("create or replace function public.complete_jiaowubao_trial_payment_task_tx(");
+  const jwbEnd = jiaowubaoCompletion.indexOf("$function$;", jwbStart);
+  const jwb = jiaowubaoCompletion.slice(jwbStart, jwbEnd);
+  const jwbFirstLedger = jwb.indexOf("where commands.command_key = p_command_key");
+  const jwbBookingsLock = jwb.indexOf("where entity = 'bookings' for update");
+  const jwbStudentsLock = jwb.indexOf("where entity = 'students' for update");
+  const jwbLpLock = jwb.indexOf("where entity = 'lpItems' for update");
+  const jwbTasksLock = jwb.indexOf("where entity = 'tasks' for update");
+  const jwbTeachersLock = jwb.indexOf("where entity = 'teachers' for update");
+  const jwbSecondLedger = jwb.indexOf("where commands.command_key = p_command_key", jwbFirstLedger + 1);
+  assert.ok(jwbFirstLedger >= 0 && jwbFirstLedger < jwbBookingsLock);
+  assert.ok(jwbBookingsLock < jwbStudentsLock && jwbStudentsLock < jwbLpLock
+    && jwbLpLock < jwbTasksLock && jwbTasksLock < jwbTeachersLock
+    && jwbTeachersLock < jwbSecondLedger);
+  assert.match(jwb, /trial\.jiaowubao\.payment-n2/);
+  assert.match(jwb, /requestAnchorBookingId/);
+  assert.match(jwb, /trialSchedule,eventId/);
+  assert.match(jwb, /trialSchedule,source/);
+  assert.match(jwb, /trialSchedule,sourceRevision/);
+  assert.match(jwb, /trialIntake,planner/);
+  assert.match(jwb, /when 'tara' then 'Tara'/);
+  assert.match(jwb, /task_item ->> 'status' in \('overdue', 'today', 'upcoming', 'waiting'\)/);
+  assert.match(jwb, /fields,trialPaymentMethod/);
+  assert.match(jwb, /internal\.jiaowubao_open_api_schedule_snapshot_current/);
+  assert.match(jwb, /internal\.jiaowubao_open_api_schedule_snapshot_ingest_items/);
+  assert.match(jwb, /pointer\.revision is distinct from lp_item #>> '\{trialSchedule,sourceRevision\}'/);
+  assert.match(jwb, /b\.version <> \(p_expected_versions ->> 'bookings'\)::bigint[\s\S]*l\.version <> \(p_expected_versions ->> 'lpItems'\)::bigint[\s\S]*t\.version <> \(p_expected_versions ->> 'tasks'\)::bigint/);
+  assert.match(jiaowubaoCompletion, /revoke all on function public\.complete_jiaowubao_trial_payment_task_tx[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(jiaowubaoCompletion, /grant execute on function public\.complete_jiaowubao_trial_payment_task_tx[\s\S]*to anon, authenticated/);
 });
 
 test("cross-owner payment snapshot is version-bound and separately requested", async () => {
@@ -112,6 +149,7 @@ test("cross-owner payment snapshot is version-bound and separately requested", a
   assert.match(stateRoute, /includeManagedTrialPaymentSnapshot/);
   assert.match(stateRoute, /entities\?\.includes\("bookings"\)/);
   assert.match(stateRoute, /entities\.includes\("students"\)/);
+  assert.match(stateRoute, /entities\.includes\("lpItems"\)/);
   assert.match(stateRoute, /entities\.includes\("tasks"\)/);
   const dtoStart = projection.indexOf("export type ManagedTrialPaymentStudentProjection");
   const dtoEnd = projection.indexOf("}>;", dtoStart);
@@ -135,6 +173,8 @@ test("client polls and completes payment reminders without optimistic task write
   assert.match(client, /trial-payment-complete:\$\{crypto\.randomUUID\(\)\}/);
   assert.match(client, /readTrialPaymentPendingCommands\(browserSessionStorage\(\), sessionOperator\)/);
   assert.match(client, /receipt\.receiptOnly/);
+  assert.match(client, /isAdminSession \? "admin" : "staff"/);
+  assert.match(client, /const adminCanComplete = isAdminSession && isAdminView/);
   assert.match(client, /managedTrialPaymentStudentIds\.has\(task\.studentId\)/);
   const submitStart = client.indexOf("const completeManagedTrialPayment = useCallback");
   const submitEnd = client.indexOf("const completeTask =", submitStart);

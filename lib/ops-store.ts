@@ -820,6 +820,7 @@ export const LP_PARENT_PROGRESS_SCHEDULER_COMMIT_RPC = "put_lp_parent_progress_s
 export const LP_PARENT_PROGRESS_SCHEDULER_RECOVER_RPC = "recover_stale_lp_parent_progress_scheduler_runs";
 export const TRIAL_PAYMENT_RECONCILE_RPC = "reconcile_trial_payment_tasks_authoritative";
 export const TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx";
+export const JIAOWUBAO_TRIAL_PAYMENT_COMPLETE_RPC = "complete_jiaowubao_trial_payment_task_tx";
 export const TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC = "get_trial_payment_completion_command_result";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_CONFIRM_RPC = "confirm_jiaowubao_open_api_schedule_snapshot_current";
@@ -831,6 +832,8 @@ export const JIAOWUBAO_OPEN_API_SCHEDULE_ABORT_RPC = "abort_jiaowubao_open_api_s
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
+export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
+export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -958,6 +961,19 @@ export type JiaowubaoOpenApiScheduleSyncLease = Readonly<{
   runKey: string;
   retryAfterSeconds: number;
 }>;
+
+export type JiaowubaoTrialSyncCommitResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  snapshot_revision: string;
+  lp_item_ids: readonly string[];
+  student_ids: readonly string[];
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type JiaowubaoTrialSyncCommandResult = Omit<JiaowubaoTrialSyncCommitResult, "applied">;
 
 /** Server-only raw receipt from the Open API source snapshot reader. */
 export type JiaowubaoOpenApiScheduleSnapshotWindow = Readonly<{
@@ -1221,6 +1237,27 @@ export function completeTrialPaymentTaskAtomic(input: {
   });
 }
 
+/** Completes one exact Jiaowubao-linked planner reminder under the same five locks. */
+export function completeJiaowubaoTrialPaymentTaskAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  taskId: string;
+  expectedVersions: Readonly<Record<"bookings" | "students" | "lpItems" | "tasks" | "teachers", number>>;
+  actor: string;
+  actorRole: "admin" | "limited-admin" | "staff" | "teacher";
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentCompletionResult[]>(JIAOWUBAO_TRIAL_PAYMENT_COMPLETE_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_task_id: input.taskId,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+    p_actor_role: input.actorRole,
+  });
+}
+
 /** Reads only an actor-bound immutable receipt; it returns no operational rows. */
 export function getTrialPaymentCompletionCommandResult(input: {
   commandKey: string;
@@ -1447,6 +1484,46 @@ export function getJiaowubaoOpenApiScheduleSnapshotWindow(input: {
     p_cursor_start: input.cursor?.startsAt ?? null,
     p_cursor_event_id: input.cursor?.eventId ?? null,
     p_snapshot_revision: input.revision,
+  });
+}
+
+/** Commits the server-derived LP/task projection as one OCC transaction. */
+export function syncJiaowubaoTrialMatchesAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  snapshotRevision: string;
+  matches: readonly Readonly<{ lpItemId: string; eventId: string; startsAt: string }>[];
+  expectedVersions: Readonly<{ lpItems: number; tasks: number }>;
+  nextLpItems: readonly unknown[];
+  nextTasks: readonly unknown[];
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoTrialSyncCommitResult[]>(JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_snapshot_revision: input.snapshotRevision,
+    p_matches: input.matches,
+    p_expected_versions: input.expectedVersions,
+    p_next_lp_items: input.nextLpItems,
+    p_next_tasks: input.nextTasks,
+    p_actor: input.actor,
+  });
+}
+
+/** Reads an already committed command before any source/OCC revalidation. */
+export function getJiaowubaoTrialSyncCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoTrialSyncCommandResult[]>(JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_uuid: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_actor: input.actor,
   });
 }
 

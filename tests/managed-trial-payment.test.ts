@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isManagedTrialPaymentTask,
   isManagedTrialPaymentTaskRecipient,
+  managedTrialPaymentTaskKind,
   managedTrialPaymentSnapshotCanReplace,
   managedTrialPaymentSnapshotIsCurrent,
   parseManagedTrialPaymentCompletionReceipt,
@@ -10,7 +12,7 @@ import {
   parseManagedTrialPaymentProjectionSnapshot,
 } from "../lib/managed-trial-payment";
 
-const versions = { bookings: 2, students: 3, tasks: 4 } as const;
+const versions = { bookings: 2, students: 3, lpItems: 5, tasks: 4 } as const;
 
 test("managed trial payment projections accept only minimal identity bound to authority versions", () => {
   const snapshot = parseManagedTrialPaymentProjectionSnapshot({
@@ -57,13 +59,23 @@ test("completion response requires either matched authoritative rows or a PII-fr
     taskId: "TASK-1",
     taskRow: { entity: "tasks", payload: [task], version: 7, updated_at: "now", updated_by: "Tara" },
     managedTrialPaymentSnapshot: {
-      versions: { bookings: 2, students: 3, tasks: 7 },
+      versions: { bookings: 2, students: 3, lpItems: 5, tasks: 7 },
       students: [{ id: "STU-1", name: "Student", initials: "ST" }],
     },
     auditEntryId: "11111111-1111-4111-8111-111111111111",
   }, "TASK-1", "Tara");
   assert.equal(full.receiptOnly, false);
   assert.equal(full.taskRow?.version, 7);
+
+  const adminFull = parseManagedTrialPaymentCompletionReceipt({
+    ...full,
+    taskRow: {
+      ...full.taskRow,
+      payload: [{ ...task, result: "已由管理员确认试听付款" }],
+      updated_by: "Nixon",
+    },
+  }, "TASK-1", "Nixon", "admin");
+  assert.equal(adminFull.receiptOnly, false);
 
   const receiptOnly = parseManagedTrialPaymentCompletionReceipt({
     committed: true,
@@ -86,8 +98,20 @@ test("completion response requires either matched authoritative rows or a PII-fr
   }, "TASK-1", "Tara"), /task evidence/);
   assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
     ...full,
+    taskRow: { ...full.taskRow, updated_by: "Nixon" },
+  }, "TASK-1", "Tara"), /task evidence/);
+  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
+    ...full,
+    taskRow: {
+      ...full.taskRow,
+      payload: [{ ...task, result: "已由规划老师确认试听付款" }],
+      updated_by: "Nixon",
+    },
+  }, "TASK-1", "Nixon", "admin"), /task evidence/);
+  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
+    ...full,
     managedTrialPaymentSnapshot: {
-      versions: { bookings: 2, students: 3, tasks: 8 },
+      versions: { bookings: 2, students: 3, lpItems: 5, tasks: 8 },
       students: [],
     },
   }, "TASK-1", "Tara"), /versions are inconsistent/);
@@ -97,12 +121,13 @@ test("payment authority versions and exact planner recipient fail closed", () =>
   assert.deepEqual(parseManagedTrialPaymentAuthorityVersions([
     { entity: "bookings", version: 2 },
     { entity: "students", version: 3 },
+    { entity: "lpItems", version: 5 },
     { entity: "tasks", version: 4 },
   ]), versions);
   assert.throws(() => parseManagedTrialPaymentAuthorityVersions([
     { entity: "bookings", version: 2 },
     { entity: "students", version: 3 },
-  ]), /tasks authority row is missing or duplicated/);
+  ]), /lpItems authority row is missing or duplicated/);
 
   const task = {
     category: "试听",
@@ -116,4 +141,16 @@ test("payment authority versions and exact planner recipient fail closed", () =>
   assert.equal(isManagedTrialPaymentTaskRecipient({ ...task, owner: "Abby" }, "Tara"), false);
   assert.equal(isManagedTrialPaymentTaskRecipient({ ...task, assignees: ["Tara", "Abby"] }, "Tara"), false);
   assert.equal(isManagedTrialPaymentTaskRecipient({ ...task, watchers: ["Abby"] }, "Tara"), false);
+
+  const jiaowubaoTask = {
+    ...task,
+    ruleKey: "trial.jiaowubao.payment-n2",
+    anchorBookingId: "JWB:event-1",
+    requestAnchorBookingId: "LP-1",
+  };
+  assert.equal(isManagedTrialPaymentTask(jiaowubaoTask), true);
+  assert.equal(managedTrialPaymentTaskKind(jiaowubaoTask), "jiaowubao");
+  assert.equal(isManagedTrialPaymentTaskRecipient(jiaowubaoTask, "tara"), true);
+  assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, requestAnchorBookingId: "" }), false);
+  assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, anchorBookingId: "JWB:event/1" }), false);
 });

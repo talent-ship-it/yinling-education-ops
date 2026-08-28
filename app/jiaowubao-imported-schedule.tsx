@@ -33,6 +33,8 @@ export type JiaowubaoImportedSchedulePage = Readonly<{
     /** Opaque, server-signed continuation token. Never inspect or construct it in the browser. */
     token: string;
   }> | null;
+  /** Immutable source revision used by server-side trial-sync verification. */
+  revision?: string;
   freshness?: "absent" | "fresh" | "stale";
   empty?: boolean;
 }>;
@@ -46,6 +48,7 @@ export type JiaowubaoImportedScheduleFeed = Readonly<{
   events: readonly JiaowubaoImportedScheduleEvent[];
   invalidTimeEventCount: number;
   paginationComplete: true;
+  revision?: string;
 }>;
 
 export type JiaowubaoImportedScheduleReadError = "session" | "reader_unavailable" | "unavailable";
@@ -59,7 +62,8 @@ const FORBIDDEN_SCHEDULE_FIELDS = new Set([
 const SOURCE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 const SOURCE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCE_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const PAGE_FIELDS = new Set(["state", "events", "invalidTimeEventCount", "hasMore", "nextCursor", "freshness", "empty"]);
+const SNAPSHOT_REVISION = /^sha256:[a-f0-9]{64}$/;
+const PAGE_FIELDS = new Set(["state", "events", "invalidTimeEventCount", "hasMore", "nextCursor", "revision", "freshness", "empty"]);
 const EVENT_FIELDS = new Set(["eventId", "sourceDate", "startsAt", "endsAt", "courseName", "teacherId", "teacherName", "trialPlannerHint", "availabilityEffect", "visibleStudentIds", "visibleStudentsTruncated"]);
 const CURSOR_FIELDS = new Set(["token"]);
 
@@ -161,6 +165,10 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
     throw new Error("教务宝同步课表新鲜度无效。");
   }
   if (source.empty !== undefined && typeof source.empty !== "boolean") throw new Error("教务宝同步课表空结果状态无效。");
+  if (source.revision !== undefined
+    && (typeof source.revision !== "string" || !SNAPSHOT_REVISION.test(source.revision))) {
+    throw new Error("教务宝同步课表版本无效。");
+  }
   if (source.freshness !== undefined
     && ((source.state === "absent" && source.freshness !== "absent")
       || (source.state === "complete" && source.freshness !== "fresh")
@@ -178,6 +186,7 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
     invalidTimeEventCount,
     hasMore: source.hasMore,
     nextCursor: parsedNextCursor ? { token: parsedNextCursor.token as string } : null,
+    ...(source.revision !== undefined ? { revision: source.revision } : {}),
     ...(source.freshness !== undefined ? { freshness: source.freshness } : {}),
     ...(source.empty !== undefined ? { empty: source.empty } : {}),
   };
@@ -217,6 +226,9 @@ export function completeJiaowubaoImportedSchedulePages(
     if (page.state !== first.state) {
       throw new Error("教务宝同步课表分页已重置或不是同一同步批次。");
     }
+    if (page.revision !== first.revision) {
+      throw new Error("教务宝同步课表分页版本不一致。");
+    }
     // The database computes this source-wide diagnostic on the first page
     // only; continuation pages deliberately return zero to avoid repeated
     // aggregation work. A nonzero continuation count would be ambiguous.
@@ -247,6 +259,7 @@ export function completeJiaowubaoImportedSchedulePages(
     events,
     invalidTimeEventCount: first.invalidTimeEventCount,
     paginationComplete: true,
+    ...(first.revision ? { revision: first.revision } : {}),
   };
 }
 
