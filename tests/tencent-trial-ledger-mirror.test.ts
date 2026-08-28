@@ -111,3 +111,21 @@ test("manual ledger values override automatic values and remain deterministic", 
     备注: "Manual note",
   });
 });
+
+test("normalizes legacy aliases and suppresses values outside the handbook dropdowns", () => {
+  const [row] = buildTencentTrialLedgerMirrorRows({
+    students: [{ id: "STU-1", planner: "Tara龙" }],
+    lpItems: [{
+      id: "LP-1",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      owner: "Nixon",
+      resultStatus: "Legacy custom result",
+    }],
+  });
+
+  assert.equal(row.values["LP 类型"], "试听 LP");
+  assert.equal(row.values.教务, "");
+  assert.equal(row.values.课程规划老师, "Tara");
+  assert.equal(row.values.试听状态, "");
+});

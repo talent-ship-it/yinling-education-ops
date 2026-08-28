@@ -44,6 +44,17 @@ export const TENCENT_TRIAL_LEDGER_FIELD_KINDS: Readonly<Record<TencentTrialLedge
   备注: "text",
 };
 
+const TENCENT_TRIAL_LEDGER_OPTIONS = {
+  workflowType: ["试听 LP", "换老师试听"],
+  operationsOwner: ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"],
+  planner: ["Tara", "Eileen", "Abby"],
+  resultStatus: ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"],
+} as const;
+
+const TENCENT_TRIAL_LEDGER_OPTION_ALIASES: Readonly<Record<string, string>> = {
+  Tara龙: "Tara",
+};
+
 export type TencentTrialLedgerMirrorRow = Readonly<{
   lpItemId: string;
   values: Readonly<Record<TencentTrialLedgerField, string>>;
@@ -89,6 +100,16 @@ function storedText(item: JsonRecord, field: TrialLedgerField) {
 
 function effectiveText(item: JsonRecord, field: TrialLedgerField, automatic: unknown) {
   return storedText(item, field) || text(automatic);
+}
+
+function canonicalOption(
+  value: unknown,
+  allowed: readonly string[],
+  aliases: Readonly<Record<string, string>> = {},
+) {
+  const candidate = text(value);
+  const canonical = aliases[candidate] ?? candidate;
+  return allowed.includes(canonical) ? canonical : "";
 }
 
 function safeMonthFromInstant(value: string) {
@@ -140,19 +161,32 @@ export function buildTencentTrialLedgerMirrorRows(input: Readonly<{
         values: {
           学生姓名: effectiveText(item, "studentName", text(intake.studentName) || text(student.name)),
           家长微信名: effectiveText(item, "guardianWechat", text(student.guardianWechat) || text(student.guardian)),
-          "LP 类型": effectiveText(item, "workflowType", item.workflowType),
+          "LP 类型": canonicalOption(
+            effectiveText(item, "workflowType", item.workflowType),
+            TENCENT_TRIAL_LEDGER_OPTIONS.workflowType,
+          ),
           上课月份: effectiveText(item, "lessonMonth", safeMonthFromInstant(scheduledAt)),
           "请求日期/时间": requestedAt,
           "上课日期和时间（墨尔本）": scheduledAt,
-          教务: effectiveText(item, "operationsOwner", item.owner),
-          课程规划老师: effectiveText(item, "planner", text(intake.planner) || text(student.planner)),
+          教务: canonicalOption(
+            effectiveText(item, "operationsOwner", item.owner),
+            TENCENT_TRIAL_LEDGER_OPTIONS.operationsOwner,
+          ),
+          课程规划老师: canonicalOption(
+            effectiveText(item, "planner", text(intake.planner) || text(student.planner)),
+            TENCENT_TRIAL_LEDGER_OPTIONS.planner,
+            TENCENT_TRIAL_LEDGER_OPTION_ALIASES,
+          ),
           科目: effectiveText(item, "subject", text(fields.subject) || text(student.course)),
           老师: effectiveText(
             item,
             "teacher",
             text(schedule.teacherName) || text(fields.assignedTeacher) || text(student.teacher),
           ),
-          试听状态: storedText(item, "resultStatus"),
+          试听状态: canonicalOption(
+            storedText(item, "resultStatus"),
+            TENCENT_TRIAL_LEDGER_OPTIONS.resultStatus,
+          ),
           是否付费: (typeof paid === "boolean" ? paid : automaticPaid) ? "是" : "否",
           备注: storedText(item, "trialLedgerNote"),
         },
