@@ -7,7 +7,11 @@ import {
   type OpsTask,
   type TaskTone,
 } from "./ops-tasks";
-import type { LpFieldValues } from "./lp-workflows";
+import {
+  TRIAL_PAYMENT_METHODS,
+  type LpFieldValues,
+  type TrialPaymentMethod,
+} from "./lp-workflows";
 
 export const TRIAL_PLANNERS = ["Tara", "Eileen", "Abby"] as const;
 export type TrialPlanner = (typeof TRIAL_PLANNERS)[number];
@@ -79,9 +83,22 @@ export type TrialScheduleMatch = Readonly<{
   owner: string;
   planner: string;
   preparationFollowUp: boolean;
+  trialPaymentMethod?: TrialPaymentMethod;
   requestSentAt?: string;
   link: TrialScheduleLink;
 }>;
+
+const TRIAL_PAYMENT_REMINDER_METHODS = new Set<TrialPaymentMethod>([
+  "后置付费试听",
+  "付费试听（未付费）",
+  "在读学生付费试听",
+]);
+
+function trialPaymentMethod(value: unknown): TrialPaymentMethod | undefined {
+  return typeof value === "string" && (TRIAL_PAYMENT_METHODS as readonly string[]).includes(value)
+    ? value as TrialPaymentMethod
+    : undefined;
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -219,7 +236,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     workflowType?: string;
     stage?: string;
     requestedAt?: string;
-    fields?: Readonly<{ preparationFollowUp?: unknown }>;
+    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown }>;
     trialIntake?: TrialIntake;
   }>[];
   students: readonly Readonly<{ id: string; name: string; owner: string; planner?: string }>[];
@@ -240,6 +257,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     const nameKey = normalize(existingStudentName);
     if (!nameKey) continue;
     const plannerName = item.trialIntake?.planner || student.planner || "";
+    const paymentMethod = trialPaymentMethod(item.fields?.trialPaymentMethod);
     const requestTime = requestedAt(item);
     const candidates = input.events.filter((event) => {
       if (claimedEvents.has(event.eventId)) return false;
@@ -266,6 +284,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       owner: student.owner,
       planner: plannerName,
       preparationFollowUp: item.fields?.preparationFollowUp !== "否",
+      ...(paymentMethod ? { trialPaymentMethod: paymentMethod } : {}),
       ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
       link: Object.freeze({
         source: "jiaowubao-open-api",
@@ -476,7 +495,10 @@ export function completeTrialSchedulingReminderTasks(
 
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
 
-export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly<{ now: Date | string }>): OpsTask[] {
+export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly<{
+  now: Date | string;
+  paymentManagedByBooking?: boolean;
+}>): OpsTask[] {
   const start = new Date(input.link.startsAt);
   const end = new Date(input.link.endsAt);
   const now = new Date(input.now);
@@ -523,14 +545,18 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
         category: "LP",
       }),
     ] : []),
-    task({
-      ...shared,
-      owner: input.planner || input.owner,
-      assignees: [input.planner || input.owner],
-      ruleKey: `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
-      title: `《教统》【提醒规划老师收取试听费】<${input.studentName}>`,
-      dueAt: n2Deadline,
-    }),
+    ...(!input.paymentManagedByBooking
+      && input.trialPaymentMethod
+      && TRIAL_PAYMENT_REMINDER_METHODS.has(input.trialPaymentMethod) ? [
+        task({
+          ...shared,
+          owner: input.planner || input.owner,
+          assignees: [input.planner || input.owner],
+          ruleKey: `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
+          title: `《教统》【提醒规划老师收取试听费】<${input.studentName}>`,
+          dueAt: n2Deadline,
+        }),
+      ] : []),
     task({
       ...shared,
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}today`,

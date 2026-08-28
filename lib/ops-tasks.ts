@@ -54,6 +54,8 @@ export interface OpsTask {
     frozenAt: string;
   };
   anchorBookingId?: string;
+  /** Trial-request identity retained after an authoritative booking takes over. */
+  requestAnchorBookingId?: string;
   closedAt?: string;
 }
 

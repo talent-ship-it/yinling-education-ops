@@ -11,7 +11,7 @@ import {
   trialIntakeFromFields,
   trialPlannerHintFromParticipants,
 } from "../lib/trial-operations";
-import type { LpFieldValues } from "../lib/lp-workflows";
+import type { LpFieldValues, TrialPaymentMethod } from "../lib/lp-workflows";
 
 const extendedFields = {
   responsibleOperations: "Ella",
@@ -229,9 +229,9 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
   assert.equal(completed.find((task) => task.id === foreign.id)?.status, foreign.status);
 });
 
-test("materializes N-2, N-1, payment and same-day tasks from one real 教务宝 event", () => {
+test("materializes N-2, N-1, pending-payment and same-day tasks from one real 教务宝 event", () => {
   const match = matchTrialScheduleEvents({
-    lpItems: [{ id: "LP-1", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) }],
+    lpItems: [{ id: "LP-1", studentId: "STU-1", workflowType: "试听 LP", fields: extendedFields, trialIntake: trialIntakeFromFields(extendedFields) }],
     students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
     teachers: [{ id: "TEA-1", name: "Grace Lin" }],
     events: [{ eventId: "evt-1", startsAt: "2026-09-03T08:00:00.000Z", endsAt: "2026-09-03T09:00:00.000Z", courseName: "Heather孙晓琳", teacherId: "TEA-1", visibleStudentIds: [], trialPlannerHint: "Tara" }],
@@ -247,6 +247,43 @@ test("materializes N-2, N-1, payment and same-day tasks from one real 教务宝 
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.title,
     "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 墨尔本 19:00 结束>");
   assert.ok(tasks.some((task) => task.title.includes("收取试听费") && task.owner === "Tara"));
+});
+
+test("Jiaowubao payment reminders follow LP authority and defer to a linked booking", () => {
+  const common = {
+    lpItemId: "LP-PAYMENT",
+    studentId: "STU-PAYMENT",
+    studentName: "QA试听学员",
+    owner: "Ella",
+    planner: "Tara",
+    preparationFollowUp: true,
+    requestSentAt: "2026-08-28T02:00:00.000Z",
+    link: {
+      source: "jiaowubao-open-api" as const,
+      eventId: "evt-payment",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "QA试听学员",
+      teacherId: "TEA-1",
+      teacherName: "Grace Lin",
+      plannerHint: "Tara" as const,
+      matchedAt: "2026-08-28T03:00:00.000Z",
+    },
+    now: "2026-08-28T03:00:00.000Z",
+  };
+  const hasPayment = (method: TrialPaymentMethod, paymentManagedByBooking = false) =>
+    generateJiaowubaoTrialTasks({
+      ...common,
+      trialPaymentMethod: method,
+      paymentManagedByBooking,
+    }).some((task) => task.ruleKey === `${TRIAL_JWB_RULE_PREFIX}payment-n2`);
+
+  assert.equal(hasPayment("付费试听（未付费）"), true);
+  assert.equal(hasPayment("后置付费试听"), true);
+  assert.equal(hasPayment("在读学生付费试听"), true);
+  assert.equal(hasPayment("免费试听"), false);
+  assert.equal(hasPayment("付费试听（已付费）"), false);
+  assert.equal(hasPayment("付费试听（未付费）", true), false);
 });
 
 test("omits the N-1 teacher-preparation task when the handover explicitly says no", () => {

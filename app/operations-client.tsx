@@ -3878,7 +3878,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       await tasksShared.mutateAndCommit((current) => {
         let next = [...current];
         for (const match of trialScheduleMatches) {
-          const generated = generateJiaowubaoTrialTasks({ ...match, now: syncedAt });
+          const paymentManagedByBooking = next.some((task) =>
+            task.requestAnchorBookingId === match.lpItemId
+            && Boolean(task.anchorBookingId)
+            && !task.anchorBookingId?.startsWith("JWB:"));
+          const generated = generateJiaowubaoTrialTasks({
+            ...match,
+            now: syncedAt,
+            paymentManagedByBooking,
+          });
           next = replaceRuleTasks(next, generated, {
             anchor: `JWB:${match.link.eventId}`,
             rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
