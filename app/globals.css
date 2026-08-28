@@ -3573,7 +3573,10 @@ summary,
 
 .skip-link:focus,
 .skip-link:focus-visible,
-.skip-link.is-focused { transform:translateY(0); }
+.skip-link.is-focused {
+  transform:translateY(0);
+  transition:none;
+}
 #main-content { scroll-margin-top:76px; }
 #main-content:focus { outline:none; }
 #jiaowubao-schedule-mapping-review-title { scroll-margin-top:78px; }
