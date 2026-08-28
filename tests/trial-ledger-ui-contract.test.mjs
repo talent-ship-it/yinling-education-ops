@@ -6,7 +6,7 @@ const client = await readFile(new URL("../app/operations-client.tsx", import.met
 
 test("keeps the trial ledger at the handbook's exact 13 columns", () => {
   const header = client.match(/<table className="trial-ledger-table">[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] ?? "";
-  const labels = [...header.matchAll(/<th>([^<]+)<\/th>/g)].map((match) => match[1]);
+  const labels = [...header.matchAll(/<th(?:\s[^>]*)?>([^<]+)<\/th>/g)].map((match) => match[1]);
 
   assert.deepEqual(labels, [
     "学生姓名",
@@ -23,4 +23,28 @@ test("keeps the trial ledger at the handbook's exact 13 columns", () => {
     "是否付费",
     "备注",
   ]);
+});
+
+test("makes all 13 ledger columns editable through the dedicated atomic route", () => {
+  for (const field of [
+    "studentName",
+    "guardianWechat",
+    "workflowType",
+    "lessonMonth",
+    "requestedAt",
+    "scheduledAt",
+    "operationsOwner",
+    "planner",
+    "subject",
+    "teacher",
+    "resultStatus",
+    "trialPaid",
+    "trialLedgerNote",
+  ]) {
+    assert.match(client, new RegExp(`(?:field: "${field}"|saveTrialLedgerFieldAtomic\\(item, "${field}")`));
+  }
+  assert.match(client, /\/api\/operations\/trial-ledger/);
+  assert.match(client, /恢复自动/);
+  assert.match(client, /field-level|字段级|trialLedgerStoredValue/);
+  assert.doesNotMatch(client, /const saveTrialLedgerField = .*lpShared\.mutateAndCommit/s);
 });
