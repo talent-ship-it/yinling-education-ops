@@ -96,6 +96,7 @@ test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", (
     lpItemId: "LP-1",
     studentId: "STU-1",
     studentName: "Heather孙晓琳",
+    guardianWechat: "Daisy",
     owner: "Ella",
     specifiedContentStatus: "需教务跟进",
     intake,
@@ -113,6 +114,15 @@ test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", (
   ]);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("paper-receive"))?.dueAt, "2026-08-29T02:00:00.000Z");
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))?.dueAt, "2026-08-29T14:00:00.000Z");
+  assert.deepEqual(tasks.map((task) => task.title), [
+    "《教务+教统》【要指定内容】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【要写作】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【发试卷】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【收试卷】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【向家长交待排课进度】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【试听排课进度反常】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【二次向家长交待排课进度】<Heather孙晓琳> <Daisy>",
+  ]);
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
 });
 

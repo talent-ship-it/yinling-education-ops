@@ -83,9 +83,10 @@ $$;
 \ir ../../supabase/migrations/20260827000200_enforce_complete_lp_submission.sql
 \ir ../../supabase/migrations/20260828000200_trial_manual_tasks_atomic.sql
 \ir ../../supabase/migrations/20260828000300_preserve_trial_legacy_evidence.sql
+\ir ../../supabase/migrations/20260828000400_align_trial_handbook_task_titles.sql
 
 insert into public.ops_state(entity, payload, version, updated_by) values
-  ('students', '[{"id":"STU-1","name":"Atomic Trial","owner":"Abby","planner":"Tara","files":0}]', 1, 'fixture'),
+  ('students', '[{"id":"STU-1","name":"Atomic Trial","guardianWechat":"Daisy","owner":"Abby","planner":"Tara","files":0}]', 1, 'fixture'),
   ('lpItems', '[]', 1, 'fixture'),
   ('tasks', '[{"id":"TSK-LEGACY-SPARSE","title":"Historical task without canonical metadata","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}},{"id":"TSK-LEGACY-MATCH","title":"Frozen legacy rule for the deterministic LP anchor","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","ruleKey":"trial.parent-follow-up","anchorBookingId":"LP-ATOMIC-a8f78ee5b2f178415038e032","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}}]', 1, 'fixture'),
   ('files', '[]', 1, 'fixture');
@@ -179,6 +180,23 @@ begin
     'trial.manual-request.writing'
   ] then
     raise exception 'trial_manual_rule_projection_failed: %', rules;
+  end if;
+  if exists (
+    select 1
+    from jsonb_array_elements((receipt.tasks_row).payload) task
+    where task ->> 'anchorBookingId' = receipt.lp_item_id
+      and task ->> 'ruleKey' like 'trial.manual-request.%'
+      and task ->> 'title' not like '%<Atomic Trial> <Daisy>'
+  ) then
+    raise exception 'trial_manual_guardian_title_failed';
+  end if;
+  if (select task ->> 'title' from jsonb_array_elements((receipt.tasks_row).payload) task
+      where task ->> 'ruleKey' = 'trial.manual-request.specified-content')
+      <> '《教务+教统》【要指定内容】<Atomic Trial> <Daisy>'
+     or (select task ->> 'title' from jsonb_array_elements((receipt.tasks_row).payload) task
+      where task ->> 'ruleKey' = 'trial.manual-request.parent-progress-48h')
+      <> '《教务+教统》【二次向家长交待排课进度】<Atomic Trial> <Daisy>' then
+    raise exception 'trial_manual_handbook_title_failed';
   end if;
   if exists (
     select 1 from jsonb_array_elements((receipt.tasks_row).payload) task

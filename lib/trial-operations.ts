@@ -318,6 +318,7 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   lpItemId: string;
   studentId: string;
   studentName: string;
+  guardianWechat: string;
   owner: string;
   specifiedContentStatus: string;
   intake: TrialIntake;
@@ -335,17 +336,19 @@ export function generateTrialManualRequestTasks(input: Readonly<{
     trigger: "试听 LP 信息交接后按手册自动生成",
   } as const;
   const tasks: OpsTask[] = [];
+  const guardianWechat = text(input.guardianWechat) || "家长微信名未填写";
+  const taskDetails = `<${input.studentName}> <${guardianWechat}>`;
   if (["需教务跟进", "需要跟进"].includes(input.specifiedContentStatus)) tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
-    title: `《教务+教统》【指定试听内容】<${input.studentName}>`,
+    title: `《教务+教统》【要指定内容】${taskDetails}`,
     dueAt: sameDay,
     category: "LP",
   }));
   if (input.intake.writingRequired) tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}writing`,
-    title: `《教务+教统》【完成试听写作要求】<${input.studentName}>`,
+    title: `《教务+教统》【要写作】${taskDetails}`,
     dueAt: sameDay,
     category: "LP",
   }));
@@ -353,14 +356,14 @@ export function generateTrialManualRequestTasks(input: Readonly<{
     tasks.push(task({
       ...shared,
       ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`,
-      title: `《教务+教统》【发送试听试卷】<${input.studentName}>`,
+      title: `《教务+教统》【发试卷】${taskDetails}`,
       dueAt: sameDay,
       category: "LP",
     }));
     tasks.push(task({
       ...shared,
       ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`,
-      title: `《教务+教统》【收回试听试卷】<${input.studentName}>`,
+      title: `《教务+教统》【收试卷】${taskDetails}`,
       dueAt: new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000),
       category: "LP",
     }));
@@ -368,13 +371,13 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
-    title: `《教务+教统》【向家长同步试听安排进度】<首次 · ${input.studentName}>`,
+    title: `《教务+教统》【向家长交待排课进度】${taskDetails}`,
     dueAt: new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000),
   }));
   tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
-    title: `《教务+教统》【试听排课异常提醒】<教务宝仍未匹配 · ${input.studentName}>`,
+    title: `《教务+教统》【试听排课进度反常】${taskDetails}`,
     dueAt: new Date(requestedAt.valueOf() + 36 * 60 * 60 * 1_000),
     category: "排课",
     tone: "red",
@@ -382,7 +385,7 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
-    title: `《教务+教统》【向家长同步试听安排进度】<第二次 · ${input.studentName}>`,
+    title: `《教务+教统》【二次向家长交待排课进度】${taskDetails}`,
     dueAt: new Date(requestedAt.valueOf() + 48 * 60 * 60 * 1_000),
   }));
   return tasks;

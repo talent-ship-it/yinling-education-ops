@@ -10,6 +10,10 @@ const evidencePreservationMigration = readFileSync(
   new URL("../supabase/migrations/20260828000300_preserve_trial_legacy_evidence.sql", import.meta.url),
   "utf8",
 );
+const handbookTitlesMigration = readFileSync(
+  new URL("../supabase/migrations/20260828000400_align_trial_handbook_task_titles.sql", import.meta.url),
+  "utf8",
+);
 const runtimeFixture = readFileSync(
   new URL("./sql/trial-manual-lp-atomic-runtime.sql", import.meta.url),
   "utf8",
@@ -55,6 +59,21 @@ test("the atomic projection removes open legacy rules and creates the complete h
   assert.match(migration, /request_at \+ interval '48 hours'/i);
   assert.match(migration, /specifiedContentStatus' in \('需要跟进', '需教务跟进'\)/i);
   assert.match(migration, /internal\.trial_manual_task_id\(delegated\.lp_item_id, rule\)/i);
+});
+
+test("open manual trial tasks use every title confirmed word-for-word in the handbook", () => {
+  for (const title of [
+    "【要指定内容】",
+    "【要写作】",
+    "【发试卷】",
+    "【收试卷】",
+    "【向家长交待排课进度】",
+    "【试听排课进度反常】",
+    "【二次向家长交待排课进度】",
+  ]) assert.match(handbookTitlesMigration, new RegExp(title));
+  assert.match(handbookTitlesMigration, /guardianWechat/);
+  assert.match(handbookTitlesMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
+  assert.match(handbookTitlesMigration, /mutate_lp_atomic_before_trial_handbook_titles/);
 });
 
 test("trial task replacement preserves unrelated legacy evidence with sparse metadata", () => {
