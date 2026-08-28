@@ -333,7 +333,7 @@ import {
 } from "@/lib/shared-state-recovery";
 import {
   TRIAL_JWB_RULE_PREFIX,
-  TRIAL_MANUAL_REQUEST_RULE_PREFIX,
+  completeTrialSchedulingReminderTasks,
   generateJiaowubaoTrialTasks,
   matchTrialScheduleEvents,
   replaceRuleTasks,
@@ -3880,18 +3880,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             anchor: `JWB:${match.link.eventId}`,
             rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
           });
-          next = next.map((task) => task.anchorBookingId === match.lpItemId
-            && task.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`
-            && task.status !== "done"
-            ? {
-                ...task,
-                status: "done" as const,
-                tone: "green" as const,
-                completionOutcome: "done" as const,
-                result: `教务宝真实排课已匹配：${match.link.eventId}`,
-                closedAt: syncedAt.toISOString(),
-              }
-            : task);
+          next = completeTrialSchedulingReminderTasks(next, {
+            lpItemId: match.lpItemId,
+            eventId: match.link.eventId,
+            completedAt: syncedAt,
+          });
         }
         return sortTasksByDueAt(next);
       });

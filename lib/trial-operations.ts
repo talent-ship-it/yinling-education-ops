@@ -2,6 +2,7 @@ import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
   deterministicTaskId,
   formatTaskDeadline,
+  isFrozenLegacyTask,
   statusForDueAt,
   type OpsTask,
   type TaskTone,
@@ -314,6 +315,12 @@ function task(input: Readonly<{
 
 export const TRIAL_MANUAL_REQUEST_RULE_PREFIX = "trial.manual-request.";
 
+export const TRIAL_SCHEDULING_REMINDER_RULE_KEYS = Object.freeze([
+  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
+  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+] as const);
+
 export function generateTrialManualRequestTasks(input: Readonly<{
   lpItemId: string;
   studentId: string;
@@ -389,6 +396,28 @@ export function generateTrialManualRequestTasks(input: Readonly<{
     dueAt: new Date(requestedAt.valueOf() + 48 * 60 * 60 * 1_000),
   }));
   return tasks;
+}
+
+export function completeTrialSchedulingReminderTasks(
+  current: readonly OpsTask[],
+  input: Readonly<{ lpItemId: string; eventId: string; completedAt: Date | string }>,
+): OpsTask[] {
+  const closedAt = new Date(input.completedAt).toISOString();
+  const managedRules: readonly string[] = TRIAL_SCHEDULING_REMINDER_RULE_KEYS;
+  return current.map((task) => task.anchorBookingId === input.lpItemId
+    && typeof task.ruleKey === "string"
+    && managedRules.includes(task.ruleKey)
+    && task.status !== "done"
+    && !isFrozenLegacyTask(task)
+    ? {
+        ...task,
+        status: "done" as const,
+        tone: "green" as const,
+        completionOutcome: "done" as const,
+        result: `教务宝真实排课已匹配：${input.eventId}`,
+        closedAt,
+      }
+    : task);
 }
 
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";

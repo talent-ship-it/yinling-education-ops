@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_MANUAL_REQUEST_RULE_PREFIX,
+  completeTrialSchedulingReminderTasks,
   generateJiaowubaoTrialTasks,
   generateTrialManualRequestTasks,
   matchTrialScheduleEvents,
@@ -124,6 +125,61 @@ test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", (
     "《教务+教统》【二次向家长交待排课进度】<Heather孙晓琳> <Daisy>",
   ]);
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
+});
+
+test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 match", () => {
+  const manualTasks = generateTrialManualRequestTasks({
+    lpItemId: "LP-1",
+    studentId: "STU-1",
+    studentName: "QA Trial Student",
+    guardianWechat: "QA Guardian",
+    owner: "Ella",
+    specifiedContentStatus: "需教务跟进",
+    intake: trialIntakeFromFields(extendedFields),
+    now: "2026-08-28T02:00:00.000Z",
+  });
+  const alreadyDone = {
+    ...manualTasks.find((task) => task.ruleKey?.endsWith("parent-progress-24h"))!,
+    id: "TASK-ALREADY-DONE",
+    status: "done" as const,
+    result: "人工确认已完成",
+  };
+  const frozen = {
+    ...manualTasks.find((task) => task.ruleKey?.endsWith("parent-progress-48h"))!,
+    id: "TASK-FROZEN",
+    legacyEvidence: {
+      state: "frozen" as const,
+      reason: "missing_canonical_due_at" as const,
+      frozenAt: "2026-08-28T02:30:00.000Z",
+    },
+  };
+  const foreign = {
+    ...manualTasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))!,
+    id: "TASK-FOREIGN",
+    anchorBookingId: "LP-2",
+  };
+  const current = manualTasks.concat(alreadyDone, frozen, foreign);
+
+  const completed = completeTrialSchedulingReminderTasks(current, {
+    lpItemId: "LP-1",
+    eventId: "evt-qa-1",
+    completedAt: "2026-08-28T04:00:00.000Z",
+  });
+  const reminderIds = new Set(manualTasks.filter((task) => task.anchorBookingId === "LP-1"
+    && ["parent-progress-24h", "scheduling-alert-36h", "parent-progress-48h"]
+      .some((suffix) => task.ruleKey?.endsWith(suffix))).map((task) => task.id));
+  const scheduling = completed.filter((task) => reminderIds.has(task.id));
+
+  assert.equal(scheduling.length, 3);
+  assert.ok(scheduling.every((task) => task.status === "done"
+    && task.tone === "green"
+    && task.result === "教务宝真实排课已匹配：evt-qa-1"
+    && task.closedAt === "2026-08-28T04:00:00.000Z"));
+  assert.equal(completed.find((task) => task.id === alreadyDone.id)?.result, "人工确认已完成");
+  assert.equal(completed.find((task) => task.id === frozen.id)?.status, frozen.status);
+  assert.deepEqual(completed.find((task) => task.id === frozen.id)?.legacyEvidence, frozen.legacyEvidence);
+  assert.notEqual(completed.find((task) => task.ruleKey?.endsWith("paper-receive"))?.status, "done");
+  assert.equal(completed.find((task) => task.id === foreign.id)?.status, foreign.status);
 });
 
 test("materializes N-2, N-1, payment and same-day tasks from one real 教务宝 event", () => {
