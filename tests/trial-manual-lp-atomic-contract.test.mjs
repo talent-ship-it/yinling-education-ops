@@ -6,6 +6,14 @@ const migration = readFileSync(
   new URL("../supabase/migrations/20260828000200_trial_manual_tasks_atomic.sql", import.meta.url),
   "utf8",
 );
+const evidencePreservationMigration = readFileSync(
+  new URL("../supabase/migrations/20260828000300_preserve_trial_legacy_evidence.sql", import.meta.url),
+  "utf8",
+);
+const runtimeFixture = readFileSync(
+  new URL("./sql/trial-manual-lp-atomic-runtime.sql", import.meta.url),
+  "utf8",
+);
 const client = readFileSync(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
 
 test("trial handbook intake and task projection stay inside the LP transaction", () => {
@@ -47,6 +55,19 @@ test("the atomic projection removes open legacy rules and creates the complete h
   assert.match(migration, /request_at \+ interval '48 hours'/i);
   assert.match(migration, /specifiedContentStatus' in \('需要跟进', '需教务跟进'\)/i);
   assert.match(migration, /internal\.trial_manual_task_id\(delegated\.lp_item_id, rule\)/i);
+});
+
+test("trial task replacement preserves unrelated legacy evidence with sparse metadata", () => {
+  assert.match(evidencePreservationMigration, /create or replace function public\.mutate_lp_atomic\(/i);
+  assert.match(evidencePreservationMigration, /not exists \([\s\S]*internal\.legacy_task_deadline_freezes evidence[\s\S]*evidence\.task_id = task\.value ->> 'id'/i);
+  assert.match(evidencePreservationMigration, /coalesce\(task\.value ->> 'anchorBookingId', ''\) = delegated\.lp_item_id/i);
+  assert.match(evidencePreservationMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/i);
+  assert.match(evidencePreservationMigration, /coalesce\(task\.value ->> 'ruleKey', ''\) in \(/i);
+  assert.match(evidencePreservationMigration, /coalesce\(task\.value ->> 'ruleKey', ''\) like 'trial\.manual-request\.%'/i);
+  assert.match(runtimeFixture, /fixture_enforce_legacy_task_evidence/i);
+  assert.match(runtimeFixture, /legacy_task_evidence_delete_forbidden/i);
+  assert.match(runtimeFixture, /TSK-LEGACY-SPARSE/i);
+  assert.match(runtimeFixture, /TSK-LEGACY-MATCH[\s\S]*trial\.parent-follow-up[\s\S]*LP-ATOMIC-a8f78ee5b2f178415038e032/i);
 });
 
 test("the browser sends one complete command and performs no post-commit trial repair", () => {

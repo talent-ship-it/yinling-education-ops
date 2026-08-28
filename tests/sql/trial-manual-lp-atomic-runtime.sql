@@ -35,6 +35,35 @@ create table internal.operational_contract_audit (
   metadata jsonb not null,
   created_at timestamptz not null default now()
 );
+create table internal.legacy_task_deadline_freezes (
+  task_id text primary key
+);
+create function internal.fixture_enforce_legacy_task_evidence()
+returns trigger language plpgsql set search_path = '' as $$
+declare old_task jsonb;
+begin
+  if new.entity <> 'tasks' then return new; end if;
+  for old_task in
+    select value
+    from jsonb_array_elements(old.payload) item(value)
+    where exists (
+      select 1 from internal.legacy_task_deadline_freezes ledger
+      where ledger.task_id = value ->> 'id'
+    )
+  loop
+    if not exists (
+      select 1 from jsonb_array_elements(new.payload) item(value)
+      where value ->> 'id' = old_task ->> 'id'
+    ) then
+      raise exception using errcode = '42501', message = 'legacy_task_evidence_delete_forbidden';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+create trigger fixture_enforce_legacy_task_evidence
+before update of payload on public.ops_state
+for each row execute function internal.fixture_enforce_legacy_task_evidence();
 create function internal.verify_ops_secret(p_secret text)
 returns boolean language sql immutable set search_path = ''
 as $$ select p_secret = 'trial-manual-fixture-secret' $$;
@@ -53,12 +82,15 @@ $$;
 \ir ../../supabase/migrations/20260819101600_lp_create_revision_atomic.sql
 \ir ../../supabase/migrations/20260827000200_enforce_complete_lp_submission.sql
 \ir ../../supabase/migrations/20260828000200_trial_manual_tasks_atomic.sql
+\ir ../../supabase/migrations/20260828000300_preserve_trial_legacy_evidence.sql
 
 insert into public.ops_state(entity, payload, version, updated_by) values
   ('students', '[{"id":"STU-1","name":"Atomic Trial","owner":"Abby","planner":"Tara","files":0}]', 1, 'fixture'),
   ('lpItems', '[]', 1, 'fixture'),
-  ('tasks', '[]', 1, 'fixture'),
+  ('tasks', '[{"id":"TSK-LEGACY-SPARSE","title":"Historical task without canonical metadata","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}},{"id":"TSK-LEGACY-MATCH","title":"Frozen legacy rule for the deterministic LP anchor","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","ruleKey":"trial.parent-follow-up","anchorBookingId":"LP-ATOMIC-a8f78ee5b2f178415038e032","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}}]', 1, 'fixture'),
   ('files', '[]', 1, 'fixture');
+insert into internal.legacy_task_deadline_freezes(task_id)
+values ('TSK-LEGACY-SPARSE'), ('TSK-LEGACY-MATCH');
 
 do $trial_manual_runtime$
 declare
@@ -134,7 +166,8 @@ begin
 
   select array_agg(task ->> 'ruleKey' order by task ->> 'ruleKey') into rules
   from jsonb_array_elements((receipt.tasks_row).payload) task
-  where task ->> 'anchorBookingId' = receipt.lp_item_id;
+  where task ->> 'anchorBookingId' = receipt.lp_item_id
+    and not (task ? 'legacyEvidence');
   if rules is distinct from array[
     'lp.handover',
     'trial.manual-request.paper-receive',
@@ -150,12 +183,19 @@ begin
   if exists (
     select 1 from jsonb_array_elements((receipt.tasks_row).payload) task
     where task ->> 'anchorBookingId' = receipt.lp_item_id
+      and not (task ? 'legacyEvidence')
       and task ->> 'ruleKey' in (
         'trial.parent-follow-up','trial.scheduling','trial.parent-no-reply-follow-up',
         'trial.teaching-control-escalation','trial.parent-progress-sync.1'
       )
   ) then
     raise exception 'trial_legacy_rules_remained';
+  end if;
+  if (select count(*) from jsonb_array_elements((receipt.tasks_row).payload) task
+      where task = '{"id":"TSK-LEGACY-SPARSE","title":"Historical task without canonical metadata","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}}'::jsonb) <> 1
+     or (select count(*) from jsonb_array_elements((receipt.tasks_row).payload) task
+      where task = '{"id":"TSK-LEGACY-MATCH","title":"Frozen legacy rule for the deterministic LP anchor","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","ruleKey":"trial.parent-follow-up","anchorBookingId":"LP-ATOMIC-a8f78ee5b2f178415038e032","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}}'::jsonb) <> 1 then
+    raise exception 'trial_legacy_evidence_changed';
   end if;
   if internal.trial_manual_task_id(receipt.lp_item_id, 'trial.manual-request.writing')
      <> (select task ->> 'id' from jsonb_array_elements((receipt.tasks_row).payload) task
