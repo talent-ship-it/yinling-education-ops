@@ -643,6 +643,8 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(css, /\.ava-month-grid/);
   assert.match(css, /\.ava-booked/);
   assert.match(client, /历史课程不能重新开课/);
+  assert.match(client, /\{!jiaowubaoImportedScheduleLoading \? <EmptyState title="暂无排课"/);
+  assert.equal([...client.matchAll(/!jiaowubaoImportedScheduleLoading \? <EmptyState title="当前筛选下没有排课"/g)].length, 2);
   assert.match(client, /title="当前筛选下没有排课"[\s\S]*新建约课/);
   assert.match(client, /title="课程关联资料不完整"[\s\S]*新建约课/);
   assert.match(client, /requestConfirmation/);

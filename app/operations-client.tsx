@@ -7652,13 +7652,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!scopedBookings.length) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
-        <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}<EmptyState title="暂无排课" detail="新建约课后会显示在这里。" /></section>
+        <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}{!jiaowubaoImportedScheduleLoading ? <EmptyState title="暂无排课" detail="新建约课后会显示在这里。" /> : null}</section>
       </>;
     }
     if (!displayedBooking || !displayedBookingSeries) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<><button className="secondary-button" type="button" onClick={() => { setScheduleFilter("all"); setScheduleDay("all"); setSchedulePage(1); }}>清除排课筛选</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button></>} />
-        <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}<EmptyState title="当前筛选下没有排课" detail="清除筛选后再试。" /></section>
+        <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}{!jiaowubaoImportedScheduleLoading ? <EmptyState title="当前筛选下没有排课" detail="清除筛选后再试。" /> : null}</section>
       </>;
     }
     const bookingStudent = studentById(displayedBooking.studentId);
@@ -7777,7 +7777,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                         <StatusPill tone={booking.status === "待确认" ? "amber" : "green"}>{booking.status}</StatusPill>
                       </button>
                     </div>;
-                  }) : <EmptyState title="当前筛选下没有排课" detail="切换日期或清除课程筛选后再试。" />}
+                  }) : !jiaowubaoImportedScheduleLoading ? <EmptyState title="当前筛选下没有排课" detail="切换日期或清除课程筛选后再试。" /> : null}
                 </div>
                 <Pagination page={safeSchedulePage} total={filteredBookings.length} pageSize={schedulePageSize} onPage={setSchedulePage} />
               </div>
