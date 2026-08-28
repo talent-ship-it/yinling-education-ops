@@ -7872,7 +7872,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <header className="panel-header trial-ledger-header"><div><p className="eyebrow">【吟领教育】学员信息管理（LP）</p><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerItems.length} 条试听</span></div></header>
         {trialLedgerItems.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
-            <thead><tr><th>学生姓名</th><th>家长微信名</th><th>LP 类型</th><th>试听月份</th><th>请求日期/时间</th><th>试听日期/时间（墨尔本）</th><th>教务</th><th>课程规划老师</th><th>科目</th><th>老师</th><th>试听状态</th><th>已付费</th><th>备注</th></tr></thead>
+            <thead><tr><th>学生姓名</th><th>家长微信名</th><th>LP 类型</th><th>上课月份</th><th>请求日期/时间</th><th>上课日期和时间（墨尔本）</th><th>教务</th><th>课程规划老师</th><th>科目</th><th>老师</th><th>试听状态</th><th>是否付费</th><th>备注</th></tr></thead>
             <tbody>{trialLedgerItems.map((item) => {
               const student = studentById(item.studentId);
               const liveMatch = trialScheduleMatchByLpId.get(item.id);
