@@ -212,6 +212,7 @@ test("uses the complete role-scoped navigation in the 375px More drawer", async 
     "@keyframes mobile-sheet-enter",
   );
   assert.match(mobileCss, /\.mobile-nav-drawer\s*\{[\s\S]*max-height:88dvh;[\s\S]*overflow-y:auto;/);
+  assert.match(mobileCss, /\.mobile-nav-drawer\s*>\s*header\s*\{[\s\S]*position:sticky;[\s\S]*top:0;[\s\S]*z-index:2;/);
   assert.match(mobileCss, /\.mobile-operator-picker\s*\{[\s\S]*display:grid;[\s\S]*grid-template-columns:minmax\(0,1fr\);/);
   assert.match(mobileCss, /\.mobile-operator-picker select\s*\{[\s\S]*min-width:0;[\s\S]*width:100%;/);
 });

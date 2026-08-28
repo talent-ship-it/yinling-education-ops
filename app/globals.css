@@ -1105,9 +1105,14 @@ body {
 
   .mobile-nav-drawer > header {
     align-items:center;
+    background:#fff;
     display:flex;
     justify-content:space-between;
-    padding:0 2px 14px;
+    margin:-16px -14px 0;
+    padding:16px 16px 14px;
+    position:sticky;
+    top:0;
+    z-index:2;
   }
 
   .mobile-nav-drawer h2 {
