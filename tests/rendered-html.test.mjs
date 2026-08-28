@@ -101,7 +101,8 @@ test("shares the To Do UI across operations roles and leaves the teacher workspa
   assert.doesNotMatch(css, /command-strip/);
   assert.match(toDoList, /aria-expanded=\{expanded\}/);
   assert.match(toDoList, /hidden=\{!expanded\}/);
-  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt\)/);
+  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt, deadlineTimeZone\)/);
+  assert.match(client, /sessionOperator === DEFAULT_TEACHING_CONTROL_WATCHER[\s\S]*?"Australia\/Melbourne"[\s\S]*?: "Asia\/Shanghai"/);
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
@@ -290,7 +291,7 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(toDoList, /title="今日到期"/);
   assert.match(toDoList, /title="已逾期"/);
   assert.match(toDoList, /sortTasksByDueAt/);
-  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt\)/);
+  assert.match(toDoList, /formatTaskDeadline\(task\.dueAt, deadlineTimeZone\)/);
   assert.match(client, /student\.id && isExecutableOpenTask\(task\)/);
   assert.doesNotMatch(client, /截止时间待确认/);
 

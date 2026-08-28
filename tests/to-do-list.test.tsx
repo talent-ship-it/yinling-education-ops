@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToDoList, type ToDoFilter } from "../app/to-do-list";
+import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "../app/to-do-list";
 import { OpsTask, TaskCategory, TaskStatus } from "../lib/ops-tasks";
 
 function task(
@@ -28,10 +28,11 @@ function task(
   };
 }
 
-function render(tasks: OpsTask[], filter: ToDoFilter = "all") {
+function render(tasks: OpsTask[], filter: ToDoFilter = "all", deadlineTimeZone: TaskDeadlineTimeZone = "Australia/Melbourne") {
   return renderToStaticMarkup(
     <ToDoList
       tasks={tasks}
+      deadlineTimeZone={deadlineTimeZone}
       studentName={(studentId) => `学生 ${studentId}`}
       filter={filter}
       onFilterChange={() => undefined}
@@ -48,6 +49,7 @@ function renderWithOpenPolicy(tasks: OpsTask[], canOpen: (task: OpsTask) => bool
   return renderToStaticMarkup(
     <ToDoList
       tasks={tasks}
+      deadlineTimeZone="Australia/Melbourne"
       studentName={(studentId) => `学生 ${studentId}`}
       filter="all"
       onFilterChange={() => undefined}
@@ -108,6 +110,17 @@ test("shows the canonical deadline as an exact date and time, not legacy workflo
   assert.doesNotMatch(html, /<small/);
   assert.match(html, /学生 STU-due/);
   assert.doesNotMatch(html, /Abby/);
+});
+
+test("renders the same deadline instant in Beijing for operations and Melbourne for teaching control", () => {
+  const deadline = "2026-08-12T14:30:00.000Z";
+  const operations = render([task("beijing", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai");
+  const teachingControl = render([task("melbourne", "试听", "today", "legacy", deadline)], "all", "Australia/Melbourne");
+
+  assert.match(operations, />截止 2026年8月12日 22:30</);
+  assert.match(operations, /title="截止：2026年8月12日 22:30（北京时间）"/);
+  assert.match(teachingControl, />截止 2026年8月13日 00:30</);
+  assert.match(teachingControl, /title="截止：2026年8月13日 00:30（墨尔本时间）"/);
 });
 
 test("does not present a descriptive legacy due string as an exact deadline", () => {

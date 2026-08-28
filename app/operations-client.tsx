@@ -158,7 +158,7 @@ import {
   type StudentLessonPackage,
 } from "@/lib/student-records";
 import { LpRevisionHistory, LpWorkflowDetails, LpWorkflowFields, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
-import { ToDoList, type ToDoFilter } from "@/app/to-do-list";
+import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "@/app/to-do-list";
 import { buildStudentRecordsPanelData, StudentRecordsPanel, type StudentHistoricalJwbSnapshot, type StudentRecordPanelSection } from "@/app/student-records-panel";
 import { CoursePackageSummary } from "@/app/course-package-summary";
 import { ScheduleMonthView, type ScheduleMonthAvailability, type ScheduleMonthLesson } from "@/app/schedule-month-view";
@@ -2534,6 +2534,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [active, setActive] = useState<Section>("dashboard");
   const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
   const isAdminSession = initialNixonUnlocked && initialRole === "admin" && sessionOperator === "Nixon";
+  const taskDeadlineTimeZone = sessionOperator === DEFAULT_TEACHING_CONTROL_WATCHER
+    ? "Australia/Melbourne"
+    : "Asia/Shanghai";
   const [currentOperator, setCurrentOperator] = useState(sessionOperator);
   const sessionIsTeacher = initialRole === "teacher";
   const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(() => defaultDisplayPreferences(sessionIsTeacher));
@@ -4637,7 +4640,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       notify("该历史任务没有准确截止时间，不能恢复为可执行任务");
       return;
     }
-    const status = statusForDueAt(task.dueAt, new Date());
+    const status = statusForDueAt(task.dueAt, new Date(), taskDeadlineTimeZone);
     const tone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
     void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId ? {
       ...item,
@@ -4692,8 +4695,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const visibleTasks = useMemo(() => {
     const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
-    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now)));
-  }, [scopedTasks, taskRefreshKey]);
+    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
+  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey]);
 
   const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
     const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
@@ -7279,7 +7282,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
@@ -7368,7 +7371,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={visibleSelectedStudent.importArchived ? readableScopedTasks : scopedTasks} bookings={visibleSelectedStudent.importArchived ? readableScopedBookings : scopedBookings} lpItems={visibleSelectedStudent.importArchived ? readableScopedLpItems : scopedLpItems} operations={visibleSelectedStudent.importArchived ? readableScopedOperations : scopedOperations} renewals={visibleSelectedStudent.importArchived ? readableScopedRenewals : scopedRenewals} messages={visibleSelectedStudent.importArchived ? readableScopedMessages : scopedMessages} files={visibleSelectedStudent.importArchived ? readableScopedFiles : scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} lowHoursThreshold={Number(rules.lowHours)} mobileOpen={mobilePreview === "student"} readOnly={visibleSelectedStudent.importArchived === true} canEditStatus={!isTeacherView && visibleSelectedStudent.importArchived !== true} onClose={() => setMobilePreview(null)} onRecord={(section) => openStudentRecord(visibleSelectedStudent.id, section)} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => { openStudentBoundModal("studentEdit", visibleSelectedStudent.id); }} onEvidence={() => { openStudentBoundModal("studentEvidence", visibleSelectedStudent.id); }} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
+          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={visibleSelectedStudent.importArchived ? readableScopedTasks : scopedTasks} bookings={visibleSelectedStudent.importArchived ? readableScopedBookings : scopedBookings} lpItems={visibleSelectedStudent.importArchived ? readableScopedLpItems : scopedLpItems} operations={visibleSelectedStudent.importArchived ? readableScopedOperations : scopedOperations} renewals={visibleSelectedStudent.importArchived ? readableScopedRenewals : scopedRenewals} messages={visibleSelectedStudent.importArchived ? readableScopedMessages : scopedMessages} files={visibleSelectedStudent.importArchived ? readableScopedFiles : scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} taskDeadlineTimeZone={taskDeadlineTimeZone} lowHoursThreshold={Number(rules.lowHours)} mobileOpen={mobilePreview === "student"} readOnly={visibleSelectedStudent.importArchived === true} canEditStatus={!isTeacherView && visibleSelectedStudent.importArchived !== true} onClose={() => setMobilePreview(null)} onRecord={(section) => openStudentRecord(visibleSelectedStudent.id, section)} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => { openStudentBoundModal("studentEdit", visibleSelectedStudent.id); }} onEvidence={() => { openStudentBoundModal("studentEvidence", visibleSelectedStudent.id); }} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
         </div>
       </section>
     </>;
@@ -13601,7 +13604,7 @@ function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; d
     ? <button className="risk-row" type="button" onClick={action}>{content}<ChevronRight size={15} /></button>
     : <div className="risk-row risk-row-static">{content}</div>;
 }
-function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals, messages, files, teacherById, preferences, lowHoursThreshold, mobileOpen, readOnly = false, canEditStatus = true, onClose, onRecord, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; lpItems: LpItem[]; operations: Operation[]; renewals: Renewal[]; messages: Message[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; lowHoursThreshold: number; mobileOpen: boolean; readOnly?: boolean; canEditStatus?: boolean; onClose: () => void; onRecord: (section: StudentRecordPanelSection) => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
+function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals, messages, files, teacherById, preferences, taskDeadlineTimeZone, lowHoursThreshold, mobileOpen, readOnly = false, canEditStatus = true, onClose, onRecord, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; lpItems: LpItem[]; operations: Operation[]; renewals: Renewal[]; messages: Message[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; taskDeadlineTimeZone: TaskDeadlineTimeZone; lowHoursThreshold: number; mobileOpen: boolean; readOnly?: boolean; canEditStatus?: boolean; onClose: () => void; onRecord: (section: StudentRecordPanelSection) => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
   const english = preferences.language === "en-AU";
   const studentTasks = tasks.filter((task) => task.studentId === student.id && isExecutableOpenTask(task));
   const nextBooking = bookings
@@ -13665,7 +13668,7 @@ function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals
     {student.notes ? <div className="detail-section"><span>特殊备注</span><strong>{student.notes}</strong></div> : null}
     {canEditStatus && <div className="student-detail-actions"><button className="secondary-button" type="button" onClick={onEdit}><UserCog size={15} /> 编辑档案</button><button className="secondary-button" type="button" onClick={onEvidence}><FilePlus2 size={15} /> 上传沟通/反馈</button></div>}
     {canEditStatus ? <label className="status-select">{english ? "Student status" : "学生状态"}<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["在读", "不活跃 + 无课时", "活跃 + 无课时", "活跃 + 有课时", "不活跃 + 有课时", "在读 + 加课待排"].map((status) => <option value={status} key={status}>{displayTerm(status, preferences.language)}</option>)}</select></label> : <div className="detail-section"><span>{english ? "Student status" : "学生状态"}</span><strong>{displayTerm(student.status, preferences.language)}</strong></div>}
-    {(studentTasks.length > 0 || nextBooking) ? <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong>{studentTasks.length > 0 ? <small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small> : null}</div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{task.title}</strong><small><time dateTime={task.dueAt}>{formatTaskDeadline(task.dueAt)}</time></small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div> : null}
+    {(studentTasks.length > 0 || nextBooking) ? <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong>{studentTasks.length > 0 ? <small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small> : null}</div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{task.title}</strong><small><time dateTime={task.dueAt}>{formatTaskDeadline(task.dueAt, taskDeadlineTimeZone)}</time></small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div> : null}
     {!readOnly && <button className="primary-button full" type="button" onClick={onSchedule}><CalendarPlus size={16} /> {english ? "Schedule a lesson for this student" : "为此学生安排课程"}</button>}
   </aside>;
 }

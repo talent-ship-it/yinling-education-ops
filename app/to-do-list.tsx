@@ -3,14 +3,16 @@
 import React from "react";
 import { ChevronDown, ChevronUp, Pencil, RotateCcw, X } from "lucide-react";
 
-import { formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt } from "../lib/ops-tasks";
+import { formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt } from "../lib/ops-tasks";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
 export type ToDoFilter = (typeof TO_DO_FILTERS)[number];
 export type TaskListView = "todo" | "done" | "cannot";
+export type TaskDeadlineTimeZone = "Asia/Shanghai" | "Australia/Melbourne";
 
 export interface ToDoListProps {
   tasks: OpsTask[];
+  deadlineTimeZone: TaskDeadlineTimeZone;
   studentName: (studentId: string) => string | undefined;
   filter: ToDoFilter;
   onFilterChange: (filter: ToDoFilter) => void;
@@ -40,14 +42,16 @@ const VIEW_LABELS: Record<TaskListView, string> = {
   cannot: "Can’t Do",
 };
 
-function happenedToday(value: string | undefined) {
+function happenedToday(value: string | undefined, timeZone: TaskDeadlineTimeZone) {
   if (!value) return false;
-  const date = new Date(value);
-  const today = new Date();
-  return Number.isFinite(date.valueOf()) && date.toDateString() === today.toDateString();
+  try {
+    return statusForDueAt(value, new Date(), timeZone) === "today";
+  } catch {
+    return false;
+  }
 }
 
-function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskListView) {
+function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskListView, timeZone: TaskDeadlineTimeZone) {
   return tasks.filter((task) => {
     const inView = view === "todo"
       ? isExecutableOpenTask(task)
@@ -56,7 +60,7 @@ function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskLi
         : task.status === "done" && task.completionOutcome !== "cannot_do";
     if (!inView) return false;
     return filter === "all"
-      || (filter === "today" ? view === "todo" ? task.status === "today" : happenedToday(task.closedAt) : task.category === filter);
+      || (filter === "today" ? view === "todo" ? task.status === "today" : happenedToday(task.closedAt, timeZone) : task.category === filter);
   });
 }
 
@@ -73,7 +77,8 @@ function TaskRows({
   onParentReplied,
   onOpen,
   canOpen,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen"> & { tasks: OpsTask[]; view: TaskListView }) {
+  deadlineTimeZone,
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -102,11 +107,12 @@ function TaskRows({
                 <span>{studentName(task.studentId) ?? "未关联学生"}{task.completionNote ? ` · ${task.completionNote}` : ""}</span>
               </button>}
           {(() => {
-            const deadline = formatTaskDeadline(task.dueAt);
+            const deadline = formatTaskDeadline(task.dueAt, deadlineTimeZone);
+            const timeZoneLabel = deadlineTimeZone === "Asia/Shanghai" ? "北京时间" : "墨尔本时间";
             if (deadline && task.dueAt) return <time
               className={`due-label ${task.status}`}
               dateTime={task.dueAt}
-              title={`截止：${deadline}（墨尔本时间）`}
+              title={`截止：${deadline}（${timeZoneLabel}）`}
             >截止 {deadline}</time>;
             return null;
           })()}
@@ -171,7 +177,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -200,14 +206,15 @@ export function ToDoList({
   onParentReplied,
   onOpen,
   canOpen,
+  deadlineTimeZone,
 }: ToDoListProps) {
   const [expanded, setExpanded] = React.useState(true);
   const [view, setView] = React.useState<TaskListView>("todo");
-  const filtered = filterTasks(tasks, filter, view);
+  const filtered = filterTasks(tasks, filter, view, deadlineTimeZone);
   const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onOpen, canOpen, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onOpen, canOpen, deadlineTimeZone, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">
@@ -221,7 +228,7 @@ export function ToDoList({
               aria-pressed={view === value}
               key={value}
               onClick={() => setView(value)}
-            >{VIEW_LABELS[value]} <strong>{filterTasks(tasks, "all", value).length}</strong></button>)}
+            >{VIEW_LABELS[value]} <strong>{filterTasks(tasks, "all", value, deadlineTimeZone).length}</strong></button>)}
           </div>
           <div className="segmented to-do-filters" role="group" aria-label="任务类别">
             {TO_DO_FILTERS.map((value) => (
