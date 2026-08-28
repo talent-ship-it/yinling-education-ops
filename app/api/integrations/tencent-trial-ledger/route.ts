@@ -102,6 +102,7 @@ function target() {
  */
 export async function GET(request: Request) {
   if (!hasBridgeToken(request)) return noStore({ error: "Not found" }, 404);
+  let claimedLeaseToken: string | null = null;
   try {
     const [claim] = await claimTencentTrialLedgerSyncBatch({
       workerId: WORKER_ID,
@@ -109,6 +110,7 @@ export async function GET(request: Request) {
       leaseSeconds: 900,
     });
     if (!claim) return noStore({ outcome: "idle", target: target() });
+    claimedLeaseToken = claim.lease_token;
 
     const students = stateRow(claim.state_rows, "students");
     const lpItems = stateRow(claim.state_rows, "lpItems");
@@ -139,6 +141,19 @@ export async function GET(request: Request) {
       mappings: claim.mappings,
     });
   } catch (error) {
+    if (claimedLeaseToken) {
+      try {
+        await failTencentTrialLedgerSyncBatch({
+          leaseToken: claimedLeaseToken,
+          errorCode: "projection_failed",
+          actor: ACTOR,
+        });
+      } catch (releaseError) {
+        console.error("tencent_trial_ledger_bridge_claim_release_failed", {
+          category: releaseError instanceof OpsStoreError ? releaseError.code ?? "ops_rpc" : "release",
+        });
+      }
+    }
     const missing = error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883");
     console.error("tencent_trial_ledger_bridge_claim_failed", {
       category: missing ? "contract_unavailable" : error instanceof OpsStoreError ? error.code ?? "ops_rpc" : "projection",
