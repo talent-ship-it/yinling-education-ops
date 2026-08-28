@@ -43,6 +43,7 @@ test("reveals the main-content skip link for keyboard focus", async () => {
 
   assert.match(client, /className=\{`skip-link\$\{skipLinkFocused \? " is-focused" : ""\}`\}/);
   assert.match(client, /href="#main-content"[\s\S]*onBlur=\{\(\) => setSkipLinkFocused\(false\)\}[\s\S]*onFocus=\{\(\) => setSkipLinkFocused\(true\)\}/);
+  assert.match(client, /style=\{skipLinkFocused \? \{ transform: "translateY\(0\)" \} : undefined\}/);
   assert.match(client, /<main className="content" id="main-content" tabIndex=\{-1\}>/);
   assert.match(css, /\.skip-link:focus,\s*\.skip-link:focus-visible,\s*\.skip-link\.is-focused\s*\{\s*transform:translateY\(0\);\s*\}/);
 });

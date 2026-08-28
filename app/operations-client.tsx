@@ -13109,6 +13109,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         href="#main-content"
         onBlur={() => setSkipLinkFocused(false)}
         onFocus={() => setSkipLinkFocused(true)}
+        style={skipLinkFocused ? { transform: "translateY(0)" } : undefined}
       >{displayPreferences.language === "en-AU" ? "Skip to main content" : "跳到主要内容"}</a>
       <aside className={`sidebar${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
         <div className="sidebar-header">
