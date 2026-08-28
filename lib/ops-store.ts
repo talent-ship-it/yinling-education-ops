@@ -822,6 +822,7 @@ export const TRIAL_PAYMENT_RECONCILE_RPC = "reconcile_trial_payment_tasks_author
 export const TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx";
 export const TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC = "get_trial_payment_completion_command_result";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_CONFIRM_RPC = "confirm_jiaowubao_open_api_schedule_snapshot_current";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC = "begin_jiaowubao_open_api_schedule_snapshot_ingest";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC = "stage_jiaowubao_open_api_schedule_snapshot_page";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC = "complete_jiaowubao_open_api_schedule_snapshot_ingest";
@@ -1349,6 +1350,25 @@ export function getJiaowubaoOpenApiScheduleSnapshotPreflight(input: {
   return rpc<JiaowubaoOpenApiScheduleSnapshotPreflight>(JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC, {
     p_secret: secret,
     p_api_source_key: input.apiSourceKey,
+    p_actor: input.actor,
+  });
+}
+
+export function confirmJiaowubaoOpenApiScheduleSnapshotCurrent(input: {
+  apiSourceKey: string;
+  revision: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{
+    confirmed: boolean;
+    revision: string;
+    rowCount: number;
+    publishedAt: string;
+  }>>(JIAOWUBAO_OPEN_API_SCHEDULE_CONFIRM_RPC, {
+    p_secret: secret,
+    p_api_source_key: input.apiSourceKey,
+    p_revision: input.revision,
     p_actor: input.actor,
   });
 }

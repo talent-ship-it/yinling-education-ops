@@ -59,12 +59,13 @@ test("schedule snapshot fails closed on oversized student evidence rather than d
 });
 
 test("production uses a private 30-minute database schedule and publishes source evidence only after durable leasing", async () => {
-  const [vercel, route, migration, rpcGrantMigration, completionFix] = await Promise.all([
+  const [vercel, route, migration, rpcGrantMigration, completionFix, unchangedConfirmation] = await Promise.all([
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000100_jiaowubao_open_api_schedule_v2_and_sync_lease.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000300_grant_server_jiaowubao_schedule_snapshot_rpc.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000400_fix_jiaowubao_schedule_snapshot_completion_hash.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260828000100_confirm_unchanged_jiaowubao_schedule_snapshot.sql", import.meta.url), "utf8"),
   ]);
   const scheduleMigration = await readFile(new URL("../supabase/migrations/20260822000200_schedule_jiaowubao_open_api_sync_every_30_minutes.sql", import.meta.url), "utf8");
   assert.deepEqual(JSON.parse(vercel).crons, []);
@@ -72,6 +73,8 @@ test("production uses a private 30-minute database schedule and publishes source
   assert.match(route, /JIAOWUBAO_SCHEDULE_SYNC_TOKEN/);
   assert.match(route, /claimJiaowubaoOpenApiScheduleSyncLease/);
   assert.match(route, /completeJiaowubaoOpenApiScheduleSnapshot/);
+  assert.match(route, /confirmJiaowubaoOpenApiScheduleSnapshotCurrent/);
+  assert.match(route, /phase = "confirm_current"/);
   assert.match(route, /上一份完整快照保持不变/);
   assert.match(route, /value\.runId === runId && value\.pageIndex === pageIndex/);
   assert.doesNotMatch(route, /value\.state === "staging"/);
@@ -104,4 +107,10 @@ test("production uses a private 30-minute database schedule and publishes source
   assert.match(completionFix, /select 'sha256:' \|\| encode\(extensions\.digest\(coalesce\(string_agg\(p\.page_sha256/);
   assert.match(completionFix, /into payload_hash from internal\.jiaowubao_open_api_schedule_snapshot_ingest_pages p/);
   assert.doesNotMatch(completionFix, /payload_hash :=/);
+  assert.match(unchangedConfirmation, /confirm_jiaowubao_open_api_schedule_snapshot_current/);
+  assert.match(unchangedConfirmation, /pg_advisory_xact_lock/);
+  assert.match(unchangedConfirmation, /current_row\.revision is distinct from p_revision/);
+  assert.match(unchangedConfirmation, /set published_at = confirmed_at/);
+  assert.match(unchangedConfirmation, /confirmed_unchanged/);
+  assert.match(unchangedConfirmation, /grant execute on function public\.confirm_jiaowubao_open_api_schedule_snapshot_current/);
 });

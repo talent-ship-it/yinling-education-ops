@@ -13,6 +13,7 @@ import {
   beginJiaowubaoOpenApiScheduleSnapshot,
   claimJiaowubaoOpenApiScheduleSyncLease,
   completeJiaowubaoOpenApiScheduleSnapshot,
+  confirmJiaowubaoOpenApiScheduleSnapshotCurrent,
   getJiaowubaoOpenApiScheduleSnapshotPreflight,
   OpsStoreError,
   releaseJiaowubaoOpenApiScheduleSyncLease,
@@ -81,6 +82,19 @@ function exactRunId(value: unknown) {
   return typeof value === "string" && UUID.test(value) ? value : null;
 }
 
+function validConfirmation(
+  value: Readonly<Record<string, unknown>>,
+  revision: string,
+  rowCount: number,
+) {
+  const publishedAt = typeof value.publishedAt === "string" ? new Date(value.publishedAt) : null;
+  return value.confirmed === true
+    && value.revision === revision
+    && value.rowCount === rowCount
+    && publishedAt !== null
+    && Number.isFinite(publishedAt.valueOf());
+}
+
 function receiptMatchesPage(value: Readonly<Record<string, unknown>>, runId: string, pageIndex: number, rowCount: number) {
   // The page RPC deliberately returns only the page receipt; the run state is
   // verified by the database before staging and again by the final publisher.
@@ -123,6 +137,17 @@ export async function GET(request: Request) {
     const currentRevision = preflight?.current === null ? null : exactRevision(preflight?.current?.revision);
     if (preflight?.current !== null && currentRevision === null) throw new Error("preflight_receipt_invalid");
     if (currentRevision === snapshot.manifest.revision) {
+      phase = "confirm_current";
+      const confirmation = await confirmJiaowubaoOpenApiScheduleSnapshotCurrent({
+        apiSourceKey: JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,
+        revision: snapshot.manifest.revision,
+        actor: ACTOR,
+      });
+      if (!validConfirmation(
+        confirmation as Readonly<Record<string, unknown>>,
+        snapshot.manifest.revision,
+        snapshot.manifest.recordCount,
+      )) throw new Error("confirmation_receipt_invalid");
       return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount });
     }
 
