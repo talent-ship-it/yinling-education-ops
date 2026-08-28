@@ -103,15 +103,22 @@ export function AccountSecurityPanel({
       <span><small>最近活动</small><strong>{sessions[0] ? formatDate(sessions[0].last_seen_at) : "无"}</strong></span>
     </div>
 
-    <div className="account-security-actions">
+    {!mfaEnabled && !mfaSetup ? <form className="account-security-actions" onSubmit={(event) => {
+      event.preventDefault();
+      if (currentPassword) onBeginMfa(currentPassword);
+    }}>
       <button className="secondary-button" type="button" onClick={onChangePassword}>
         <KeyRound size={16} aria-hidden="true" />修改密码
       </button>
-      {!mfaEnabled ? <label style={{ minWidth: 220 }}>当前密码<input type="password" autoComplete="current-password" value={currentPassword} maxLength={256} onChange={(event) => setCurrentPassword(event.target.value)} /></label> : null}
-      {!mfaEnabled && !mfaSetup ? <button className="secondary-button" type="button" disabled={Boolean(busyAction) || !currentPassword} onClick={() => onBeginMfa(currentPassword)}>
+      <label style={{ minWidth: 220 }}>当前密码<input name="currentPassword" type="password" autoComplete="current-password" value={currentPassword} maxLength={256} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
+      <button className="secondary-button" type="submit" disabled={Boolean(busyAction) || !currentPassword}>
         <Smartphone size={16} aria-hidden="true" />{busyAction === "mfa-begin" ? "正在生成…" : "设置 MFA"}
-      </button> : null}
-    </div>
+      </button>
+    </form> : <div className="account-security-actions">
+      <button className="secondary-button" type="button" onClick={onChangePassword}>
+        <KeyRound size={16} aria-hidden="true" />修改密码
+      </button>
+    </div>}
     {!mfaEnabled ? <p className="form-footnote">开始和确认 MFA 都会重新校验当前密码，防止他人利用已登录会话绑定验证器。</p> : null}
 
     {mfaSetup ? <div className="detail-section">
@@ -124,6 +131,7 @@ export function AccountSecurityPanel({
     </div> : null}
 
     {(mfaEnabled || mfaSetup) ? <form className="form-grid account-mfa-form" onSubmit={submitMfa}>
+      {!mfaEnabled ? <label className="span-2">当前密码<input name="currentPassword" type="password" autoComplete="current-password" value={currentPassword} maxLength={256} onChange={(event) => setCurrentPassword(event.target.value)} required /></label> : null}
       <label className="span-2">验证器验证码<input value={code} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required /></label>
       <p className="form-footnote span-2">{mfaEnabled ? "验证后会停用 MFA，并撤销当前账号所有会话。" : "确认后会启用 MFA，并要求重新登录。"}</p>
       <footer><button className={mfaEnabled ? "danger-button" : "primary-button"} type="submit" disabled={!validCode || (!mfaEnabled && !currentPassword) || Boolean(busyAction)}>{mfaEnabled ? <ShieldOff size={15} /> : <ShieldCheck size={15} />}{busyAction === "mfa-verify" || busyAction === "mfa-disable" ? "正在验证…" : mfaEnabled ? "验证并停用 MFA" : "验证并启用 MFA"}</button></footer>
