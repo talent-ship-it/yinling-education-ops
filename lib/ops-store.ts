@@ -40,6 +40,34 @@ export type OperationalAuditRecord = Readonly<{
   created_at: string;
 }>;
 
+export type TencentTrialLedgerSyncClaim = Readonly<{
+  lease_token: string;
+  events: readonly Readonly<{
+    eventId: string;
+    entity: "students" | "lpItems";
+    entityVersion: number;
+    attempt: number;
+  }>[];
+  source_versions: Readonly<{ students: number; lpItems: number }>;
+  state_rows: readonly OpsStateRow[];
+  mappings: readonly Readonly<{
+    lpItemId: string;
+    recordId: string;
+    payloadSha256: string;
+  }>[];
+  attempt_count: number;
+}>;
+
+export type TencentTrialLedgerSyncStatus = Readonly<{
+  pending_count: number;
+  failed_count: number;
+  dead_count: number;
+  active_lease_expires_at: string | null;
+  last_synced_at: string | null;
+  last_payload_sha256: string | null;
+  last_record_count: number | null;
+}>;
+
 export type OpsSourceRow = {
   source_id: string;
   title: string;
@@ -787,6 +815,10 @@ export const LP_ATOMIC_RPC = "mutate_lp_atomic";
 export const LP_ATOMIC_COMMAND_RESULT_RPC = "get_lp_atomic_command_result";
 export const TRIAL_LEDGER_ATOMIC_RPC = "mutate_trial_ledger_field_atomic";
 export const TRIAL_LEDGER_COMMAND_RESULT_RPC = "get_trial_ledger_command_result";
+export const TENCENT_TRIAL_LEDGER_SYNC_CLAIM_RPC = "claim_tencent_trial_ledger_sync_batch";
+export const TENCENT_TRIAL_LEDGER_SYNC_COMPLETE_RPC = "complete_tencent_trial_ledger_sync_batch";
+export const TENCENT_TRIAL_LEDGER_SYNC_FAIL_RPC = "fail_tencent_trial_ledger_sync_batch";
+export const TENCENT_TRIAL_LEDGER_SYNC_STATUS_RPC = "get_tencent_trial_ledger_sync_status";
 export const STUDENT_FILE_LINK_ATOMIC_PUT_RPC = "put_student_file_link_atomic";
 export const APP_ACCOUNT_AUTH_STATE_RPC = "read_app_account_auth_state";
 export const APP_ACCOUNT_CREDENTIAL_RPC = "read_app_account_credential";
@@ -1246,6 +1278,73 @@ export function getTrialLedgerCommandResult(input: {
     p_command_uuid: input.commandKey,
     p_command_intent: input.commandIntent,
     p_actor: input.actor,
+  });
+}
+
+/** Claims one durable batch for the external Tencent Docs MCP bridge. */
+export function claimTencentTrialLedgerSyncBatch(input: {
+  workerId: string;
+  limit?: number;
+  leaseSeconds?: number;
+}) {
+  const { secret } = configuration();
+  return rpc<TencentTrialLedgerSyncClaim[]>(TENCENT_TRIAL_LEDGER_SYNC_CLAIM_RPC, {
+    p_secret: secret,
+    p_worker_id: input.workerId,
+    p_limit: input.limit ?? 100,
+    p_lease_seconds: input.leaseSeconds ?? 300,
+  });
+}
+
+/** Acknowledges a batch only after Tencent records have been read back. */
+export function completeTencentTrialLedgerSyncBatch(input: {
+  leaseToken: string;
+  payloadSha256: string;
+  recordMappings: readonly Readonly<{
+    lpItemId: string;
+    recordId: string;
+    payloadSha256: string;
+  }>[];
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<readonly Readonly<{
+    completed: boolean;
+    completed_event_count: number;
+    synced_record_count: number;
+  }>[]>(TENCENT_TRIAL_LEDGER_SYNC_COMPLETE_RPC, {
+    p_secret: secret,
+    p_lease_token: input.leaseToken,
+    p_payload_sha256: input.payloadSha256,
+    p_record_count: input.recordMappings.length,
+    p_record_mappings: input.recordMappings,
+    p_actor: input.actor,
+  });
+}
+
+/** Releases a failed MCP write with bounded database-owned backoff. */
+export function failTencentTrialLedgerSyncBatch(input: {
+  leaseToken: string;
+  errorCode: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<readonly Readonly<{
+    failed: boolean;
+    dead: boolean;
+    retry_at: string;
+  }>[]>(TENCENT_TRIAL_LEDGER_SYNC_FAIL_RPC, {
+    p_secret: secret,
+    p_lease_token: input.leaseToken,
+    p_error_code: input.errorCode,
+    p_actor: input.actor,
+  });
+}
+
+export function getTencentTrialLedgerSyncStatus() {
+  const { secret } = configuration();
+  return rpc<TencentTrialLedgerSyncStatus[]>(TENCENT_TRIAL_LEDGER_SYNC_STATUS_RPC, {
+    p_secret: secret,
   });
 }
 

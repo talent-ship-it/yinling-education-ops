@@ -350,6 +350,7 @@ import {
   type TrialLedgerFieldValue,
   type TrialLedgerOverrides,
 } from "@/lib/trial-ledger";
+import { TENCENT_TRIAL_LEDGER_URL } from "@/lib/tencent-trial-ledger-mirror";
 import {
   jiaowubaoTrialSyncPendingDisposition,
   jiaowubaoTrialSyncScope,
@@ -8123,6 +8124,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
     return <>
       <ViewHeading eyebrow="试听与 LP" title="试听与 LP" actions={<>
+        <a className="secondary-button" href={TENCENT_TRIAL_LEDGER_URL} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 腾讯复盘台账</a>
         <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在生成任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `同步教务宝真实排课${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
         <button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>
       </>} />
