@@ -76,6 +76,10 @@ test("formats the canonical task deadline as an exact Melbourne date and time", 
     formatTaskDeadline("2026-01-04T07:00:00.000Z"),
     "2026年1月4日 18:00",
   );
+  assert.equal(
+    formatTaskDeadline("2026-01-04T07:00:00.000Z", "Australia/Melbourne", "12h"),
+    "2026年1月4日 下午06:00",
+  );
   assert.equal(formatTaskDeadline("not-a-deadline"), undefined);
   assert.equal(formatTaskDeadline(undefined), undefined);
 });

@@ -355,12 +355,17 @@ function formatDue(instant: Date, timeZone: string) {
 export function formatTaskDeadline(
   dueAt: string | undefined,
   timeZone = MELBOURNE_TIME_ZONE,
+  timeFormat: "24h" | "12h" = "24h",
 ) {
   if (!isCanonicalTaskDueAt(dueAt)) return undefined;
   const instant = new Date(dueAt);
   if (!Number.isFinite(instant.getTime())) return undefined;
   const { year, month, day, hour, minute } = localParts(instant, timeZone);
-  return `${year}年${month}月${day}日 ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+  const minuteLabel = minute.toString().padStart(2, "0");
+  const timeLabel = timeFormat === "12h"
+    ? `${hour < 12 ? "上午" : "下午"}${(hour % 12 || 12).toString().padStart(2, "0")}:${minuteLabel}`
+    : `${hour.toString().padStart(2, "0")}:${minuteLabel}`;
+  return `${year}年${month}月${day}日 ${timeLabel}`;
 }
 
 export function statusForDueAt(

@@ -29,12 +29,18 @@ function task(
   };
 }
 
-function render(tasks: OpsTask[], filter: ToDoFilter = "all", deadlineTimeZone: TaskDeadlineTimeZone = "Australia/Melbourne") {
+function render(
+  tasks: OpsTask[],
+  filter: ToDoFilter = "all",
+  deadlineTimeZone: TaskDeadlineTimeZone = "Australia/Melbourne",
+  deadlineTimeFormat: "24h" | "12h" = "24h",
+) {
   return renderToStaticMarkup(
     <ToDoList
       tasks={tasks}
       deadlineTimeZone={deadlineTimeZone}
       deadlineTimeZoneLabel={timezoneLabelFor(deadlineTimeZone, "zh-CN")}
+      deadlineTimeFormat={deadlineTimeFormat}
       studentName={(studentId) => `学生 ${studentId}`}
       filter={filter}
       onFilterChange={() => undefined}
@@ -107,7 +113,7 @@ test("shows the canonical deadline as an exact date and time, not legacy workflo
   const html = render([task("due", "LP", "today", "试听前 N-3 · 18:00", "2026-08-12T08:00:00.000Z")]);
   assert.match(html, />截止 2026年8月12日 18:00</);
   assert.match(html, /<time[^>]+dateTime="2026-08-12T08:00:00\.000Z"/);
-  assert.match(html, /title="截止：2026年8月12日 18:00（墨尔本）"/);
+  assert.match(html, /title="截止：2026年8月12日 18:00 · 墨尔本"/);
   assert.doesNotMatch(html, /试听前 N-3/);
   assert.doesNotMatch(html, /不应渲染的解释文字/);
   assert.doesNotMatch(html, /<small/);
@@ -121,9 +127,11 @@ test("renders the same deadline instant in Beijing for operations and Melbourne 
   const teachingControl = render([task("melbourne", "试听", "today", "legacy", deadline)], "all", "Australia/Melbourne");
 
   assert.match(operations, />截止 2026年8月12日 22:30</);
-  assert.match(operations, /title="截止：2026年8月12日 22:30（北京时间（中国））"/);
+  assert.match(operations, /title="截止：2026年8月12日 22:30 · 北京时间（中国）"/);
   assert.match(teachingControl, />截止 2026年8月13日 00:30</);
-  assert.match(teachingControl, /title="截止：2026年8月13日 00:30（墨尔本）"/);
+  assert.match(teachingControl, /title="截止：2026年8月13日 00:30 · 墨尔本"/);
+  const twelveHour = render([task("twelve-hour", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai", "12h");
+  assert.match(twelveHour, />截止 2026年8月12日 下午10:30</);
 });
 
 test("does not present a descriptive legacy due string as an exact deadline", () => {
