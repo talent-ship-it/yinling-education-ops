@@ -201,3 +201,33 @@ test("materializes N-2, N-1, payment and same-day tasks from one real 教务宝 
     "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 墨尔本 19:00 结束>");
   assert.ok(tasks.some((task) => task.title.includes("收取试听费") && task.owner === "Tara"));
 });
+
+test("omits the N-1 teacher-preparation task when the handover explicitly says no", () => {
+  const fields = { ...extendedFields, preparationFollowUp: "否" as const };
+  const match = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-NO-PREP",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields,
+      trialIntake: trialIntakeFromFields(fields),
+    }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-no-prep",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "Heather孙晓琳",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  })[0]!;
+
+  const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
+  assert.equal(match.preparationFollowUp, false);
+  assert.equal(tasks.length, 3);
+  assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("prep-n1")));
+});

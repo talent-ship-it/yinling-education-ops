@@ -77,6 +77,7 @@ export type TrialScheduleMatch = Readonly<{
   studentName: string;
   owner: string;
   planner: string;
+  preparationFollowUp: boolean;
   link: TrialScheduleLink;
 }>;
 
@@ -180,6 +181,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     workflowType?: string;
     stage?: string;
     requestedAt?: string;
+    fields?: Readonly<{ preparationFollowUp?: unknown }>;
     trialIntake?: TrialIntake;
   }>[];
   students: readonly Readonly<{ id: string; name: string; owner: string; planner?: string }>[];
@@ -220,6 +222,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       studentName,
       owner: student.owner,
       planner: plannerName,
+      preparationFollowUp: item.fields?.preparationFollowUp !== "否",
       link: Object.freeze({
         source: "jiaowubao-open-api",
         eventId: event.eventId,
@@ -450,13 +453,15 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
       dueAt: localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE),
       category: "LP",
     }),
-    task({
-      ...shared,
-      ruleKey: `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
-      title: `《教务+教统》【跟进老师备课内容】<${input.studentName} · ${input.link.teacherName}>`,
-      dueAt: localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE),
-      category: "LP",
-    }),
+    ...(input.preparationFollowUp ? [
+      task({
+        ...shared,
+        ruleKey: `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
+        title: `《教务+教统》【跟进老师备课内容】<${input.studentName} · ${input.link.teacherName}>`,
+        dueAt: localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE),
+        category: "LP",
+      }),
+    ] : []),
     task({
       ...shared,
       owner: input.planner || input.owner,
