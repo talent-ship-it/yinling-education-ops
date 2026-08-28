@@ -347,7 +347,8 @@ export function JiaowubaoImportedSchedulePanel({
             const studentNames = event.visibleStudentIds
               .map((studentId) => studentNameForId(studentId))
               .filter((name): name is string => Boolean(name));
-            const teacherName = event.teacherId ? teacherNameForId(event.teacherId) : undefined;
+            const teacherName = event.teacherName?.trim()
+              || (event.teacherId ? teacherNameForId(event.teacherId) : undefined);
             const blocksAvailability = event.availabilityEffect === "blocks_teacher_ava";
             // Availability-only readers deliberately receive no course or
             // participant details. Describe that limited record truthfully

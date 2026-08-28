@@ -57,6 +57,24 @@ test("renders imported schedule events as a separate, clearly read-only source p
   assert.doesNotMatch(html, /<button/);
 });
 
+test("prefers the bounded 教务宝 teacher label over an internal roster mapping", () => {
+  const html = renderToStaticMarkup(<JiaowubaoImportedSchedulePanel
+    feed={{
+      ...feed,
+      events: [{ ...feed.events[0]!, teacherName: "Zara Baker" }],
+    }}
+    loading={false}
+    error={false}
+    timezone="Australia/Melbourne"
+    language="zh-CN"
+    studentNameForId={() => "王同学"}
+    teacherNameForId={() => "内部映射老师"}
+  />);
+
+  assert.match(html, /Zara Baker/);
+  assert.doesNotMatch(html, /内部映射老师/);
+});
+
 test("labels authorised-list truncation and availability-only source time without inventing missing class details", () => {
   const html = renderToStaticMarkup(<JiaowubaoImportedSchedulePanel
     feed={{
