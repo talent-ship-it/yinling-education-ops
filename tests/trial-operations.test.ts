@@ -231,3 +231,43 @@ test("omits the N-1 teacher-preparation task when the handover explicitly says n
   assert.equal(tasks.length, 3);
   assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("prep-n1")));
 });
+
+test("compresses N-2, N-1 and payment reminders onto intake day for a next-day trial", () => {
+  const fields = {
+    ...extendedFields,
+    requestSentAt: "2026-09-02T03:00:00.000Z",
+  };
+  const match = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-NEXT-DAY",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields,
+      trialIntake: trialIntakeFromFields(fields),
+    }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-next-day",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "Heather孙晓琳",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-09-02T03:30:00.000Z",
+  })[0]!;
+
+  const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-09-02T03:30:00.000Z" });
+  const compressedRules = ["lp-materials-n2", "prep-n1", "payment-n2"];
+  assert.equal(match.requestSentAt, "2026-09-02T03:00:00.000Z");
+  assert.deepEqual(tasks
+    .filter((task) => compressedRules.some((suffix) => task.ruleKey?.endsWith(suffix)))
+    .map((task) => task.dueAt), [
+      "2026-09-02T08:00:00.000Z",
+      "2026-09-02T08:00:00.000Z",
+      "2026-09-02T08:00:00.000Z",
+    ]);
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.dueAt, "2026-09-03T08:00:00.000Z");
+});

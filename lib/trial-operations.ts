@@ -78,6 +78,7 @@ export type TrialScheduleMatch = Readonly<{
   owner: string;
   planner: string;
   preparationFollowUp: boolean;
+  requestSentAt?: string;
   link: TrialScheduleLink;
 }>;
 
@@ -223,6 +224,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       owner: student.owner,
       planner: plannerName,
       preparationFollowUp: item.fields?.preparationFollowUp !== "否",
+      ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
       link: Object.freeze({
         source: "jiaowubao-open-api",
         eventId: event.eventId,
@@ -281,6 +283,11 @@ function localDayDeadline(value: Date, dayOffset: number, hour: number, timeZone
     month: shifted.getUTCMonth() + 1,
     day: shifted.getUTCDate(),
   }, hour, timeZone);
+}
+
+function localDayNumber(value: Date, timeZone: string) {
+  const local = zonedParts(value, timeZone);
+  return Date.UTC(local.year, local.month - 1, local.day) / (24 * 60 * 60 * 1_000);
 }
 
 function task(input: Readonly<{
@@ -429,6 +436,16 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
   const start = new Date(input.link.startsAt);
   const end = new Date(input.link.endsAt);
   const now = new Date(input.now);
+  const requestSentAt = input.requestSentAt ? new Date(input.requestSentAt) : null;
+  const compressBeforeTrialTasks = requestSentAt !== null
+    && Number.isFinite(requestSentAt.valueOf())
+    && localDayNumber(start, MELBOURNE_TIME_ZONE) - localDayNumber(requestSentAt, MELBOURNE_TIME_ZONE) === 1;
+  const n2Deadline = compressBeforeTrialTasks
+    ? localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE)
+    : localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE);
+  const n1Deadline = compressBeforeTrialTasks
+    ? localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE)
+    : localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE);
   const anchor = `JWB:${input.link.eventId}`;
   const operations = [input.owner, DEFAULT_TEACHING_CONTROL_WATCHER];
   const shared = {
@@ -450,7 +467,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
       ...shared,
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
       title: `《教务+教统》【LP发给老师 + 资料对接】<${input.studentName} · ${input.link.teacherName}>`,
-      dueAt: localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE),
+      dueAt: n2Deadline,
       category: "LP",
     }),
     ...(input.preparationFollowUp ? [
@@ -458,7 +475,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
         ...shared,
         ruleKey: `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
         title: `《教务+教统》【跟进老师备课内容】<${input.studentName} · ${input.link.teacherName}>`,
-        dueAt: localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE),
+        dueAt: n1Deadline,
         category: "LP",
       }),
     ] : []),
@@ -468,7 +485,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
       assignees: [input.planner || input.owner],
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
       title: `《教统》【提醒规划老师收取试听费】<${input.studentName}>`,
-      dueAt: localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE),
+      dueAt: n2Deadline,
     }),
     task({
       ...shared,
