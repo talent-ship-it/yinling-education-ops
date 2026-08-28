@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatJiaowubaoTodayTaskTitle,
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_MANUAL_REQUEST_RULE_PREFIX,
   completeTrialSchedulingReminderTasks,
@@ -358,6 +359,13 @@ test("materializes N-2, N-1, pending-payment and same-day tasks from one real �
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.title,
     "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 墨尔本 19:00 结束>");
   assert.ok(tasks.some((task) => task.title.includes("收取试听费") && task.owner === "Tara"));
+  const today = tasks.find((task) => task.ruleKey?.endsWith("today"))!;
+  assert.equal(formatJiaowubaoTodayTaskTitle({
+    task: today,
+    endsAt: match.link.endsAt,
+    timeZone: "Asia/Shanghai",
+    timeZoneLabel: "北京时间（中国）",
+  }), "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 北京时间（中国） 17:00 结束>");
 });
 
 test("Jiaowubao payment reminders follow LP authority and defer to a linked booking", () => {

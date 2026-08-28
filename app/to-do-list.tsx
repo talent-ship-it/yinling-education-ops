@@ -8,11 +8,13 @@ import { formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, st
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
 export type ToDoFilter = (typeof TO_DO_FILTERS)[number];
 export type TaskListView = "todo" | "done" | "cannot";
-export type TaskDeadlineTimeZone = "Asia/Shanghai" | "Australia/Melbourne";
+export type TaskDeadlineTimeZone = string;
 
 export interface ToDoListProps {
   tasks: OpsTask[];
   deadlineTimeZone: TaskDeadlineTimeZone;
+  deadlineTimeZoneLabel: string;
+  taskTitle?: (task: OpsTask) => string;
   studentName: (studentId: string) => string | undefined;
   filter: ToDoFilter;
   onFilterChange: (filter: ToDoFilter) => void;
@@ -78,7 +80,9 @@ function TaskRows({
   onOpen,
   canOpen,
   deadlineTimeZone,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone"> & { tasks: OpsTask[]; view: TaskListView }) {
+  deadlineTimeZoneLabel,
+  taskTitle,
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -95,24 +99,24 @@ function TaskRows({
     <div className="task-list" role="list">
       {tasks.map((task) => {
         const editing = editor?.taskId === task.id ? editor : null;
+        const displayTitle = taskTitle?.(task) ?? task.title;
         return <div className={`task-row to-do-row ${task.status} ${task.completionOutcome ?? ""}`} role="listitem" key={task.id}>
           <span className={`task-dot ${task.tone}`} aria-hidden="true" />
           {canOpen?.(task) === false
             ? <span className="task-copy task-copy-static">
-                <strong>{task.title}</strong>
+                <strong>{displayTitle}</strong>
                 <span>{studentName(task.studentId) ?? "未关联学生"}{task.completionNote ? ` · ${task.completionNote}` : ""}</span>
               </span>
             : <button className="task-copy" type="button" onClick={() => onOpen(task)}>
-                <strong>{task.title}</strong>
+                <strong>{displayTitle}</strong>
                 <span>{studentName(task.studentId) ?? "未关联学生"}{task.completionNote ? ` · ${task.completionNote}` : ""}</span>
               </button>}
           {(() => {
             const deadline = formatTaskDeadline(task.dueAt, deadlineTimeZone);
-            const timeZoneLabel = deadlineTimeZone === "Asia/Shanghai" ? "北京时间" : "墨尔本时间";
             if (deadline && task.dueAt) return <time
               className={`due-label ${task.status}`}
               dateTime={task.dueAt}
-              title={`截止：${deadline}（${timeZoneLabel}）`}
+              title={`截止：${deadline}（${deadlineTimeZoneLabel}）`}
             >截止 {deadline}</time>;
             return null;
           })()}
@@ -129,7 +133,7 @@ function TaskRows({
               className="task-note-button"
               type="button"
               title="编辑任务备注"
-              aria-label={`编辑备注：${task.title}`}
+              aria-label={`编辑备注：${displayTitle}`}
               onClick={() => setEditor({ taskId: task.id, mode: "note", value: task.completionNote ?? "" })}
             ><Pencil size={14} /></button>
             {view === "todo" ? <>
@@ -137,21 +141,21 @@ function TaskRows({
                 className="cannot-do-button"
                 type="button"
                 title="无法完成"
-                aria-label={`无法完成：${task.title}`}
+                aria-label={`无法完成：${displayTitle}`}
                 onClick={() => setEditor({ taskId: task.id, mode: "cannot", value: "" })}
               ><X size={15} /></button>
               <button
                 className="complete-button"
                 type="button"
                 title="标记完成"
-                aria-label={`完成：${task.title}`}
+                aria-label={`完成：${displayTitle}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button>
             </> : <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"
-              aria-label={`恢复到待办：${task.title}`}
+              aria-label={`恢复到待办：${displayTitle}`}
               onClick={() => onReopen(task.id)}
             ><RotateCcw size={14} /><span>恢复</span></button>}
           </div>
@@ -177,7 +181,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -207,6 +211,8 @@ export function ToDoList({
   onOpen,
   canOpen,
   deadlineTimeZone,
+  deadlineTimeZoneLabel,
+  taskTitle,
 }: ToDoListProps) {
   const [expanded, setExpanded] = React.useState(true);
   const [view, setView] = React.useState<TaskListView>("todo");
@@ -214,7 +220,7 @@ export function ToDoList({
   const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onOpen, canOpen, deadlineTimeZone, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onOpen, canOpen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">

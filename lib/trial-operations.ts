@@ -542,6 +542,35 @@ export function completeTrialSchedulingReminderTasks(
 
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
 
+export function formatJiaowubaoTodayTaskTitle(input: Readonly<{
+  task: Pick<OpsTask, "ruleKey" | "title">;
+  endsAt?: string;
+  timeZone: string;
+  timeZoneLabel: string;
+  locale?: string;
+  timeFormat?: "24h" | "12h";
+}>) {
+  if (input.task.ruleKey !== `${TRIAL_JWB_RULE_PREFIX}today`
+    || !input.task.title.startsWith("《教务+教统》【今日试听】<")
+    || !input.task.title.endsWith(">")
+    || !input.endsAt) return input.task.title;
+  const endsAt = new Date(input.endsAt);
+  if (!Number.isFinite(endsAt.valueOf())) return input.task.title;
+  try {
+    const endLabel = new Intl.DateTimeFormat(input.locale ?? "zh-CN", {
+      timeZone: input.timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: input.timeFormat === "12h",
+    }).format(endsAt);
+    const inner = input.task.title.slice(0, -1)
+      .replace(/ · 墨尔本 \d{2}:\d{2} 结束$/u, "");
+    return `${inner} · ${input.timeZoneLabel} ${endLabel} 结束>`;
+  } catch {
+    return input.task.title;
+  }
+}
+
 export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly<{
   now: Date | string;
   paymentManagedByBooking?: boolean;
