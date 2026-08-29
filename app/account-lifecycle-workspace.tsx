@@ -6,6 +6,7 @@ import {
   AccountAdminLifecycle,
   type AccountAccessChange,
   type AccountDirectoryRecord,
+  type AccountIssuedPasswordResult,
   type AccountStatusChange,
 } from "@/app/account-admin-lifecycle";
 import {
@@ -195,7 +196,7 @@ export function AccountLifecycleWorkspace({
       });
       const body = await responseBody(response);
       if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "账号状态保存失败。");
-      setDirectoryNotice(change.status === "disabled" ? "账号已停用，活动会话已撤销。" : "账号已恢复；如该账号尚无独立密码，请立即重置临时密码后再通知本人登录。");
+      setDirectoryNotice(change.status === "disabled" ? "账号已停用，活动会话已撤销。" : "账号已恢复；如该账号尚无独立密码，请先设置登录密码再通知本人登录。");
       await loadDirectory(change.accountId);
       await loadSelectedAccount(change.accountId);
     } catch (error) {
@@ -247,6 +248,31 @@ export function AccountLifecycleWorkspace({
     } finally {
       setDirectoryBusy(null);
     }
+  };
+
+  const revealIssuedPassword = async (account: AccountDirectoryRecord): Promise<AccountIssuedPasswordResult> => {
+    const response = await fetch("/api/accounts/issued-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ accountId: account.account_id }),
+    });
+    const body = await responseBody(response);
+    if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "发放密码读取失败。");
+    const state = body.state;
+    if (body.available === true && typeof body.password === "string" && body.password) {
+      return {
+        available: true,
+        state: "available",
+        password: body.password,
+        issuedAt: typeof body.issuedAt === "string" ? body.issuedAt : null,
+      };
+    }
+    if (body.available !== false
+        || (state !== "self_changed" && state !== "not_recorded" && state !== "stale")) {
+      throw new Error("发放密码响应无效，请刷新后重试。");
+    }
+    return { available: false, state };
   };
 
   const beginMfa = async (currentPassword: string) => {
@@ -338,11 +364,12 @@ export function AccountLifecycleWorkspace({
       busyAction={directoryBusy ?? (directoryLoading ? "all" : null)}
       error={directoryError}
       notice={directoryNotice}
-      subtitle="角色保持与登录身份绑定；可调整最小权限和数据范围、停用账号、重置临时密码、撤销会话与 MFA。邀请投递尚未配置，因此不会显示虚假的“已发送”操作。"
+      subtitle="角色保持与登录身份绑定；可查看管理员发放密码、调整最小权限和数据范围、停用账号、重置密码、撤销会话与 MFA。邀请投递尚未配置，因此不会显示虚假的“已发送”操作。"
       onSelectAccount={setSelectedAccountId}
       onUpdateAccess={(change) => void updateAccess(change)}
       onSetStatus={(change) => void updateStatus(change)}
       onResetPassword={onResetPassword}
+      onRevealPassword={revealIssuedPassword}
       onRevokeSessions={(account) => void revokeSelectedSessions(account)}
       onResetMfa={(account) => void resetSelectedMfa(account)}
       onViewAccount={onViewAccount}

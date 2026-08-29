@@ -161,6 +161,14 @@ export type AccountPasswordRotationResult = AppAccountCredentialCommitResult & R
   currently_active: boolean;
 }>;
 
+export type AccountIssuedPasswordEscrowResult = Readonly<{
+  escrow_state: "available" | "self_changed" | "not_recorded" | "stale";
+  credential_version: number | null;
+  ciphertext: string | null;
+  issued_at: string | null;
+  audit_entry_id: string | null;
+}>;
+
 export type AccountRole = "admin" | "limited-admin" | "staff" | "teacher";
 export type AccountStatus = "invited" | "active" | "disabled";
 
@@ -836,7 +844,9 @@ export const ACCOUNT_SESSION_READ_RPC = "read_account_session";
 export const ACCOUNT_SESSIONS_READ_RPC = "read_account_sessions";
 export const ACCOUNT_SESSION_REVOKE_RPC = "revoke_account_sessions";
 export const ACCOUNT_CURRENT_SESSION_REVOKE_RPC = "revoke_current_account_session";
-export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v2";
+export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v3";
+export const ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow";
+export const ACCOUNT_ISSUED_PASSWORD_SEED_RPC = "seed_account_issued_password_escrow";
 export const ACCOUNT_RECOVERY_ISSUE_RPC = "issue_account_recovery";
 export const ACCOUNT_RECOVERY_CONSUME_RPC = "consume_account_recovery";
 export const ACCOUNT_MFA_LOGIN_RPC = "read_account_mfa_for_login";
@@ -3319,6 +3329,7 @@ export async function rotateAccountPasswordAtomic(input: {
   mustChangePassword: boolean;
   action: "self_change" | "admin_reset";
   actorAccountId: string;
+  issuedPasswordCiphertext: string | null;
 }) {
   const { secret } = configuration();
   const rows = await rpc<AccountPasswordRotationResult[]>(ACCOUNT_PASSWORD_ROTATE_RPC, {
@@ -3331,6 +3342,20 @@ export async function rotateAccountPasswordAtomic(input: {
     p_expected_credential_version: input.expectedCredentialVersion,
     p_must_change_password: input.mustChangePassword,
     p_action: input.action,
+    p_actor_account_id: input.actorAccountId,
+    p_issued_password_ciphertext: input.issuedPasswordCiphertext,
+  });
+  return rows[0] ?? null;
+}
+
+export async function getAccountIssuedPasswordEscrow(input: {
+  accountId: string;
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountIssuedPasswordEscrowResult[]>(ACCOUNT_ISSUED_PASSWORD_READ_RPC, {
+    p_secret: secret,
+    p_account_id: input.accountId,
     p_actor_account_id: input.actorAccountId,
   });
   return rows[0] ?? null;

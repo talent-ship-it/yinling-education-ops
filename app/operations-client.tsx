@@ -104,7 +104,6 @@ import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
   DEMO_STAFF_USERS,
-  normaliseDemoUserName,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
@@ -11233,14 +11232,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         refreshVersion={accountLifecycleRefreshVersion}
         onChangePassword={() => setModal("accountPasswordChange")}
         onResetPassword={(account: AccountDirectoryRecord) => {
-          const staffNameCollidesWithTeacher = account.account_role === "staff"
-            && recordTeachers.some((teacher) => normaliseDemoUserName(teacher.name) === normaliseDemoUserName(account.account_name));
           setAccountPasswordResetTarget({
             accountId: account.account_id,
             label: account.account_name,
-            login: staffNameCollidesWithTeacher
-              ? `${account.account_name} 教务`
-              : account.account_name,
+            login: account.account_role === "staff" ? `${account.account_name} 教务` : account.account_name,
             expectedCredentialVersion: account.credential_version ?? 0,
           });
           setAccountPasswordResetError("");
@@ -13286,7 +13281,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       setAccountLifecycleRefreshVersion((current) => current + 1);
       setAccountPasswordResetTarget(null);
       setModal(null);
-      notify(`${label} 的密码已重置；对方登录后需要立即设置新密码`);
+      notify(`${label} 的密码已重置；可在账号页查看并复制，不强制首次登录改密`);
     } catch {
       setAccountPasswordResetError("网络暂时不可用，请保持窗口打开后重试。");
     } finally {
@@ -13873,10 +13868,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {modal === "accountPasswordReset" && isAdminSession && accountPasswordResetTarget && <Dialog title={`重置 ${accountPasswordResetTarget.label} 的密码`} onClose={closeAccountPasswordReset}>
         <form className="form-grid account-password-reset-form" onSubmit={submitAccountPasswordReset}>
           <PasswordUsernameContext login={accountPasswordResetTarget.login} />
-          <div className="form-notice span-2"><KeyRound size={16} /> 登录账号：{accountPasswordResetTarget.login}。重置后，旧密码和旧登录状态都会失效；用户首次登录必须改成自己的密码。</div>
-          <label className="span-2">新临时密码<input name="newPassword" data-dialog-autofocus="true" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
-          <label className="span-2">再次输入临时密码<input name="confirmation" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
-          <p className="form-footnote span-2">至少 12 个字符，同时包含字母和数字，且不能与账号名称相同。请通过现有安全渠道告知本人，系统不会显示或发送密码。</p>
+          <div className="form-notice span-2"><KeyRound size={16} /> 登录账号：{accountPasswordResetTarget.login}。重置后，旧密码和旧登录状态都会失效；新密码可直接用于登录，不强制首次改密。</div>
+          <label className="span-2">新密码<input name="newPassword" data-dialog-autofocus="true" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+          <label className="span-2">再次输入新密码<input name="confirmation" type="password" autoComplete="new-password" minLength={12} maxLength={128} required /></label>
+          <p className="form-footnote span-2">至少 12 个字符，同时包含字母和数字，且不能与账号名称相同。重置后可在账号页逐个查看和复制；系统不会自动发送密码。</p>
           {accountPasswordResetError && <div className="form-error span-2" role="alert">{accountPasswordResetError}</div>}
           <footer><button className="secondary-button" type="button" disabled={accountPasswordResetBusy} onClick={closeAccountPasswordReset}>取消</button><button className="primary-button" type="submit" disabled={accountPasswordResetBusy}><KeyRound size={16} /> {accountPasswordResetBusy ? "正在重置…" : "确认重置"}</button></footer>
         </form>

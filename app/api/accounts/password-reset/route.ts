@@ -7,6 +7,7 @@ import {
   hashAccountPassword,
   validateAccountPassword,
 } from "@/lib/account-credentials";
+import { encryptAccountIssuedPassword } from "@/lib/account-issued-password";
 import {
   DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
@@ -79,14 +80,21 @@ export async function POST(request: Request) {
       body?.newPassword as string,
       accountPasswordCommandSalt(commandKey, identityKey, process.env.OPS_API_SECRET ?? ""),
     );
+    const issuedPasswordCiphertext = encryptAccountIssuedPassword({
+      password: body?.newPassword as string,
+      accountId: target.account_id,
+      credentialVersion: (expectedCredentialVersion as number) + 1,
+      commandKey,
+    });
     const result = await rotateAccountPasswordAtomic({
       commandKey,
       accountId: target.account_id,
       ...password,
       expectedCredentialVersion: expectedCredentialVersion as number,
-      mustChangePassword: true,
+      mustChangePassword: false,
       action: "admin_reset",
       actorAccountId: session.accountId,
+      issuedPasswordCiphertext,
     });
     if (!result || result.identity_key !== identityKey || !result.enabled) {
       throw new OpsStoreError("账号密码重置未返回有效结果。", "invalid_commit_result");
@@ -113,7 +121,7 @@ export async function POST(request: Request) {
       return noStore({ error: "账号密码数据库合同尚未部署，当前不会重置密码。", code: "account_contract_unavailable" }, 501);
     }
     if (error instanceof OpsStoreError && error.message === "account_not_active") {
-      return noStore({ error: "请先恢复该账号，再重置临时密码。", code: "account_not_active" }, 409);
+      return noStore({ error: "请先恢复该账号，再重置登录密码。", code: "account_not_active" }, 409);
     }
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "account_credential_version_conflict")) {
       return noStore({ error: "该账号密码刚刚已更新，请刷新后再试。", code: "version_conflict" }, 409);

@@ -7,7 +7,12 @@ const [
   credentialMigration,
   lifecycleMigration,
   lifecycleHardeningMigration,
+  authSettlementHotfix,
+  passwordPolicyMigration,
+  issuedPasswordMigration,
   credentials,
+  issuedPasswordCrypto,
+  issuedPasswordCryptoCore,
   accountDirectory,
   sessionToken,
   auth,
@@ -16,6 +21,7 @@ const [
   sessionRoute,
   changeRoute,
   resetRoute,
+  issuedPasswordRoute,
   accountsRoute,
   accessRoute,
   statusRoute,
@@ -32,7 +38,12 @@ const [
   read("../supabase/migrations/20260827000400_app_account_credentials.sql"),
   read("../supabase/migrations/20260827000700_account_lifecycle.sql"),
   read("../supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql"),
+  read("../supabase/migrations/20260829000400_fix_account_auth_success_settlement.sql"),
+  read("../supabase/migrations/20260829000500_disable_forced_first_login_password_change.sql"),
+  read("../supabase/migrations/20260829000600_admin_issued_password_escrow.sql"),
   read("../lib/account-credentials.ts"),
+  read("../lib/account-issued-password.ts"),
+  read("../lib/account-issued-password-crypto.ts"),
   read("../lib/account-directory.ts"),
   read("../lib/demo-session-token.ts"),
   read("../lib/demo-auth.ts"),
@@ -41,6 +52,7 @@ const [
   read("../app/api/demo-session/route.ts"),
   read("../app/api/account/password/route.ts"),
   read("../app/api/accounts/password-reset/route.ts"),
+  read("../app/api/accounts/issued-password/route.ts"),
   read("../app/api/accounts/route.ts"),
   read("../app/api/accounts/access/route.ts"),
   read("../app/api/accounts/status/route.ts"),
@@ -62,6 +74,12 @@ test("account passwords and browser sessions use server-owned security material"
   assert.match(credentials, /timingSafeEqual/);
   assert.match(credentials, /ACCOUNT_PASSWORD_MIN_LENGTH = 12/);
   assert.match(credentials, /accountPasswordCommandSalt/);
+  assert.match(issuedPasswordCrypto, /import "server-only"/);
+  assert.match(issuedPasswordCryptoCore, /aes-256-gcm/);
+  assert.match(issuedPasswordCryptoCore, /createHmac\("sha256", secret\)/);
+  assert.match(issuedPasswordCryptoCore, /cipher\.setAAD\(associatedData/);
+  assert.match(issuedPasswordCryptoCore, /decipher\.setAuthTag/);
+  assert.doesNotMatch(`${issuedPasswordCrypto}\n${issuedPasswordCryptoCore}`, /console\./);
   assert.match(sessionToken, /const SESSION_VERSION = 4/);
   assert.match(sessionToken, /export const SERVER_SESSION_VERSION = 5/);
   assert.match(sessionToken, /randomBytes\(32\)/);
@@ -81,6 +99,15 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(lifecycleMigration, /create table if not exists internal\.app_account_scope_members/);
   assert.doesNotMatch(lifecycleMigration, /app_account_auth_throttles/);
   assert.match(lifecycleHardeningMigration, /create table if not exists internal\.app_account_auth_throttles/);
+  assert.match(issuedPasswordMigration, /create table if not exists internal\.app_account_issued_passwords/);
+  assert.match(issuedPasswordMigration, /alter table internal\.app_account_issued_passwords enable row level security/);
+  assert.match(issuedPasswordMigration, /revoke all on table internal\.app_account_issued_passwords from public, anon, authenticated, service_role/);
+  assert.match(issuedPasswordMigration, /create or replace function public\.rotate_account_password_tx_v3/);
+  assert.match(issuedPasswordMigration, /create or replace function public\.read_account_issued_password_escrow/);
+  assert.match(issuedPasswordMigration, /account\.issued_password_viewed/);
+  assert.match(issuedPasswordMigration, /case when visible_state = 'available' then escrow\.ciphertext else null end/);
+  assert.doesNotMatch(issuedPasswordMigration, /password_plaintext/);
+  assert.match(passwordPolicyMigration, /set must_change_password = false/);
   assert.match(lifecycleHardeningMigration, /app_account_auth_throttles_updated_idx[\s\S]*updated_at/);
   assert.match(lifecycleHardeningMigration, /add column if not exists result_snapshot jsonb/);
   assert.match(lifecycleMigration, /create table if not exists internal\.app_account_commands/);
@@ -109,7 +136,8 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
 });
 
 test("routes enforce full-admin boundaries and use atomic account operations", () => {
-  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v2"/);
+  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v3"/);
+  assert.match(store, /ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow"/);
   assert.match(store, /ACCOUNT_SESSION_CREATE_RPC = "create_account_session"/);
   assert.match(store, /ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa"/);
   assert.match(loginRoute, /ensureAccountDirectory/);
@@ -131,18 +159,27 @@ test("routes enforce full-admin boundaries and use atomic account operations", (
   assert.match(changeRoute, /getAccountByIdentity\(identityKey\)/);
   assert.match(changeRoute, /expectedCredentialVersion: result\.credential_version/);
   assert.match(changeRoute, /expectedAccessVersion: currentDirectory\.access_version/);
+  assert.match(changeRoute, /issuedPasswordCiphertext: null/);
   assert.doesNotMatch(changeRoute, /newPassword[^]*NextResponse\.json/);
 
   assert.match(resetRoute, /hasValidNixonSession/);
   assert.match(resetRoute, /getAccountDirectory/);
   assert.match(resetRoute, /accountId/);
-  assert.match(resetRoute, /mustChangePassword: true/);
+  assert.match(resetRoute, /mustChangePassword: false/);
   assert.match(resetRoute, /action: "admin_reset"/);
+  assert.match(resetRoute, /encryptAccountIssuedPassword/);
+  assert.match(resetRoute, /issuedPasswordCiphertext/);
   assert.match(resetRoute, /const expectedCredentialVersion = body\?\.expectedCredentialVersion/);
   assert.match(resetRoute, /expectedCredentialVersion: expectedCredentialVersion as number/);
   assert.doesNotMatch(resetRoute, /expectedCredentialVersion: existing\?\.credential_version \?\? 0/);
   assert.match(resetRoute, /result\.current_credential_version !== result\.credential_version/);
   assert.match(resetRoute, /password_reset_superseded/);
+  assert.match(issuedPasswordRoute, /resolveAccountRequestContext/);
+  assert.match(issuedPasswordRoute, /context\.fullAdmin/);
+  assert.match(issuedPasswordRoute, /decryptAccountIssuedPassword/);
+  assert.match(issuedPasswordRoute, /verifyAccountPassword\(password, credential\)/);
+  assert.match(issuedPasswordRoute, /"Cache-Control": "private, no-store, max-age=0"/);
+  assert.doesNotMatch(issuedPasswordRoute, /console\./);
   assert.match(operationsClient, /expectedCredentialVersion: account\.credential_version \?\? 0/);
   assert.match(operationsClient, /accountPasswordResetTarget\.expectedCredentialVersion/);
   const passwordRotationV2 = lifecycleHardeningMigration.slice(
@@ -275,6 +312,8 @@ test("authentication attempts are HMAC-keyed, database-throttled and logout repo
   assert.match(successSettlement, /throttle\.failed_attempts - 1/);
   assert.match(successSettlement, /network-first order/);
   assert.doesNotMatch(successSettlement, /where t\.throttle_key = any\(p_throttle_keys\)/);
+  assert.match(authSettlementHotfix, /select distinct supplied\.key[\s\S]*\) keys[\s\S]*order by case when keys\.key like 'n:%'/);
+  assert.doesNotMatch(authSettlementHotfix, /select distinct key from unnest\(p_throttle_keys\) key\s+order by case/);
   assert.match(logoutRoute, /serverSessionRevoked/);
   assert.match(logoutRoute, /revokeCurrentAccountSession/);
   assert.match(logoutRoute, /sessionId: envelope\.sessionId/);
@@ -303,9 +342,13 @@ test("account UI wires real password, MFA, session and authorization actions wit
   assert.match(workspace, /fetch\("\/api\/accounts\/access"/);
   assert.match(workspace, /fetch\("\/api\/accounts\/status"/);
   assert.match(workspace, /fetch\("\/api\/accounts\/mfa-reset"/);
+  assert.match(workspace, /fetch\("\/api\/accounts\/issued-password"/);
   assert.match(workspace, /邀请投递尚未配置/);
   assert.doesNotMatch(workspace, /onResendInvite=/);
-  assert.match(adminLifecycle, /重置临时密码/);
+  assert.match(adminLifecycle, /重置登录密码/);
+  assert.match(adminLifecycle, /查看密码/);
+  assert.match(adminLifecycle, /本人自行修改后不可查看/);
+  assert.match(adminLifecycle, /account\.credential_version/);
   assert.match(adminLifecycle, /撤销此账号会话/);
   assert.match(adminLifecycle, /重置 MFA/);
   assert.match(adminLifecycle, /账号角色（与登录身份绑定）/);

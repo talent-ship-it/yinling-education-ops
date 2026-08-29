@@ -145,6 +145,7 @@ export async function POST(request: Request) {
       mustChangePassword: false,
       action: "self_change",
       actorAccountId: session.accountId,
+      issuedPasswordCiphertext: null,
     });
     if (!result || result.identity_key !== identityKey || !result.enabled) {
       throw new OpsStoreError("账号密码已提交但未返回有效结果。", "invalid_commit_result");

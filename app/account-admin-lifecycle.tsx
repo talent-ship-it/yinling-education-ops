@@ -5,6 +5,9 @@ import {
   Ban,
   CheckCircle2,
   Clock3,
+  Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   Mail,
   RefreshCw,
@@ -90,6 +93,13 @@ export type AccountStatusChange = Readonly<{
   expectedAccessVersion: number;
 }>;
 
+export type AccountIssuedPasswordResult = Readonly<{
+  available: boolean;
+  state: "available" | "self_changed" | "not_recorded" | "stale";
+  password?: string;
+  issuedAt?: string | null;
+}>;
+
 export type AccountAdminLifecycleProps = Readonly<{
   accounts: readonly AccountDirectoryRecord[];
   selectedAccountId?: string | null;
@@ -109,6 +119,7 @@ export type AccountAdminLifecycleProps = Readonly<{
   onResendInvite?: (account: AccountDirectoryRecord) => void;
   onIssueRecovery?: (account: AccountDirectoryRecord) => void;
   onResetPassword?: (account: AccountDirectoryRecord) => void;
+  onRevealPassword?: (account: AccountDirectoryRecord) => Promise<AccountIssuedPasswordResult>;
   onRevokeSessions?: (account: AccountDirectoryRecord) => void;
   onResetMfa?: (account: AccountDirectoryRecord) => void;
   onViewAccount?: (account: AccountDirectoryRecord) => void;
@@ -139,6 +150,10 @@ const GRID_STYLE: CSSProperties = {
 
 function roleLabel(role: AccountRole): string {
   return ROLE_LABELS[role];
+}
+
+function accountLogin(account: AccountDirectoryRecord): string {
+  return account.account_role === "staff" ? `${account.account_name} 教务` : account.account_name;
 }
 
 function statusLabel(status: AccountStatus): string {
@@ -200,6 +215,7 @@ function accountEditorStateKey(account: AccountDirectoryRecord) {
   if (!accountAuthorizationLoaded(account)) return `${account.account_id}:directory`;
   return JSON.stringify([
     account.account_id,
+    account.credential_version,
     account.role_version,
     account.scope_version,
     accountPermissions(account),
@@ -233,6 +249,7 @@ type EditorProps = Readonly<{
   onResendInvite?: (account: AccountDirectoryRecord) => void;
   onIssueRecovery?: (account: AccountDirectoryRecord) => void;
   onResetPassword?: (account: AccountDirectoryRecord) => void;
+  onRevealPassword?: (account: AccountDirectoryRecord) => Promise<AccountIssuedPasswordResult>;
   onRevokeSessions?: (account: AccountDirectoryRecord) => void;
   onResetMfa?: (account: AccountDirectoryRecord) => void;
   onViewAccount?: (account: AccountDirectoryRecord) => void;
@@ -251,6 +268,7 @@ function AccountEditor({
   onResendInvite,
   onIssueRecovery,
   onResetPassword,
+  onRevealPassword,
   onRevokeSessions,
   onResetMfa,
   onViewAccount,
@@ -263,6 +281,9 @@ function AccountEditor({
   const [newScopeKind, setNewScopeKind] = useState(scopeValue(scopeOptions[0] ?? "entity"));
   const [newScopeKey, setNewScopeKey] = useState("");
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const [issuedPassword, setIssuedPassword] = useState<AccountIssuedPasswordResult | null>(null);
+  const [credentialBusy, setCredentialBusy] = useState(false);
+  const [credentialMessage, setCredentialMessage] = useState("");
 
   const isBusy = (action: string) => busyAction === "all" || busyAction === action;
   const isSelf = Boolean(currentAccountId && currentAccountId === account.account_id);
@@ -271,6 +292,7 @@ function AccountEditor({
   const isReadOnly = account.super_admin || !onUpdateAccess || !authorizationLoaded || independentPasswordMissing;
   const inviteExpiresAt = account.invite_expires_at ?? account.invite?.expires_at;
   const inviteDeliveryStatus = account.invite_delivery_status ?? account.invite?.delivery_status;
+  const login = accountLogin(account);
 
   const confirm = (action: PendingAction, callback: () => void) => {
     if (pending !== action) {
@@ -298,6 +320,37 @@ function AccountEditor({
     if (!key || scopeDraft.some((member) => member.kind === newScopeKind && member.key === key)) return;
     setScopeDraft([...scopeDraft, { kind: newScopeKind, key }]);
     setNewScopeKey("");
+  };
+
+  const copyCredential = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCredentialMessage(`${label}已复制。`);
+    } catch {
+      setCredentialMessage(`${label}复制失败，请手动选择后复制。`);
+    }
+  };
+
+  const revealIssuedPassword = async () => {
+    if (!onRevealPassword || credentialBusy) return;
+    setCredentialBusy(true);
+    setCredentialMessage("");
+    try {
+      const result = await onRevealPassword(account);
+      setIssuedPassword(result);
+      if (!result.available) {
+        setCredentialMessage(result.state === "self_changed"
+          ? "本人已自行修改密码；管理员无法查看其自设密码，可在下方重置。"
+          : result.state === "stale"
+            ? "记录对应旧密码版本；请在下方重置新密码。"
+            : "该账号还没有可查看的管理员发放密码；可在下方重置。"
+        );
+      }
+    } catch (error) {
+      setCredentialMessage(error instanceof Error ? error.message : "发放密码暂时无法核对。");
+    } finally {
+      setCredentialBusy(false);
+    }
   };
 
   const requestStatus = (status: "active" | "disabled") => {
@@ -337,6 +390,44 @@ function AccountEditor({
       <span>该账号下次登录需要更新密码。</span>
     </div>}
 
+    <section className="detail-section account-credential-section" aria-labelledby={`${account.account_id}-credential-heading`}>
+      <h3 id={`${account.account_id}-credential-heading`}>登录凭据</h3>
+      <label className="account-credential-field">
+        <span>登录账号</span>
+        <div className="copy-field">
+          <input value={login} readOnly aria-label={`${account.account_name} 的登录账号`} spellCheck={false} />
+          <button className="icon-button" type="button" aria-label={`复制 ${account.account_name} 的登录账号`} onClick={() => void copyCredential(login, "登录账号")}>
+            <Copy size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </label>
+      <div className="account-credential-field">
+        <span>当前发放密码</span>
+        {account.credential_version === null ? <div className="account-credential-empty"><KeyRound size={15} aria-hidden="true" /><span>尚未建立独立密码</span></div>
+          : issuedPassword?.available && issuedPassword.password ? <>
+            <div className="copy-field account-password-copy-field">
+              <input value={issuedPassword.password} readOnly aria-label={`${account.account_name} 的当前发放密码`} autoComplete="off" spellCheck={false} />
+              <button className="icon-button" type="button" aria-label={`复制 ${account.account_name} 的当前发放密码`} onClick={() => void copyCredential(issuedPassword.password!, "发放密码")}>
+                <Copy size={16} aria-hidden="true" />
+              </button>
+              <button className="icon-button" type="button" aria-label="隐藏发放密码" onClick={() => { setIssuedPassword(null); setCredentialMessage("发放密码已隐藏。"); }}>
+                <EyeOff size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <small>发放于 {formatDate(issuedPassword.issuedAt)} · 查看操作已记录</small>
+          </>
+            : issuedPassword && !issuedPassword.available ? <div className="account-credential-empty"><ShieldCheck size={15} aria-hidden="true" /><span>{issuedPassword.state === "self_changed" ? "已自行修改" : "暂无可查看密码"}</span></div>
+              : <div className="copy-field">
+                <input value="••••••••••••" readOnly aria-label={`${account.account_name} 的发放密码已隐藏`} tabIndex={-1} />
+                <button className="secondary-button account-reveal-password" type="button" disabled={!onRevealPassword || credentialBusy} onClick={() => void revealIssuedPassword()}>
+                  <Eye size={16} aria-hidden="true" />{credentialBusy ? "正在核对…" : "查看密码"}
+                </button>
+              </div>}
+        <small>只展示管理员发放且仍有效的密码；本人自行修改后不可查看。每次查看都会写入审计。</small>
+      </div>
+      {credentialMessage ? <p className="account-credential-message" role="status" aria-live="polite">{credentialMessage}</p> : null}
+    </section>
+
     <section className="detail-section" aria-labelledby={`${account.account_id}-role-heading`}>
       <h3 id={`${account.account_id}-role-heading`} style={{ fontSize: 14, margin: 0 }}>角色与权限</h3>
       <label style={{ display: "grid", gap: 5, marginTop: 8 }}>
@@ -365,7 +456,7 @@ function AccountEditor({
         })}
       </div> : <div className="empty-inline">权限投影尚未提供</div>}
       {!authorizationLoaded && <div className="empty-inline" role="status"><RefreshCw size={14} aria-hidden="true" />正在读取服务端权限与范围…</div>}
-      {independentPasswordMissing && !account.super_admin && <div className="form-notice" role="status"><KeyRound size={14} aria-hidden="true" />请先在下方重置临时密码，再编辑权限与数据范围。</div>}
+      {independentPasswordMissing && !account.super_admin && <div className="form-notice" role="status"><KeyRound size={14} aria-hidden="true" />请先在下方设置登录密码，再编辑权限与数据范围。</div>}
       {account.super_admin && <p style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.5, margin: "10px 0 0" }}>超级管理员权限由服务端判定，组件不在本地展开或覆盖。</p>}
       {onUpdateAccess && !account.super_admin && <button className="primary-button full" type="button" disabled={!authorizationLoaded || independentPasswordMissing || isBusy("access")} onClick={submitAccess} style={{ marginTop: 12 }}>
         <CheckCircle2 size={15} aria-hidden="true" />{!authorizationLoaded ? "正在读取权限…" : independentPasswordMissing ? "请先建立独立密码" : isBusy("access") ? "正在保存…" : "保存权限和范围"}
@@ -406,7 +497,7 @@ function AccountEditor({
         <KeyRound size={15} aria-hidden="true" />{pending === "recovery" ? "再次确认重发恢复" : "重发恢复"}
       </button>}
       {onResetPassword && !isSelf && account.status === "active" && <button className="secondary-button full" type="button" disabled={isBusy("password")} onClick={() => onResetPassword(account)}>
-        <KeyRound size={15} aria-hidden="true" />重置临时密码
+        <KeyRound size={15} aria-hidden="true" />重置登录密码
       </button>}
       {onRevokeSessions && <button className="secondary-button full" type="button" disabled={isBusy("sessions")} onClick={() => confirm("sessions", () => onRevokeSessions(account))}>
         <Users size={15} aria-hidden="true" />{pending === "sessions" ? "再次确认撤销会话" : "撤销此账号会话"}
@@ -447,6 +538,7 @@ export function AccountAdminLifecycle({
   onResendInvite,
   onIssueRecovery,
   onResetPassword,
+  onRevealPassword,
   onRevokeSessions,
   onResetMfa,
   onViewAccount,
@@ -545,6 +637,7 @@ export function AccountAdminLifecycle({
         onResendInvite={onResendInvite}
         onIssueRecovery={onIssueRecovery}
         onResetPassword={onResetPassword}
+        onRevealPassword={onRevealPassword}
         onRevokeSessions={onRevokeSessions}
         onResetMfa={onResetMfa}
         onViewAccount={onViewAccount}
