@@ -10,6 +10,7 @@ const [
   authSettlementHotfix,
   passwordPolicyMigration,
   issuedPasswordMigration,
+  issuedPasswordValidationHotfix,
   credentials,
   issuedPasswordCrypto,
   issuedPasswordCryptoCore,
@@ -41,6 +42,7 @@ const [
   read("../supabase/migrations/20260829000400_fix_account_auth_success_settlement.sql"),
   read("../supabase/migrations/20260829000500_disable_forced_first_login_password_change.sql"),
   read("../supabase/migrations/20260829000600_admin_issued_password_escrow.sql"),
+  read("../supabase/migrations/20260829000700_fix_issued_password_escrow_validation.sql"),
   read("../lib/account-credentials.ts"),
   read("../lib/account-issued-password.ts"),
   read("../lib/account-issued-password-crypto.ts"),
@@ -106,6 +108,10 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(issuedPasswordMigration, /create or replace function public\.read_account_issued_password_escrow/);
   assert.match(issuedPasswordMigration, /account\.issued_password_viewed/);
   assert.match(issuedPasswordMigration, /case when visible_state = 'available' then escrow\.ciphertext else null end/);
+  assert.match(issuedPasswordValidationHotfix, /drop constraint if exists app_account_issued_passwords_check/);
+  assert.match(issuedPasswordValidationHotfix, /char_length\(ciphertext\) <= 920/);
+  assert.match(issuedPasswordValidationHotfix, /\{22,\}\$/);
+  assert.doesNotMatch(issuedPasswordValidationHotfix, /\{22,900\}/);
   assert.doesNotMatch(issuedPasswordMigration, /password_plaintext/);
   assert.match(passwordPolicyMigration, /set must_change_password = false/);
   assert.match(lifecycleHardeningMigration, /app_account_auth_throttles_updated_idx[\s\S]*updated_at/);
