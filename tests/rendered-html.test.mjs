@@ -336,6 +336,8 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(css, /\.master-detail-layout > \.student-detail/);
   assert.match(css, /border-left:1px solid #dbe5df/);
   assert.match(css, /\.account-admin-layout \.collection-head,[\s\S]*?min-width:0/);
+  assert.match(css, /\.account-grid-row \.status-pill\s*\{[^}]*justify-self:start;[^}]*width:fit-content;/);
+  assert.match(css, /@media \(min-width:1101px\) and \(max-width:1210px\)[\s\S]*?\.account-admin-layout\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) 390px;/);
   assert.match(css, /@media \(min-width:761px\) and \(max-width:1399px\)[\s\S]*?\.student-collection \.master-detail-layout/);
   assert.match(css, /@media \(max-width:760px\)[\s\S]*?\.fixed-rule-grid,[\s\S]*?\.kanban-board/);
   assert.match(client, /RULE_OPTIONS\.lowHours\.map/);

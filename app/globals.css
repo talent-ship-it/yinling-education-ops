@@ -2859,6 +2859,11 @@ body {
 }
 
 /* Final width safeguards: desktop breakpoints must account for the fixed sidebar. */
+.account-grid-row .status-pill {
+  justify-self:start;
+  width:fit-content;
+}
+
 @media (min-width:761px) {
   .course-grid-row {
     grid-template-columns:minmax(0,1fr) minmax(72px,.32fr);
@@ -2958,6 +2963,18 @@ body {
     grid-template-columns:repeat(2,minmax(0,1fr));
   }
 
+}
+
+@media (min-width:1101px) and (max-width:1210px) {
+  .account-admin-layout {
+    grid-template-columns:minmax(0,1fr) 390px;
+    min-height:600px;
+  }
+
+  .account-list {
+    border-bottom:0;
+    border-right:1px solid var(--line);
+  }
 }
 
 @media (min-width:761px) and (max-width:1399px) {
