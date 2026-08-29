@@ -1,5 +1,6 @@
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
+  isManagedTrialPaymentConfirmationTask,
   isManagedTrialPaymentTaskRecipient,
   managedTrialPaymentTaskKind,
 } from "@/lib/managed-trial-payment";
@@ -7,10 +8,14 @@ import type { OpsStateRow } from "@/lib/ops-store";
 
 type RecordValue = Record<string, unknown>;
 
-const COMMAND_PATTERN = /^trial-payment-complete:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const COMMAND_PATTERN = /^trial-payment-(complete|reopen):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const VERSION_ENTITIES = ["bookings", "students", "lpItems", "tasks", "teachers"] as const;
+const OPEN_TASK_STATUSES = new Set(["overdue", "today", "upcoming", "waiting"]);
 
-export type TrialPaymentCompletionCommand = Readonly<{
+export type TrialPaymentLifecycleAction = "complete" | "reopen";
+
+export type TrialPaymentLifecycleCommand = Readonly<{
+  action: TrialPaymentLifecycleAction;
   commandKey: string;
   taskId: string;
   expectedVersions: Readonly<Record<(typeof VERSION_ENTITIES)[number], number>>;
@@ -59,10 +64,18 @@ function records(rows: readonly OpsStateRow[], entity: string) {
   return row.payload as RecordValue[];
 }
 
-export function parseTrialPaymentCompletionCommand(value: unknown): TrialPaymentCompletionCommand {
+export function parseTrialPaymentLifecycleCommand(value: unknown): TrialPaymentLifecycleCommand {
+  const commandMatch = isRecord(value) && typeof value.commandKey === "string"
+    ? value.commandKey.match(COMMAND_PATTERN)
+    : null;
+  const action = isRecord(value) && value.action === undefined
+    ? "complete"
+    : isRecord(value) && (value.action === "complete" || value.action === "reopen")
+      ? value.action
+      : null;
   if (!isRecord(value)
-    || Object.keys(value).some((key) => !["commandKey", "taskId", "expectedVersions"].includes(key))
-    || typeof value.commandKey !== "string" || !COMMAND_PATTERN.test(value.commandKey)
+    || Object.keys(value).some((key) => !["action", "commandKey", "taskId", "expectedVersions"].includes(key))
+    || !commandMatch || !action || commandMatch[1] !== action
     || typeof value.taskId !== "string" || !value.taskId.trim()
     || !isRecord(value.expectedVersions)
     || Object.keys(value.expectedVersions).sort().join("\0") !== [...VERSION_ENTITIES].sort().join("\0")) {
@@ -75,16 +88,16 @@ export function parseTrialPaymentCompletionCommand(value: unknown): TrialPayment
       fail("invalid_request", `expectedVersions.${entity} is invalid.`);
     }
     return [entity, version as number];
-  })) as TrialPaymentCompletionCommand["expectedVersions"];
-  return { commandKey: value.commandKey, taskId: value.taskId.trim(), expectedVersions };
+  })) as TrialPaymentLifecycleCommand["expectedVersions"];
+  return { action, commandKey: value.commandKey as string, taskId: value.taskId.trim(), expectedVersions };
 }
 
-export function trialPaymentCompletionIntent(command: Pick<TrialPaymentCompletionCommand, "taskId">) {
-  return { action: "complete", taskId: command.taskId } as const;
+export function trialPaymentLifecycleIntent(command: Pick<TrialPaymentLifecycleCommand, "action" | "taskId">) {
+  return { action: command.action, taskId: command.taskId } as const;
 }
 
-export function authorizeTrialPaymentTaskCompletion(input: {
-  command: TrialPaymentCompletionCommand;
+export function authorizeTrialPaymentTaskLifecycle(input: {
+  command: TrialPaymentLifecycleCommand;
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;
@@ -100,6 +113,12 @@ export function authorizeTrialPaymentTaskCompletion(input: {
   if (!kind || !isManagedTrialPaymentTaskRecipient(task, input.actor)) {
     fail("task_forbidden", "这项试听收费提醒没有分配给当前规划老师。");
   }
+  if (input.command.action === "complete" && !OPEN_TASK_STATUSES.has(String(task.status))) {
+    fail("task_forbidden", "这项试听收费提醒当前不能确认付款。");
+  }
+  if (input.command.action === "reopen" && !isManagedTrialPaymentConfirmationTask(task)) {
+    fail("task_forbidden", "这项试听收费提醒不是可恢复的付款确认。");
+  }
   const students = records(input.rows, "students").filter((candidate) => candidate.id === studentId
     && candidate.importArchived !== true);
   if (students.length !== 1) {
@@ -114,7 +133,20 @@ export function authorizeTrialPaymentTaskCompletion(input: {
     if (booking.length !== 1 || student.planner !== input.actor) {
       fail("task_forbidden", "试听排课或规划老师分配已经变化，请刷新后重试。");
     }
-    return { kind, task, booking: booking[0], student } as const;
+    const requestAnchor = typeof task.requestAnchorBookingId === "string"
+      ? task.requestAnchorBookingId.trim()
+      : "";
+    const lpMatches = lpItems.filter((candidate) => candidate.studentId === studentId
+      && ["试听 LP", "换老师试听"].includes(String(candidate.workflowType))
+      && candidate.stage !== "完成"
+      && (requestAnchor ? candidate.id === requestAnchor : true));
+    const uniqueLpItems = requestAnchor ? lpMatches : lpMatches.length === 1 ? lpMatches : [];
+    const lpItem = uniqueLpItems.length === 1 ? uniqueLpItems[0]! : null;
+    const fields = lpItem && isRecord(lpItem.fields) ? lpItem.fields : null;
+    if (!lpItem || !REMINDER_PAYMENT_METHODS.has(String(fields?.trialPaymentMethod ?? ""))) {
+      fail("task_forbidden", "试听 LP 或收费方式已经变化，请刷新后重试。");
+    }
+    return { kind, task, booking: booking[0], lpItem, student } as const;
   }
 
   records(input.rows, "bookings");

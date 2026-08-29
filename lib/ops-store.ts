@@ -856,6 +856,8 @@ export const TRIAL_PAYMENT_RECONCILE_RPC = "reconcile_trial_payment_tasks_author
 export const TRIAL_PAYMENT_COMPLETE_RPC = "complete_trial_payment_task_tx";
 export const JIAOWUBAO_TRIAL_PAYMENT_COMPLETE_RPC = "complete_jiaowubao_trial_payment_task_tx";
 export const TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC = "get_trial_payment_completion_command_result";
+export const TRIAL_PAYMENT_LIFECYCLE_RPC = "mutate_trial_payment_task_lifecycle_tx";
+export const TRIAL_PAYMENT_LIFECYCLE_COMMAND_RESULT_RPC = "get_trial_payment_lifecycle_command_result";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_CONFIRM_RPC = "confirm_jiaowubao_open_api_schedule_snapshot_current";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC = "begin_jiaowubao_open_api_schedule_snapshot_ingest";
@@ -981,6 +983,29 @@ export type TrialPaymentCompletionResult = Readonly<{
 
 export type TrialPaymentCompletionCommandResult = Readonly<{
   command_key: string;
+  task_id: string;
+  audit_entry_id: string;
+}>;
+
+export type TrialPaymentLifecycleResult = Readonly<{
+  command_key: string;
+  applied: boolean;
+  action: "complete" | "reopen";
+  task_id: string;
+  anchor_id: string;
+  student_id: string;
+  lp_item_id: string;
+  bookings_row: OpsStateRow;
+  students_row: OpsStateRow;
+  lp_items_row: OpsStateRow;
+  tasks_row: OpsStateRow;
+  teachers_row: OpsStateRow;
+  audit_entry_id: string;
+}>;
+
+export type TrialPaymentLifecycleCommandResult = Readonly<{
+  command_key: string;
+  action: "complete" | "reopen";
   task_id: string;
   audit_entry_id: string;
 }>;
@@ -1421,6 +1446,48 @@ export function getTrialPaymentCompletionCommandResult(input: {
     p_secret: secret,
     p_command_key: input.commandKey,
     p_command_intent: input.commandIntent,
+    p_task_id: input.taskId,
+    p_actor: input.actor,
+  });
+}
+
+/** Atomically completes or reopens one payment task and its LP paid flag. */
+export function mutateTrialPaymentTaskLifecycleAtomic(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  action: "complete" | "reopen";
+  taskId: string;
+  expectedVersions: Readonly<Record<"bookings" | "students" | "lpItems" | "tasks" | "teachers", number>>;
+  actor: string;
+  actorRole: "admin" | "limited-admin" | "staff" | "teacher";
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentLifecycleResult[]>(TRIAL_PAYMENT_LIFECYCLE_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_action: input.action,
+    p_task_id: input.taskId,
+    p_expected_versions: input.expectedVersions,
+    p_actor: input.actor,
+    p_actor_role: input.actorRole,
+  });
+}
+
+/** Reads one actor-bound payment lifecycle receipt without operational rows. */
+export function getTrialPaymentLifecycleCommandResult(input: {
+  commandKey: string;
+  commandIntent: Readonly<Record<string, unknown>>;
+  action: "complete" | "reopen";
+  taskId: string;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<TrialPaymentLifecycleCommandResult[]>(TRIAL_PAYMENT_LIFECYCLE_COMMAND_RESULT_RPC, {
+    p_secret: secret,
+    p_command_key: input.commandKey,
+    p_command_intent: input.commandIntent,
+    p_action: input.action,
     p_task_id: input.taskId,
     p_actor: input.actor,
   });

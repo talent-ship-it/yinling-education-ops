@@ -215,6 +215,28 @@ test("cross-owner trial payment access is exact, minimal, and planner-only", () 
     "id", "initials", "name",
   ]);
 
+  const confirmedRows = paymentRows.map((item) => item.entity === "tasks" ? {
+    ...item,
+    payload: (item.payload as Array<Record<string, unknown>>).map((task) => task.id === "TASK-TRIAL-PAYMENT"
+      ? {
+          ...task,
+          status: "done",
+          tone: "green",
+          result: "已由规划老师确认试听付款",
+          closedAt: "2026-08-29T01:00:00.000Z",
+        }
+      : task),
+  } : item);
+  const confirmedPlanner = buildOpsAccessContext(confirmedRows, "Tara", false, "staff");
+  assert.equal((filterOpsStateRows(confirmedRows, confirmedPlanner)
+    .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>)
+    .some((task) => task.id === "TASK-TRIAL-PAYMENT"), true);
+  assert.deepEqual(managedTrialPaymentStudentProjections(confirmedRows, confirmedPlanner), [{
+    id: "STU-ABBY",
+    name: "Abby student",
+    initials: "",
+  }]);
+
   const operationsOwner = buildOpsAccessContext(paymentRows, "Abby", false, "staff");
   const ownerTasks = filterOpsStateRows(paymentRows, operationsOwner)
     .find((item) => item.entity === "tasks")?.payload as Array<{ id: string }>;

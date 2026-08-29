@@ -282,13 +282,14 @@ import {
   type ManagedExamStudentProjection,
 } from "@/lib/managed-exam-refresh";
 import {
+  isManagedTrialPaymentConfirmationTask,
   isManagedTrialPaymentTask,
   isManagedTrialPaymentTaskRecipient,
   MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES,
   managedTrialPaymentSnapshotCanReplace,
   managedTrialPaymentSnapshotIsCurrent,
   parseManagedTrialPaymentAuthorityVersions,
-  parseManagedTrialPaymentCompletionReceipt,
+  parseManagedTrialPaymentLifecycleReceipt,
   parseManagedTrialPaymentProjectionSnapshot,
   type ManagedTrialPaymentProjectionSnapshot,
 } from "@/lib/managed-trial-payment";
@@ -328,6 +329,7 @@ import {
   type TeacherAvailabilitySubmission,
 } from "@/lib/teacher-availability";
 import {
+  fetchJsonWithTimeout,
   fetchWithTimeout,
   recoverSharedStateAfterUnknownWrite,
   SHARED_STATE_REQUEST_TIMEOUT_MS,
@@ -4474,14 +4476,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const completeManagedTrialPayment = useCallback(async (taskId: string, recovering = false) => {
+  const mutateManagedTrialPayment = useCallback(async (
+    taskId: string,
+    action: "complete" | "reopen",
+    recovering = false,
+  ) => {
     if (trialPaymentBusyRef.current.has(taskId)) return;
     const storage = browserSessionStorage();
-    let pending = trialPaymentCommandKeysRef.current.get(taskId);
+    const scope = `${action}:${taskId}`;
+    const actionLabel = action === "complete" ? "确认付款" : "恢复未付费";
+    let pending = trialPaymentCommandKeysRef.current.get(scope);
     if (!pending) {
       pending = {
+        action,
         taskId,
-        commandKey: `trial-payment-complete:${crypto.randomUUID()}`,
+        commandKey: `trial-payment-${action}:${crypto.randomUUID()}`,
         expectedVersions: {
           bookings: getCurrentBookingsVersion(),
           students: getCurrentStudentsVersion(),
@@ -4506,6 +4515,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const clearPending = () => {
       trialPaymentCommandKeysRef.current = removeTrialPaymentPendingCommand(
         trialPaymentCommandKeysRef.current.values(),
+        action,
         taskId,
       );
       persistTrialPaymentPendingCommands(
@@ -4522,26 +4532,29 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       // The command key/task id never changes, so the retry remains idempotent.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         let response: Response;
+        let body: unknown;
         try {
-          response = await fetchWithTimeout(fetch, "/api/tasks/trial-payment", {
+          const received = await fetchJsonWithTimeout(fetch, "/api/tasks/trial-payment", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(currentPending),
           }, SHARED_STATE_REQUEST_TIMEOUT_MS);
+          response = received.response;
+          body = received.body;
         } catch {
-          if (!recovering) notify("试听付款确认结果未知；已保留原命令，刷新后可安全恢复");
+          if (!recovering) notify(`试听${actionLabel}结果未知；已保留原命令，刷新后可安全恢复`);
           return;
         }
-        const body = await response.json().catch(() => null) as unknown;
         const bodyRecord = body && typeof body === "object" && !Array.isArray(body)
           ? body as Record<string, unknown>
           : {};
-        let receipt: ReturnType<typeof parseManagedTrialPaymentCompletionReceipt> | null = null;
+        let receipt: ReturnType<typeof parseManagedTrialPaymentLifecycleReceipt> | null = null;
         if (response.ok) {
           try {
-            receipt = parseManagedTrialPaymentCompletionReceipt(
+            receipt = parseManagedTrialPaymentLifecycleReceipt(
               body,
               currentPending.taskId,
+              currentPending.action,
               sessionOperator,
               isAdminSession ? "admin" : "staff",
             );
@@ -4591,19 +4604,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           }
           const errorMessage = typeof bodyRecord.error === "string"
             ? bodyRecord.error
-            : "试听付款确认暂时无法提交";
+            : `试听${actionLabel}暂时无法提交`;
           if (!recovering || disposition === "clear") {
             notify(disposition === "clear" ? errorMessage : `${errorMessage}；已保留原命令`);
           }
           return;
         }
         if (!receipt) {
-          if (!recovering) notify("试听付款确认回执不完整；已保留原命令等待恢复");
+          if (!recovering) notify(`试听${actionLabel}回执不完整；已保留原命令等待恢复`);
           return;
         }
         if (receipt.receiptOnly) {
           clearManagedTrialPaymentProjection();
-          notify("试听付款确认已提交；当前负责范围已变化，未载入学生资料");
+          notify(`试听${actionLabel}已提交；当前负责范围已变化，未载入学生资料`);
           return;
         }
         const snapshot = receipt.managedTrialPaymentSnapshot;
@@ -4624,8 +4637,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           clearManagedTrialPaymentProjection();
         }
         notify(receipt.applied
-          ? "已确认试听付款并同步关闭收费提醒"
-          : "试听付款确认回执已恢复，系统没有重复写入");
+          ? action === "complete"
+            ? "已确认试听付款，LP 与收费提醒已同步"
+            : "已恢复未付费，LP 与收费提醒已同步"
+          : `试听${actionLabel}回执已恢复，系统没有重复写入`);
         return;
       }
     } finally {
@@ -4654,11 +4669,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     void (async () => {
       for (const entry of pending.values()) {
         if (cancelled) return;
-        await completeManagedTrialPayment(entry.taskId, true);
+        await mutateManagedTrialPayment(entry.taskId, entry.action, true);
       }
     })();
     return () => { cancelled = true; };
-  }, [completeManagedTrialPayment, sessionOperator]);
+  }, [mutateManagedTrialPayment, sessionOperator]);
 
   const completeTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
@@ -4672,7 +4687,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify("只有任务指定的规划老师可以确认试听付款");
         return;
       }
-      void completeManagedTrialPayment(task.id);
+      void mutateManagedTrialPayment(task.id, "complete");
       return;
     }
     const examRule = task.ruleKey?.match(/^exam:([^:]+):(planning|care|recall|results)$/);
@@ -4730,11 +4745,28 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const reopenTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "done") return;
-    if (taskUsesDedicatedLifecycle(task)
-      || isManagedTrialPaymentTask(task) && task.completionOutcome !== "cannot_do") {
+    if (taskUsesDedicatedLifecycle(task)) {
       notify("该任务需要从对应业务流程撤销，不能直接恢复");
       return;
     }
+    if (isManagedTrialPaymentTask(task) && task.completionOutcome !== "cannot_do") {
+      if (!isManagedTrialPaymentConfirmationTask(task)) {
+        notify("自动关闭的收费提醒请在试听复盘台账修改是否付费状态");
+        return;
+      }
+      const plannerCanReopen = initialRole === "staff"
+        && currentOperator === sessionOperator
+        && isManagedTrialPaymentTaskRecipient(task, sessionOperator);
+      const adminCanReopen = isAdminSession && isAdminView && currentOperator === sessionOperator;
+      if (!plannerCanReopen && !adminCanReopen) {
+        notify("只有任务指定的规划老师可以恢复试听未付费状态");
+        return;
+      }
+      void mutateManagedTrialPayment(task.id, "reopen");
+      return;
+    }
+    // Can't Do records whether the reminder itself could be executed; it is
+    // not payment evidence and therefore must not mutate the LP paid flag.
     if (!task.dueAt) {
       notify("该历史任务没有准确截止时间，不能恢复为可执行任务");
       return;
@@ -7463,7 +7495,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">

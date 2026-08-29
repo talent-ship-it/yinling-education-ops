@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isManagedTrialPaymentConfirmationTask,
   isManagedTrialPaymentTask,
   isManagedTrialPaymentTaskRecipient,
   managedTrialPaymentTaskKind,
   managedTrialPaymentSnapshotCanReplace,
   managedTrialPaymentSnapshotIsCurrent,
   managedTrialPaymentTaskLifecycleChange,
-  parseManagedTrialPaymentCompletionReceipt,
+  parseManagedTrialPaymentLifecycleReceipt,
   parseManagedTrialPaymentAuthorityVersions,
   parseManagedTrialPaymentProjectionSnapshot,
 } from "../lib/managed-trial-payment";
@@ -39,7 +40,7 @@ test("managed trial payment projections accept only minimal identity bound to au
   }
 });
 
-test("completion response requires either matched authoritative rows or a PII-free receipt", () => {
+test("payment lifecycle response requires matched authoritative evidence or a PII-free receipt", () => {
   const task = {
     id: "TASK-1",
     category: "试听",
@@ -53,7 +54,7 @@ test("completion response requires either matched authoritative rows or a PII-fr
     result: "已由规划老师确认试听付款",
     closedAt: "2026-08-21T00:00:00.000Z",
   };
-  const full = parseManagedTrialPaymentCompletionReceipt({
+  const fullResponse = {
     committed: true,
     applied: true,
     receiptOnly: false,
@@ -64,21 +65,22 @@ test("completion response requires either matched authoritative rows or a PII-fr
       students: [{ id: "STU-1", name: "Student", initials: "ST" }],
     },
     auditEntryId: "11111111-1111-4111-8111-111111111111",
-  }, "TASK-1", "Tara");
+  };
+  const full = parseManagedTrialPaymentLifecycleReceipt(fullResponse, "TASK-1", "complete", "Tara");
   assert.equal(full.receiptOnly, false);
   assert.equal(full.taskRow?.version, 7);
 
-  const adminFull = parseManagedTrialPaymentCompletionReceipt({
-    ...full,
+  const adminFull = parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
     taskRow: {
       ...full.taskRow,
       payload: [{ ...task, result: "已由管理员确认试听付款" }],
       updated_by: "Nixon",
     },
-  }, "TASK-1", "Nixon", "admin");
+  }, "TASK-1", "complete", "Nixon", "admin");
   assert.equal(adminFull.receiptOnly, false);
 
-  const receiptOnly = parseManagedTrialPaymentCompletionReceipt({
+  const receiptOnlyResponse = {
     committed: true,
     applied: false,
     receiptOnly: true,
@@ -86,36 +88,52 @@ test("completion response requires either matched authoritative rows or a PII-fr
     taskRow: null,
     managedTrialPaymentSnapshot: null,
     auditEntryId: "11111111-1111-4111-8111-111111111111",
-  }, "TASK-1", "Tara");
+  };
+  const receiptOnly = parseManagedTrialPaymentLifecycleReceipt(receiptOnlyResponse, "TASK-1", "complete", "Tara");
   assert.equal(receiptOnly.taskRow, null);
 
-  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
-    ...receiptOnly,
+  assert.throws(() => parseManagedTrialPaymentLifecycleReceipt({
+    ...receiptOnlyResponse,
     taskRow: { entity: "tasks", payload: [], version: 7, updated_at: "now", updated_by: "Tara" },
-  }, "TASK-1", "Tara"), /exposed state/);
-  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
-    ...full,
+  }, "TASK-1", "complete", "Tara"), /exposed state/);
+  assert.throws(() => parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
     taskRow: { ...full.taskRow, payload: [{ ...task, owner: "Abby" }] },
-  }, "TASK-1", "Tara"), /task evidence/);
-  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
-    ...full,
+  }, "TASK-1", "complete", "Tara"), /task evidence/);
+  assert.throws(() => parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
     taskRow: { ...full.taskRow, updated_by: "Nixon" },
-  }, "TASK-1", "Tara"), /task evidence/);
-  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
-    ...full,
+  }, "TASK-1", "complete", "Tara"), /task evidence/);
+  assert.throws(() => parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
     taskRow: {
       ...full.taskRow,
       payload: [{ ...task, result: "已由规划老师确认试听付款" }],
       updated_by: "Nixon",
     },
-  }, "TASK-1", "Nixon", "admin"), /task evidence/);
-  assert.throws(() => parseManagedTrialPaymentCompletionReceipt({
-    ...full,
+  }, "TASK-1", "complete", "Nixon", "admin"), /task evidence/);
+  assert.throws(() => parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
     managedTrialPaymentSnapshot: {
       versions: { bookings: 2, students: 3, lpItems: 5, tasks: 8 },
       students: [],
     },
-  }, "TASK-1", "Tara"), /versions are inconsistent/);
+  }, "TASK-1", "complete", "Tara"), /versions are inconsistent/);
+
+  const reopened = parseManagedTrialPaymentLifecycleReceipt({
+    ...fullResponse,
+    taskRow: {
+      ...full.taskRow,
+      payload: [{
+        ...task,
+        status: "today",
+        tone: "red",
+        result: undefined,
+        closedAt: undefined,
+      }],
+    },
+  }, "TASK-1", "reopen", "Tara");
+  assert.equal(reopened.paymentState, "unpaid");
 });
 
 test("payment authority versions and exact planner recipient fail closed", () => {
@@ -154,6 +172,19 @@ test("payment authority versions and exact planner recipient fail closed", () =>
   assert.equal(isManagedTrialPaymentTaskRecipient(jiaowubaoTask, "tara"), true);
   assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, requestAnchorBookingId: "" }), false);
   assert.equal(isManagedTrialPaymentTask({ ...jiaowubaoTask, anchorBookingId: "JWB:event/1" }), false);
+  const confirmed = {
+    ...jiaowubaoTask,
+    status: "done",
+    tone: "green",
+    result: "已由规划老师确认试听付款",
+    closedAt: "2026-08-29T01:00:00.000Z",
+  };
+  assert.equal(isManagedTrialPaymentConfirmationTask(confirmed), true);
+  assert.equal(isManagedTrialPaymentConfirmationTask({
+    ...confirmed,
+    result: "试听台账已标记付费，收费提醒自动关闭",
+  }), false);
+  assert.equal(isManagedTrialPaymentConfirmationTask({ ...confirmed, closedAt: "not-an-instant" }), false);
 });
 
 test("managed payment lifecycle permits notes and Can't Do without permitting payment confirmation", () => {

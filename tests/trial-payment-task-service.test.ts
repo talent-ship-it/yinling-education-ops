@@ -4,9 +4,9 @@ import test from "node:test";
 import type { DemoSessionRole } from "../lib/demo-session-token";
 import type { OpsStateRow } from "../lib/ops-store";
 import {
-  authorizeTrialPaymentTaskCompletion,
-  parseTrialPaymentCompletionCommand,
-  trialPaymentCompletionIntent,
+  authorizeTrialPaymentTaskLifecycle,
+  parseTrialPaymentLifecycleCommand,
+  trialPaymentLifecycleIntent,
   TrialPaymentTaskServiceError,
 } from "../lib/trial-payment-task-service";
 
@@ -55,6 +55,7 @@ function fixtureRows(): OpsStateRow[] {
       category: "试听",
       ruleKey: "trial.payment-urgent",
       anchorBookingId: "BOOK-PAY-1",
+      requestAnchorBookingId: "LP-PAY-1",
       status: "today",
     }], VERSIONS.tasks),
     row("teachers", [], VERSIONS.teachers),
@@ -62,7 +63,8 @@ function fixtureRows(): OpsStateRow[] {
 }
 
 function command() {
-  return parseTrialPaymentCompletionCommand({
+  return parseTrialPaymentLifecycleCommand({
+    action: "complete",
     commandKey: COMMAND_KEY,
     taskId: "TASK-PAY-1",
     expectedVersions: VERSIONS,
@@ -70,7 +72,8 @@ function command() {
 }
 
 function jiaowubaoCommand() {
-  return parseTrialPaymentCompletionCommand({
+  return parseTrialPaymentLifecycleCommand({
+    action: "complete",
     commandKey: "trial-payment-complete:123e4567-e89b-42d3-a456-426614174001",
     taskId: "TASK-JWB-PAY-1",
     expectedVersions: VERSIONS,
@@ -82,14 +85,15 @@ function forbidden(action: () => unknown) {
     && error.code === "task_forbidden");
 }
 
-test("payment completion accepts only a narrow idempotent command envelope", () => {
+test("payment lifecycle accepts only a narrow idempotent command envelope", () => {
   const parsed = command();
   assert.deepEqual(parsed, {
+    action: "complete",
     commandKey: COMMAND_KEY,
     taskId: "TASK-PAY-1",
     expectedVersions: VERSIONS,
   });
-  assert.deepEqual(trialPaymentCompletionIntent(parsed), {
+  assert.deepEqual(trialPaymentLifecycleIntent(parsed), {
     action: "complete",
     taskId: "TASK-PAY-1",
   });
@@ -101,14 +105,14 @@ test("payment completion accepts only a narrow idempotent command envelope", () 
     { commandKey: COMMAND_KEY, taskId: "TASK-PAY-1", expectedVersions: { ...VERSIONS, tasks: 0 } },
     { commandKey: COMMAND_KEY, taskId: "TASK-PAY-1", expectedVersions: VERSIONS, tasks: [] },
   ]) {
-    assert.throws(() => parseTrialPaymentCompletionCommand(invalid), (error: unknown) =>
+    assert.throws(() => parseTrialPaymentLifecycleCommand(invalid), (error: unknown) =>
       error instanceof TrialPaymentTaskServiceError && error.code === "invalid_request");
   }
 });
 
 test("only the current cross-owner planner can authorize the exact payment task", () => {
   const rows = fixtureRows();
-  const authorized = authorizeTrialPaymentTaskCompletion({
+  const authorized = authorizeTrialPaymentTaskLifecycle({
     command: command(),
     rows,
     actor: "Tara",
@@ -124,8 +128,50 @@ test("only the current cross-owner planner can authorize the exact payment task"
     ["Nixon", "admin"],
     ["Tara", "teacher"],
   ] as Array<[string, DemoSessionRole]>) {
-    forbidden(() => authorizeTrialPaymentTaskCompletion({ command: command(), rows, actor, role }));
+    forbidden(() => authorizeTrialPaymentTaskLifecycle({ command: command(), rows, actor, role }));
   }
+});
+
+test("only an explicit payment confirmation can use the reopen lifecycle", () => {
+  const rows = fixtureRows().map((candidate) => candidate.entity === "tasks" ? {
+    ...candidate,
+    payload: (candidate.payload as Array<Record<string, unknown>>).map((task) => ({
+      ...task,
+      status: "done",
+      tone: "green",
+      result: "已由规划老师确认试听付款",
+      closedAt: "2026-08-29T01:00:00.000Z",
+    })),
+  } : candidate);
+  const reopen = parseTrialPaymentLifecycleCommand({
+    action: "reopen",
+    commandKey: "trial-payment-reopen:123e4567-e89b-42d3-a456-426614174000",
+    taskId: "TASK-PAY-1",
+    expectedVersions: VERSIONS,
+  });
+  const authorized = authorizeTrialPaymentTaskLifecycle({
+    command: reopen,
+    rows,
+    actor: "Tara",
+    role: "staff",
+  });
+  assert.equal(authorized.lpItem.id, "LP-PAY-1");
+
+  const cannotDoRows = rows.map((candidate) => candidate.entity === "tasks" ? {
+    ...candidate,
+    payload: (candidate.payload as Array<Record<string, unknown>>).map((task) => ({
+      ...task,
+      tone: "red",
+      result: "无法完成：家长未回复",
+      completionOutcome: "cannot_do",
+    })),
+  } : candidate);
+  forbidden(() => authorizeTrialPaymentTaskLifecycle({
+    command: reopen,
+    rows: cannotDoRows,
+    actor: "Tara",
+    role: "staff",
+  }));
 });
 
 test("payment completion fails closed when any task, booking or planner authority drifts", () => {
@@ -146,7 +192,7 @@ test("payment completion fails closed when any task, booking or planner authorit
     mutate("students", (payload) => payload.map((student) => ({ ...student, importArchived: true }))),
   ];
   for (const rows of variants) {
-    forbidden(() => authorizeTrialPaymentTaskCompletion({
+    forbidden(() => authorizeTrialPaymentTaskLifecycle({
       command: command(),
       rows,
       actor: "Tara",
@@ -190,7 +236,7 @@ test("Jiaowubao payment completion is bound to the exact current LP schedule and
     };
     return candidate;
   });
-  const authorized = authorizeTrialPaymentTaskCompletion({
+  const authorized = authorizeTrialPaymentTaskLifecycle({
     command: jiaowubaoCommand(),
     rows: jiaowubaoRows,
     actor: "Tara",
@@ -227,7 +273,7 @@ test("Jiaowubao payment completion is bound to the exact current LP schedule and
     } : candidate),
   ];
   for (const rows of variants) {
-    forbidden(() => authorizeTrialPaymentTaskCompletion({
+    forbidden(() => authorizeTrialPaymentTaskLifecycle({
       command: jiaowubaoCommand(),
       rows,
       actor: "Tara",

@@ -45,6 +45,24 @@ export async function fetchWithTimeout(
   }
 }
 
+/** Keeps the same abort deadline active until the response body is consumed. */
+export async function fetchJsonWithTimeout<T = unknown>(
+  fetchImpl: SharedStateFetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = SHARED_STATE_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(input, { ...init, signal: controller.signal });
+    const body = await response.json().catch(() => null) as T | null;
+    return { response, body } as const;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Resolve a generic PUT whose commit status is unknown. The response is read
  * from the server as a complete entity snapshot; local pending changes are

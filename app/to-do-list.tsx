@@ -28,6 +28,7 @@ export interface ToDoListProps {
   onTeacherReplied?: (task: OpsTask) => void;
   onOpen: (task: OpsTask) => void;
   canOpen?: (task: OpsTask) => boolean;
+  canReopen?: (task: OpsTask) => boolean;
 }
 
 const FILTER_LABELS: Record<ToDoFilter, string> = {
@@ -83,11 +84,12 @@ function TaskRows({
   onTeacherReplied,
   onOpen,
   canOpen,
+  canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
   deadlineTimeFormat,
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -163,13 +165,13 @@ function TaskRows({
                 aria-label={`完成：${displayTitle}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button>
-            </> : <button
+            </> : canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"
               aria-label={`恢复到待办：${displayTitle}`}
               onClick={() => onReopen(task.id)}
-            ><RotateCcw size={14} /><span>恢复</span></button>}
+            ><RotateCcw size={14} /><span>恢复</span></button> : null}
           </div>
           {editing ? <form className="task-inline-editor" onSubmit={submitEditor}>
             <label>{editing.mode === "cannot" ? "无法完成原因（必填）" : "任务备注"}
@@ -194,7 +196,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -224,6 +226,7 @@ export function ToDoList({
   onTeacherReplied,
   onOpen,
   canOpen,
+  canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
   deadlineTimeFormat = "24h",
@@ -235,7 +238,7 @@ export function ToDoList({
   const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onTeacherReplied, onOpen, canOpen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">

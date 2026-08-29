@@ -87,6 +87,7 @@ export type TrialScheduleMatch = Readonly<{
   planner: string;
   preparationFollowUp: boolean;
   trialPaymentMethod?: TrialPaymentMethod;
+  trialPaid?: boolean;
   requestSentAt?: string;
   link: TrialScheduleLink;
 }>;
@@ -259,6 +260,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     workflowType?: string;
     stage?: string;
     requestedAt?: string;
+    trialPaid?: unknown;
     fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown }>;
     trialIntake?: TrialIntake;
   }>[];
@@ -327,6 +329,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       planner: plannerName,
       preparationFollowUp: item.fields?.preparationFollowUp !== "否",
       ...(paymentMethod ? { trialPaymentMethod: paymentMethod } : {}),
+      ...(typeof item.trialPaid === "boolean" ? { trialPaid: item.trialPaid } : {}),
       ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
       link: Object.freeze({
         source: "jiaowubao-open-api",
@@ -784,14 +787,23 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
     ...(!input.paymentManagedByBooking
       && input.trialPaymentMethod
       && TRIAL_PAYMENT_REMINDER_METHODS.has(input.trialPaymentMethod) ? [
-        task({
-          ...shared,
-          owner: input.planner || input.owner,
-          assignees: [input.planner || input.owner],
-          ruleKey: `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
-          title: `《教统》【提醒规划老师收取试听费】<${input.studentName}>`,
-          dueAt: n2Deadline,
-        }),
+        (() => {
+          const paymentTask = task({
+            ...shared,
+            owner: input.planner || input.owner,
+            assignees: [input.planner || input.owner],
+            ruleKey: `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
+            title: `《教统》【提醒规划老师收取试听费】<${input.studentName}>`,
+            dueAt: n2Deadline,
+          });
+          return input.trialPaid === true ? {
+            ...paymentTask,
+            status: "done" as const,
+            tone: "green" as const,
+            result: "试听台账已标记付费，收费提醒自动关闭",
+            closedAt: now.toISOString(),
+          } : paymentTask;
+        })(),
       ] : []),
     task({
       ...shared,

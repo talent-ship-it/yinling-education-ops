@@ -12,6 +12,7 @@ import {
   type ManagedExamStudentProjection,
 } from "@/lib/managed-exam-refresh";
 import {
+  isManagedTrialPaymentConfirmationTask,
   managedTrialPaymentTaskLifecycleChange,
   type ManagedTrialPaymentProjectionSnapshot,
   type ManagedTrialPaymentStudentProjection,
@@ -147,7 +148,8 @@ function managedTrialPaymentTaskMatchesStudent(context: OpsAccessContext, value:
   const studentId = rowStudentId(value);
   const actionableStatus = typeof value.status === "string"
     && (["overdue", "today", "upcoming", "waiting"].includes(value.status)
-      || value.status === "done" && value.completionOutcome === "cannot_do");
+      || value.status === "done" && value.completionOutcome === "cannot_do"
+      || isManagedTrialPaymentConfirmationTask(value));
   if (!identity || !actionableStatus || !studentId || !context.allActiveStudentIds.has(studentId)) return false;
   const planner = identity.kind === "booking"
     ? context.studentPlannerById.get(studentId)

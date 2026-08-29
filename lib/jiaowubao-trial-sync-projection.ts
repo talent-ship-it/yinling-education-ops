@@ -194,6 +194,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       workflowType: text(item.workflowType),
       stage: text(item.stage),
       ...(text(item.requestedAt) ? { requestedAt: text(item.requestedAt) } : {}),
+      ...(typeof item.trialPaid === "boolean" ? { trialPaid: item.trialPaid } : {}),
       ...(record(item.fields) ? { fields: item.fields } : {}),
       ...(isTrialIntake(item.trialIntake) ? { trialIntake: item.trialIntake } : {}),
     })),

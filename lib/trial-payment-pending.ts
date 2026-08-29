@@ -3,13 +3,14 @@ export const TRIAL_PAYMENT_PENDING_SCHEMA = 1 as const;
 export const TRIAL_PAYMENT_PENDING_LIMIT = 16;
 
 const MAX_STORAGE_LENGTH = 32_000;
-const COMMAND_KEY = /^trial-payment-complete:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const COMMAND_KEY = /^trial-payment-(complete|reopen):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const VERSION_ENTITIES = ["bookings", "students", "lpItems", "tasks", "teachers"] as const;
 
 export type TrialPaymentExpectedVersions = Readonly<Record<(typeof VERSION_ENTITIES)[number], number>>;
 
 export type TrialPaymentPendingCommand = Readonly<{
+  action: "complete" | "reopen";
   taskId: string;
   commandKey: string;
   expectedVersions: TrialPaymentExpectedVersions;
@@ -32,18 +33,31 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
 }
 
 function parseEntry(value: unknown): TrialPaymentPendingCommand | null {
+  const legacyShape = isRecord(value)
+    && hasExactKeys(value, ["taskId", "commandKey", "expectedVersions"]);
+  const currentShape = isRecord(value)
+    && hasExactKeys(value, ["action", "taskId", "commandKey", "expectedVersions"]);
+  const commandMatch = isRecord(value) && typeof value.commandKey === "string"
+    ? value.commandKey.match(COMMAND_KEY)
+    : null;
+  const action = isRecord(value) && value.action === undefined
+    ? "complete"
+    : isRecord(value) && (value.action === "complete" || value.action === "reopen")
+      ? value.action
+      : null;
   if (!isRecord(value)
-    || !hasExactKeys(value, ["taskId", "commandKey", "expectedVersions"])
+    || (!legacyShape && !currentShape)
     || typeof value.taskId !== "string" || !TASK_ID.test(value.taskId)
-    || typeof value.commandKey !== "string" || !COMMAND_KEY.test(value.commandKey)
+    || !commandMatch || !action || commandMatch[1] !== action
     || !isRecord(value.expectedVersions)) return null;
   const expectedVersions = value.expectedVersions;
   if (!hasExactKeys(expectedVersions, VERSION_ENTITIES)
     || !VERSION_ENTITIES.every((entity) => Number.isSafeInteger(expectedVersions[entity])
       && (expectedVersions[entity] as number) >= 1)) return null;
   return {
+    action,
     taskId: value.taskId,
-    commandKey: value.commandKey,
+    commandKey: value.commandKey as string,
     expectedVersions: Object.fromEntries(VERSION_ENTITIES.map((entity) => [
       entity,
       expectedVersions[entity] as number,
@@ -58,8 +72,9 @@ function storageKey(actor: string) {
 function boundedMap(entries: Iterable<TrialPaymentPendingCommand>) {
   const result = new Map<string, TrialPaymentPendingCommand>();
   for (const entry of entries) {
-    result.delete(entry.taskId);
-    result.set(entry.taskId, entry);
+    const scope = `${entry.action}:${entry.taskId}`;
+    result.delete(scope);
+    result.set(scope, entry);
   }
   while (result.size > TRIAL_PAYMENT_PENDING_LIMIT) {
     const oldest = result.keys().next().value;
@@ -99,7 +114,7 @@ export function readTrialPaymentPendingCommands(
       return empty;
     }
     const valid = entries as TrialPaymentPendingCommand[];
-    if (new Set(valid.map((entry) => entry.taskId)).size !== valid.length
+    if (new Set(valid.map((entry) => `${entry.action}:${entry.taskId}`)).size !== valid.length
       || new Set(valid.map((entry) => entry.commandKey)).size !== valid.length) {
       storage.removeItem(key);
       return empty;
@@ -143,9 +158,10 @@ export function upsertTrialPaymentPendingCommand(
 
 export function removeTrialPaymentPendingCommand(
   entries: Iterable<TrialPaymentPendingCommand>,
+  action: TrialPaymentPendingCommand["action"],
   taskId: string,
 ) {
-  return boundedMap(Array.from(entries).filter((entry) => entry.taskId !== taskId));
+  return boundedMap(Array.from(entries).filter((entry) => entry.action !== action || entry.taskId !== taskId));
 }
 
 /**
@@ -172,7 +188,7 @@ export function trialPaymentPendingDisposition(input: Readonly<{
     return input.expectedVersionsChanged ? "retry" : "retain";
   }
   if ([403, 404].includes(input.status)
-    || (input.status === 409 && ["idempotency_conflict", "invalid_completion"].includes(input.code ?? ""))) return "clear";
+    || (input.status === 409 && ["idempotency_conflict", "invalid_completion", "invalid_lifecycle"].includes(input.code ?? ""))) return "clear";
   return input.status >= 200 && input.status < 300
     && input.committed
     && (input.receiptOnly

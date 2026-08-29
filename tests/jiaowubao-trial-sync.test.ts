@@ -29,7 +29,7 @@ function row(entity: string, payload: unknown, version = 1): OpsStateRow {
   return { entity, payload, version, updated_at: "2026-08-28T00:00:00.000Z", updated_by: "fixture" };
 }
 
-function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?: unknown } = {}) {
+function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?: unknown; trialPaid?: boolean } = {}) {
   const intake = {
     planner: "Tara",
     requestSentAt: "2026-08-28T02:00:00.000Z",
@@ -51,6 +51,7 @@ function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?
     requestedAt: intake.requestSentAt,
     fields: { preparationFollowUp: "是", trialPaymentMethod: "付费试听（未付费）" },
     trialIntake: intake,
+    ...(typeof extra.trialPaid === "boolean" ? { trialPaid: extra.trialPaid } : {}),
     ...(extra.schedule ? { trialSchedule: extra.schedule } : {}),
   };
   const manualReminder = {
@@ -221,6 +222,20 @@ test("discovers the same unambiguous references without any browser-supplied pai
     matchedAt: "2026-08-28T03:00:00.000Z",
   });
   assert.deepEqual(projection.references, command.matches);
+});
+
+test("an explicit LP paid flag keeps the Jiaowubao payment reminder closed", () => {
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows({ trialPaid: true }),
+    references: command.matches,
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  const payment = projection.nextTasks.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2");
+  assert.equal(payment?.status, "done");
+  assert.equal(payment?.tone, "green");
+  assert.equal(payment?.result, "试听台账已标记付费，收费提醒自动关闭");
 });
 
 test("schedule reconciliation preserves open teacher-reply lifecycle tasks on the current JWB anchor", () => {

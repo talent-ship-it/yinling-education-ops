@@ -11,6 +11,7 @@ import {
 } from "../lib/trial-payment-pending";
 
 const pending: TrialPaymentPendingCommand = {
+  action: "complete",
   taskId: "TSK-BOOKING-abc123",
   commandKey: "trial-payment-complete:123e4567-e89b-42d3-a456-426614174000",
   expectedVersions: { bookings: 2, students: 3, lpItems: 4, tasks: 5, teachers: 6 },
@@ -29,7 +30,7 @@ function storage() {
 test("pending payment completion is actor-scoped and replays its original key and OCC versions", () => {
   const store = storage();
   persistTrialPaymentPendingCommands(store, "Tara", [pending]);
-  assert.deepEqual(readTrialPaymentPendingCommands(store, "Tara").get(pending.taskId), pending);
+  assert.deepEqual(readTrialPaymentPendingCommands(store, "Tara").get(`complete:${pending.taskId}`), pending);
   assert.equal(readTrialPaymentPendingCommands(store, "Molly").size, 0);
 
   const replacement = {
@@ -38,8 +39,8 @@ test("pending payment completion is actor-scoped and replays its original key an
     expectedVersions: { ...pending.expectedVersions, tasks: 9 },
   };
   const updated = upsertTrialPaymentPendingCommand([pending], replacement);
-  assert.deepEqual(updated.get(pending.taskId), replacement);
-  assert.equal(removeTrialPaymentPendingCommand(updated.values(), pending.taskId).size, 0);
+  assert.deepEqual(updated.get(`complete:${pending.taskId}`), replacement);
+  assert.equal(removeTrialPaymentPendingCommand(updated.values(), "complete", pending.taskId).size, 0);
 });
 
 test("malformed or extra pending data fails closed and is removed", () => {
@@ -63,7 +64,7 @@ test("only definitive authority failures or complete authoritative success clear
       hasAuthoritativeProjection: false,
     }), "clear");
   }
-  for (const code of ["idempotency_conflict", "invalid_completion"]) {
+  for (const code of ["idempotency_conflict", "invalid_completion", "invalid_lifecycle"]) {
     assert.equal(trialPaymentPendingDisposition({
       status: 409,
       code,
@@ -158,7 +159,32 @@ test("two same-version pending commands preserve both keys and rebase the second
   const rebasedSecond = { ...second, expectedVersions: nextVersions };
   commands = upsertTrialPaymentPendingCommand(commands.values(), rebasedSecond);
   assert.equal(commands.size, 2);
-  assert.equal(commands.get(first.taskId)?.expectedVersions.tasks, first.expectedVersions.tasks);
-  assert.equal(commands.get(second.taskId)?.commandKey, second.commandKey);
-  assert.equal(commands.get(second.taskId)?.expectedVersions.tasks, nextVersions.tasks);
+  assert.equal(commands.get(`complete:${first.taskId}`)?.expectedVersions.tasks, first.expectedVersions.tasks);
+  assert.equal(commands.get(`complete:${second.taskId}`)?.commandKey, second.commandKey);
+  assert.equal(commands.get(`complete:${second.taskId}`)?.expectedVersions.tasks, nextVersions.tasks);
+});
+
+test("completion and reopen retries for one task keep separate ordered scopes", () => {
+  const reopen: TrialPaymentPendingCommand = {
+    ...pending,
+    action: "reopen",
+    commandKey: "trial-payment-reopen:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
+  let commands = upsertTrialPaymentPendingCommand([], pending);
+  commands = upsertTrialPaymentPendingCommand(commands.values(), reopen);
+  assert.deepEqual([...commands.keys()], [`complete:${pending.taskId}`, `reopen:${pending.taskId}`]);
+  commands = removeTrialPaymentPendingCommand(commands.values(), "complete", pending.taskId);
+  assert.deepEqual([...commands.keys()], [`reopen:${pending.taskId}`]);
+});
+
+test("completion and reopen retries for one task both survive a storage round trip", () => {
+  const store = storage();
+  const reopen: TrialPaymentPendingCommand = {
+    ...pending,
+    action: "reopen",
+    commandKey: "trial-payment-reopen:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  };
+  persistTrialPaymentPendingCommands(store, "Tara", [pending, reopen]);
+  const restored = readTrialPaymentPendingCommands(store, "Tara");
+  assert.deepEqual([...restored.keys()], [`complete:${pending.taskId}`, `reopen:${pending.taskId}`]);
 });

@@ -64,8 +64,8 @@ test("student creation selects only the returned scope-filtered authoritative ro
 test("trial-payment recovery is strictly serialized", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const recovery = source.slice(source.indexOf("trialPaymentRecoveryActorRef.current === sessionOperator"), source.indexOf("const completeTask =", source.indexOf("trialPaymentRecoveryActorRef.current === sessionOperator")));
-  assert.match(recovery, /for \(const entry of pending\.values\(\)\)[\s\S]*await completeManagedTrialPayment\(entry\.taskId, true\)/);
-  assert.doesNotMatch(recovery, /void completeManagedTrialPayment\(entry\.taskId, true\)/);
+  assert.match(recovery, /for \(const entry of pending\.values\(\)\)[\s\S]*await mutateManagedTrialPayment\(entry\.taskId, entry\.action, true\)/);
+  assert.doesNotMatch(recovery, /void mutateManagedTrialPayment\(entry\.taskId, entry\.action, true\)/);
 });
 
 test("batch preview dispatches to the matching read-only server workflow and ignores stale responses", async () => {

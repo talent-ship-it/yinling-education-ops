@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  fetchJsonWithTimeout,
   fetchWithTimeout,
   recoverSharedStateAfterUnknownWrite,
   type SharedStateFetch,
@@ -39,6 +40,22 @@ test("generic PUT timeout aborts the request instead of leaving an optimistic wr
     /write timeout/,
   );
   assert.equal(aborted, true);
+});
+
+test("JSON timeout remains active after response headers arrive", async () => {
+  let aborted = false;
+  const fetchImpl: SharedStateFetch = async (_input, init) => ({
+    json: () => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        aborted = true;
+        reject(new Error("body timeout"));
+      }, { once: true });
+    }),
+  }) as Response;
+
+  const result = await fetchJsonWithTimeout(fetchImpl, "/api/tasks/trial-payment", { method: "POST" }, 5);
+  assert.equal(aborted, true);
+  assert.equal(result.body, null);
 });
 
 test("network timeout returns the committed baseline without retrying the PUT", async () => {

@@ -22,8 +22,8 @@ test("urgent reminders have a secret-gated fixed-frequency server reconciler", a
   assert.deepEqual(vercel.crons, []);
 });
 
-test("planner completion is a replay-first narrow command and never accepts a task replacement", async () => {
-  const [route, service, store, migration, hardening, legacyRevoke, jiaowubaoCompletion] = await Promise.all([
+test("payment complete/reopen is replay-first and atomically owns the task plus LP paid flag", async () => {
+  const [route, service, store, migration, hardening, legacyRevoke, jiaowubaoCompletion, lifecycle] = await Promise.all([
     read("app/api/tasks/trial-payment/route.ts"),
     read("lib/trial-payment-task-service.ts"),
     read("lib/ops-store.ts"),
@@ -31,50 +31,78 @@ test("planner completion is a replay-first narrow command and never accepts a ta
     read("supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql"),
     read("supabase/migrations/20260827000910_revoke_legacy_trial_payment_atomic.sql"),
     read("supabase/migrations/20260828000510_jiaowubao_trial_payment_completion.sql"),
+    read("supabase/migrations/20260829000300_trial_payment_paid_lifecycle.sql"),
   ]);
-  assert.match(route, /parseTrialPaymentCompletionCommand\(body\)/);
+  assert.match(route, /parseTrialPaymentLifecycleCommand\(body\)/);
+  assert.match(route, /getTrialPaymentLifecycleCommandResult\(/);
   assert.match(route, /getTrialPaymentCompletionCommandResult\(/);
   assert.ok(
-    route.indexOf("getTrialPaymentCompletionCommandResult({")
+    route.indexOf("getTrialPaymentLifecycleCommandResult({")
       < route.indexOf("getOpsState([\"bookings\", \"students\", \"lpItems\", \"tasks\", \"teachers\"]"),
     "immutable receipt lookup must precede current task authorization",
   );
   assert.match(route, /const lateReplay = await readCommandReceipt\(\)/);
-  assert.match(route, /if \(lateReplay\[0\]\) return receiptOnly\(lateReplay\[0\]\)/);
-  assert.doesNotMatch(route, /authorizeTrialPaymentTaskCompletion\(/);
+  assert.match(route, /if \(lateReplay\) return receiptOnly\(lateReplay\)/);
   assert.match(route, /getOpsState\(\["bookings", "students", "lpItems", "tasks", "teachers"\]\)/);
-  assert.match(route, /canWriteOpsEntity\(authorization, "tasks"\)/);
+  assert.match(route, /canWriteOpsTransaction\(authorization, "tasks", \["tasks", "lpItems"\]\)/);
   assert.match(route, /taskVisible/);
   assert.match(route, /const fullAdmin = resolved\.session\.user === DEMO_ADMIN_USER/);
   assert.equal((route.match(/buildOpsAccessContext\([^;]+fullAdmin/g) ?? []).length, 2);
   assert.ok(
-    route.indexOf("canWriteOpsEntity(authorization, \"tasks\")")
-      < route.indexOf("const completePaymentTask ="),
+    route.indexOf("canWriteOpsTransaction(authorization, \"tasks\", [\"tasks\", \"lpItems\"])")
+      < route.indexOf("const saved = await mutateTrialPaymentTaskLifecycleAtomic"),
     "current lifecycle permission and task scope must be checked before the atomic command",
   );
-  assert.match(route, /completeTrialPaymentTaskAtomic/);
-  assert.match(route, /completeJiaowubaoTrialPaymentTaskAtomic/);
+  assert.match(route, /mutateTrialPaymentTaskLifecycleAtomic/);
   assert.match(route, /managedTrialPaymentTaskKind/);
-  assert.match(route, /paymentKind === "jiaowubao"/);
-  assert.match(route, /actorRole: resolved\.session\.role/);
+  assert.match(route, /paymentStateFromResult/);
+  assert.doesNotMatch(route, /paymentState:\s*(null|paymentState)/);
+  assert.match(route, /actorRole: fullAdmin[\s\S]*\? "admin"[\s\S]*resolved\.session\.role === "admin" \? "limited-admin"/);
   assert.match(route, /receiptOnly: true/);
   assert.match(route, /taskRow: null/);
   assert.match(route, /managedTrialPaymentStudentProjectionSnapshot\(/);
   assert.doesNotMatch(route, /putOpsState|mergeScopedPayload/);
-  assert.match(service, /Object\.keys\(value\)\.some\(\(key\) => !\["commandKey", "taskId", "expectedVersions"\]/);
+  assert.match(service, /trial-payment-\(complete\|reopen\)/);
+  assert.match(service, /\["action", "commandKey", "taskId", "expectedVersions"\]/);
   assert.match(service, /input\.role !== "staff"/);
   assert.match(service, /isManagedTrialPaymentTaskRecipient\(task, input\.actor\)/);
   assert.match(service, /student\.planner !== input\.actor/);
   assert.match(service, /trialSchedule/);
   assert.match(store, /p_command_intent: input\.commandIntent/);
+  assert.match(store, /p_action: input\.action/);
   assert.match(store, /p_task_id: input\.taskId/);
   assert.match(store, /p_actor_role: input\.actorRole/);
-  assert.match(store, /TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC/);
-  assert.match(store, /export function getTrialPaymentCompletionCommandResult/);
+  assert.match(store, /TRIAL_PAYMENT_LIFECYCLE_COMMAND_RESULT_RPC/);
+  assert.match(store, /export function getTrialPaymentLifecycleCommandResult/);
   assert.doesNotMatch(store.slice(
-    store.indexOf("export function completeTrialPaymentTaskAtomic"),
-    store.indexOf("/**", store.indexOf("export function completeTrialPaymentTaskAtomic") + 10),
+    store.indexOf("export function mutateTrialPaymentTaskLifecycleAtomic"),
+    store.indexOf("/**", store.indexOf("export function mutateTrialPaymentTaskLifecycleAtomic") + 10),
   ), /p_tasks|payload/);
+
+  assert.match(lifecycle, /create table if not exists internal\.trial_payment_lifecycle_commands/);
+  assert.match(lifecycle, /create or replace function public\.get_trial_payment_lifecycle_command_result/);
+  assert.match(lifecycle, /create or replace function public\.mutate_trial_payment_task_lifecycle_tx/);
+  const lifecycleMutation = lifecycle.slice(lifecycle.indexOf("create or replace function public.mutate_trial_payment_task_lifecycle_tx"));
+  const lifecycleBookingLock = lifecycleMutation.indexOf("where entity = 'bookings' for update");
+  const lifecycleStudentLock = lifecycleMutation.indexOf("where entity = 'students' for update");
+  const lifecycleLpLock = lifecycleMutation.indexOf("where entity = 'lpItems' for update");
+  const lifecycleTaskLock = lifecycleMutation.indexOf("where entity = 'tasks' for update");
+  const lifecycleTeacherLock = lifecycleMutation.indexOf("where entity = 'teachers' for update");
+  assert.ok(lifecycleBookingLock >= 0 && lifecycleBookingLock < lifecycleStudentLock
+    && lifecycleStudentLock < lifecycleLpLock && lifecycleLpLock < lifecycleTaskLock
+    && lifecycleTaskLock < lifecycleTeacherLock);
+  assert.match(lifecycleMutation, /jsonb_build_object\('trialPaid', p_action = 'complete'\)/);
+  assert.match(lifecycleMutation, /item\.value ->> 'id' = p_task_id[\s\S]*item\.value ->> 'status' in \('overdue', 'today', 'upcoming', 'waiting'\)/);
+  assert.match(lifecycle, /item\.value ->> 'completionOutcome' is distinct from 'cannot_do'/);
+  assert.match(lifecycleMutation, /item\.value - 'closedAt' - 'result' - 'completionOutcome'/);
+  assert.match(lifecycleMutation, /values \('lpItems', saved_l\.version/);
+  assert.match(lifecycleMutation, /values \('tasks', saved_t\.version/);
+  assert.match(lifecycleMutation, /trial_payment_reopen/);
+  assert.match(lifecycleMutation, /coalesce\(p_actor_role, ''\) not in \('staff', 'admin'\)/);
+  assert.match(lifecycleMutation, /coalesce\(item\.value ->> 'dueAt', ''\) !~/);
+  assert.match(lifecycle, /reconcile_trial_payment_tasks_for_booking_base_20260829000300/);
+  assert.match(lifecycle, /lp_item -> 'trialPaid'/);
+  assert.match(lifecycle, /if p_action <> 'delete'/);
 
   const completionStart = migration.indexOf("create or replace function public.complete_trial_payment_task_atomic(");
   const completionEnd = migration.indexOf("$function$;", completionStart);
@@ -160,26 +188,30 @@ test("cross-owner payment snapshot is version-bound and separately requested", a
   assert.match(projection, /versions\[entity\] !== parseVersion\(authorityVersions\[entity\], entity\)/);
 });
 
-test("client polls and completes payment reminders without optimistic task writes", async () => {
-  const [client, pending, projection] = await Promise.all([
+test("client polls and mutates payment lifecycle without optimistic task writes", async () => {
+  const [client, list, pending, projection] = await Promise.all([
     read("app/operations-client.tsx"),
+    read("app/to-do-list.tsx"),
     read("lib/trial-payment-pending.ts"),
     read("lib/managed-trial-payment.ts"),
   ]);
   assert.match(client, /const activeDelayMs = 15_000/);
   assert.match(client, /includeManagedTrialPaymentSnapshot/);
   assert.match(client, /parseManagedTrialPaymentAuthorityVersions\(responseRows\)/);
-  assert.match(client, /fetchWithTimeout\(fetch, "\/api\/tasks\/trial-payment"/);
-  assert.match(client, /trial-payment-complete:\$\{crypto\.randomUUID\(\)\}/);
+  assert.match(client, /fetchJsonWithTimeout\(fetch, "\/api\/tasks\/trial-payment"/);
+  assert.match(client, /trial-payment-\$\{action\}:\$\{crypto\.randomUUID\(\)\}/);
   assert.match(client, /readTrialPaymentPendingCommands\(browserSessionStorage\(\), sessionOperator\)/);
   assert.match(client, /receipt\.receiptOnly/);
   assert.match(client, /isAdminSession \? "admin" : "staff"/);
   assert.match(client, /const adminCanComplete = isAdminSession && isAdminView/);
   assert.match(client, /managedTrialPaymentStudentIds\.has\(task\.studentId\)/);
-  const submitStart = client.indexOf("const completeManagedTrialPayment = useCallback");
+  assert.match(client, /mutateManagedTrialPayment\(task\.id, "reopen"\)/);
+  assert.match(client, /canReopen=\{\(task\) => !isManagedTrialPaymentTask\(task\)[\s\S]*isManagedTrialPaymentConfirmationTask\(task\)\}/);
+  assert.match(list, /canReopen\?\.\(task\) !== false \? <button/);
+  const submitStart = client.indexOf("const mutateManagedTrialPayment = useCallback");
   const submitEnd = client.indexOf("const completeTask =", submitStart);
   assert.ok(submitStart >= 0 && submitEnd > submitStart);
   assert.doesNotMatch(client.slice(submitStart, submitEnd), /setTasks\(/);
   assert.match(pending, /receiptOnly/);
-  assert.match(projection, /parseManagedTrialPaymentCompletionReceipt/);
+  assert.match(projection, /parseManagedTrialPaymentLifecycleReceipt/);
 });

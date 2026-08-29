@@ -21,10 +21,14 @@ export type ManagedTrialPaymentCompletionTaskRow = Readonly<{
   updated_by: string;
 }>;
 
-export type ManagedTrialPaymentCompletionReceipt = Readonly<{
+export type ManagedTrialPaymentLifecycleAction = "complete" | "reopen";
+
+export type ManagedTrialPaymentLifecycleReceipt = Readonly<{
   committed: true;
   applied: boolean;
   receiptOnly: boolean;
+  action: ManagedTrialPaymentLifecycleAction;
+  paymentState: "paid" | "unpaid" | null;
   taskId: string;
   auditEntryId: string;
   taskRow: ManagedTrialPaymentCompletionTaskRow | null;
@@ -39,6 +43,11 @@ type PaymentTaskCandidate = Readonly<{
   owner?: unknown;
   assignees?: unknown;
   watchers?: unknown;
+  status?: unknown;
+  tone?: unknown;
+  result?: unknown;
+  closedAt?: unknown;
+  completionOutcome?: unknown;
 }>;
 
 const JIAOWUBAO_ANCHOR = /^JWB:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
@@ -192,6 +201,16 @@ function canonicalInstant(value: unknown) {
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString() === value;
 }
 
+/** Only an explicit human payment confirmation can be undone from All Done. */
+export function isManagedTrialPaymentConfirmationTask(task: PaymentTaskCandidate) {
+  return isManagedTrialPaymentTask(task)
+    && task.status === "done"
+    && task.tone === "green"
+    && task.completionOutcome === undefined
+    && ["已由规划老师确认试听付款", "已由管理员确认试听付款"].includes(String(task.result))
+    && canonicalInstant(task.closedAt);
+}
+
 function sameLifecycleFieldsExceptNote(existing: RecordValue, replacement: RecordValue) {
   const fields = ["closedAt", "completionOutcome", "result", "status", "tone"] as const;
   return fields.every((field) => JSON.stringify(existing[field]) === JSON.stringify(replacement[field]));
@@ -277,12 +296,13 @@ export function isManagedTrialPaymentTaskRecipient(
  * successful shape allowed to omit rows; a normal success must carry the exact
  * completed task plus a projection bound to the same task version.
  */
-export function parseManagedTrialPaymentCompletionReceipt(
+export function parseManagedTrialPaymentLifecycleReceipt(
   value: unknown,
   expectedTaskId: string,
+  expectedAction: ManagedTrialPaymentLifecycleAction,
   actor: string,
   actorRole: "staff" | "admin" = "staff",
-): ManagedTrialPaymentCompletionReceipt {
+): ManagedTrialPaymentLifecycleReceipt {
   const responseKeys = [
     "committed", "applied", "receiptOnly", "taskId", "taskRow",
     "managedTrialPaymentSnapshot", "auditEntryId",
@@ -305,6 +325,8 @@ export function parseManagedTrialPaymentCompletionReceipt(
       committed: true,
       applied: false,
       receiptOnly: true,
+      action: expectedAction,
+      paymentState: null,
       taskId: expectedTaskId,
       taskRow: null,
       managedTrialPaymentSnapshot: null,
@@ -325,15 +347,24 @@ export function parseManagedTrialPaymentCompletionReceipt(
   if (matchingTasks.length !== 1) throw new TypeError("managed trial payment completion task is missing or duplicated");
   const task = matchingTasks[0];
   const actorEvidenceValid = actorRole === "admin"
-    ? isManagedTrialPaymentTask(task) && task.result === "已由管理员确认试听付款"
-    : isManagedTrialPaymentTaskRecipient(task, actor) && task.result === "已由规划老师确认试听付款";
+    ? isManagedTrialPaymentTask(task)
+    : isManagedTrialPaymentTaskRecipient(task, actor);
+  const completed = expectedAction === "complete"
+    && task.status === "done"
+    && task.tone === "green"
+    && task.result === (actorRole === "admin" ? "已由管理员确认试听付款" : "已由规划老师确认试听付款")
+    && typeof task.closedAt === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(task.closedAt)
+    && new Date(task.closedAt).toISOString() === task.closedAt;
+  const reopened = expectedAction === "reopen"
+    && OPEN_TASK_STATUSES.has(String(task.status))
+    && ["red", "amber", "blue"].includes(String(task.tone))
+    && task.result === undefined
+    && task.closedAt === undefined
+    && task.completionOutcome === undefined;
   if (!actorEvidenceValid
     || !samePerson(taskRow.updated_by, actor)
-    || task.status !== "done"
-    || task.tone !== "green"
-    || typeof task.closedAt !== "string"
-    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(task.closedAt)
-    || new Date(task.closedAt).toISOString() !== task.closedAt) {
+    || (!completed && !reopened)) {
     throw new TypeError("managed trial payment completion task evidence is invalid");
   }
   const rawSnapshot = value.managedTrialPaymentSnapshot;
@@ -348,6 +379,8 @@ export function parseManagedTrialPaymentCompletionReceipt(
     committed: true,
     applied: value.applied,
     receiptOnly: false,
+    action: expectedAction,
+    paymentState: expectedAction === "complete" ? "paid" : "unpaid",
     taskId: expectedTaskId,
     taskRow: taskRow as ManagedTrialPaymentCompletionTaskRow,
     managedTrialPaymentSnapshot: snapshot,
