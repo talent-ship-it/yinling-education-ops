@@ -5,6 +5,7 @@ import {
   isFrozenLegacyTask,
   sortTasksByDueAt,
   statusForDueAt,
+  TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT,
   type OpsTask,
   type TaskTone,
 } from "./ops-tasks";
@@ -658,22 +659,37 @@ export function reopenTrialTaskWithHandbookFollowUps(
   if (!Number.isFinite(reopenedAt.valueOf())) throw new TypeError("reopenedAt must be a valid timestamp");
   const source = current.find((candidate) => candidate.id === input.taskId);
   if (!source || source.status !== "done" || !source.dueAt || isFrozenLegacyTask(source)) return [...current];
+  const parentReplyClosure = source.anchorBookingId && source.closedAt
+    && (source.result === "家长已回复" || source.result === TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT)
+    ? current.filter((candidate) => candidate.status === "done"
+      && candidate.anchorBookingId === source.anchorBookingId
+      && candidate.studentId === source.studentId
+      && candidate.closedAt === source.closedAt
+      && (candidate.result === "家长已回复"
+        || candidate.result === TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT))
+    : [];
+  if (parentReplyClosure.some((candidate) => !candidate.dueAt || isFrozenLegacyTask(candidate))) {
+    return [...current];
+  }
+  const parentReplyClosureIds = new Set(parentReplyClosure.map((candidate) => candidate.id));
   const dependentRules = source.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`
     ? new Set([`${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`])
     : source.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`
       ? new Set<string>(TRIAL_TEACHER_REPLY_RULE_KEYS)
       : new Set<string>();
-  const status = statusForDueAt(source.dueAt, reopenedAt, input.timeZone);
-  const tone: TaskTone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
   return sortTasksByDueAt(current.flatMap((candidate) => {
-    if (candidate.id === source.id) return [{
-      ...candidate,
-      status,
-      tone,
-      result: undefined,
-      closedAt: undefined,
-      completionOutcome: undefined,
-    }];
+    if (candidate.id === source.id || parentReplyClosureIds.has(candidate.id)) {
+      const status = statusForDueAt(candidate.dueAt!, reopenedAt, input.timeZone);
+      const tone: TaskTone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
+      return [{
+        ...candidate,
+        status,
+        tone,
+        result: undefined,
+        closedAt: undefined,
+        completionOutcome: undefined,
+      }];
+    }
     if (candidate.status !== "done"
       && candidate.anchorBookingId === source.anchorBookingId
       && dependentRules.has(candidate.ruleKey ?? "")) return [];

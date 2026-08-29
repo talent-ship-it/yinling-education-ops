@@ -18,6 +18,7 @@ import {
   trialPlannerHintFromParticipants,
 } from "../lib/trial-operations";
 import type { LpFieldValues, TrialPaymentMethod } from "../lib/lp-workflows";
+import { TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT, type OpsTask } from "../lib/ops-tasks";
 
 const extendedFields = {
   responsibleOperations: "Ella",
@@ -318,6 +319,50 @@ test("starts the 收试卷 clock from actual 发试卷 completion and removes it
   });
   assert.notEqual(reopened.find((task) => task.id === send.id)?.status, "done");
   assert.equal(reopened.find((task) => task.id === receive.id), undefined);
+});
+
+test("reopening any parent-reply closure restores the full same-instant escalation chain", () => {
+  const closedAt = "2026-08-29T04:00:00.000Z";
+  const task = (input: Partial<OpsTask> & Pick<OpsTask, "id" | "ruleKey" | "result">): OpsTask => ({
+    id: input.id,
+    title: input.id,
+    studentId: "STU-PARENT-REPLY",
+    category: "试听",
+    status: "done",
+    tone: "green",
+    dueAt: "2026-08-29T03:00:00.000Z",
+    anchorBookingId: "LP-PARENT-REPLY",
+    closedAt,
+    completionOutcome: "done",
+    ...input,
+  });
+  const closed = [
+    task({ id: "reply-source", ruleKey: "trial.parent-follow-up", result: "家长已回复" }),
+    task({ id: "progress", ruleKey: "trial.parent-progress-sync.1", result: TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT }),
+    task({ id: "follow-up", ruleKey: "trial.parent-no-reply-follow-up", result: TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT }),
+    task({ id: "teaching-control", ruleKey: "trial.teaching-control-escalation", result: TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT }),
+    task({ id: "manual-evidence", ruleKey: "trial.manual", result: "人工完成", closedAt }),
+  ];
+
+  for (const taskId of ["reply-source", "follow-up"]) {
+    const reopened = reopenTrialTaskWithHandbookFollowUps(closed, {
+      taskId,
+      reopenedAt: "2026-08-30T04:00:00.000Z",
+      timeZone: "Australia/Melbourne",
+    });
+    for (const id of ["reply-source", "progress", "follow-up", "teaching-control"]) {
+      const restored = reopened.find((candidate) => candidate.id === id);
+      assert.equal(restored?.status, "overdue");
+      assert.equal(restored?.tone, "red");
+      assert.equal(restored?.result, undefined);
+      assert.equal(restored?.closedAt, undefined);
+      assert.equal(restored?.completionOutcome, undefined);
+    }
+    assert.deepEqual(
+      reopened.find((candidate) => candidate.id === "manual-evidence"),
+      closed.find((candidate) => candidate.id === "manual-evidence"),
+    );
+  }
 });
 
 test("starts 4h and 8h teacher-reply reminders after materials handoff and closes both manually", () => {
