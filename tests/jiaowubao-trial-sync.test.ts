@@ -213,6 +213,44 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   }]);
 });
 
+test("discovers the same unambiguous references without any browser-supplied pairs", () => {
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows(),
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(projection.references, command.matches);
+});
+
+test("schedule reconciliation preserves open teacher-reply lifecycle tasks on the current JWB anchor", () => {
+  const teacherReply = {
+    id: "TASK-TEACHER-REPLY",
+    title: "《教务+教统》【跟进老师回复】<Heather孙晓琳 · Zara Baker>",
+    owner: "Ella",
+    assignees: ["Ella", "Ops Admin"],
+    watchers: ["Ops Admin"],
+    studentId: "STU-TRIAL-1",
+    due: "2026-08-28 15:00",
+    dueAt: "2026-08-28T05:00:00.000Z",
+    status: "upcoming",
+    tone: "blue",
+    category: "LP",
+    trigger: "资料对接完成后自动生成",
+    ruleKey: "trial.jiaowubao.teacher-reply-4h",
+    anchorBookingId: "JWB:evt-trial-1",
+    requestAnchorBookingId: "LP-TRIAL-1",
+  } as const;
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows: fixtureRows({ tasks: [teacherReply] }),
+    references: command.matches,
+    rawEvents: [rawEvent],
+    snapshotRevision: command.snapshotRevision,
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(projection.nextTasks.find((task) => task.id === teacherReply.id), teacherReply);
+});
+
 test("links a teacher-change trial only to its requested teacher and never creates a payment task", () => {
   const rows = teacherChangeFixtureRows();
   const projection = prepareJiaowubaoTrialSyncProjection({

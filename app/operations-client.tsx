@@ -2819,7 +2819,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoImportedScheduleErrorCode, setJiaowubaoImportedScheduleErrorCode] = useState<JiaowubaoImportedScheduleReadError | null>(null);
   const [jiaowubaoImportedScheduleLoadedKey, setJiaowubaoImportedScheduleLoadedKey] = useState<string | null>(null);
   const [trialScheduleSyncing, setTrialScheduleSyncing] = useState(false);
-  const trialScheduleAutoSyncRef = useRef("");
   const trialScheduleSyncRunRef = useRef(false);
   const trialSchedulePendingRecoveryAttemptedRef = useRef(new Set<string>());
   const [teacherAvailabilityCompletion, setTeacherAvailabilityCompletion] = useState<TeacherAvailabilityCompletionInbox | null>(null);
@@ -4006,33 +4005,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     // idempotent command path before any source revalidation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, currentOperator]);
-
-  useEffect(() => {
-    if (active !== "lp" || trialScheduleSyncing
-      || currentJiaowubaoImportedSchedule?.state !== "complete"
-      || !currentJiaowubaoImportedSchedule.revision
-      || !trialScheduleMatches.length) return;
-    const fingerprint = JSON.stringify({
-      revision: currentJiaowubaoImportedSchedule.revision,
-      matches: trialScheduleMatches.map((match) => ({
-        lpItemId: match.lpItemId,
-        eventId: match.link.eventId,
-        startsAt: match.link.startsAt,
-        endsAt: match.link.endsAt,
-        teacherId: match.link.teacherId,
-        teacherName: match.link.teacherName,
-        planner: match.planner,
-        preparationFollowUp: match.preparationFollowUp,
-        trialPaymentMethod: match.trialPaymentMethod ?? null,
-      })).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId)),
-    });
-    if (trialScheduleAutoSyncRef.current === fingerprint) return;
-    trialScheduleAutoSyncRef.current = fingerprint;
-    void syncTrialSchedulesFromJiaowubao();
-    // The fingerprint owns this one idempotent external-snapshot projection;
-    // adding the function object would re-run it on every shared-state render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, currentJiaowubaoImportedSchedule?.revision, currentJiaowubaoImportedSchedule?.state, trialScheduleMatches, trialScheduleSyncing]);
 
   const refreshJiaowubaoScheduleMappingReview = async () => {
     const review = await readJiaowubaoScheduleMappingReview();
@@ -8171,7 +8143,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow="试听与 LP" title="试听与 LP" actions={<>
         <a className="secondary-button" href={TENCENT_TRIAL_LEDGER_URL} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 腾讯复盘台账</a>
-        <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在生成任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `同步教务宝真实排课${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
+        <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在核对任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `后台自动同步 · 立即核对${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
         <button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>
       </>} />
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">

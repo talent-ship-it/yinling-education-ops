@@ -74,8 +74,10 @@ test("production uses a private 30-minute database schedule and publishes source
   assert.match(route, /claimJiaowubaoOpenApiScheduleSyncLease/);
   assert.match(route, /completeJiaowubaoOpenApiScheduleSnapshot/);
   assert.match(route, /confirmJiaowubaoOpenApiScheduleSnapshotCurrent/);
+  assert.match(route, /runJiaowubaoTrialAutoSync/);
+  assert.match(route, /phase = "project_trials"/);
   assert.match(route, /phase = "confirm_current"/);
-  assert.match(route, /上一份完整快照保持不变/);
+  assert.match(route, /下一次计划任务重试/);
   assert.match(route, /value\.runId === runId && value\.pageIndex === pageIndex/);
   assert.doesNotMatch(route, /value\.state === "staging"/);
   assert.match(route, /jiaowubao_schedule_sync_failed/);

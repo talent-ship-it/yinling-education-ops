@@ -6,19 +6,20 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const route = fs.readFileSync(path.join(root, "app/api/operations/jiaowubao-trial-sync/route.ts"), "utf8");
+const sourceReader = fs.readFileSync(path.join(root, "lib/jiaowubao-trial-source-window.ts"), "utf8");
 const client = fs.readFileSync(path.join(root, "app/operations-client.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260828000500_jiaowubao_trial_sync_atomic.sql"), "utf8");
 
 test("trial sync replays first and re-reads the complete immutable source window on the server", () => {
   const post = route.slice(route.indexOf("export async function POST"));
   const replay = post.indexOf("const replay = await getJiaowubaoTrialSyncCommandResult");
-  const sourceRead = post.indexOf("readSourceWindow(command.snapshotRevision, command.window)");
+  const sourceRead = post.indexOf("readJiaowubaoTrialSourceWindow(command.snapshotRevision, command.window)");
   const projection = post.indexOf("prepareJiaowubaoTrialSyncProjection");
   const commit = post.indexOf("const saved = await syncJiaowubaoTrialMatchesAtomic");
   assert.ok(replay >= 0 && sourceRead > replay && projection > sourceRead && commit > projection);
-  assert.match(route, /scope: "all"/);
-  assert.match(route, /page\.revision !== snapshotRevision/);
-  assert.match(route, /page\.hasMore/);
+  assert.match(sourceReader, /scope: "all"/);
+  assert.match(sourceReader, /page\.revision !== snapshotRevision/);
+  assert.match(sourceReader, /page\.hasMore/);
   assert.doesNotMatch(route, /mutateAndCommit/);
 });
 
@@ -31,8 +32,8 @@ test("browser persists one narrow retry command and no longer performs split LP/
   assert.match(syncBlock, /persistJiaowubaoTrialSyncPendingCommands/);
   assert.match(syncBlock, /snapshotRevision: currentJiaowubaoImportedSchedule\.revision/);
   assert.doesNotMatch(syncBlock, /\.mutateAndCommit/);
-  assert.match(syncBlock, /trialPaymentMethod: match\.trialPaymentMethod/);
-  assert.match(syncBlock, /teacherName: match\.link\.teacherName/);
+  assert.doesNotMatch(syncBlock, /trialPaymentMethod: match\.trialPaymentMethod/);
+  assert.doesNotMatch(syncBlock, /teacherName: match\.link\.teacherName/);
 });
 
 test("database contract locks both state rows, CAS-checks the source pointer, and records idempotent audit evidence", () => {

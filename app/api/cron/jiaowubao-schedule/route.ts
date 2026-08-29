@@ -10,6 +10,10 @@ import {
   jiaowubaoScheduleSnapshotRows,
 } from "@/lib/jiaowubao-open-api-schedule-snapshot";
 import {
+  jiaowubaoTrialProjectionWindow,
+  runJiaowubaoTrialAutoSync,
+} from "@/lib/jiaowubao-trial-auto-sync";
+import {
   beginJiaowubaoOpenApiScheduleSnapshot,
   claimJiaowubaoOpenApiScheduleSyncLease,
   completeJiaowubaoOpenApiScheduleSnapshot,
@@ -104,8 +108,8 @@ function receiptMatchesPage(value: Readonly<Record<string, unknown>>, runId: str
 /**
  * Supabase pg_cron invokes this Vercel route every 30 minutes. It only replaces
  * the completed, immutable JWB source snapshot after every upstream page has
- * been staged and PostgreSQL verifies the expected current pointer. It never
- * projects a row into operations.
+ * been staged and PostgreSQL verifies the expected current pointer. It then
+ * projects every unambiguous trial LP/task match from that immutable source.
  */
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
@@ -148,7 +152,12 @@ export async function GET(request: Request) {
         snapshot.manifest.revision,
         snapshot.manifest.recordCount,
       )) throw new Error("confirmation_receipt_invalid");
-      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount });
+      phase = "project_trials";
+      const trialProjection = await runJiaowubaoTrialAutoSync({
+        snapshotRevision: snapshot.manifest.revision,
+        window: jiaowubaoTrialProjectionWindow(window),
+      });
+      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, trialProjection });
     }
 
     const envelope = buildJiaowubaoScheduleSnapshotEnvelope(snapshot, currentRevision);
@@ -157,7 +166,12 @@ export async function GET(request: Request) {
     const runId = exactRunId(begin?.runId);
     if (!runId) throw new Error("begin_receipt_invalid");
     if (begin.state === "complete") {
-      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount });
+      phase = "project_trials";
+      const trialProjection = await runJiaowubaoTrialAutoSync({
+        snapshotRevision: snapshot.manifest.revision,
+        window: jiaowubaoTrialProjectionWindow(window),
+      });
+      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, trialProjection });
     }
     if (begin.state !== "staging") throw new Error("begin_receipt_invalid");
 
@@ -183,12 +197,18 @@ export async function GET(request: Request) {
       || !exactRevision(completed.rowsSha256) || !exactRevision(completed.payloadSha256)) {
       throw new Error("complete_receipt_invalid");
     }
+    phase = "project_trials";
+    const trialProjection = await runJiaowubaoTrialAutoSync({
+      snapshotRevision: snapshot.manifest.revision,
+      window: jiaowubaoTrialProjectionWindow(window),
+    });
     return noStore({
       outcome: completed.replayed ? "no_change" : "applied",
       window,
       pageCount: snapshot.manifest.pageCount,
       rowCount: snapshot.manifest.recordCount,
       revision: snapshot.manifest.revision,
+      trialProjection,
     });
   } catch (error) {
     // Never log an upstream body, URL, header, snapshot row, or secret. This
@@ -200,7 +220,7 @@ export async function GET(request: Request) {
     // The route is bearer-protected. Returning the fixed phase lets the
     // trusted scheduler surface an actionable aggregate failure without ever
     // returning source rows, response data, URLs, headers, or credentials.
-    return noStore({ error: "教务宝课表同步未完成；上一份完整快照保持不变。", phase }, 503);
+    return noStore({ error: "教务宝课表或试听任务同步未完成；系统会在下一次计划任务重试。", phase }, 503);
   } finally {
     if (acquired) {
       await releaseJiaowubaoOpenApiScheduleSyncLease({

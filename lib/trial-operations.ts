@@ -536,6 +536,13 @@ export function completeTrialSchedulingReminderTasks(
 
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
 
+export const TRIAL_JWB_SCHEDULE_RULE_KEYS = Object.freeze([
+  `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
+  `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
+  `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
+  `${TRIAL_JWB_RULE_PREFIX}today`,
+] as const);
+
 export const TRIAL_TEACHER_REPLY_RULE_KEYS = Object.freeze([
   `${TRIAL_JWB_RULE_PREFIX}teacher-reply-4h`,
   `${TRIAL_JWB_RULE_PREFIX}teacher-reply-8h`,
@@ -799,10 +806,15 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
 export function replaceRuleTasks(
   current: readonly OpsTask[],
   generated: readonly OpsTask[],
-  input: Readonly<{ anchor: string; rulePrefixes: readonly string[] }>,
+  input: Readonly<{
+    anchor: string;
+    rulePrefixes?: readonly string[];
+    ruleKeys?: readonly string[];
+  }>,
 ) {
   const managed = (task: OpsTask) => task.anchorBookingId === input.anchor
-    && input.rulePrefixes.some((prefix) => task.ruleKey?.startsWith(prefix));
+    && (input.ruleKeys?.includes(task.ruleKey ?? "") === true
+      || input.rulePrefixes?.some((prefix) => task.ruleKey?.startsWith(prefix)) === true);
   const generatedById = new Map(generated.map((item) => [item.id, item]));
   const next = current.filter((item) => !managed(item) || item.status === "done" && !generatedById.has(item.id));
   for (const candidate of generated) {

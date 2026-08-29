@@ -7,6 +7,7 @@ import {
   replaceRuleTasks,
   trialPlannerHintFromParticipants,
   TRIAL_JWB_RULE_PREFIX,
+  TRIAL_JWB_SCHEDULE_RULE_KEYS,
   type TrialScheduleLink,
 } from "./trial-operations";
 import { sortTasksByDueAt, type OpsTask } from "./ops-tasks";
@@ -117,6 +118,7 @@ export type JiaowubaoTrialSyncProjection = Readonly<{
   nextLpItems: readonly RecordValue[];
   nextTasks: readonly OpsTask[];
   studentIds: readonly string[];
+  references: readonly JiaowubaoTrialSyncMatchRef[];
   evidence: readonly Readonly<{
     lpItemId: string;
     eventId: string;
@@ -132,7 +134,7 @@ export type JiaowubaoTrialSyncProjection = Readonly<{
  */
 export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   rows: readonly OpsStateRow[];
-  references: readonly JiaowubaoTrialSyncMatchRef[];
+  references?: readonly JiaowubaoTrialSyncMatchRef[];
   rawEvents: readonly RawScheduleEvent[];
   snapshotRevision: string;
   matchedAt: Date | string;
@@ -149,15 +151,18 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   const eventById = new Map(input.rawEvents.map((event) => [event.eventId, event]));
   if (eventById.size !== input.rawEvents.length
     || !/^sha256:[a-f0-9]{64}$/.test(input.snapshotRevision)
-    || input.references.some((reference) => eventById.get(reference.eventId)?.startsAt !== reference.startsAt)) {
+    || input.references?.some((reference) => eventById.get(reference.eventId)?.startsAt !== reference.startsAt)) {
     throw new JiaowubaoTrialSyncProjectionError("source_mismatch", "教务宝试听匹配证据不完整。");
   }
 
-  const requestedLpItems = input.references.map((reference) => {
-    const matches = lpItems.filter((item) => text(item.id) === reference.lpItemId);
-    if (matches.length !== 1) throw new JiaowubaoTrialSyncProjectionError("lp_not_found", "试听 LP 已不存在。");
-    return matches[0]!;
-  });
+  const requestedLpItems = input.references
+    ? input.references.map((reference) => {
+        const matches = lpItems.filter((item) => text(item.id) === reference.lpItemId);
+        if (matches.length !== 1) throw new JiaowubaoTrialSyncProjectionError("lp_not_found", "试听 LP 已不存在。");
+        return matches[0]!;
+      })
+    : lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
+      && text(item.stage) !== "完成");
   const allowedStudentIds = new Set(requestedLpItems.map((item) => text(item.studentId)).filter(Boolean));
   const studentLookup = buildStudentLookup(students, allowedStudentIds);
   const matchedAt = new Date(input.matchedAt);
@@ -203,13 +208,15 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     matchedAt,
     sourceRevision: input.snapshotRevision,
   });
-  const referenceByLpId = new Map(input.references.map((reference) => [reference.lpItemId, reference]));
-  if (preparedMatches.length !== input.references.length
-    || preparedMatches.some((match) => {
-      const reference = referenceByLpId.get(match.lpItemId);
-      return !reference || match.link.eventId !== reference.eventId || match.link.startsAt !== reference.startsAt;
-    })) {
-    throw new JiaowubaoTrialSyncProjectionError("match_rejected", "教务宝排课与试听 LP 不能再无歧义匹配。");
+  if (input.references) {
+    const referenceByLpId = new Map(input.references.map((reference) => [reference.lpItemId, reference]));
+    if (preparedMatches.length !== input.references.length
+      || preparedMatches.some((match) => {
+        const reference = referenceByLpId.get(match.lpItemId);
+        return !reference || match.link.eventId !== reference.eventId || match.link.startsAt !== reference.startsAt;
+      })) {
+      throw new JiaowubaoTrialSyncProjectionError("match_rejected", "教务宝排课与试听 LP 不能再无歧义匹配。");
+    }
   }
 
   const matchByLpId = new Map(preparedMatches.map((match) => [match.lpItemId, match]));
@@ -247,7 +254,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     const generated = generateJiaowubaoTrialTasks({ ...match, now: matchedAt, paymentManagedByBooking });
     nextTasks = replaceRuleTasks(nextTasks, generated, {
       anchor: currentAnchor,
-      rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
+      ruleKeys: TRIAL_JWB_SCHEDULE_RULE_KEYS,
     });
     nextTasks = completeTrialSchedulingReminderTasks(nextTasks, {
       lpItemId: match.lpItemId,
@@ -266,6 +273,12 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     nextLpItems,
     nextTasks: sortTasksByDueAt(nextTasks),
     studentIds: [...new Set(preparedMatches.map((match) => match.studentId))].sort(),
+    references: preparedMatches.map((match) => ({
+      lpItemId: match.lpItemId,
+      eventId: match.link.eventId,
+      startsAt: match.link.startsAt,
+    })).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId)
+      || left.eventId.localeCompare(right.eventId)),
     evidence,
   };
 }
