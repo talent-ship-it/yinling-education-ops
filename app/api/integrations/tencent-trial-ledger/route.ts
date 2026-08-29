@@ -22,8 +22,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const ACTOR = "Tencent Trial Ledger MCP Bridge";
-const WORKER_ID = "codex-mcp-bridge";
+const ACTOR = "Tencent Trial Ledger System Worker";
+const WORKER_ID = "tencent-docs-system-worker";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ERROR_CODE = /^[a-z0-9_.:-]{1,80}$/u;
@@ -96,8 +96,8 @@ function target() {
 
 /**
  * Claims a database outbox batch and returns the complete deterministic mirror
- * projection. This endpoint never talks to Tencent itself: the bearer-scoped
- * Codex bridge performs MCP writes and must read them back before POSTing the
+ * projection. This endpoint never talks to Tencent itself. The production
+ * worker performs MCP writes and must read them back before POSTing the
  * completion mapping.
  */
 export async function GET(request: Request) {

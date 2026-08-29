@@ -11,7 +11,7 @@ The app is a Next.js site backed by Supabase shared state. It is currently an in
 - Scheduling, LP workflows, exception handling, renewals, and a month-based payroll workspace with Excel export, teacher onboarding, rate maintenance, review locks, and audit history.
 - Per-account display preferences support Chinese or English interface labels, locale-aware date/time formats, timezone selection, and text sizing. English mode translates system-controlled UI while preserving names and source records as entered.
 - Supabase is the write target for in-app changes.
-- Tencent roster and handbook sources remain read-only. The dedicated 13-column trial-review SmartSheet is a one-way, private projection written by the durable MCP bridge; staff corrections are made in the app and then mirrored to Tencent.
+- Tencent roster and handbook sources remain read-only. The dedicated 13-column trial-review SmartSheet is a one-way, private projection written every 15 minutes by the production system through Tencent's MCP API; staff corrections are made in the app and then mirrored to Tencent. Codex is not part of the scheduled run path.
 - External message sending is not connected yet; message actions only create or mark internal records.
 
 ## Access Model
