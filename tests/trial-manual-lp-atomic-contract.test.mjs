@@ -15,7 +15,7 @@ const handbookTitlesMigration = readFileSync(
   "utf8",
 );
 const followUpDefaultsMigration = readFileSync(
-  new URL("../supabase/migrations/20260829000100_trial_handbook_follow_up_defaults.sql", import.meta.url),
+  new URL("../supabase/migrations/20260829000200_trial_handbook_follow_up_defaults.sql", import.meta.url),
   "utf8",
 );
 const runtimeFixture = readFileSync(
