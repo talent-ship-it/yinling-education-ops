@@ -10,6 +10,7 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export const TRIAL_LEDGER_WORKFLOW_TYPES = ["试听 LP", "换老师试听"] as const;
 export const TRIAL_LEDGER_PLANNERS = ["Tara", "Eileen", "Abby"] as const;
+export const DEFAULT_TRIAL_RESULT_STATUS = "试听未进行" as const;
 
 export const TRIAL_LEDGER_OVERRIDE_FIELDS = [
   "studentName",
@@ -216,4 +217,14 @@ export function trialLedgerStoredValue(
 
 export function isTrialLedgerWorkflow(item: Pick<TrialLedgerRecord, "workflowType">) {
   return (TRIAL_LEDGER_WORKFLOW_TYPES as readonly string[]).includes(item.workflowType ?? "");
+}
+
+/** Trial rows always have a usable handbook status, including legacy blanks. */
+export function effectiveTrialResultStatus(
+  item: Pick<TrialLedgerRecord, "workflowType" | "resultStatus">,
+): LpResultStatus | undefined {
+  if (item.resultStatus && (TRIAL_LEDGER_RESULT_STATUSES as readonly string[]).includes(item.resultStatus)) {
+    return item.resultStatus;
+  }
+  return isTrialLedgerWorkflow(item) ? DEFAULT_TRIAL_RESULT_STATUS : undefined;
 }

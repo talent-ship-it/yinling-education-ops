@@ -1,4 +1,5 @@
 import {
+  effectiveTrialResultStatus,
   isTrialLedgerWorkflow,
   trialLedgerStoredValue,
   type TrialLedgerField,
@@ -184,7 +185,7 @@ export function buildTencentTrialLedgerMirrorRows(input: Readonly<{
             text(schedule.teacherName) || text(fields.assignedTeacher) || text(student.teacher),
           ),
           试听状态: canonicalOption(
-            storedText(item, "resultStatus"),
+            effectiveTrialResultStatus(item as TrialLedgerRecord),
             TENCENT_TRIAL_LEDGER_OPTIONS.resultStatus,
           ),
           是否付费: (typeof paid === "boolean" ? paid : automaticPaid) ? "是" : "否",

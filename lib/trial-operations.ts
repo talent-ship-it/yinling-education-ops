@@ -3,6 +3,7 @@ import {
   deterministicTaskId,
   formatTaskDeadline,
   isFrozenLegacyTask,
+  sortTasksByDueAt,
   statusForDueAt,
   type OpsTask,
   type TaskTone,
@@ -487,13 +488,6 @@ export function generateTrialManualRequestTasks(input: Readonly<{
       dueAt: sameDay,
       category: "LP",
     }));
-    tasks.push(task({
-      ...shared,
-      ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`,
-      title: `《教务+教统》【收试卷】${taskDetails}`,
-      dueAt: new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000),
-      category: "LP",
-    }));
   }
   tasks.push(task({
     ...shared,
@@ -541,6 +535,164 @@ export function completeTrialSchedulingReminderTasks(
 }
 
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
+
+export const TRIAL_TEACHER_REPLY_RULE_KEYS = Object.freeze([
+  `${TRIAL_JWB_RULE_PREFIX}teacher-reply-4h`,
+  `${TRIAL_JWB_RULE_PREFIX}teacher-reply-8h`,
+] as const);
+
+export function isTrialTeacherReplyTaskRule(ruleKey: string | undefined) {
+  return Boolean(ruleKey && (TRIAL_TEACHER_REPLY_RULE_KEYS as readonly string[]).includes(ruleKey));
+}
+
+function followUpTitle(title: string, from: string, to: string) {
+  return title.includes(from) ? title.replace(from, to) : `${to}${title}`;
+}
+
+function dependentTrialTasks(taskToComplete: OpsTask, completedAt: Date) {
+  if (!taskToComplete.anchorBookingId) return [];
+  const common = {
+    owner: taskToComplete.owner,
+    assignees: taskToComplete.assignees ?? [taskToComplete.owner, DEFAULT_TEACHING_CONTROL_WATCHER],
+    watchers: taskToComplete.watchers ?? [DEFAULT_TEACHING_CONTROL_WATCHER],
+    studentId: taskToComplete.studentId,
+    category: "LP" as const,
+    trigger: `完成“${taskToComplete.title}”后按试听手册自动生成`,
+    anchorBookingId: taskToComplete.anchorBookingId,
+    ...(taskToComplete.requestAnchorBookingId
+      ? { requestAnchorBookingId: taskToComplete.requestAnchorBookingId }
+      : {}),
+  };
+  const create = (ruleKey: string, title: string, hours: number, tone: TaskTone = "blue"): OpsTask => {
+    const dueAt = new Date(completedAt.valueOf() + hours * 60 * 60 * 1_000).toISOString();
+    return {
+      id: deterministicTaskId(taskToComplete.anchorBookingId!, ruleKey),
+      title,
+      ...common,
+      due: formatTaskDeadline(dueAt, SHANGHAI_TIME_ZONE) ?? dueAt,
+      dueAt,
+      status: statusForDueAt(dueAt, completedAt),
+      tone,
+      ruleKey,
+    };
+  };
+
+  if (taskToComplete.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`) {
+    return [create(
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`,
+      followUpTitle(taskToComplete.title, "【发试卷】", "【收试卷】"),
+      24,
+    )];
+  }
+  if (taskToComplete.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`) {
+    return [
+      create(
+        TRIAL_TEACHER_REPLY_RULE_KEYS[0],
+        followUpTitle(taskToComplete.title, "【LP发给老师 + 资料对接】", "【跟进老师回复】"),
+        4,
+      ),
+      create(
+        TRIAL_TEACHER_REPLY_RULE_KEYS[1],
+        followUpTitle(taskToComplete.title, "【LP发给老师 + 资料对接】", "【短信提醒老师或更换老师】"),
+        8,
+        "red",
+      ),
+    ];
+  }
+  return [];
+}
+
+/**
+ * Completes one task and materializes only the handbook follow-ups whose clock
+ * starts at that exact completion instant. Existing completed evidence wins;
+ * an open deterministic follow-up is safely rebased instead of duplicated.
+ */
+export function completeTrialTaskWithHandbookFollowUps(
+  current: readonly OpsTask[],
+  input: Readonly<{ taskId: string; completedAt: Date | string }>,
+) {
+  const completedAt = new Date(input.completedAt);
+  if (!Number.isFinite(completedAt.valueOf())) throw new TypeError("completedAt must be a valid timestamp");
+  const source = current.find((candidate) => candidate.id === input.taskId);
+  if (!source || source.status === "done" || isFrozenLegacyTask(source)) return [...current];
+  const closedAt = completedAt.toISOString();
+  const completed = current.map((candidate) => candidate.id === source.id
+    ? {
+        ...candidate,
+        status: "done" as const,
+        tone: "green" as const,
+        closedAt,
+        result: "已由当前操作员确认完成",
+        completionOutcome: "done" as const,
+      }
+    : candidate);
+  const generated = dependentTrialTasks(source, completedAt);
+  if (!generated.length) return completed;
+  const generatedIds = new Set(generated.map((candidate) => candidate.id));
+  const preserved = completed.filter((candidate) => !generatedIds.has(candidate.id));
+  for (const candidate of generated) {
+    const existing = completed.find((item) => item.id === candidate.id);
+    preserved.push(existing?.status === "done"
+      ? existing
+      : existing?.completionNote ? { ...candidate, completionNote: existing.completionNote } : candidate);
+  }
+  return sortTasksByDueAt(preserved);
+}
+
+/** Reopens a source task and removes only still-open follow-ups it generated. */
+export function reopenTrialTaskWithHandbookFollowUps(
+  current: readonly OpsTask[],
+  input: Readonly<{ taskId: string; reopenedAt: Date | string; timeZone: string }>,
+) {
+  const reopenedAt = new Date(input.reopenedAt);
+  if (!Number.isFinite(reopenedAt.valueOf())) throw new TypeError("reopenedAt must be a valid timestamp");
+  const source = current.find((candidate) => candidate.id === input.taskId);
+  if (!source || source.status !== "done" || !source.dueAt || isFrozenLegacyTask(source)) return [...current];
+  const dependentRules = source.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`
+    ? new Set([`${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`])
+    : source.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`
+      ? new Set<string>(TRIAL_TEACHER_REPLY_RULE_KEYS)
+      : new Set<string>();
+  const status = statusForDueAt(source.dueAt, reopenedAt, input.timeZone);
+  const tone: TaskTone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
+  return sortTasksByDueAt(current.flatMap((candidate) => {
+    if (candidate.id === source.id) return [{
+      ...candidate,
+      status,
+      tone,
+      result: undefined,
+      closedAt: undefined,
+      completionOutcome: undefined,
+    }];
+    if (candidate.status !== "done"
+      && candidate.anchorBookingId === source.anchorBookingId
+      && dependentRules.has(candidate.ruleKey ?? "")) return [];
+    return [candidate];
+  }));
+}
+
+/** A manual teacher reply closes both the 4h and 8h reminder branches. */
+export function closeTrialTeacherReplyTasks(
+  current: readonly OpsTask[],
+  input: Readonly<{ task: OpsTask; repliedAt: Date | string }>,
+) {
+  const repliedAt = new Date(input.repliedAt);
+  if (!Number.isFinite(repliedAt.valueOf())) throw new TypeError("repliedAt must be a valid timestamp");
+  const closedAt = repliedAt.toISOString();
+  return current.map((candidate) => candidate.anchorBookingId === input.task.anchorBookingId
+    && candidate.studentId === input.task.studentId
+    && isTrialTeacherReplyTaskRule(candidate.ruleKey)
+    && candidate.status !== "done"
+    ? {
+        ...candidate,
+        status: "done" as const,
+        tone: "green" as const,
+        result: "老师已回复",
+        completionOutcome: "done" as const,
+        closedAt,
+      }
+    : candidate);
+}
 
 export function formatJiaowubaoTodayTaskTitle(input: Readonly<{
   task: Pick<OpsTask, "ruleKey" | "title">;

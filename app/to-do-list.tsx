@@ -25,6 +25,7 @@ export interface ToDoListProps {
   onReopen: (taskId: string) => void;
   onUpdateNote: (taskId: string, note: string) => void;
   onParentReplied?: (task: OpsTask) => void;
+  onTeacherReplied?: (task: OpsTask) => void;
   onOpen: (task: OpsTask) => void;
   canOpen?: (task: OpsTask) => boolean;
 }
@@ -79,13 +80,14 @@ function TaskRows({
   onReopen,
   onUpdateNote,
   onParentReplied,
+  onTeacherReplied,
   onOpen,
   canOpen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
   deadlineTimeFormat,
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -132,6 +134,13 @@ function TaskRows({
                 type="button"
                 onClick={() => onParentReplied(task)}
               >家长已回</button> : null}
+            {view === "todo" && onTeacherReplied
+              && (task.ruleKey === "trial.jiaowubao.teacher-reply-4h"
+                || task.ruleKey === "trial.jiaowubao.teacher-reply-8h") ? <button
+                className="compact-button reply-button"
+                type="button"
+                onClick={() => onTeacherReplied(task)}
+              >老师已回</button> : null}
             <button
               className="task-note-button"
               type="button"
@@ -185,7 +194,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -212,6 +221,7 @@ export function ToDoList({
   onReopen,
   onUpdateNote,
   onParentReplied,
+  onTeacherReplied,
   onOpen,
   canOpen,
   deadlineTimeZone,
@@ -225,7 +235,7 @@ export function ToDoList({
   const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onOpen, canOpen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onTeacherReplied, onOpen, canOpen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">

@@ -95,6 +95,7 @@ test("manual ledger values override automatic values and remain deterministic", 
   });
 
   assert.deepEqual(rows.map((row) => row.lpItemId), ["LP-A", "LP-Z"]);
+  assert.equal(rows[0].values.试听状态, "试听未进行");
   assert.deepEqual(rows[1].values, {
     学生姓名: "Manual Name",
     家长微信名: "Manual Parent",
@@ -112,7 +113,7 @@ test("manual ledger values override automatic values and remain deterministic", 
   });
 });
 
-test("normalizes legacy aliases and suppresses values outside the handbook dropdowns", () => {
+test("normalizes legacy aliases and replaces invalid trial status with the handbook default", () => {
   const [row] = buildTencentTrialLedgerMirrorRows({
     students: [{ id: "STU-1", planner: "Tara龙" }],
     lpItems: [{
@@ -127,5 +128,5 @@ test("normalizes legacy aliases and suppresses values outside the handbook dropd
   assert.equal(row.values["LP 类型"], "试听 LP");
   assert.equal(row.values.教务, "");
   assert.equal(row.values.课程规划老师, "Tara");
-  assert.equal(row.values.试听状态, "");
+  assert.equal(row.values.试听状态, "试听未进行");
 });

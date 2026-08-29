@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  closeTrialTeacherReplyTasks,
+  completeTrialTaskWithHandbookFollowUps,
   formatJiaowubaoTodayTaskTitle,
+  reopenTrialTaskWithHandbookFollowUps,
+  TRIAL_TEACHER_REPLY_RULE_KEYS,
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_MANUAL_REQUEST_RULE_PREFIX,
   completeTrialSchedulingReminderTasks,
@@ -244,7 +248,7 @@ test("accepts the live browser Date used when matching a freshly loaded schedule
   assert.deepEqual(matches, []);
 });
 
-test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", () => {
+test("materializes intake-time handbook tasks without starting the paper-receive clock early", () => {
   const intake = trialIntakeFromFields(extendedFields);
   const tasks = generateTrialManualRequestTasks({
     lpItemId: "LP-1",
@@ -256,28 +260,101 @@ test("materializes the handbook same-day, paper, 24h, 36h and 48h task chain", (
     intake,
     now: "2026-08-28T02:00:00.000Z",
   });
-  assert.equal(tasks.length, 7);
+  assert.equal(tasks.length, 6);
   assert.deepEqual(tasks.map((task) => task.ruleKey), [
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}writing`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`,
-    `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
   ]);
-  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("paper-receive"))?.dueAt, "2026-08-29T02:00:00.000Z");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("paper-receive")), undefined);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))?.dueAt, "2026-08-29T14:00:00.000Z");
   assert.deepEqual(tasks.map((task) => task.title), [
     "《教务+教统》【要指定内容】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【要写作】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【发试卷】<Heather孙晓琳> <Daisy>",
-    "《教务+教统》【收试卷】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【向家长交待排课进度】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【试听排课进度反常】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【二次向家长交待排课进度】<Heather孙晓琳> <Daisy>",
   ]);
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
+});
+
+test("starts the 收试卷 clock from actual 发试卷 completion and removes it when reopened", () => {
+  const initial = generateTrialManualRequestTasks({
+    lpItemId: "LP-PAPER",
+    studentId: "STU-PAPER",
+    studentName: "Paper Student",
+    guardianWechat: "Paper Parent",
+    owner: "Ella",
+    specifiedContentStatus: "无需跟进",
+    intake: trialIntakeFromFields(extendedFields),
+    now: "2026-08-28T02:00:00.000Z",
+  });
+  const send = initial.find((task) => task.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`)!;
+  const completed = completeTrialTaskWithHandbookFollowUps(initial, {
+    taskId: send.id,
+    completedAt: "2026-08-28T05:30:00.000Z",
+  });
+  const receive = completed.find((task) => task.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`)!;
+  assert.equal(completed.find((task) => task.id === send.id)?.status, "done");
+  assert.equal(receive.dueAt, "2026-08-29T05:30:00.000Z");
+  assert.equal(receive.title, "《教务+教统》【收试卷】<Paper Student> <Paper Parent>");
+  assert.deepEqual(receive.assignees, ["Ella", "Ops Admin"]);
+
+  const replayed = completeTrialTaskWithHandbookFollowUps(completed, {
+    taskId: send.id,
+    completedAt: "2026-08-28T06:30:00.000Z",
+  });
+  assert.equal(replayed.filter((task) => task.id === receive.id).length, 1);
+  assert.equal(replayed.find((task) => task.id === receive.id)?.dueAt, receive.dueAt);
+
+  const reopened = reopenTrialTaskWithHandbookFollowUps(completed, {
+    taskId: send.id,
+    reopenedAt: "2026-08-28T06:00:00.000Z",
+    timeZone: "Australia/Melbourne",
+  });
+  assert.notEqual(reopened.find((task) => task.id === send.id)?.status, "done");
+  assert.equal(reopened.find((task) => task.id === receive.id), undefined);
+});
+
+test("starts 4h and 8h teacher-reply reminders after materials handoff and closes both manually", () => {
+  const match = matchTrialScheduleEvents({
+    lpItems: [{ id: "LP-REPLY", studentId: "STU-1", workflowType: "试听 LP", fields: extendedFields, trialIntake: trialIntakeFromFields(extendedFields) }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{ eventId: "evt-reply", startsAt: "2026-09-03T08:00:00.000Z", endsAt: "2026-09-03T09:00:00.000Z", courseName: "Heather孙晓琳", teacherId: "TEA-1", visibleStudentIds: [], trialPlannerHint: "Tara" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  })[0]!;
+  const initial = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
+  const materials = initial.find((task) => task.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`)!;
+  const completed = completeTrialTaskWithHandbookFollowUps(initial, {
+    taskId: materials.id,
+    completedAt: "2026-08-29T01:00:00.000Z",
+  });
+  const replyTasks = completed.filter((task) => TRIAL_TEACHER_REPLY_RULE_KEYS.includes(
+    task.ruleKey as (typeof TRIAL_TEACHER_REPLY_RULE_KEYS)[number],
+  ));
+  assert.deepEqual(replyTasks.map((task) => task.dueAt), [
+    "2026-08-29T05:00:00.000Z",
+    "2026-08-29T09:00:00.000Z",
+  ]);
+  assert.ok(replyTasks.every((task) => task.assignees?.includes("Ella") && task.assignees.includes("Ops Admin")));
+  assert.match(replyTasks[0]!.title, /【跟进老师回复】/);
+  assert.match(replyTasks[1]!.title, /【短信提醒老师或更换老师】/);
+
+  const closed = closeTrialTeacherReplyTasks(completed, {
+    task: replyTasks[0]!,
+    repliedAt: "2026-08-29T03:00:00.000Z",
+  });
+  const closedReplies = closed.filter((task) => TRIAL_TEACHER_REPLY_RULE_KEYS.includes(
+    task.ruleKey as (typeof TRIAL_TEACHER_REPLY_RULE_KEYS)[number],
+  ));
+  assert.ok(closedReplies.every((task) => task.status === "done"
+    && task.result === "老师已回复"
+    && task.closedAt === "2026-08-29T03:00:00.000Z"));
 });
 
 test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 match", () => {

@@ -14,6 +14,10 @@ const handbookTitlesMigration = readFileSync(
   new URL("../supabase/migrations/20260828000400_align_trial_handbook_task_titles.sql", import.meta.url),
   "utf8",
 );
+const followUpDefaultsMigration = readFileSync(
+  new URL("../supabase/migrations/20260829000100_trial_handbook_follow_up_defaults.sql", import.meta.url),
+  "utf8",
+);
 const runtimeFixture = readFileSync(
   new URL("./sql/trial-manual-lp-atomic-runtime.sql", import.meta.url),
   "utf8",
@@ -74,6 +78,15 @@ test("open manual trial tasks use every title confirmed word-for-word in the han
   assert.match(handbookTitlesMigration, /guardianWechat/);
   assert.match(handbookTitlesMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
   assert.match(handbookTitlesMigration, /mutate_lp_atomic_before_trial_handbook_titles/);
+});
+
+test("new trials default their result and defer 收试卷 until 发试卷 is actually completed", () => {
+  assert.match(followUpDefaultsMigration, /resultStatus', '试听未进行'/);
+  assert.match(followUpDefaultsMigration, /trial\.manual-request\.paper-receive/);
+  assert.match(followUpDefaultsMigration, /trial\.manual-request\.paper-send/);
+  assert.match(followUpDefaultsMigration, /closedAt[\s\S]*interval '24 hours'/);
+  assert.match(followUpDefaultsMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
+  assert.match(followUpDefaultsMigration, /not \(task\.value \? 'legacyEvidence'\)/);
 });
 
 test("trial task replacement preserves unrelated legacy evidence with sparse metadata", () => {

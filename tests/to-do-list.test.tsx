@@ -48,6 +48,7 @@ function render(
       onCannotDo={() => undefined}
       onReopen={() => undefined}
       onUpdateNote={() => undefined}
+      onTeacherReplied={() => undefined}
       onOpen={() => undefined}
     />,
   );
@@ -198,4 +199,14 @@ test("renders a cross-owner managed exam task identity as non-navigable text", (
   assert.match(html, /<span class="task-copy task-copy-static"><strong>任务 managed-exam<\/strong>/);
   assert.doesNotMatch(html, /<button class="task-copy"/);
   assert.match(html, /aria-label="完成：任务 managed-exam"/);
+});
+
+test("shows a manual teacher-reply close action only on the 4h/8h reply chain", () => {
+  const teacherReply = {
+    ...task("teacher-reply", "LP", "today", "今天 18:00"),
+    ruleKey: "trial.jiaowubao.teacher-reply-4h",
+    anchorBookingId: "JWB:evt-reply",
+  };
+  const html = render([teacherReply, task("ordinary", "LP", "today", "今天 19:00")]);
+  assert.equal(html.match(/>老师已回</g)?.length, 1);
 });

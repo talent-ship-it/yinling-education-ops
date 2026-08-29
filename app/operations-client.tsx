@@ -334,13 +334,18 @@ import {
   type SharedStateRow,
 } from "@/lib/shared-state-recovery";
 import {
+  closeTrialTeacherReplyTasks,
+  completeTrialTaskWithHandbookFollowUps,
   formatJiaowubaoTodayTaskTitle,
+  isTrialTeacherReplyTaskRule,
   matchTrialScheduleEvents,
+  reopenTrialTaskWithHandbookFollowUps,
   trialIntakeFromFields,
   type TrialIntake,
   type TrialScheduleLink,
 } from "@/lib/trial-operations";
 import {
+  effectiveTrialResultStatus,
   TRIAL_LEDGER_PLANNERS,
   TRIAL_LEDGER_WORKFLOW_TYPES,
   isTrialLedgerWorkflow,
@@ -4703,16 +4708,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       void completeManagedExamFollowUp(task);
       return;
     }
-    const before = { ...task };
     const completedAt = new Date();
-    void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId
-      ? { ...item, status: "done" as const, tone: "green" as const, closedAt: completedAt.toISOString(), result: "已由当前操作员确认完成", completionOutcome: "done" as const }
-      : item))
+    void tasksShared.mutateAndCommit((current) => completeTrialTaskWithHandbookFollowUps(current, {
+      taskId,
+      completedAt,
+    }))
       .then(() => {
         addAudit("完成强提醒任务", `${task.title} · ${studentById(task.studentId)?.name ?? "未关联学生"}`, "green");
         notify("已完成并写入操作记录", () => {
-          void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId ? before : item))
-            .then(() => addAudit("撤销完成强提醒任务", `${task.title} · 恢复为 ${before.status}`, "amber"))
+          void tasksShared.mutateAndCommit((current) => reopenTrialTaskWithHandbookFollowUps(current, {
+            taskId,
+            reopenedAt: new Date(),
+            timeZone: taskDeadlineTimeZone,
+          }))
+            .then(() => addAudit("撤销完成强提醒任务", `${task.title} · 恢复为待处理`, "amber"))
             .catch((error: unknown) => notify(error instanceof Error ? `撤销失败：${error.message}` : "撤销失败，请重试"));
         });
       })
@@ -4758,16 +4767,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       notify("该历史任务没有准确截止时间，不能恢复为可执行任务");
       return;
     }
-    const status = statusForDueAt(task.dueAt, new Date(), taskDeadlineTimeZone);
-    const tone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
-    void tasksShared.mutateAndCommit((current) => current.map((item) => item.id === taskId ? {
-      ...item,
-      status,
-      tone,
-      result: undefined,
-      closedAt: undefined,
-      completionOutcome: undefined,
-    } : item)).then(() => {
+    void tasksShared.mutateAndCommit((current) => reopenTrialTaskWithHandbookFollowUps(current, {
+      taskId,
+      reopenedAt: new Date(),
+      timeZone: taskDeadlineTimeZone,
+    })).then(() => {
       addAudit("恢复任务到 To Do", task.title, "amber");
       notify("任务已恢复到 To Do");
     }).catch((error: unknown) => notify(error instanceof Error ? error.message : "任务恢复失败"));
@@ -4818,6 +4822,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         });
       })
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "家长回复保存失败"));
+  };
+
+  const recordTrialTeacherReply = (task: Task) => {
+    if (!task.anchorBookingId || !isTrialTeacherReplyTaskRule(task.ruleKey)) return;
+    const before = tasks.filter((item) => item.studentId === task.studentId
+      && item.anchorBookingId === task.anchorBookingId
+      && isTrialTeacherReplyTaskRule(item.ruleKey));
+    const repliedAt = new Date();
+    void tasksShared.mutateAndCommit((current) => closeTrialTeacherReplyTasks(current, { task, repliedAt }))
+      .then(() => {
+        addAudit("记录试听老师回复", `${studentById(task.studentId)?.name ?? task.studentId} · 4/8 小时提醒链已关闭`, "green");
+        notify("已记录老师回复，后续老师回复提醒已关闭", () => {
+          const beforeById = new Map(before.map((item) => [item.id, item]));
+          void tasksShared.mutateAndCommit((current) => current.map((item) => beforeById.get(item.id) ?? item))
+            .then(() => addAudit("撤销试听老师回复", `${studentById(task.studentId)?.name ?? task.studentId} · 恢复老师回复提醒`, "amber"))
+            .catch((error: unknown) => notify(error instanceof Error ? `撤销失败：${error.message}` : "撤销失败，请重试"));
+        });
+      })
+      .catch((error: unknown) => notify(error instanceof Error ? error.message : "老师回复保存失败"));
   };
 
   const visibleTasks = useMemo(() => {
@@ -7468,7 +7491,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} onUpdateNote={updateTaskNote} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
@@ -8031,7 +8054,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
     const resultControl = (item: LpItem) => {
       const options = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
-      return options.length ? <select className="lp-result-select" value={item.resultStatus ?? ""} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}><option value="">业务结果</option>{options.map((status) => <option value={status} key={status}>{status}</option>)}</select> : null;
+      const value = effectiveTrialResultStatus(item) ?? item.resultStatus ?? "";
+      return options.length ? <select className="lp-result-select" value={value} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}>{value ? null : <option value="">业务结果</option>}{options.map((status) => <option value={status} key={status}>{status}</option>)}</select> : null;
     };
     const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType === "试听 LP" || item.workflowType === "换老师试听");
     const clearTrialLedgerDraft = (key: string) => setTrialLedgerDrafts((current) => {
@@ -8188,7 +8212,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{ledgerSelectCell({ item, field: "planner", automaticValue: automaticPlanner, label: `${automaticStudentName || item.id} 课程规划老师`, options: TRIAL_LEDGER_PLANNERS })}</td>
                 <td>{ledgerTextCell({ item, field: "subject", automaticValue: automaticSubject, label: `${automaticStudentName || item.id} 科目`, list: "trial-ledger-subject-options", placeholder: "待填写" })}</td>
                 <td>{ledgerTextCell({ item, field: "teacher", automaticValue: automaticTeacher, label: `${automaticStudentName || item.id} 老师`, list: "trial-ledger-teacher-options", placeholder: "待匹配", sourceLabel: schedule?.teacherName ? "教务宝真实数据" : "自动填充" })}</td>
-                <td><div className="ledger-edit-cell manual"><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={item.resultStatus ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}><option value="">待填写</option>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : "人工结果"}</small></span></div></td>
+                <td><div className={`ledger-edit-cell ${item.resultStatus ? "manual" : "automatic"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={effectiveTrialResultStatus(item) ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value as LpResultStatus)}>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : item.resultStatus ? "人工结果" : "新建默认值"}</small></span></div></td>
                 <td><div className={`ledger-edit-cell ${storedPaid === undefined ? "automatic" : "manual"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[paidKey] === true} value={storedPaid === undefined ? "" : storedPaid ? "true" : "false"} aria-label={`${automaticStudentName || item.id} 是否付费`} onChange={(event) => { const value = event.target.value === "" ? undefined : event.target.value === "true"; void saveTrialLedgerFieldAtomic(item, "trialPaid", value).catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败")); }}><option value="">自动 · {automaticPaid ? "是" : "否"}</option><option value="true">是</option><option value="false">否</option></select><span className="ledger-cell-meta"><small>{trialLedgerSaving[paidKey] ? "保存中…" : storedPaid === undefined ? "按付费方式自动判断" : "手动值"}</small></span></div></td>
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
               </tr>;
