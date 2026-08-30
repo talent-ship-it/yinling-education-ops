@@ -283,6 +283,34 @@ test("materializes intake-time handbook tasks without starting the paper-receive
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
 });
 
+test("omits all four conditional follow-up branches when the handover says they are unnecessary", () => {
+  for (const specifiedContentStatus of ["已指定", "无需指定"]) {
+    const intake = trialIntakeFromFields({
+      ...extendedFields,
+      writingRequired: false,
+      paperRequired: false,
+    });
+    const tasks = generateTrialManualRequestTasks({
+      lpItemId: `LP-NO-CONDITIONAL-${specifiedContentStatus}`,
+      studentId: "STU-NO-CONDITIONAL",
+      studentName: "QA试听学员",
+      guardianWechat: "QA家长",
+      owner: "Ella",
+      specifiedContentStatus,
+      intake,
+      now: "2026-08-28T02:00:00.000Z",
+    });
+
+    assert.deepEqual(tasks.map((task) => task.ruleKey), [
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+    ]);
+    assert.ok(!tasks.some((task) => ["specified-content", "writing", "paper-send", "paper-receive"]
+      .some((suffix) => task.ruleKey?.endsWith(suffix))));
+  }
+});
+
 test("starts the 收试卷 clock from actual 发试卷 completion and removes it when reopened", () => {
   const initial = generateTrialManualRequestTasks({
     lpItemId: "LP-PAPER",
@@ -387,8 +415,10 @@ test("starts 4h and 8h teacher-reply reminders after materials handoff and close
     "2026-08-29T09:00:00.000Z",
   ]);
   assert.ok(replyTasks.every((task) => task.assignees?.includes("Ella") && task.assignees.includes("Ops Admin")));
-  assert.match(replyTasks[0]!.title, /【跟进老师回复】/);
-  assert.match(replyTasks[1]!.title, /【短信提醒老师或更换老师】/);
+  assert.equal(replyTasks[0]!.title,
+    "《教务+教统》【跟进老师回复】<Heather孙晓琳> <Grace Lin>");
+  assert.equal(replyTasks[1]!.title,
+    "《教务+教统》【短信提醒老师或更换老师】<Heather孙晓琳> <Grace Lin>");
 
   const closed = closeTrialTeacherReplyTasks(completed, {
     task: replyTasks[0]!,
@@ -464,7 +494,7 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
   assert.equal(completed.find((task) => task.id === legacyScheduling.id)?.status, "done");
 });
 
-test("materializes N-2, N-1, pending-payment and same-day tasks from one real 教务宝 event", () => {
+test("materializes N-3, N-2, N-1, pending-payment and same-day tasks from one real 教务宝 event", () => {
   const match = matchTrialScheduleEvents({
     lpItems: [{ id: "LP-1", studentId: "STU-1", workflowType: "试听 LP", fields: extendedFields, trialIntake: trialIntakeFromFields(extendedFields) }],
     students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
@@ -473,12 +503,18 @@ test("materializes N-2, N-1, pending-payment and same-day tasks from one real �
     matchedAt: "2026-08-28T03:00:00.000Z",
   })[0]!;
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
-  assert.equal(tasks.length, 4);
+  assert.equal(tasks.length, 5);
   assert.ok(tasks.every((task) => task.ruleKey?.startsWith(TRIAL_JWB_RULE_PREFIX)));
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-finalize-tomorrow-n3"))?.title,
+    "《教务+教统》【明日LP定稿】<Heather孙晓琳> <Grace Lin>");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-finalize-tomorrow-n3"))?.dueAt,
+    "2026-08-31T08:00:00.000Z");
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.title,
-    "《教务+教统》【LP发给老师 + 资料对接】<Heather孙晓琳 · Grace Lin>");
+    "《教务+教统》【今日LP定稿】<Heather孙晓琳> <Grace Lin>");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.dueAt,
+    "2026-09-01T08:00:00.000Z");
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("prep-n1"))?.title,
-    "《教务+教统》【跟进老师备课内容】<Heather孙晓琳 · Grace Lin>");
+    "《教务+教统》【跟进老师备课内容】<Heather孙晓琳> <Grace Lin>");
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.title,
     "《教务+教统》【今日试听】<Heather孙晓琳 · Grace Lin · 墨尔本 19:00 结束>");
   assert.ok(tasks.some((task) => task.title.includes("收取试听费") && task.owner === "Tara"));
@@ -587,11 +623,11 @@ test("omits the N-1 teacher-preparation task when the handover explicitly says n
 
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
   assert.equal(match.preparationFollowUp, false);
-  assert.equal(tasks.length, 3);
+  assert.equal(tasks.length, 4);
   assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("prep-n1")));
 });
 
-test("compresses N-2, N-1 and payment reminders onto intake day for a next-day trial", () => {
+test("hides 明日LP定稿 and compresses all pre-trial reminders onto intake day for a next-day trial", () => {
   const fields = {
     ...extendedFields,
     requestSentAt: "2026-09-02T03:00:00.000Z",
@@ -621,6 +657,8 @@ test("compresses N-2, N-1 and payment reminders onto intake day for a next-day t
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-09-02T03:30:00.000Z" });
   const compressedRules = ["lp-materials-n2", "prep-n1", "payment-n2"];
   assert.equal(match.requestSentAt, "2026-09-02T03:00:00.000Z");
+  assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("lp-finalize-tomorrow-n3")));
+  assert.match(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.title ?? "", /【今日LP定稿】/);
   assert.deepEqual(tasks
     .filter((task) => compressedRules.some((suffix) => task.ruleKey?.endsWith(suffix)))
     .map((task) => task.dueAt), [
@@ -629,6 +667,42 @@ test("compresses N-2, N-1 and payment reminders onto intake day for a next-day t
       "2026-09-02T08:00:00.000Z",
     ]);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("today"))?.dueAt, "2026-09-03T08:00:00.000Z");
+});
+
+test("hides 明日LP定稿 and shows 今日LP定稿 on intake day for a day-after-tomorrow trial", () => {
+  const fields = {
+    ...extendedFields,
+    requestSentAt: "2026-09-01T03:00:00.000Z",
+  };
+  const match = matchTrialScheduleEvents({
+    lpItems: [{
+      id: "LP-DAY-AFTER-TOMORROW",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields,
+      trialIntake: trialIntakeFromFields(fields),
+    }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-day-after-tomorrow",
+      startsAt: "2026-09-03T08:00:00.000Z",
+      endsAt: "2026-09-03T09:00:00.000Z",
+      courseName: "Heather孙晓琳",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Tara",
+    }],
+    matchedAt: "2026-09-01T03:30:00.000Z",
+  })[0]!;
+
+  const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-09-01T03:30:00.000Z" });
+  assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("lp-finalize-tomorrow-n3")));
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.dueAt,
+    "2026-09-01T08:00:00.000Z");
+  assert.match(tasks.find((task) => task.ruleKey?.endsWith("lp-materials-n2"))?.title ?? "", /【今日LP定稿】/);
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("prep-n1"))?.dueAt,
+    "2026-09-02T08:00:00.000Z");
 });
 
 test("uses the bounded 教务宝 teacher label even before an internal teacher ID mapping exists", () => {

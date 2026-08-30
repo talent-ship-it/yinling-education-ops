@@ -52,3 +52,16 @@ test("database contract locks both state rows, CAS-checks the source pointer, an
   assert.match(migration, /trial\.jiaowubao\.sync_atomic/);
   assert.match(migration, /insert into public\.ops_mutation_log/);
 });
+
+test("latest database validator accepts the N-3 LP finalize projection", () => {
+  const latest = fs.readFileSync(path.join(
+    root,
+    "supabase/migrations/20260830000100_trial_lp_finalize_tasks.sql",
+  ), "utf8");
+  assert.match(latest, /create or replace function internal\.jiaowubao_trial_sync_generated_task_valid/);
+  assert.match(latest, /trial\.jiaowubao\.lp-finalize-tomorrow-n3/);
+  assert.match(latest, /trial\.jiaowubao\.lp-materials-n2/);
+  assert.match(latest, /trial\.jiaowubao\.prep-n1/);
+  assert.match(latest, /trial\.jiaowubao\.payment-n2/);
+  assert.match(latest, /trial\.jiaowubao\.today/);
+});

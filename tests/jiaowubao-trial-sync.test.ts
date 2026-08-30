@@ -198,6 +198,7 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
   const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
   assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
+    "trial.jiaowubao.lp-finalize-tomorrow-n3",
     "trial.jiaowubao.lp-materials-n2",
     "trial.jiaowubao.payment-n2",
     "trial.jiaowubao.prep-n1",
@@ -283,6 +284,7 @@ test("links a teacher-change trial only to its requested teacher and never creat
   assert.equal(student.teacher, "Grace Lin");
   const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
   assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
+    "trial.jiaowubao.lp-finalize-tomorrow-n3",
     "trial.jiaowubao.lp-materials-n2",
     "trial.jiaowubao.prep-n1",
     "trial.jiaowubao.today",

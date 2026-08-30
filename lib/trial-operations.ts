@@ -541,6 +541,7 @@ export function completeTrialSchedulingReminderTasks(
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
 
 export const TRIAL_JWB_SCHEDULE_RULE_KEYS = Object.freeze([
+  `${TRIAL_JWB_RULE_PREFIX}lp-finalize-tomorrow-n3`,
   `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
   `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
   `${TRIAL_JWB_RULE_PREFIX}payment-n2`,
@@ -558,6 +559,13 @@ export function isTrialTeacherReplyTaskRule(ruleKey: string | undefined) {
 
 function followUpTitle(title: string, from: string, to: string) {
   return title.includes(from) ? title.replace(from, to) : `${to}${title}`;
+}
+
+function lpFinalizeFollowUpTitle(title: string, to: string) {
+  for (const from of ["【今日LP定稿】", "【LP发给老师 + 资料对接】"]) {
+    if (title.includes(from)) return title.replace(from, to);
+  }
+  return `${to}${title}`;
 }
 
 function dependentTrialTasks(taskToComplete: OpsTask, completedAt: Date) {
@@ -599,12 +607,12 @@ function dependentTrialTasks(taskToComplete: OpsTask, completedAt: Date) {
     return [
       create(
         TRIAL_TEACHER_REPLY_RULE_KEYS[0],
-        followUpTitle(taskToComplete.title, "【LP发给老师 + 资料对接】", "【跟进老师回复】"),
+        lpFinalizeFollowUpTitle(taskToComplete.title, "【跟进老师回复】"),
         4,
       ),
       create(
         TRIAL_TEACHER_REPLY_RULE_KEYS[1],
-        followUpTitle(taskToComplete.title, "【LP发给老师 + 资料对接】", "【短信提醒老师或更换老师】"),
+        lpFinalizeFollowUpTitle(taskToComplete.title, "【短信提醒老师或更换老师】"),
         8,
         "red",
       ),
@@ -757,10 +765,13 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
   const end = new Date(input.link.endsAt);
   const now = new Date(input.now);
   const requestSentAt = input.requestSentAt ? new Date(input.requestSentAt) : null;
-  const compressBeforeTrialTasks = requestSentAt !== null
-    && Number.isFinite(requestSentAt.valueOf())
-    && localDayNumber(start, MELBOURNE_TIME_ZONE) - localDayNumber(requestSentAt, MELBOURNE_TIME_ZONE) === 1;
-  const n2Deadline = compressBeforeTrialTasks
+  const leadDays = requestSentAt !== null && Number.isFinite(requestSentAt.valueOf())
+    ? localDayNumber(start, MELBOURNE_TIME_ZONE) - localDayNumber(requestSentAt, MELBOURNE_TIME_ZONE)
+    : null;
+  const shortNoticeFinalize = leadDays !== null && leadDays >= 0 && leadDays <= 2;
+  const compressBeforeTrialTasks = leadDays !== null && leadDays >= 0 && leadDays <= 1;
+  const n3Deadline = localDayDeadline(start, -3, 18, MELBOURNE_TIME_ZONE);
+  const n2Deadline = shortNoticeFinalize
     ? localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE)
     : localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE);
   const n1Deadline = compressBeforeTrialTasks
@@ -784,10 +795,19 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
     hourCycle: "h23",
   }).format(end);
   return [
+    ...(leadDays === null || leadDays >= 3 ? [
+      task({
+        ...shared,
+        ruleKey: `${TRIAL_JWB_RULE_PREFIX}lp-finalize-tomorrow-n3`,
+        title: `《教务+教统》【明日LP定稿】<${input.studentName}> <${input.link.teacherName}>`,
+        dueAt: n3Deadline,
+        category: "LP",
+      }),
+    ] : []),
     task({
       ...shared,
       ruleKey: `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
-      title: `《教务+教统》【LP发给老师 + 资料对接】<${input.studentName} · ${input.link.teacherName}>`,
+      title: `《教务+教统》【今日LP定稿】<${input.studentName}> <${input.link.teacherName}>`,
       dueAt: n2Deadline,
       category: "LP",
     }),
@@ -795,7 +815,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
       task({
         ...shared,
         ruleKey: `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
-        title: `《教务+教统》【跟进老师备课内容】<${input.studentName} · ${input.link.teacherName}>`,
+        title: `《教务+教统》【跟进老师备课内容】<${input.studentName}> <${input.link.teacherName}>`,
         dueAt: n1Deadline,
         category: "LP",
       }),
