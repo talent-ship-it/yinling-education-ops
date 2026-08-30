@@ -93,6 +93,8 @@ insert into public.ops_state(entity, payload, version, updated_by) values
 insert into internal.legacy_task_deadline_freezes(task_id)
 values ('TSK-LEGACY-SPARSE'), ('TSK-LEGACY-MATCH');
 
+\ir ../../supabase/migrations/20260831000100_trial_scheduling_policy.sql
+
 do $trial_manual_runtime$
 declare
   fields jsonb := '{
@@ -148,7 +150,7 @@ begin
   if not receipt.applied
      or (receipt.students_row).version <> 2
      or (receipt.lp_items_row).version <> 3
-     or (receipt.tasks_row).version <> 3
+     or (receipt.tasks_row).version <> 4
      or (receipt.files_row).version <> 1 then
     raise exception 'trial_manual_atomic_versions_failed';
   end if;
@@ -174,10 +176,9 @@ begin
     'trial.manual-request.paper-receive',
     'trial.manual-request.paper-send',
     'trial.manual-request.parent-progress-24h',
-    'trial.manual-request.parent-progress-48h',
-    'trial.manual-request.scheduling-alert-36h',
     'trial.manual-request.specified-content',
-    'trial.manual-request.writing'
+    'trial.manual-request.writing',
+    'trial.scheduling'
   ] then
     raise exception 'trial_manual_rule_projection_failed: %', rules;
   end if;
@@ -194,8 +195,8 @@ begin
       where task ->> 'ruleKey' = 'trial.manual-request.specified-content')
       <> '《教务+教统》【要指定内容】<Atomic Trial> <Daisy>'
      or (select task ->> 'title' from jsonb_array_elements((receipt.tasks_row).payload) task
-      where task ->> 'ruleKey' = 'trial.manual-request.parent-progress-48h')
-      <> '《教务+教统》【二次向家长交待排课进度】<Atomic Trial> <Daisy>' then
+      where task ->> 'ruleKey' = 'trial.scheduling')
+      <> '《教务+教统》【试听待排课】<Atomic Trial> <Daisy>' then
     raise exception 'trial_manual_handbook_title_failed';
   end if;
   if exists (
@@ -203,7 +204,7 @@ begin
     where task ->> 'anchorBookingId' = receipt.lp_item_id
       and not (task ? 'legacyEvidence')
       and task ->> 'ruleKey' in (
-        'trial.parent-follow-up','trial.scheduling','trial.parent-no-reply-follow-up',
+        'trial.parent-follow-up','trial.parent-no-reply-follow-up',
         'trial.teaching-control-escalation','trial.parent-progress-sync.1'
       )
   ) then

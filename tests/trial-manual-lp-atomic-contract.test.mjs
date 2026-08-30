@@ -18,6 +18,10 @@ const followUpDefaultsMigration = readFileSync(
   new URL("../supabase/migrations/20260829000200_trial_handbook_follow_up_defaults.sql", import.meta.url),
   "utf8",
 );
+const schedulingPolicyMigration = readFileSync(
+  new URL("../supabase/migrations/20260831000100_trial_scheduling_policy.sql", import.meta.url),
+  "utf8",
+);
 const runtimeFixture = readFileSync(
   new URL("./sql/trial-manual-lp-atomic-runtime.sql", import.meta.url),
   "utf8",
@@ -87,6 +91,23 @@ test("new trials default their result and defer 收试卷 until 发试卷 is act
   assert.match(followUpDefaultsMigration, /closedAt[\s\S]*interval '24 hours'/);
   assert.match(followUpDefaultsMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
   assert.match(followUpDefaultsMigration, /not \(task\.value \? 'legacyEvidence'\)/);
+});
+
+test("the latest scheduling policy creates one JWB-controlled pending task and retires superseded chains", () => {
+  assert.match(schedulingPolicyMigration, /trial_scheduling_policy_tasks/);
+  assert.match(schedulingPolicyMigration, /【试听待排课】/);
+  assert.match(schedulingPolicyMigration, /internal\.trial_manual_task_id\(p_lp_item_id, 'trial\.scheduling'\)/);
+  assert.match(schedulingPolicyMigration, /trial\.manual-request\.parent-progress-24h/);
+  for (const retiredRule of [
+    "trial.manual-request.scheduling-alert-36h",
+    "trial.manual-request.parent-progress-48h",
+    "trial.jiaowubao.teacher-reply-4h",
+    "trial.jiaowubao.teacher-reply-8h",
+  ]) assert.match(schedulingPolicyMigration, new RegExp(retiredRule.replaceAll(".", "\\.")));
+  assert.match(schedulingPolicyMigration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
+  assert.match(schedulingPolicyMigration, /not \(task\.value \? 'legacyEvidence'\)/);
+  assert.match(schedulingPolicyMigration, /mutate_lp_atomic_before_trial_scheduling_policy/);
+  assert.match(schedulingPolicyMigration, /jiaowubao_trial_sync_manual_completion_valid/);
 });
 
 test("trial task replacement preserves unrelated legacy evidence with sparse metadata", () => {
