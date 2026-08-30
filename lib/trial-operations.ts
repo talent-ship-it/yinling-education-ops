@@ -439,11 +439,11 @@ function task(input: Readonly<{
 }
 
 export const TRIAL_MANUAL_REQUEST_RULE_PREFIX = "trial.manual-request.";
+export const TRIAL_PENDING_SCHEDULING_RULE_KEY = "trial.scheduling";
 
 export const TRIAL_SCHEDULING_REMINDER_RULE_KEYS = Object.freeze([
+  TRIAL_PENDING_SCHEDULING_RULE_KEY,
   `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
-  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
-  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
 ] as const);
 
 export function generateTrialManualRequestTasks(input: Readonly<{
@@ -470,6 +470,7 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   const tasks: OpsTask[] = [];
   const guardianWechat = text(input.guardianWechat) || "家长微信名未填写";
   const taskDetails = `<${input.studentName}> <${guardianWechat}>`;
+  const schedulingDeadline = new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000);
   if (["需教务跟进", "需要跟进"].includes(input.specifiedContentStatus)) tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
@@ -495,23 +496,18 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   }
   tasks.push(task({
     ...shared,
-    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
-    title: `《教务+教统》【向家长交待排课进度】${taskDetails}`,
-    dueAt: new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000),
-  }));
-  tasks.push(task({
-    ...shared,
-    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
-    title: `《教务+教统》【试听排课进度反常】${taskDetails}`,
-    dueAt: new Date(requestedAt.valueOf() + 36 * 60 * 60 * 1_000),
+    ruleKey: TRIAL_PENDING_SCHEDULING_RULE_KEY,
+    title: `《教务+教统》【试听待排课】${taskDetails}`,
+    dueAt: schedulingDeadline,
     category: "排课",
     tone: "red",
+    trigger: "试听 LP 信息交接后立即生成，排课后由教务宝自动完成",
   }));
   tasks.push(task({
     ...shared,
-    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
-    title: `《教务+教统》【二次向家长交待排课进度】${taskDetails}`,
-    dueAt: new Date(requestedAt.valueOf() + 48 * 60 * 60 * 1_000),
+    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+    title: `《教务+教统》【向家长交待排课进度】${taskDetails}`,
+    dueAt: schedulingDeadline,
   }));
   return tasks;
 }
@@ -521,7 +517,7 @@ export function completeTrialSchedulingReminderTasks(
   input: Readonly<{ lpItemId: string; eventId: string; completedAt: Date | string }>,
 ): OpsTask[] {
   const closedAt = new Date(input.completedAt).toISOString();
-  const managedRules: readonly string[] = [...TRIAL_SCHEDULING_REMINDER_RULE_KEYS, "trial.scheduling"];
+  const managedRules: readonly string[] = TRIAL_SCHEDULING_REMINDER_RULE_KEYS;
   return current.map((task) => task.anchorBookingId === input.lpItemId
     && typeof task.ruleKey === "string"
     && managedRules.includes(task.ruleKey)
@@ -561,13 +557,6 @@ function followUpTitle(title: string, from: string, to: string) {
   return title.includes(from) ? title.replace(from, to) : `${to}${title}`;
 }
 
-function lpFinalizeFollowUpTitle(title: string, to: string) {
-  for (const from of ["【今日LP定稿】", "【LP发给老师 + 资料对接】"]) {
-    if (title.includes(from)) return title.replace(from, to);
-  }
-  return `${to}${title}`;
-}
-
 function dependentTrialTasks(taskToComplete: OpsTask, completedAt: Date) {
   if (!taskToComplete.anchorBookingId) return [];
   const common = {
@@ -602,21 +591,6 @@ function dependentTrialTasks(taskToComplete: OpsTask, completedAt: Date) {
       followUpTitle(taskToComplete.title, "【发试卷】", "【收试卷】"),
       24,
     )];
-  }
-  if (taskToComplete.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`) {
-    return [
-      create(
-        TRIAL_TEACHER_REPLY_RULE_KEYS[0],
-        lpFinalizeFollowUpTitle(taskToComplete.title, "【跟进老师回复】"),
-        4,
-      ),
-      create(
-        TRIAL_TEACHER_REPLY_RULE_KEYS[1],
-        lpFinalizeFollowUpTitle(taskToComplete.title, "【短信提醒老师或更换老师】"),
-        8,
-        "red",
-      ),
-    ];
   }
   return [];
 }

@@ -210,3 +210,16 @@ test("shows a manual teacher-reply close action only on the 4h/8h reply chain", 
   const html = render([teacherReply, task("ordinary", "LP", "today", "今天 19:00")]);
   assert.equal(html.match(/>老师已回</g)?.length, 1);
 });
+
+test("keeps pending scheduling editable and cancellable without a manual completion button", () => {
+  const pendingScheduling = {
+    ...task("pending-scheduling", "排课", "today", "今天 18:00"),
+    ruleKey: "trial.scheduling",
+    anchorBookingId: "LP-PENDING-SCHEDULING",
+  };
+  const html = render([pendingScheduling]);
+
+  assert.match(html, /aria-label="编辑备注：任务 pending-scheduling"/);
+  assert.match(html, /aria-label="无法完成：任务 pending-scheduling"/);
+  assert.doesNotMatch(html, /aria-label="完成：任务 pending-scheduling"/);
+});

@@ -70,6 +70,14 @@ function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?
     ruleKey: "trial.manual-request.parent-progress-24h",
     anchorBookingId: "LP-TRIAL-1",
   };
+  const pendingScheduling = {
+    ...manualReminder,
+    id: "TASK-PENDING-SCHEDULING",
+    title: "《教务+教统》【试听待排课】<Heather孙晓琳> <QA家长>",
+    tone: "red",
+    category: "排课",
+    ruleKey: "trial.scheduling",
+  };
   return [
     row("students", [{
       id: "STU-TRIAL-1",
@@ -81,7 +89,7 @@ function fixtureRows(extra: { bookings?: unknown[]; tasks?: unknown[]; schedule?
     row("teachers", [{ id: "TEA-1", name: "Zara Baker" }]),
     row("bookings", extra.bookings ?? []),
     row("lpItems", [lp], 7),
-    row("tasks", [manualReminder, ...(extra.tasks ?? [])], 11),
+    row("tasks", [pendingScheduling, manualReminder, ...(extra.tasks ?? [])], 11),
   ];
 }
 
@@ -207,6 +215,7 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   assert.ok(jwbTasks.every((task) => task.requestAnchorBookingId === "LP-TRIAL-1"));
   assert.equal(jwbTasks.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.owner, "Tara");
   assert.equal(projection.nextTasks.find((task) => task.id === "TASK-MANUAL-24H")?.status, "done");
+  assert.equal(projection.nextTasks.find((task) => task.id === "TASK-PENDING-SCHEDULING")?.status, "done");
   assert.deepEqual(projection.evidence, [{
     lpItemId: "LP-TRIAL-1",
     eventId: "evt-trial-1",
@@ -239,7 +248,7 @@ test("an explicit LP paid flag keeps the Jiaowubao payment reminder closed", () 
   assert.equal(payment?.result, "试听台账已标记付费，收费提醒自动关闭");
 });
 
-test("schedule reconciliation preserves open teacher-reply lifecycle tasks on the current JWB anchor", () => {
+test("schedule reconciliation removes retired open teacher-reply tasks but preserves completed evidence", () => {
   const teacherReply = {
     id: "TASK-TEACHER-REPLY",
     title: "《教务+教统》【跟进老师回复】<Heather孙晓琳 · Zara Baker>",
@@ -257,14 +266,24 @@ test("schedule reconciliation preserves open teacher-reply lifecycle tasks on th
     anchorBookingId: "JWB:evt-trial-1",
     requestAnchorBookingId: "LP-TRIAL-1",
   } as const;
+  const completedTeacherReply = {
+    ...teacherReply,
+    id: "TASK-TEACHER-REPLY-DONE",
+    status: "done",
+    tone: "green",
+    completionOutcome: "done",
+    result: "老师已回复",
+    closedAt: "2026-08-28T02:30:00.000Z",
+  } as const;
   const projection = prepareJiaowubaoTrialSyncProjection({
-    rows: fixtureRows({ tasks: [teacherReply] }),
+    rows: fixtureRows({ tasks: [teacherReply, completedTeacherReply] }),
     references: command.matches,
     rawEvents: [rawEvent],
     snapshotRevision: command.snapshotRevision,
     matchedAt: "2026-08-28T03:00:00.000Z",
   });
-  assert.deepEqual(projection.nextTasks.find((task) => task.id === teacherReply.id), teacherReply);
+  assert.equal(projection.nextTasks.find((task) => task.id === teacherReply.id), undefined);
+  assert.deepEqual(projection.nextTasks.find((task) => task.id === completedTeacherReply.id), completedTeacherReply);
 });
 
 test("links a teacher-change trial only to its requested teacher and never creates a payment task", () => {

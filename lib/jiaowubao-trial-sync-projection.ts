@@ -8,6 +8,7 @@ import {
   trialPlannerHintFromParticipants,
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_JWB_SCHEDULE_RULE_KEYS,
+  TRIAL_TEACHER_REPLY_RULE_KEYS,
   type TrialScheduleLink,
 } from "./trial-operations";
 import { sortTasksByDueAt, type OpsTask } from "./ops-tasks";
@@ -246,6 +247,9 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       || !(task.requestAnchorBookingId === match.lpItemId
         || Boolean(previousAnchor && task.anchorBookingId === previousAnchor))
       || task.anchorBookingId === currentAnchor);
+    nextTasks = nextTasks.filter((task) => task.status === "done"
+      || task.requestAnchorBookingId !== match.lpItemId
+      || !(TRIAL_TEACHER_REPLY_RULE_KEYS as readonly string[]).includes(task.ruleKey ?? ""));
     const paymentManagedByBooking = managedBookingOwnsPayment({
       bookings,
       tasks: nextTasks,

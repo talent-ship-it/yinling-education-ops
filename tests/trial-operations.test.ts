@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  closeTrialTeacherReplyTasks,
   completeTrialTaskWithHandbookFollowUps,
   formatJiaowubaoTodayTaskTitle,
   reopenTrialTaskWithHandbookFollowUps,
@@ -261,24 +260,22 @@ test("materializes intake-time handbook tasks without starting the paper-receive
     intake,
     now: "2026-08-28T02:00:00.000Z",
   });
-  assert.equal(tasks.length, 6);
+  assert.equal(tasks.length, 5);
   assert.deepEqual(tasks.map((task) => task.ruleKey), [
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}writing`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`,
+    "trial.scheduling",
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
-    `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
-    `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
   ]);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("paper-receive")), undefined);
-  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))?.dueAt, "2026-08-29T14:00:00.000Z");
+  assert.equal(tasks.find((task) => task.ruleKey === "trial.scheduling")?.dueAt, "2026-08-29T02:00:00.000Z");
   assert.deepEqual(tasks.map((task) => task.title), [
     "《教务+教统》【要指定内容】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【要写作】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【发试卷】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【试听待排课】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【向家长交待排课进度】<Heather孙晓琳> <Daisy>",
-    "《教务+教统》【试听排课进度反常】<Heather孙晓琳> <Daisy>",
-    "《教务+教统》【二次向家长交待排课进度】<Heather孙晓琳> <Daisy>",
   ]);
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
 });
@@ -302,9 +299,8 @@ test("omits all four conditional follow-up branches when the handover says they 
     });
 
     assert.deepEqual(tasks.map((task) => task.ruleKey), [
+      "trial.scheduling",
       `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
-      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-alert-36h`,
-      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
     ]);
     assert.ok(!tasks.some((task) => ["specified-content", "writing", "paper-send", "paper-receive"]
       .some((suffix) => task.ruleKey?.endsWith(suffix))));
@@ -393,7 +389,7 @@ test("reopening any parent-reply closure restores the full same-instant escalati
   }
 });
 
-test("starts 4h and 8h teacher-reply reminders after materials handoff and closes both manually", () => {
+test("does not create the retired 4h and 8h teacher-reply reminders", () => {
   const match = matchTrialScheduleEvents({
     lpItems: [{ id: "LP-REPLY", studentId: "STU-1", workflowType: "试听 LP", fields: extendedFields, trialIntake: trialIntakeFromFields(extendedFields) }],
     students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
@@ -410,29 +406,10 @@ test("starts 4h and 8h teacher-reply reminders after materials handoff and close
   const replyTasks = completed.filter((task) => TRIAL_TEACHER_REPLY_RULE_KEYS.includes(
     task.ruleKey as (typeof TRIAL_TEACHER_REPLY_RULE_KEYS)[number],
   ));
-  assert.deepEqual(replyTasks.map((task) => task.dueAt), [
-    "2026-08-29T05:00:00.000Z",
-    "2026-08-29T09:00:00.000Z",
-  ]);
-  assert.ok(replyTasks.every((task) => task.assignees?.includes("Ella") && task.assignees.includes("Ops Admin")));
-  assert.equal(replyTasks[0]!.title,
-    "《教务+教统》【跟进老师回复】<Heather孙晓琳> <Grace Lin>");
-  assert.equal(replyTasks[1]!.title,
-    "《教务+教统》【短信提醒老师或更换老师】<Heather孙晓琳> <Grace Lin>");
-
-  const closed = closeTrialTeacherReplyTasks(completed, {
-    task: replyTasks[0]!,
-    repliedAt: "2026-08-29T03:00:00.000Z",
-  });
-  const closedReplies = closed.filter((task) => TRIAL_TEACHER_REPLY_RULE_KEYS.includes(
-    task.ruleKey as (typeof TRIAL_TEACHER_REPLY_RULE_KEYS)[number],
-  ));
-  assert.ok(closedReplies.every((task) => task.status === "done"
-    && task.result === "老师已回复"
-    && task.closedAt === "2026-08-29T03:00:00.000Z"));
+  assert.deepEqual(replyTasks, []);
 });
 
-test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 match", () => {
+test("closes the pending-scheduling and 24h parent-update tasks after one real 教务宝 match", () => {
   const manualTasks = generateTrialManualRequestTasks({
     lpItemId: "LP-1",
     studentId: "STU-1",
@@ -450,7 +427,7 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
     result: "人工确认已完成",
   };
   const frozen = {
-    ...manualTasks.find((task) => task.ruleKey?.endsWith("parent-progress-48h"))!,
+    ...manualTasks.find((task) => task.ruleKey === "trial.scheduling")!,
     id: "TASK-FROZEN",
     legacyEvidence: {
       state: "frozen" as const,
@@ -459,17 +436,11 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
     },
   };
   const foreign = {
-    ...manualTasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))!,
+    ...manualTasks.find((task) => task.ruleKey === "trial.scheduling")!,
     id: "TASK-FOREIGN",
     anchorBookingId: "LP-2",
   };
-  const legacyScheduling = {
-    ...manualTasks.find((task) => task.ruleKey?.endsWith("scheduling-alert-36h"))!,
-    id: "TASK-LEGACY-SCHEDULING",
-    ruleKey: "trial.scheduling",
-    title: "完成试听排课",
-  };
-  const current = manualTasks.concat(alreadyDone, frozen, foreign, legacyScheduling);
+  const current = manualTasks.concat(alreadyDone, frozen, foreign);
 
   const completed = completeTrialSchedulingReminderTasks(current, {
     lpItemId: "LP-1",
@@ -477,11 +448,11 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
     completedAt: "2026-08-28T04:00:00.000Z",
   });
   const reminderIds = new Set(manualTasks.filter((task) => task.anchorBookingId === "LP-1"
-    && ["parent-progress-24h", "scheduling-alert-36h", "parent-progress-48h"]
-      .some((suffix) => task.ruleKey?.endsWith(suffix))).map((task) => task.id));
+    && (task.ruleKey === "trial.scheduling" || task.ruleKey?.endsWith("parent-progress-24h")))
+    .map((task) => task.id));
   const scheduling = completed.filter((task) => reminderIds.has(task.id));
 
-  assert.equal(scheduling.length, 3);
+  assert.equal(scheduling.length, 2);
   assert.ok(scheduling.every((task) => task.status === "done"
     && task.tone === "green"
     && task.result === "教务宝真实排课已匹配：evt-qa-1"
@@ -491,7 +462,6 @@ test("closes all 24h, 36h and 48h scheduling reminders after one real 教务宝 
   assert.deepEqual(completed.find((task) => task.id === frozen.id)?.legacyEvidence, frozen.legacyEvidence);
   assert.notEqual(completed.find((task) => task.ruleKey?.endsWith("paper-receive"))?.status, "done");
   assert.equal(completed.find((task) => task.id === foreign.id)?.status, foreign.status);
-  assert.equal(completed.find((task) => task.id === legacyScheduling.id)?.status, "done");
 });
 
 test("materializes N-3, N-2, N-1, pending-payment and same-day tasks from one real 教务宝 event", () => {

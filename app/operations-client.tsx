@@ -341,6 +341,7 @@ import {
   isTrialTeacherReplyTaskRule,
   matchTrialScheduleEvents,
   reopenTrialTaskWithHandbookFollowUps,
+  TRIAL_PENDING_SCHEDULING_RULE_KEY,
   trialIntakeFromFields,
   type TrialIntake,
   type TrialScheduleLink,
@@ -4677,6 +4678,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const completeTask = (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === "done") return;
+    if (task.ruleKey === TRIAL_PENDING_SCHEDULING_RULE_KEY) {
+      notify("试听待排课只能由教务宝真实排课自动完成");
+      return;
+    }
     if (isManagedTrialPaymentTask(task)) {
       const plannerCanComplete = initialRole === "staff"
         && currentOperator === sessionOperator

@@ -158,13 +158,13 @@ function TaskRows({
                 aria-label={`无法完成：${displayTitle}`}
                 onClick={() => setEditor({ taskId: task.id, mode: "cannot", value: "" })}
               ><X size={15} /></button>
-              <button
+              {task.ruleKey !== "trial.scheduling" ? <button
                 className="complete-button"
                 type="button"
                 title="标记完成"
                 aria-label={`完成：${displayTitle}`}
                 onClick={() => onComplete(task.id)}
-              ><span aria-hidden="true">✓</span></button>
+              ><span aria-hidden="true">✓</span></button> : null}
             </> : canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
