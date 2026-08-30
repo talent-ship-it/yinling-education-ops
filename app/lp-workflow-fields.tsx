@@ -637,11 +637,11 @@ export function LpWorkflowFields({
       </label>}
       {workflowType === "试听 LP" ? <>
         <label className="span-2">对接备注<textarea name={LP_WORKFLOW_FORM_NAMES.contactNote} defaultValue={initialValues.contactNote} rows={2} /></label>
-        <label>需要写作
+        <label>是否要写作
           <select name={LP_WORKFLOW_FORM_NAMES.writingRequired} defaultValue={initialValues.writingRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
         </label>
         <label>写作备注<input name={LP_WORKFLOW_FORM_NAMES.writingNote} defaultValue={initialValues.writingNote} /></label>
-        <label>需要发、收试卷
+        <label>是否发试卷、收试卷
           <select name={LP_WORKFLOW_FORM_NAMES.paperRequired} defaultValue={initialValues.paperRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
         </label>
         <label>试卷备注<input name={LP_WORKFLOW_FORM_NAMES.paperNote} defaultValue={initialValues.paperNote} /></label>
@@ -843,7 +843,7 @@ export function LpWorkflowFields({
       </label>
     </> : null}
 
-    <label>{showsTrialFields ? "家长指定内容跟进" : "指定内容"}
+    <label>{showsTrialFields ? "是否要指定内容" : "指定内容"}
       <select
         name={LP_WORKFLOW_FORM_NAMES.specifiedContentStatus}
         defaultValue={initialValues.specifiedContentStatus ?? SPECIFIED_CONTENT_STATUSES[2]}
@@ -851,7 +851,7 @@ export function LpWorkflowFields({
         {SPECIFIED_CONTENT_STATUSES.filter((option) => option !== "需要跟进").map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
-    <label>备课跟进
+    <label>是否跟进老师备课内容
       <select
         name={LP_WORKFLOW_FORM_NAMES.preparationFollowUp}
         defaultValue={initialValues.preparationFollowUp ?? PREPARATION_FOLLOW_UP_OPTIONS[0]}

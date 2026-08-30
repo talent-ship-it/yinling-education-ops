@@ -428,6 +428,9 @@ test("renders the exact trial operations list and seven customisable location su
   for (const location of ["VIC", "NSW", "QLD", "WA", "SA", "NZ", "国内"]) {
     assert.match(locations, new RegExp(`value="${location}"`));
   }
+  for (const label of ["是否要指定内容", "是否要写作", "是否发试卷、收试卷", "是否跟进老师备课内容"]) {
+    assert.match(html, new RegExp(label));
+  }
   assert.match(html, /<input(?=[^>]*name="locationTimezone")(?=[^>]*list="lp-options-locationTimezone")[^>]*>/);
   assert.doesNotMatch(locations, /Australia\/Melbourne/);
 });
