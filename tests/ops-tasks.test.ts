@@ -117,6 +117,14 @@ test("presents retained legacy trial history with the current bracketed visual h
     taskTitlePresentation("向家长同步试听安排进度（第 2 次）"),
     { primary: "【二次向家长交待排课进度】", details: [] },
   );
+  assert.deepEqual(
+    taskTitlePresentation("旧版首次交接任务", "student.initial-handover"),
+    { primary: "【学生信息交接】", details: [] },
+  );
+  assert.deepEqual(
+    taskTitlePresentation("旧版创建任务", "student.create-lp"),
+    { primary: "【创建 LP】", details: [] },
+  );
 });
 
 test("identifies only the retained named acceptance fixture for task-board hiding", () => {

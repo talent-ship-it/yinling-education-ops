@@ -105,7 +105,7 @@ function TaskRows({
       {tasks.map((task) => {
         const editing = editor?.taskId === task.id ? editor : null;
         const displayTitle = taskTitle?.(task) ?? task.title;
-        const title = taskTitlePresentation(displayTitle);
+        const title = taskTitlePresentation(displayTitle, task.ruleKey);
         const supportingCopy = title.details.length === 0 || task.completionNote
           ? `${title.details.length === 0 ? studentName(task.studentId) ?? "未关联学生" : ""}${task.completionNote ? `${title.details.length === 0 ? " · " : ""}${task.completionNote}` : ""}`
           : "";

@@ -416,19 +416,25 @@ const LEGACY_TRIAL_TASK_HEADLINES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^向家长同步试听安排进度（第 [2-9][0-9]* 次）/u, "二次向家长交待排课进度"],
 ];
 
+const LEGACY_TASK_RULE_HEADLINES: Readonly<Record<string, string>> = {
+  "student.initial-handover": "学生信息交接",
+  "student.create-lp": "创建 LP",
+};
+
 /**
  * Handbook task titles use 【】 for the action and <> for context. Keep the
  * exact persisted title for audit/history, but present only that action as the
  * visual headline and demote names/times to supporting text.
  */
-export function taskTitlePresentation(value: string): TaskTitlePresentation {
+export function taskTitlePresentation(value: string, ruleKey?: string): TaskTitlePresentation {
   const title = value.trim();
   const primaryMatch = title.match(/【([^【】]+)】/u);
   const details = [...title.matchAll(/<([^<>]+)>/gu)]
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean);
   if (!primaryMatch) {
-    const legacyHeadline = LEGACY_TRIAL_TASK_HEADLINES.find(([pattern]) => pattern.test(title))?.[1];
+    const legacyHeadline = (ruleKey ? LEGACY_TASK_RULE_HEADLINES[ruleKey] : undefined)
+      ?? LEGACY_TRIAL_TASK_HEADLINES.find(([pattern]) => pattern.test(title))?.[1];
     return legacyHeadline
       ? { primary: `【${legacyHeadline}】`, details }
       : { primary: title, details: [] };
