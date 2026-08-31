@@ -16,7 +16,7 @@ const runtimeFixture = await readFile(
 
 test("the final scheduling projector preserves handover retirement and the 24h/48h/72h chain", () => {
   assert.match(migration, /create or replace function internal\.trial_scheduling_policy_tasks\(/i);
-  assert.match(migration, /task\.value ->> 'ruleKey' in \([\s\S]*scheduling-alert-36h[\s\S]*lp\.handover/i);
+  assert.match(migration, /coalesce\(task\.value ->> 'ruleKey', ''\) in \([\s\S]*scheduling-alert-36h[\s\S]*lp\.handover/i);
   assert.match(migration, /trial\.manual-request\.parent-progress-24h/);
   assert.match(migration, /trial\.manual-request\.parent-progress-48h/);
   assert.match(migration, /trial\.manual-request\.scheduling-anomaly-72h/);
@@ -37,14 +37,18 @@ test("completed or frozen rows are preserved and completed rows cannot seed a ne
   assert.match(migration, /evidence\.task_id = task\.value ->> 'id'/i);
   assert.match(runtimeFixture, /trial_completed_template_reopened_chain/);
   assert.match(runtimeFixture, /trial_historical_handover_changed/);
+  assert.match(runtimeFixture, /TSK-SPARSE-SAME-ANCHOR/);
+  assert.match(runtimeFixture, /TSK-HANDOVER-NO-ANCHOR/);
 });
 
 test("the forward backfill repairs only open generic handovers belonging to trial LPs", () => {
   assert.match(migration, /trial_lp\.value ->> 'workflowType' = '试听 LP'/i);
-  assert.match(migration, /task\.value ->> 'ruleKey' = 'lp\.handover'/i);
+  assert.match(migration, /coalesce\(task\.value ->> 'ruleKey', ''\) = 'lp\.handover'/i);
   assert.match(migration, /试听 LP：核对交接信息%/);
   assert.match(migration, /insert into public\.ops_mutation_log/i);
   assert.match(migration, /updated_by = 'migration:preserve-trial-handover-retirement'/i);
+  assert.match(migration, /coalesce\(task\.value ->> 'anchorBookingId', ''\) = p_lp_item_id/i);
+  assert.match(migration, /coalesce\(task\.value ->> 'ruleKey', ''\) = 'lp\.handover'/i);
 });
 
 test("the disposable runtime fixture exercises the full migration order and expects no generic handover", () => {
@@ -58,4 +62,7 @@ test("the disposable runtime fixture exercises the full migration order and expe
     runtimeFixture.indexOf("trial_manual_rule_projection_failed"),
   );
   assert.doesNotMatch(expectedRules, /'lp\.handover'/);
+  assert.match(runtimeFixture, /trial_policy_backfill_version_or_log_failed/);
+  assert.match(runtimeFixture, /trial_policy_backfill_sparse_or_history_changed/);
+  assert.match(runtimeFixture, /trial_policy_backfill_not_idempotent/);
 });

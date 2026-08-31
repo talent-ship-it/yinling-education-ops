@@ -195,9 +195,12 @@ begin
     '[
       {"id":"TSK-DONE-TEMPLATE","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"trial.manual-request.parent-progress-24h","status":"done","dueAt":"2099-08-29T02:00:00.000Z"},
       {"id":"TSK-OPEN-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming"},
+      {"id":"TSK-OPEN-HANDOVER-TITLE","anchorBookingId":"LP-COMPLETED-TEMPLATE","title":"试听 LP：核对交接信息 legacy","status":"upcoming"},
       {"id":"TSK-DONE-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"done"},
       {"id":"TSK-FROZEN-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming"},
-      {"id":"TSK-LEGACY-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}}
+      {"id":"TSK-LEGACY-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}},
+      {"id":"TSK-SPARSE-SAME-ANCHOR","anchorBookingId":"LP-COMPLETED-TEMPLATE","title":"Sparse operational note","status":"upcoming"},
+      {"id":"TSK-HANDOVER-NO-ANCHOR","ruleKey":"lp.handover","title":"Unanchored evidence","status":"upcoming"}
     ]'::jsonb,
     'LP-COMPLETED-TEMPLATE'
   );
@@ -207,13 +210,16 @@ begin
   ) then
     raise exception 'trial_open_handover_not_retired';
   end if;
-  if (select count(*) from jsonb_array_elements(completed_only_projection) task
-      where task ->> 'id' in (
-        'TSK-DONE-TEMPLATE',
-        'TSK-DONE-HANDOVER',
-        'TSK-FROZEN-HANDOVER',
-        'TSK-LEGACY-HANDOVER'
-      )) <> 4 then
+  if jsonb_array_length(completed_only_projection) <> 6
+     or (select count(*) from jsonb_array_elements(completed_only_projection) task
+         where task in (
+           '{"id":"TSK-DONE-TEMPLATE","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"trial.manual-request.parent-progress-24h","status":"done","dueAt":"2099-08-29T02:00:00.000Z"}'::jsonb,
+           '{"id":"TSK-DONE-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"done"}'::jsonb,
+           '{"id":"TSK-FROZEN-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming"}'::jsonb,
+           '{"id":"TSK-LEGACY-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}}'::jsonb,
+           '{"id":"TSK-SPARSE-SAME-ANCHOR","anchorBookingId":"LP-COMPLETED-TEMPLATE","title":"Sparse operational note","status":"upcoming"}'::jsonb,
+           '{"id":"TSK-HANDOVER-NO-ANCHOR","ruleKey":"lp.handover","title":"Unanchored evidence","status":"upcoming"}'::jsonb
+         )) <> 6 then
     raise exception 'trial_historical_handover_changed';
   end if;
   if exists (
@@ -299,5 +305,123 @@ begin
   end;
 end;
 $trial_manual_runtime$;
+
+-- Exercise the complete 01200 backfill, including sparse task preservation,
+-- one version/log bump, and a second idempotent application.
+create table internal.trial_policy_fixture_checkpoint (
+  stage text primary key,
+  task_version bigint not null,
+  migration_log_count bigint not null,
+  payload jsonb not null
+);
+
+update public.ops_state
+set payload = payload || jsonb_build_array(jsonb_build_object(
+      'id', 'LP-BACKFILL-012',
+      'workflowType', '试听 LP',
+      'stage', '试听需求已发出'
+    )),
+    version = version + 1,
+    updated_at = now(),
+    updated_by = 'fixture:01200-setup'
+where entity = 'lpItems';
+
+update public.ops_state
+set payload = payload || '[
+      {"id":"TSK-BACKFILL-24H","anchorBookingId":"LP-BACKFILL-012","ruleKey":"trial.manual-request.parent-progress-24h","status":"upcoming","dueAt":"2099-08-29T02:00:00.000Z"},
+      {"id":"TSK-BACKFILL-SCHEDULING","anchorBookingId":"LP-BACKFILL-012","ruleKey":"trial.scheduling","status":"upcoming","dueAt":"2099-08-29T02:00:00.000Z"},
+      {"id":"TSK-BACKFILL-48H","anchorBookingId":"LP-BACKFILL-012","ruleKey":"trial.manual-request.parent-progress-48h","status":"upcoming","dueAt":"2099-08-30T02:00:00.000Z"},
+      {"id":"TSK-BACKFILL-72H","anchorBookingId":"LP-BACKFILL-012","ruleKey":"trial.manual-request.scheduling-anomaly-72h","status":"upcoming","dueAt":"2099-08-31T02:00:00.000Z"},
+      {"id":"TSK-BACKFILL-OPEN-HANDOVER","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"upcoming"},
+      {"id":"TSK-BACKFILL-TITLE-ALIAS","anchorBookingId":"LP-BACKFILL-012","title":"试听 LP：核对交接信息 historical alias","status":"upcoming"},
+      {"id":"TSK-BACKFILL-SPARSE","anchorBookingId":"LP-BACKFILL-012","title":"Sparse task without a rule","status":"upcoming"},
+      {"id":"TSK-BACKFILL-NO-ANCHOR","ruleKey":"lp.handover","title":"Unanchored handover evidence","status":"upcoming"},
+      {"id":"TSK-BACKFILL-DONE","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"done","result":"historical"},
+      {"id":"TSK-FROZEN-HANDOVER","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"upcoming","note":"ledger frozen"},
+      {"id":"TSK-BACKFILL-LEGACY","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}}
+    ]'::jsonb,
+    version = version + 1,
+    updated_at = now(),
+    updated_by = 'fixture:01200-setup'
+where entity = 'tasks';
+
+insert into internal.trial_policy_fixture_checkpoint(stage, task_version, migration_log_count, payload)
+select 'before', version,
+  (select count(*) from public.ops_mutation_log
+   where actor = 'migration:preserve-trial-handover-retirement'),
+  payload
+from public.ops_state where entity = 'tasks';
+
+\ir ../../supabase/migrations/20260831001200_preserve_trial_handover_retirement.sql
+
+do $trial_policy_backfill_runtime$
+declare
+  t public.ops_state%rowtype;
+  before_checkpoint internal.trial_policy_fixture_checkpoint%rowtype;
+  preserved_count integer;
+begin
+  select * into t from public.ops_state where entity = 'tasks';
+  select * into before_checkpoint
+  from internal.trial_policy_fixture_checkpoint where stage = 'before';
+
+  if t.version <> before_checkpoint.task_version + 1
+     or (select count(*) from public.ops_mutation_log
+         where actor = 'migration:preserve-trial-handover-retirement')
+        <> before_checkpoint.migration_log_count + 1 then
+    raise exception 'trial_policy_backfill_version_or_log_failed';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(t.payload) task
+    where task ->> 'id' in (
+      'TSK-BACKFILL-OPEN-HANDOVER',
+      'TSK-BACKFILL-TITLE-ALIAS'
+    )
+  ) then
+    raise exception 'trial_policy_backfill_open_handover_remained';
+  end if;
+
+  select count(*) into preserved_count
+  from jsonb_array_elements(t.payload) task
+  where task in (
+    '{"id":"TSK-BACKFILL-SPARSE","anchorBookingId":"LP-BACKFILL-012","title":"Sparse task without a rule","status":"upcoming"}'::jsonb,
+    '{"id":"TSK-BACKFILL-NO-ANCHOR","ruleKey":"lp.handover","title":"Unanchored handover evidence","status":"upcoming"}'::jsonb,
+    '{"id":"TSK-BACKFILL-DONE","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"done","result":"historical"}'::jsonb,
+    '{"id":"TSK-FROZEN-HANDOVER","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"upcoming","note":"ledger frozen"}'::jsonb,
+    '{"id":"TSK-BACKFILL-LEGACY","anchorBookingId":"LP-BACKFILL-012","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}}'::jsonb
+  );
+  if preserved_count <> 5 then
+    raise exception 'trial_policy_backfill_sparse_or_history_changed';
+  end if;
+
+  insert into internal.trial_policy_fixture_checkpoint(stage, task_version, migration_log_count, payload)
+  values (
+    'after',
+    t.version,
+    (select count(*) from public.ops_mutation_log
+     where actor = 'migration:preserve-trial-handover-retirement'),
+    t.payload
+  );
+end;
+$trial_policy_backfill_runtime$;
+
+\ir ../../supabase/migrations/20260831001200_preserve_trial_handover_retirement.sql
+
+do $trial_policy_idempotency_runtime$
+declare
+  t public.ops_state%rowtype;
+  after_checkpoint internal.trial_policy_fixture_checkpoint%rowtype;
+begin
+  select * into t from public.ops_state where entity = 'tasks';
+  select * into after_checkpoint
+  from internal.trial_policy_fixture_checkpoint where stage = 'after';
+  if t.version <> after_checkpoint.task_version
+     or t.payload is distinct from after_checkpoint.payload
+     or (select count(*) from public.ops_mutation_log
+         where actor = 'migration:preserve-trial-handover-retirement')
+        <> after_checkpoint.migration_log_count then
+    raise exception 'trial_policy_backfill_not_idempotent';
+  end if;
+end;
+$trial_policy_idempotency_runtime$;
 
 select 'trial_manual_lp_atomic_runtime_ok' as result;

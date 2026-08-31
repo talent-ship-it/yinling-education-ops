@@ -36,9 +36,9 @@ begin
     select coalesce(jsonb_agg(task.value order by task.ordinality), '[]'::jsonb)
     from jsonb_array_elements(p_tasks) with ordinality task(value, ordinality)
     where not (
-      task.value ->> 'anchorBookingId' = p_lp_item_id
+      coalesce(task.value ->> 'anchorBookingId', '') = p_lp_item_id
       and (
-        task.value ->> 'ruleKey' in (
+        coalesce(task.value ->> 'ruleKey', '') in (
           'trial.manual-request.scheduling-alert-36h',
           'lp.handover'
         )
@@ -191,13 +191,14 @@ begin
         where evidence.task_id = task.value ->> 'id'
       )
       and (
-        task.value ->> 'ruleKey' = 'lp.handover'
+        coalesce(task.value ->> 'ruleKey', '') = 'lp.handover'
         or btrim(coalesce(task.value ->> 'title', '')) like '试听 LP：核对交接信息%'
       )
       and exists (
         select 1
         from jsonb_array_elements(l.payload) trial_lp(value)
-        where trial_lp.value ->> 'id' = task.value ->> 'anchorBookingId'
+        where nullif(btrim(trial_lp.value ->> 'id'), '') is not null
+          and trial_lp.value ->> 'id' = coalesce(task.value ->> 'anchorBookingId', '')
           and trial_lp.value ->> 'workflowType' = '试听 LP'
       )
     )
