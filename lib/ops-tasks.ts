@@ -385,6 +385,37 @@ export type TaskTitlePresentation = Readonly<{
   details: readonly string[];
 }>;
 
+/** Fixed marker used by the retained 2026-08-27 production acceptance record. */
+export const TRIAL_ACCEPTANCE_FIXTURE_MARKER = "QA 系统验收 20260827";
+
+/**
+ * Completed acceptance rows remain immutable audit evidence, but they should
+ * not appear in the operator task board or its counters.
+ */
+export function isTrialAcceptanceFixtureTask(
+  task: Pick<OpsTask, "title">,
+  studentName?: string,
+) {
+  return task.title.includes(TRIAL_ACCEPTANCE_FIXTURE_MARKER)
+    || studentName?.trim() === TRIAL_ACCEPTANCE_FIXTURE_MARKER;
+}
+
+const LEGACY_TRIAL_TASK_HEADLINES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^试听 LP：核对交接信息/u, "试听 LP 交接"],
+  [/^发送家长试听跟进请求/u, "发送家长试听跟进请求"],
+  [/^完成试听排课/u, "试听待排课"],
+  [/^紧急审核试听 LP/u, "今日 LP 定稿"],
+  [/^审核试听 LP/u, "LP 定稿"],
+  [/^紧急确认老师备课内容与资料/u, "跟进老师备课内容"],
+  [/^确认老师备课内容与资料/u, "跟进老师备课内容"],
+  [/^完成试听前最低检查/u, "试听前检查"],
+  [/^短通知备课确认/u, "跟进老师备课内容"],
+  [/^家长未回复：再次跟进/u, "家长未回复：再次跟进"],
+  [/^家长未回复：向负责人汇报/u, "家长未回复：向负责人汇报"],
+  [/^向家长同步试听安排进度（第 1 次）/u, "向家长交待排课进度"],
+  [/^向家长同步试听安排进度（第 [2-9][0-9]* 次）/u, "二次向家长交待排课进度"],
+];
+
 /**
  * Handbook task titles use 【】 for the action and <> for context. Keep the
  * exact persisted title for audit/history, but present only that action as the
@@ -393,10 +424,15 @@ export type TaskTitlePresentation = Readonly<{
 export function taskTitlePresentation(value: string): TaskTitlePresentation {
   const title = value.trim();
   const primaryMatch = title.match(/【([^【】]+)】/u);
-  if (!primaryMatch) return { primary: title, details: [] };
   const details = [...title.matchAll(/<([^<>]+)>/gu)]
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean);
+  if (!primaryMatch) {
+    const legacyHeadline = LEGACY_TRIAL_TASK_HEADLINES.find(([pattern]) => pattern.test(title))?.[1];
+    return legacyHeadline
+      ? { primary: `【${legacyHeadline}】`, details }
+      : { primary: title, details: [] };
+  }
   return {
     primary: `【${primaryMatch[1]?.trim() ?? ""}】`,
     details,

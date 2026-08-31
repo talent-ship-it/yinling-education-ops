@@ -12,6 +12,7 @@ import {
   generateTrialBookingTasks,
   generateTrialEscalationTasks,
   generateTrialRequestTasks,
+  isTrialAcceptanceFixtureTask,
   linkTrialRequestTasksToBooking,
   OpsTask,
   reconcileTrialBookingTasks,
@@ -98,6 +99,31 @@ test("presents handbook action text as the headline and angle-bracket context as
     { primary: "【试听待排课】", details: ["Heather孙晓琳", "Daisy"] },
   );
   assert.deepEqual(taskTitlePresentation("普通内部任务"), { primary: "普通内部任务", details: [] });
+});
+
+test("presents retained legacy trial history with the current bracketed visual hierarchy", () => {
+  assert.deepEqual(
+    taskTitlePresentation("试听 LP：核对交接信息 <历史学生>"),
+    { primary: "【试听 LP 交接】", details: ["历史学生"] },
+  );
+  assert.deepEqual(taskTitlePresentation("完成试听排课"), { primary: "【试听待排课】", details: [] });
+  assert.deepEqual(taskTitlePresentation("审核试听 LP"), { primary: "【LP 定稿】", details: [] });
+  assert.deepEqual(taskTitlePresentation("紧急审核试听 LP"), { primary: "【今日 LP 定稿】", details: [] });
+  assert.deepEqual(
+    taskTitlePresentation("确认老师备课内容与资料"),
+    { primary: "【跟进老师备课内容】", details: [] },
+  );
+  assert.deepEqual(
+    taskTitlePresentation("向家长同步试听安排进度（第 2 次）"),
+    { primary: "【二次向家长交待排课进度】", details: [] },
+  );
+});
+
+test("identifies only the retained named acceptance fixture for task-board hiding", () => {
+  assert.equal(isTrialAcceptanceFixtureTask({ title: "【试听待排课】<QA 系统验收 20260827>" }), true);
+  assert.equal(isTrialAcceptanceFixtureTask({ title: "普通历史任务" }, "QA 系统验收 20260827"), true);
+  assert.equal(isTrialAcceptanceFixtureTask({ title: "普通历史任务" }, "真实学生"), false);
+  assert.equal(isTrialAcceptanceFixtureTask({ title: "QA 系统验收 20260828" }), false);
 });
 
 test("refresh preserves completed tasks and recalculates active tasks", () => {

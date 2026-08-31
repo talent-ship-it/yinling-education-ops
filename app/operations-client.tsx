@@ -111,6 +111,7 @@ import {
   closeTrialEscalationTasks,
   formatCompactTaskDeadline,
   isExecutableOpenTask,
+  isTrialAcceptanceFixtureTask,
   isTrialEscalationTaskRule,
   refreshTaskStatus,
   sortTasksByDueAt,
@@ -4854,8 +4855,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const visibleTasks = useMemo(() => {
     const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
-    return sortTasksByDueAt(scopedTasks.map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
-  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey]);
+    return sortTasksByDueAt(scopedTasks
+      .filter((task) => !isTrialAcceptanceFixtureTask(task, taskStudentNames.get(task.studentId)))
+      .map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
+  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames]);
 
   const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
     const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
