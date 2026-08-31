@@ -51,6 +51,7 @@ function render(
       onUpdateNote={() => undefined}
       onRepairDeadline={repairDeadlines ? () => undefined : undefined}
       canRepairDeadline={(candidate) => !Object.hasOwn(candidate, "ruleKey") && !Object.hasOwn(candidate, "anchorBookingId")}
+      onParentReplied={() => undefined}
       onTeacherReplied={() => undefined}
       onOpen={() => undefined}
     />,
@@ -237,6 +238,34 @@ test("shows a manual teacher-reply close action only on the 4h/8h reply chain", 
   };
   const html = render([teacherReply, task("ordinary", "LP", "today", "今天 19:00")]);
   assert.equal(html.match(/>老师已回</g)?.length, 1);
+});
+
+test("shows a parent-replied action only on executable parent follow-up chains", () => {
+  const parentRules = [
+    "trial.parent-follow-up",
+    "trial.parent-no-reply-follow-up",
+    "trial.teaching-control-escalation",
+    "trial.parent-progress-sync.1",
+  ];
+  const parentTasks = parentRules.map((ruleKey, index) => ({
+    ...task(`parent-${index}`, "试听", "today", "今天 18:00"),
+    ruleKey,
+    anchorBookingId: "LP-PARENT-REPLY",
+  }));
+  const frozenParentTask = {
+    ...parentTasks[0]!,
+    id: "parent-frozen",
+    dueAt: undefined,
+    legacyEvidence: {
+      state: "frozen" as const,
+      reason: "missing_canonical_due_at" as const,
+      frozenAt: "2026-08-20T00:00:00.000Z",
+    },
+  };
+  const html = render([...parentTasks, frozenParentTask, task("ordinary", "试听", "today", "今天 19:00")]);
+  assert.equal(html.match(/>家长已回</g)?.length, 4);
+  assert.doesNotMatch(html, /aria-label="家长已回：任务 parent-frozen"/);
+  assert.match(html, /aria-label="家长已回：任务 parent-0"/);
 });
 
 test("keeps pending scheduling editable and cancellable without a manual completion button", () => {

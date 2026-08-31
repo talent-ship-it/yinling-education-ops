@@ -86,6 +86,7 @@ function TaskRows({
   onUpdateNote,
   onRepairDeadline,
   canRepairDeadline,
+  onParentReplied,
   onTeacherReplied,
   onOpen,
   canOpen,
@@ -93,7 +94,7 @@ function TaskRows({
   deadlineTimeZone,
   deadlineTimeZoneLabel,
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -145,6 +146,15 @@ function TaskRows({
             return null;
           })()}
           <div className="task-row-actions">
+            {view === "todo" && executable && onParentReplied && (task.ruleKey === "trial.parent-follow-up"
+              || task.ruleKey === "trial.parent-no-reply-follow-up"
+              || task.ruleKey === "trial.teaching-control-escalation"
+              || task.ruleKey?.startsWith("trial.parent-progress-sync.")) ? <button
+                className="compact-button reply-button"
+                type="button"
+                aria-label={`家长已回：${title.primary}`}
+                onClick={() => onParentReplied(task)}
+              >家长已回</button> : null}
             {view === "todo" && onTeacherReplied
               && (task.ruleKey === "trial.jiaowubao.teacher-reply-4h"
                 || task.ruleKey === "trial.jiaowubao.teacher-reply-8h") ? <button
@@ -209,7 +219,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -237,6 +247,7 @@ export function ToDoList({
   onUpdateNote,
   onRepairDeadline,
   canRepairDeadline,
+  onParentReplied,
   onTeacherReplied,
   onOpen,
   canOpen,
@@ -253,7 +264,7 @@ export function ToDoList({
   const today = sortTasksByDueAt(actionable.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">
