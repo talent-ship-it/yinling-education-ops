@@ -1695,8 +1695,8 @@ export function completeJiaowubaoOpenApiScheduleSnapshot(input: { runId: string;
 }
 
 /**
- * Persists normalized authority entities and provenance-safe native matches
- * for one exact completed Open API snapshot. It never overwrites native rows.
+ * Projects one exact completed Open API snapshot, atomically synchronizes its
+ * native students/teachers/courses/bookings, and verifies the post-write match.
  */
 export function projectJiaowubaoOpenApiAuthority(input: {
   revision: string;
@@ -1707,7 +1707,7 @@ export function projectJiaowubaoOpenApiAuthority(input: {
     p_secret: secret,
     p_revision: input.revision,
     p_actor: input.actor,
-  }, { timeoutMs: 120_000 });
+  }, { timeoutMs: 260_000 });
 }
 
 export function getJiaowubaoOpenApiScheduleSnapshotStatus(input: { runId: string; actor: "Ops Admin" }) {
