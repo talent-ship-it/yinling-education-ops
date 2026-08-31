@@ -7,6 +7,7 @@ import {
   closeTasksForBooking,
   DEFAULT_TEACHING_CONTROL_WATCHER,
   deterministicTaskId,
+  formatCompactTaskDeadline,
   formatTaskDeadline,
   generateTrialBookingTasks,
   generateTrialEscalationTasks,
@@ -19,6 +20,7 @@ import {
   RuleBoundTask,
   sortTasksByDueAt,
   statusForDueAt,
+  taskTitlePresentation,
   TASK_SPACING_MS,
   TaskCategory,
   TRIAL_MANAGED_TASK_RULES,
@@ -82,6 +84,20 @@ test("formats the canonical task deadline as an exact Melbourne date and time", 
   );
   assert.equal(formatTaskDeadline("not-a-deadline"), undefined);
   assert.equal(formatTaskDeadline(undefined), undefined);
+});
+
+test("formats a compact task-list deadline without year or time", () => {
+  assert.equal(formatCompactTaskDeadline("2026-08-19T08:00:00.000Z"), "8月19日");
+  assert.equal(formatCompactTaskDeadline("2026-08-19T14:30:00.000Z", "Asia/Shanghai"), "8月19日");
+  assert.equal(formatCompactTaskDeadline("not-a-deadline"), undefined);
+});
+
+test("presents handbook action text as the headline and angle-bracket context as details", () => {
+  assert.deepEqual(
+    taskTitlePresentation("《教务+教统》【试听待排课】<Heather孙晓琳> <Daisy>"),
+    { primary: "【试听待排课】", details: ["Heather孙晓琳", "Daisy"] },
+  );
+  assert.deepEqual(taskTitlePresentation("普通内部任务"), { primary: "普通内部任务", details: [] });
 });
 
 test("refresh preserves completed tasks and recalculates active tasks", () => {

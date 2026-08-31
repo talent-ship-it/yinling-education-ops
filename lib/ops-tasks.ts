@@ -368,6 +368,41 @@ export function formatTaskDeadline(
   return `${year}年${month}月${day}日 ${timeLabel}`;
 }
 
+/** Compact operator-facing deadline; the canonical instant remains in dateTime. */
+export function formatCompactTaskDeadline(
+  dueAt: string | undefined,
+  timeZone = MELBOURNE_TIME_ZONE,
+) {
+  if (!isCanonicalTaskDueAt(dueAt)) return undefined;
+  const instant = new Date(dueAt);
+  if (!Number.isFinite(instant.getTime())) return undefined;
+  const { month, day } = localParts(instant, timeZone);
+  return `${month}月${day}日`;
+}
+
+export type TaskTitlePresentation = Readonly<{
+  primary: string;
+  details: readonly string[];
+}>;
+
+/**
+ * Handbook task titles use 【】 for the action and <> for context. Keep the
+ * exact persisted title for audit/history, but present only that action as the
+ * visual headline and demote names/times to supporting text.
+ */
+export function taskTitlePresentation(value: string): TaskTitlePresentation {
+  const title = value.trim();
+  const primaryMatch = title.match(/【([^【】]+)】/u);
+  if (!primaryMatch) return { primary: title, details: [] };
+  const details = [...title.matchAll(/<([^<>]+)>/gu)]
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean);
+  return {
+    primary: `【${primaryMatch[1]?.trim() ?? ""}】`,
+    details,
+  };
+}
+
 export function statusForDueAt(
   dueAt: Date | string,
   now: Date | string,

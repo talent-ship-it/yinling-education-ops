@@ -3,7 +3,7 @@
 import React from "react";
 import { ChevronDown, ChevronUp, Pencil, RotateCcw, X } from "lucide-react";
 
-import { formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt } from "../lib/ops-tasks";
+import { formatCompactTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
 export type ToDoFilter = (typeof TO_DO_FILTERS)[number];
@@ -80,16 +80,14 @@ function TaskRows({
   onCannotDo,
   onReopen,
   onUpdateNote,
-  onParentReplied,
   onTeacherReplied,
   onOpen,
   canOpen,
   canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
-  deadlineTimeFormat,
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -107,19 +105,26 @@ function TaskRows({
       {tasks.map((task) => {
         const editing = editor?.taskId === task.id ? editor : null;
         const displayTitle = taskTitle?.(task) ?? task.title;
+        const title = taskTitlePresentation(displayTitle);
+        const supportingCopy = title.details.length === 0 || task.completionNote
+          ? `${title.details.length === 0 ? studentName(task.studentId) ?? "未关联学生" : ""}${task.completionNote ? `${title.details.length === 0 ? " · " : ""}${task.completionNote}` : ""}`
+          : "";
+        const copy = <>
+          <strong>{title.primary}</strong>
+          {title.details.length > 0 ? <small className="task-title-details">{title.details.join(" · ")}</small> : null}
+          {supportingCopy ? <span>{supportingCopy}</span> : null}
+        </>;
         return <div className={`task-row to-do-row ${task.status} ${task.completionOutcome ?? ""}`} role="listitem" key={task.id}>
           <span className={`task-dot ${task.tone}`} aria-hidden="true" />
           {canOpen?.(task) === false
             ? <span className="task-copy task-copy-static">
-                <strong>{displayTitle}</strong>
-                <span>{studentName(task.studentId) ?? "未关联学生"}{task.completionNote ? ` · ${task.completionNote}` : ""}</span>
+                {copy}
               </span>
             : <button className="task-copy" type="button" onClick={() => onOpen(task)}>
-                <strong>{displayTitle}</strong>
-                <span>{studentName(task.studentId) ?? "未关联学生"}{task.completionNote ? ` · ${task.completionNote}` : ""}</span>
+                {copy}
               </button>}
           {(() => {
-            const deadline = formatTaskDeadline(task.dueAt, deadlineTimeZone, deadlineTimeFormat);
+            const deadline = formatCompactTaskDeadline(task.dueAt, deadlineTimeZone);
             if (deadline && task.dueAt) return <time
               className={`due-label ${task.status}`}
               dateTime={task.dueAt}
@@ -128,14 +133,6 @@ function TaskRows({
             return null;
           })()}
           <div className="task-row-actions">
-            {view === "todo" && onParentReplied && (task.ruleKey === "trial.parent-follow-up"
-              || task.ruleKey === "trial.parent-no-reply-follow-up"
-              || task.ruleKey === "trial.teaching-control-escalation"
-              || task.ruleKey?.startsWith("trial.parent-progress-sync.")) ? <button
-                className="compact-button reply-button"
-                type="button"
-                onClick={() => onParentReplied(task)}
-              >家长已回</button> : null}
             {view === "todo" && onTeacherReplied
               && (task.ruleKey === "trial.jiaowubao.teacher-reply-4h"
                 || task.ruleKey === "trial.jiaowubao.teacher-reply-8h") ? <button
@@ -147,7 +144,7 @@ function TaskRows({
               className="task-note-button"
               type="button"
               title="编辑任务备注"
-              aria-label={`编辑备注：${displayTitle}`}
+              aria-label={`编辑备注：${title.primary}`}
               onClick={() => setEditor({ taskId: task.id, mode: "note", value: task.completionNote ?? "" })}
             ><Pencil size={14} /></button>
             {view === "todo" ? <>
@@ -155,21 +152,21 @@ function TaskRows({
                 className="cannot-do-button"
                 type="button"
                 title="无法完成"
-                aria-label={`无法完成：${displayTitle}`}
+                aria-label={`无法完成：${title.primary}`}
                 onClick={() => setEditor({ taskId: task.id, mode: "cannot", value: "" })}
               ><X size={15} /></button>
               {task.ruleKey !== "trial.scheduling" ? <button
                 className="complete-button"
                 type="button"
                 title="标记完成"
-                aria-label={`完成：${displayTitle}`}
+                aria-label={`完成：${title.primary}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button> : null}
             </> : canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"
-              aria-label={`恢复到待办：${displayTitle}`}
+              aria-label={`恢复到待办：${title.primary}`}
               onClick={() => onReopen(task.id)}
             ><RotateCcw size={14} /><span>恢复</span></button> : null}
           </div>
@@ -196,7 +193,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -222,14 +219,12 @@ export function ToDoList({
   onCannotDo,
   onReopen,
   onUpdateNote,
-  onParentReplied,
   onTeacherReplied,
   onOpen,
   canOpen,
   canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
-  deadlineTimeFormat = "24h",
   taskTitle,
 }: ToDoListProps) {
   const [expanded, setExpanded] = React.useState(true);
@@ -238,7 +233,7 @@ export function ToDoList({
   const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
   const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">

@@ -5104,6 +5104,7 @@ body { background:var(--canvas); font-size:14px; line-height:1.45; }
 .task-state-tabs { flex:0 0 auto; }
 .task-state-tabs button { gap:5px; }
 .task-state-tabs button strong { align-items:center; background:rgba(23,109,99,.1); border-radius:999px; display:inline-flex; font-size:9px; justify-content:center; min-width:19px; padding:1px 5px; }
+.task-copy .task-title-details { color:#64766d; font-size:10px; font-weight:600; letter-spacing:.01em; line-height:1.45; }
 .task-note-button,.cannot-do-button,.reopen-task-button { align-items:center; background:#fff; border:1px solid #d8e1db; border-radius:50%; color:#6f7e75; cursor:pointer; display:inline-flex; height:32px; justify-content:center; width:32px; }
 .task-note-button:hover { background:#eef7f4; border-color:#9ac9bf; color:#176d63; }
 .cannot-do-button:hover { background:#fff2f1; border-color:#efb4ae; color:#b63c32; }

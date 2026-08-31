@@ -109,12 +109,13 @@ import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
   closeTrialEscalationTasks,
-  formatTaskDeadline,
+  formatCompactTaskDeadline,
   isExecutableOpenTask,
   isTrialEscalationTaskRule,
   refreshTaskStatus,
   sortTasksByDueAt,
   statusForDueAt,
+  taskTitlePresentation,
   type OpsTask,
   type TaskCategory,
   type TaskStatus,
@@ -13994,7 +13995,10 @@ function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals
     {student.notes ? <div className="detail-section"><span>特殊备注</span><strong>{student.notes}</strong></div> : null}
     {canEditStatus && <div className="student-detail-actions"><button className="secondary-button" type="button" onClick={onEdit}><UserCog size={15} /> 编辑档案</button><button className="secondary-button" type="button" onClick={onEvidence}><FilePlus2 size={15} /> 上传沟通/反馈</button></div>}
     {canEditStatus ? <label className="status-select">{english ? "Student status" : "学生状态"}<select value={student.status} onChange={(event) => onStatus(event.target.value as Student["status"])}>{["在读", "不活跃 + 无课时", "活跃 + 无课时", "活跃 + 有课时", "不活跃 + 有课时", "在读 + 加课待排"].map((status) => <option value={status} key={status}>{displayTerm(status, preferences.language)}</option>)}</select></label> : <div className="detail-section"><span>{english ? "Student status" : "学生状态"}</span><strong>{displayTerm(student.status, preferences.language)}</strong></div>}
-    {(studentTasks.length > 0 || nextBooking) ? <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong>{studentTasks.length > 0 ? <small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small> : null}</div>{studentTasks.slice(0, 3).map((task) => <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{taskTitle(task)}</strong><small><time dateTime={task.dueAt}>{formatTaskDeadline(task.dueAt, taskDeadlineTimeZone, preferences.timeFormat)}</time></small></span></div>)}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div> : null}
+    {(studentTasks.length > 0 || nextBooking) ? <div className="timeline"><div className="timeline-title"><strong>{english ? "Next steps and timeline" : "下一步与时间线"}</strong>{studentTasks.length > 0 ? <small>{studentTasks.length} {english ? "open tasks" : "项待办"}</small> : null}</div>{studentTasks.slice(0, 3).map((task) => {
+      const title = taskTitlePresentation(taskTitle(task));
+      return <div className="timeline-item" key={task.id}><i className={task.tone} /><span><strong>{title.primary}</strong>{title.details.length > 0 ? <small>{title.details.join(" · ")}</small> : null}<small><time dateTime={task.dueAt}>{formatCompactTaskDeadline(task.dueAt, taskDeadlineTimeZone)}</time></small></span></div>;
+    })}{nextBooking && <div className="timeline-item"><i className="green" /><span><strong>{english ? "Next lesson" : "下一节"}: {formatInstant(bookingInstant(nextBooking), student.timezone, preferences)}</strong><small>{teacherById(nextBooking.teacherId)?.name} · {displayTerm(nextBooking.kind, preferences.language)}</small></span></div>}</div> : null}
     {!readOnly && <button className="primary-button full" type="button" onClick={onSchedule}><CalendarPlus size={16} /> {english ? "Schedule a lesson for this student" : "为此学生安排课程"}</button>}
   </aside>;
 }
