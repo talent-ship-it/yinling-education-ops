@@ -91,10 +91,15 @@ insert into public.ops_state(entity, payload, version, updated_by) values
   ('tasks', '[{"id":"TSK-LEGACY-SPARSE","title":"Historical task without canonical metadata","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}},{"id":"TSK-LEGACY-MATCH","title":"Frozen legacy rule for the deterministic LP anchor","owner":"Archive","studentId":"STU-HISTORICAL","status":"today","ruleKey":"trial.parent-follow-up","anchorBookingId":"LP-ATOMIC-a8f78ee5b2f178415038e032","legacyEvidence":{"state":"frozen","reason":"missing_canonical_due_at","frozenAt":"2026-08-19T00:00:00.000Z"}}]', 1, 'fixture'),
   ('files', '[]', 1, 'fixture');
 insert into internal.legacy_task_deadline_freezes(task_id)
-values ('TSK-LEGACY-SPARSE'), ('TSK-LEGACY-MATCH');
+values
+  ('TSK-LEGACY-SPARSE'),
+  ('TSK-LEGACY-MATCH'),
+  ('TSK-FROZEN-HANDOVER');
 
 \ir ../../supabase/migrations/20260831000100_trial_scheduling_policy.sql
+\ir ../../supabase/migrations/20260831000300_trial_handover_task_retirement.sql
 \ir ../../supabase/migrations/20260831001100_restore_trial_scheduling_feedback_chain.sql
+\ir ../../supabase/migrations/20260831001200_preserve_trial_handover_retirement.sql
 
 do $trial_manual_runtime$
 declare
@@ -136,6 +141,7 @@ declare
   lookup record;
   lp jsonb;
   rules text[];
+  completed_only_projection jsonb;
   caught_state text;
   caught_message text;
 begin
@@ -173,7 +179,6 @@ begin
   where task ->> 'anchorBookingId' = receipt.lp_item_id
     and not (task ? 'legacyEvidence');
   if rules is distinct from array[
-    'lp.handover',
     'trial.manual-request.paper-receive',
     'trial.manual-request.paper-send',
     'trial.manual-request.parent-progress-24h',
@@ -184,6 +189,42 @@ begin
     'trial.scheduling'
   ] then
     raise exception 'trial_manual_rule_projection_failed: %', rules;
+  end if;
+
+  completed_only_projection := internal.trial_scheduling_policy_tasks(
+    '[
+      {"id":"TSK-DONE-TEMPLATE","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"trial.manual-request.parent-progress-24h","status":"done","dueAt":"2099-08-29T02:00:00.000Z"},
+      {"id":"TSK-OPEN-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming"},
+      {"id":"TSK-DONE-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"done"},
+      {"id":"TSK-FROZEN-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming"},
+      {"id":"TSK-LEGACY-HANDOVER","anchorBookingId":"LP-COMPLETED-TEMPLATE","ruleKey":"lp.handover","status":"upcoming","legacyEvidence":{"state":"frozen"}}
+    ]'::jsonb,
+    'LP-COMPLETED-TEMPLATE'
+  );
+  if exists (
+    select 1 from jsonb_array_elements(completed_only_projection) task
+    where task ->> 'id' = 'TSK-OPEN-HANDOVER'
+  ) then
+    raise exception 'trial_open_handover_not_retired';
+  end if;
+  if (select count(*) from jsonb_array_elements(completed_only_projection) task
+      where task ->> 'id' in (
+        'TSK-DONE-TEMPLATE',
+        'TSK-DONE-HANDOVER',
+        'TSK-FROZEN-HANDOVER',
+        'TSK-LEGACY-HANDOVER'
+      )) <> 4 then
+    raise exception 'trial_historical_handover_changed';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(completed_only_projection) task
+    where task ->> 'ruleKey' in (
+      'trial.scheduling',
+      'trial.manual-request.parent-progress-48h',
+      'trial.manual-request.scheduling-anomaly-72h'
+    )
+  ) then
+    raise exception 'trial_completed_template_reopened_chain';
   end if;
   if exists (
     select 1
