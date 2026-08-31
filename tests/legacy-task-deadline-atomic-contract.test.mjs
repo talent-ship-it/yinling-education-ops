@@ -11,9 +11,10 @@ function sqlFunction(sql, signature) {
   return sql.slice(start, end);
 }
 
-test("legacy deadline route accepts a closed command, reauthorizes before replay, and writes through one atomic RPC", async () => {
-  const [route, service, store, client, toDoList] = await Promise.all([
+test("legacy deadline route reauthorizes before replay and gates clear before one atomic RPC", async () => {
+  const [route, executor, service, store, client, toDoList] = await Promise.all([
     readFile(new URL("../app/api/tasks/legacy-deadline/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/legacy-task-deadline-executor.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/legacy-task-deadline-service.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/ops-store.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8"),
@@ -23,15 +24,19 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.match(route, /const MAX_REQUEST_BYTES = 1_024/);
   assert.match(route, /parseLegacyTaskDeadlineCommand/);
   assert.match(route, /getOpsState\(\["students", "tasks"\]\)/);
-  assert.ok(route.indexOf("authorizeLegacyTaskDeadlineCommand({") < route.indexOf("getLegacyTaskDeadlineCommandResult({"));
-  const replayLookup = route.indexOf("getLegacyTaskDeadlineCommandResult({");
-  const clearWriteGate = route.indexOf("assertLegacyTaskDeadlineSetCommand(command)", replayLookup);
-  const prepare = route.indexOf("prepareLegacyTaskDeadline({", clearWriteGate);
-  const mutation = route.indexOf("mutateLegacyTaskDeadlineAtomic({", prepare);
+  assert.match(route, /executeLegacyTaskDeadlineCommand\(\{/);
+  assert.match(route, /getReplay: getLegacyTaskDeadlineCommandResult/);
+  assert.match(route, /mutate: mutateLegacyTaskDeadlineAtomic/);
+  const authorization = executor.indexOf("authorizeLegacyTaskDeadlineCommand(input)");
+  const replayLookup = executor.indexOf("input.getReplay({", authorization);
+  const clearWriteGate = executor.indexOf("assertLegacyTaskDeadlineSetCommand(input.command)", replayLookup);
+  const prepare = executor.indexOf("prepareLegacyTaskDeadline({", clearWriteGate);
+  const mutation = executor.indexOf("input.mutate({", prepare);
+  assert.ok(authorization >= 0 && replayLookup > authorization, "fresh authorization must precede replay");
   assert.ok(replayLookup >= 0 && clearWriteGate > replayLookup, "historical clear receipts must replay before the write gate");
   assert.ok(prepare > clearWriteGate && mutation > prepare, "new clear commands must stop before preparation and mutation");
   assert.match(route, /legacyTaskDeadlineHttpError\(error\)/);
-  assert.match(route, /mutateLegacyTaskDeadlineAtomic\(\{[\s\S]*commandKey: prepared\.commandKey[\s\S]*commandIntent: prepared\.commandIntent[\s\S]*expectedVersions: prepared\.expectedVersions[\s\S]*actor:/);
+  assert.match(executor, /input\.mutate\(\{[\s\S]*commandKey: prepared\.commandKey[\s\S]*commandIntent: prepared\.commandIntent[\s\S]*expectedVersions: prepared\.expectedVersions[\s\S]*actor:/);
   assert.doesNotMatch(route, /putOpsState|addAudit|p_due_at|p_tasks|p_students/);
   assert.doesNotMatch(route, /const unchanged =|if \(unchanged\)/);
   assert.match(route, /Cache-Control": "private, no-store"/);

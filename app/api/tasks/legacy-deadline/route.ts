@@ -14,14 +14,11 @@ import {
   type OpsStateRow,
 } from "@/lib/ops-store";
 import {
-  assertLegacyTaskDeadlineSetCommand,
-  authorizeLegacyTaskDeadlineCommand,
-  legacyTaskDeadlineIntent,
   parseLegacyTaskDeadlineCommand,
-  prepareLegacyTaskDeadline,
   hasLegacyTaskDeadlineAdminAccess,
   LegacyTaskDeadlineServiceError,
 } from "@/lib/legacy-task-deadline-service";
+import { executeLegacyTaskDeadlineCommand } from "@/lib/legacy-task-deadline-executor";
 import { legacyTaskDeadlineHttpError } from "@/lib/legacy-task-deadline-http";
 
 export const dynamic = "force-dynamic";
@@ -133,61 +130,39 @@ export async function POST(request: Request) {
     }
     const command = parseLegacyTaskDeadlineCommand(input);
     const rows = await getOpsState(["students", "tasks"]);
-    // This fresh authorization also runs before a replay response. A prior
-    // receipt never revives access to a now-archived or rule-managed task.
-    authorizeLegacyTaskDeadlineCommand({
+    const execution = await executeLegacyTaskDeadlineCommand({
       command,
       rows,
       actor: access.session.actor,
       role: access.session.role,
       fullAdmin: access.session.fullAdmin,
+      getReplay: getLegacyTaskDeadlineCommandResult,
+      mutate: mutateLegacyTaskDeadlineAtomic,
     });
-    const commandIntent = legacyTaskDeadlineIntent(command);
-    const replay = await getLegacyTaskDeadlineCommandResult({
-      commandKey: command.commandKey,
-      commandIntent,
-      actor: access.session.actor,
-    });
-    if (replay[0]) {
+    if (execution.kind === "replay") {
+      const replay = execution.result;
       return noStore({
         committed: true,
         applied: false,
-        ...(replay[0].applied ? {} : { unchanged: true }),
-        action: replay[0].action,
-        taskId: replay[0].task_id,
-        dueAt: replay[0].due_at,
+        ...(replay.applied ? {} : { unchanged: true }),
+        action: replay.action,
+        taskId: replay.task_id,
+        dueAt: replay.due_at,
         taskRow: taskRow(rows),
-        auditEntryId: replay[0].audit_entry_id,
+        auditEntryId: replay.audit_entry_id,
       });
     }
-
-    // A historical clear may replay its immutable receipt above. A new clear
-    // stops here and can never reach the mutation RPC.
-    assertLegacyTaskDeadlineSetCommand(command);
-
-    const prepared = prepareLegacyTaskDeadline({
-      command,
-      rows,
-      actor: access.session.actor,
-      role: access.session.role,
-      fullAdmin: access.session.fullAdmin,
-    });
-    const saved = await mutateLegacyTaskDeadlineAtomic({
-      commandKey: prepared.commandKey,
-      commandIntent: prepared.commandIntent,
-      expectedVersions: prepared.expectedVersions,
-      actor: access.session.actor,
-    });
-    if (!saved[0]) throw new OpsStoreError("历史任务截止时间原子命令没有返回结果。", "invalid_commit_result");
+    const saved = execution.result;
+    if (!saved) throw new OpsStoreError("历史任务截止时间原子命令没有返回结果。", "invalid_commit_result");
     return noStore({
       committed: true,
-      applied: saved[0].applied,
-      ...(!saved[0].applied ? { unchanged: true } : {}),
-      action: saved[0].action,
-      taskId: saved[0].task_id,
-      dueAt: saved[0].due_at,
-      taskRow: saved[0].task_row,
-      auditEntryId: saved[0].audit_entry_id,
+      applied: saved.applied,
+      ...(!saved.applied ? { unchanged: true } : {}),
+      action: saved.action,
+      taskId: saved.task_id,
+      dueAt: saved.due_at,
+      taskRow: saved.task_row,
+      auditEntryId: saved.audit_entry_id,
     });
   } catch (error) {
     if (error instanceof LegacyTaskDeadlineRequestTooLargeError) {

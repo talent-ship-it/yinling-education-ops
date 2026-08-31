@@ -44,13 +44,24 @@ export type LegacyTaskDeadlineCommand =
   | LegacyTaskDeadlineSetCommand
   | LegacyTaskDeadlineClearReplayCommand;
 
+export type LegacyTaskDeadlineSetIntent = Readonly<{
+  action: "set";
+  taskId: string;
+  melbourneDateTime: string;
+}>;
+
+export type LegacyTaskDeadlineClearReplayIntent = Readonly<{
+  action: "clear";
+  taskId: string;
+}>;
+
 export type LegacyTaskDeadlineIntent =
-  | Readonly<{ action: "set"; taskId: string; melbourneDateTime: string }>
-  | Readonly<{ action: "clear"; taskId: string }>;
+  | LegacyTaskDeadlineSetIntent
+  | LegacyTaskDeadlineClearReplayIntent;
 
 export type PreparedLegacyTaskDeadline = Readonly<{
   commandKey: string;
-  commandIntent: LegacyTaskDeadlineIntent;
+  commandIntent: LegacyTaskDeadlineSetIntent;
   action: "set";
   taskId: string;
   melbourneDateTime: string;
@@ -227,6 +238,9 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
   };
 }
 
+export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineSetCommand): LegacyTaskDeadlineSetIntent;
+export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineClearReplayCommand): LegacyTaskDeadlineClearReplayIntent;
+export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineCommand): LegacyTaskDeadlineIntent;
 export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineCommand): LegacyTaskDeadlineIntent {
   if (command.action === "clear") {
     return { action: "clear", taskId: command.taskId };
