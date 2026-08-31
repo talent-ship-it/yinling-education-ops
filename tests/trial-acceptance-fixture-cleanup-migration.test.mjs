@@ -14,11 +14,18 @@ test("acceptance fixture cleanup targets only the two named synthetic markers", 
   assert.match(migration, /task\.value ->> 'anchorBookingId'/);
 });
 
-test("acceptance fixture cleanup updates the three affected state rows atomically", () => {
+test("acceptance fixture cleanup preserves completed and frozen QA history", () => {
+  assert.match(migration, /coalesce\(task\.value ->> 'status', ''\) <> 'done'/);
+  assert.match(migration, /not \(task\.value \? 'legacyEvidence'\)/);
+  assert.match(migration, /internal\.legacy_task_deadline_freezes/);
+  assert.doesNotMatch(migration, /set payload = next_s/);
+});
+
+test("acceptance fixture cleanup atomically removes only the new LP and open tasks", () => {
   assert.match(migration, /entity = 'students' for update/);
   assert.match(migration, /entity = 'lpItems' for update/);
   assert.match(migration, /entity = 'tasks' for update/);
-  for (const entity of ["students", "lpItems", "tasks"]) {
+  for (const entity of ["lpItems", "tasks"]) {
     assert.match(migration, new RegExp(`values \\('${entity}', saved\\.version, saved\\.updated_by\\)`));
   }
 });

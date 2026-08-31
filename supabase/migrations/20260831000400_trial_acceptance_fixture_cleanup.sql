@@ -1,6 +1,8 @@
 -- Remove only the named synthetic acceptance fixtures used during the trial
--- workflow rollout.  Unlike operational cleanup, this intentionally removes
--- their completed task rows as well: they are QA data, not business evidence.
+-- workflow rollout.  Completed and frozen rows remain immutable evidence;
+-- the old QA student/LP therefore stay as history while their open reminders
+-- are retired.  The newly-created E2E LP has no completed history and can be
+-- removed in full.
 
 do $migration$
 declare
@@ -9,8 +11,8 @@ declare
   t public.ops_state%rowtype;
   saved public.ops_state%rowtype;
   qa_student_ids text[];
-  qa_lp_ids text[];
-  next_s jsonb;
+  qa_historical_lp_ids text[];
+  e2e_lp_ids text[];
   next_l jsonb;
   next_t jsonb;
 begin
@@ -30,42 +32,38 @@ begin
   where student.value ->> 'name' = 'QA 系统验收 20260827';
 
   select coalesce(array_agg(lp.value ->> 'id'), array[]::text[])
-  into qa_lp_ids
+  into qa_historical_lp_ids
   from jsonb_array_elements(l.payload) lp(value)
-  where lp.value ->> 'studentId' = any(qa_student_ids)
-     or lp.value #>> '{fields,specialNotes}' = 'E2E-QA-NO-FOLLOWUP-20260831-02';
+  where lp.value ->> 'studentId' = any(qa_student_ids);
 
-  next_s := (
-    select coalesce(jsonb_agg(student.value order by student.ordinality), '[]'::jsonb)
-    from jsonb_array_elements(s.payload) with ordinality student(value, ordinality)
-    where not ((student.value ->> 'id') = any(qa_student_ids))
-  );
+  select coalesce(array_agg(lp.value ->> 'id'), array[]::text[])
+  into e2e_lp_ids
+  from jsonb_array_elements(l.payload) lp(value)
+  where lp.value #>> '{fields,specialNotes}' = 'E2E-QA-NO-FOLLOWUP-20260831-02';
+
   next_l := (
     select coalesce(jsonb_agg(lp.value order by lp.ordinality), '[]'::jsonb)
     from jsonb_array_elements(l.payload) with ordinality lp(value, ordinality)
-    where not ((lp.value ->> 'id') = any(qa_lp_ids))
+    where not ((lp.value ->> 'id') = any(e2e_lp_ids))
   );
   next_t := (
     select coalesce(jsonb_agg(task.value order by task.ordinality), '[]'::jsonb)
     from jsonb_array_elements(t.payload) with ordinality task(value, ordinality)
     where not (
-      (task.value ->> 'studentId') = any(qa_student_ids)
-      or (task.value ->> 'anchorBookingId') = any(qa_lp_ids)
-      or btrim(coalesce(task.value ->> 'title', '')) like '%QA 系统验收 20260827%'
+      (
+        (task.value ->> 'studentId') = any(qa_student_ids)
+        or (task.value ->> 'anchorBookingId') = any(qa_historical_lp_ids || e2e_lp_ids)
+        or btrim(coalesce(task.value ->> 'title', '')) like '%QA 系统验收 20260827%'
+      )
+      and coalesce(task.value ->> 'status', '') <> 'done'
+      and not (task.value ? 'legacyEvidence')
+      and not exists (
+        select 1
+        from internal.legacy_task_deadline_freezes evidence
+        where evidence.task_id = task.value ->> 'id'
+      )
     )
   );
-
-  if next_s is distinct from s.payload then
-    update public.ops_state
-    set payload = next_s,
-        version = s.version + 1,
-        updated_at = now(),
-        updated_by = 'migration:trial-acceptance-fixture-cleanup'
-    where entity = 'students'
-    returning * into saved;
-    insert into public.ops_mutation_log(entity, version, actor)
-    values ('students', saved.version, saved.updated_by);
-  end if;
 
   if next_l is distinct from l.payload then
     update public.ops_state
