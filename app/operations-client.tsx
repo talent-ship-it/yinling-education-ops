@@ -8073,10 +8073,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return options.length ? <select className="lp-result-select" value={value} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}>{value ? null : <option value="">业务结果</option>}{options.map((status) => <option value={status} key={status}>{status}</option>)}</select> : null;
     };
     const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType === "试听 LP" || item.workflowType === "换老师试听");
-    const clearTrialLedgerDraft = (key: string) => setTrialLedgerDrafts((current) => {
-      if (!Object.hasOwn(current, key)) return current;
+    const clearTrialLedgerDraft = (...keys: string[]) => setTrialLedgerDrafts((current) => {
+      if (!keys.some((key) => Object.hasOwn(current, key))) return current;
       const next = { ...current };
-      delete next[key];
+      for (const key of keys) delete next[key];
       return next;
     });
     const saveTrialLedgerDraft = async (
@@ -8170,6 +8170,59 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <span className="ledger-cell-meta"><small>{busy ? "保存中…" : stored === undefined ? "自动填充" : "手动值"}</small></span>
       </div>;
     };
+    const ledgerSchedulePartCell = (input: {
+      item: LpItem;
+      automaticValue: string;
+      part: "date" | "time";
+      label: string;
+      sourceLabel: string;
+    }) => {
+      const stored = trialLedgerStoredValue(input.item, "scheduledAt");
+      const effectiveValue = String(stored ?? input.automaticValue ?? "");
+      const localValue = effectiveValue
+        ? dateTimeValueInTimezone(new Date(effectiveValue), "Australia/Melbourne")
+        : "";
+      const [automaticDate = "", automaticTime = ""] = localValue.split("T");
+      const dateKey = `${input.item.id}:scheduledAt:date`;
+      const timeKey = `${input.item.id}:scheduledAt:time`;
+      const key = input.part === "date" ? dateKey : timeKey;
+      const automaticPart = input.part === "date" ? automaticDate : automaticTime;
+      const busy = trialLedgerSaving[`${input.item.id}:scheduledAt`] === true;
+      const manual = stored !== undefined;
+      const savePart = (rawValue: string) => {
+        const date = input.part === "date"
+          ? rawValue
+          : trialLedgerDrafts[dateKey] ?? automaticDate;
+        const time = input.part === "time"
+          ? rawValue
+          : trialLedgerDrafts[timeKey] ?? automaticTime;
+        if (!date || !time) return;
+        const value = zonedDateTimeToUtc(date, time, "Australia/Melbourne").toISOString();
+        void saveTrialLedgerFieldAtomic(input.item, "scheduledAt", value)
+          .then(() => clearTrialLedgerDraft(dateKey, timeKey))
+          .catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败"));
+      };
+      return <div className={`ledger-edit-cell ${manual ? "manual" : "automatic"}`}>
+        <input
+          aria-label={input.label}
+          className="ledger-cell-input"
+          disabled={busy}
+          step={input.part === "time" ? 60 : undefined}
+          type={input.part}
+          value={trialLedgerDrafts[key] ?? automaticPart}
+          onChange={(event) => setTrialLedgerDrafts((current) => ({ ...current, [key]: event.target.value }))}
+          onBlur={(event) => savePart(event.target.value)}
+        />
+        <span className="ledger-cell-meta">
+          <small>{busy ? "保存中…" : manual ? "手动值" : input.sourceLabel}</small>
+          {manual && input.part === "time" && <button type="button" disabled={busy} onClick={() => {
+            void saveTrialLedgerFieldAtomic(input.item, "scheduledAt", undefined)
+              .then(() => clearTrialLedgerDraft(dateKey, timeKey))
+              .catch((error: unknown) => notify(error instanceof Error ? error.message : "恢复自动值失败"));
+          }}>恢复自动</button>}
+        </span>
+      </div>;
+    };
     const trialIntakeDetails = (item: LpItem) => item.workflowType === "试听 LP" ? <details className="trial-intake-details">
       <summary>查看试听交接详情</summary>
       <LpWorkflowDetails type="试听 LP" fields={item.fields ?? {}} />
@@ -8194,7 +8247,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         {trialLedgerItems.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
             <caption className="visually-hidden">试听 LP 销售复盘台账；自动值可逐列人工修正并恢复</caption>
-            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期和时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">试听状态</th><th scope="col">是否付费</th><th scope="col">备注</th></tr></thead>
+            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">试听状态</th><th scope="col">是否付费</th><th scope="col">备注</th></tr></thead>
             <tbody>{trialLedgerItems.map((item) => {
               const student = studentById(item.studentId);
               const liveMatch = trialScheduleMatchByLpId.get(item.id);
@@ -8223,7 +8276,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{ledgerSelectCell({ item, field: "workflowType", automaticValue: item.workflowType ?? "试听 LP", label: `${automaticStudentName || item.id} LP 类型`, options: TRIAL_LEDGER_WORKFLOW_TYPES })}</td>
                 <td>{ledgerTextCell({ item, field: "lessonMonth", automaticValue: automaticLessonMonth, label: `${automaticStudentName || item.id} 上课月份`, type: "month", placeholder: "待排课", sourceLabel: "按墨尔本排课自动生成" })}</td>
                 <td>{ledgerTextCell({ item, field: "requestedAt", automaticValue: requestAt ?? "", label: `${automaticStudentName || item.id} 请求日期和时间`, type: "datetime-local", timezone: displayPreferences.timezone, placeholder: "待填写" })}</td>
-                <td>{ledgerTextCell({ item, field: "scheduledAt", automaticValue: automaticScheduledAt, label: `${automaticStudentName || item.id} 上课日期和时间（墨尔本）`, type: "datetime-local", timezone: "Australia/Melbourne", placeholder: "等待教务宝匹配", sourceLabel: schedule?.source === "jiaowubao-open-api" ? "教务宝真实数据" : "自动填充" })}</td>
+                <td>{ledgerSchedulePartCell({ item, automaticValue: automaticScheduledAt, part: "date", label: `${automaticStudentName || item.id} 上课日期`, sourceLabel: schedule?.source === "jiaowubao-open-api" ? "教务宝真实数据" : "等待排课" })}</td>
+                <td>{ledgerSchedulePartCell({ item, automaticValue: automaticScheduledAt, part: "time", label: `${automaticStudentName || item.id} 上课时间（墨尔本）`, sourceLabel: schedule?.source === "jiaowubao-open-api" ? "教务宝真实数据" : "等待排课" })}</td>
                 <td>{ledgerSelectCell({ item, field: "operationsOwner", automaticValue: item.owner, label: `${automaticStudentName || item.id} 教务`, options: TRIAL_OPERATIONS })}</td>
                 <td>{ledgerSelectCell({ item, field: "planner", automaticValue: automaticPlanner, label: `${automaticStudentName || item.id} 课程规划老师`, options: TRIAL_LEDGER_PLANNERS })}</td>
                 <td>{ledgerTextCell({ item, field: "subject", automaticValue: automaticSubject, label: `${automaticStudentName || item.id} 科目`, list: "trial-ledger-subject-options", placeholder: "待填写" })}</td>
@@ -8238,7 +8292,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <datalist id="trial-ledger-guardian-options">{Array.from(new Set(scopedStudents.map((student) => student.guardianWechat || student.guardian).filter(Boolean))).map((guardian) => <option value={guardian} key={guardian} />)}</datalist>
           <datalist id="trial-ledger-subject-options">{Array.from(new Set([...courses.map((course) => course.name), ...scopedStudents.map((student) => student.course)].filter(Boolean))).map((subject) => <option value={subject} key={subject} />)}</datalist>
           <datalist id="trial-ledger-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.name} key={teacher.id} />)}</datalist>
-        </div> : <div className="empty-inline">还没有试听 LP；创建后会自动进入 13 列台账。</div>}
+        </div> : <div className="empty-inline">还没有试听 LP；创建后会自动进入 14 列台账。</div>}
       </section>
       <section className="panel collection-shell">
         <div className="view-bar">

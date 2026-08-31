@@ -4,7 +4,7 @@ import test from "node:test";
 
 const client = await readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
 
-test("keeps the trial ledger at the handbook's exact 13 columns", () => {
+test("shows the handbook's 14 review columns with Melbourne date and time separated", () => {
   const header = client.match(/<table className="trial-ledger-table">[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] ?? "";
   const labels = [...header.matchAll(/<th(?:\s[^>]*)?>([^<]+)<\/th>/g)].map((match) => match[1]);
 
@@ -14,7 +14,8 @@ test("keeps the trial ledger at the handbook's exact 13 columns", () => {
     "LP 类型",
     "上课月份",
     "请求日期/时间",
-    "上课日期和时间（墨尔本）",
+    "上课日期",
+    "上课时间（墨尔本）",
     "教务",
     "课程规划老师",
     "科目",
@@ -25,7 +26,7 @@ test("keeps the trial ledger at the handbook's exact 13 columns", () => {
   ]);
 });
 
-test("makes all 13 ledger columns editable through the dedicated atomic route", () => {
+test("keeps all 13 persisted ledger fields editable through the dedicated atomic route", () => {
   for (const field of [
     "studentName",
     "guardianWechat",
@@ -41,9 +42,13 @@ test("makes all 13 ledger columns editable through the dedicated atomic route", 
     "trialPaid",
     "trialLedgerNote",
   ]) {
-    assert.match(client, new RegExp(`(?:field: "${field}"|saveTrialLedgerFieldAtomic\\(item, "${field}")`));
+    assert.match(client, new RegExp(`(?:field: "${field}"|saveTrialLedgerFieldAtomic\\((?:item|input\\.item), "${field}")`));
   }
   assert.match(client, /\/api\/operations\/trial-ledger/);
+  assert.match(client, /ledgerSchedulePartCell/);
+  assert.match(client, /part: "date"/);
+  assert.match(client, /part: "time"/);
+  assert.match(client, /zonedDateTimeToUtc\(date, time, "Australia\/Melbourne"\)/);
   assert.match(client, /恢复自动/);
   assert.match(client, /field-level|字段级|trialLedgerStoredValue/);
   assert.doesNotMatch(client, /const saveTrialLedgerField = .*lpShared\.mutateAndCommit/s);
