@@ -65,7 +65,7 @@ export function JiaowubaoAuthorityStatusPanel({
       <div>
         <p className="eyebrow">权威来源 · 非唯一来源</p>
         <h2 id="jwb-authority-title">教务宝 Open API 已进入资料库</h2>
-        <p>完整来源快照与规范化映射均长期保存在数据库；仅在证据唯一时关联现有资料，不覆盖其他权威来源字段。</p>
+        <p>完整来源快照与规范化映射均长期保存在数据库；仅在证据唯一时同步现有资料，并保留其他权威来源的数据。</p>
       </div>
       <span className={`jwb-authority-pill ${cadenceHealthy ? "healthy" : "warning"}`}>
         {cadenceHealthy ? "30 分钟同步正常" : "同步已超过 75 分钟"}

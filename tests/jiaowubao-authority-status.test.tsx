@@ -65,7 +65,8 @@ const source = {
       sourceOnlyEntityRows: 13,
       sourceSnapshotPersisted: true,
       normalizedProjectionPersisted: true,
-      nativeRecordsOverwritten: false,
+      nativeRecordsOverwritten: true,
+      nativeRecordsSynchronized: true,
       connectedTools: ["query_schedule_list"],
     },
   },
@@ -76,7 +77,8 @@ test("parses only aggregate Jiaowubao authority health and validates the 30-minu
   assert.ok(status);
   assert.equal(status.matches.student.matchRate, 80);
   assert.equal(status.prices.studentPriceRecords, 3);
-  assert.equal(status.coverage.nativeRecordsOverwritten, false);
+  assert.equal(status.coverage.nativeRecordsOverwritten, true);
+  assert.equal(status.coverage.nativeRecordsSynchronized, true);
   assert.equal(jiaowubaoAuthorityCadenceHealthy(status, Date.parse("2026-08-31T05:40:00.000Z")), true);
   assert.equal(jiaowubaoAuthorityCadenceHealthy(status, Date.parse("2026-08-31T05:46:00.000Z")), false);
   assert.equal(findJiaowubaoAuthorityStatus([{ source_id: "other" }, source])?.snapshotRows, 12);
@@ -97,6 +99,13 @@ test("rejects inconsistent counts and strips any extra database payload before b
     },
   }), null);
   assert.equal(parseJiaowubaoAuthorityStatus({ ...source, row_count: 13 }), null);
+  assert.equal(parseJiaowubaoAuthorityStatus({
+    ...source,
+    payload: {
+      ...source.payload,
+      coverage: { ...source.payload.coverage, nativeRecordsSynchronized: false },
+    },
+  }), null);
 });
 
 test("renders sync health, match rates, anomaly counts and private price retention without values or IDs", () => {

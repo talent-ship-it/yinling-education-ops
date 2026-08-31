@@ -54,7 +54,8 @@ export type JiaowubaoAuthorityStatus = Readonly<{
     sourceOnlyEntityRows: number;
     sourceSnapshotPersisted: true;
     normalizedProjectionPersisted: true;
-    nativeRecordsOverwritten: false;
+    nativeRecordsOverwritten: true;
+    nativeRecordsSynchronized: true;
     connectedTools: readonly ["query_schedule_list"];
   }>;
 }>;
@@ -163,7 +164,8 @@ export function parseJiaowubaoAuthorityStatus(source: unknown): JiaowubaoAuthori
       || integer(rawPrices.schedulePriceRecords) === null || integer(rawPrices.studentPriceRecords) === null
       || rawCoverage.sourceSnapshotPersisted !== true
       || rawCoverage.normalizedProjectionPersisted !== true
-      || rawCoverage.nativeRecordsOverwritten !== false
+      || rawCoverage.nativeRecordsOverwritten !== true
+      || rawCoverage.nativeRecordsSynchronized !== true
       || !Array.isArray(rawCoverage.connectedTools)
       || rawCoverage.connectedTools.length !== 1 || rawCoverage.connectedTools[0] !== "query_schedule_list"
       || integer(rawCoverage.snapshotRows) !== sourceRowCount
@@ -201,7 +203,8 @@ export function parseJiaowubaoAuthorityStatus(source: unknown): JiaowubaoAuthori
       sourceOnlyEntityRows,
       sourceSnapshotPersisted: true,
       normalizedProjectionPersisted: true,
-      nativeRecordsOverwritten: false,
+      nativeRecordsOverwritten: true,
+      nativeRecordsSynchronized: true,
       connectedTools: Object.freeze(["query_schedule_list"] as const),
     }),
   });
