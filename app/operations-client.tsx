@@ -8201,7 +8201,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               const schedule = liveMatch?.link ?? item.trialSchedule;
               const requestAt = item.trialIntake?.requestSentAt ?? item.requestedAt;
               const resultOptions = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
-              const automaticStudentName = item.trialIntake?.studentName || student?.name || "";
+              const automaticStudentName = liveMatch?.studentName || schedule?.studentName
+                || item.trialIntake?.studentName || student?.name || "";
               const automaticGuardianWechat = student?.guardianWechat || student?.guardian || "";
               const automaticScheduledAt = schedule?.startsAt ?? "";
               const effectiveScheduledAt = String(trialLedgerStoredValue(item, "scheduledAt") ?? automaticScheduledAt);

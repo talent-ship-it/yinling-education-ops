@@ -203,6 +203,7 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   const lp = projection.nextLpItems[0]!;
   assert.equal((lp.trialSchedule as Record<string, unknown>).eventId, "evt-trial-1");
   assert.equal((lp.trialSchedule as Record<string, unknown>).sourceRevision, command.snapshotRevision);
+  assert.equal((lp.trialSchedule as Record<string, unknown>).studentName, "Heather孙晓琳");
   assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
   const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
   assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [

@@ -63,6 +63,8 @@ export type TrialScheduleLink = Readonly<{
   startsAt: string;
   endsAt: string;
   courseName: string | null;
+  /** Student name deterministically extracted from the verified course title. */
+  studentName: string;
   teacherId: string | null;
   teacherName: string;
   plannerHint: JiaowubaoTrialPlannerHint;
@@ -158,10 +160,31 @@ function compactTrialStudentName(value: string) {
   return value.trim().replace(/([\p{Script=Latin}\p{N}])[\s\p{P}\p{S}_]+(?=\p{Script=Han})/gu, "$1");
 }
 
+const STRUCTURED_TRIAL_STUDENT_NAME = /^[\p{Script=Latin}\p{M}'’.-]+(?:\s+[\p{Script=Latin}\p{M}'’.-]+){0,3}(?:\p{Script=Han}{1,8})?$/u;
+
+/**
+ * 教务宝试听学员 A/B/C use a generic participant, so the real student name
+ * lives at the end of the course title: “课程信息 - English中文试听”.  Keep this
+ * parser deliberately narrow; an unfamiliar title must remain unmatched.
+ */
+function structuredTrialStudentNameFromCourseTitle(courseName: unknown) {
+  const source = text(courseName).normalize("NFKC");
+  if (!source) return undefined;
+  const delimited = source.match(/^.*[-–—]\s+(.{1,80}?)\s*试听(?:课)?\s*$/u);
+  const direct = delimited ? null : source.match(/^(.{1,80}?)\s*试听(?:课)?\s*$/u);
+  const candidate = compactTrialStudentName(delimited?.[1] ?? direct?.[1] ?? "");
+  return STRUCTURED_TRIAL_STUDENT_NAME.test(candidate) ? candidate : undefined;
+}
+
 function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, directStudentMatch: boolean) {
   const source = text(courseName).normalize("NFKC");
   const expected = Array.from(normalize(expectedName));
   if (!source) return undefined;
+
+  const structuredName = structuredTrialStudentNameFromCourseTitle(source);
+  if (structuredName && (directStudentMatch || normalize(structuredName).includes(expected.join("")))) {
+    return structuredName;
+  }
 
   const searchable: string[] = [];
   const spans: Array<Readonly<{ start: number; end: number }>> = [];
@@ -342,6 +365,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
         startsAt: canonicalInstant(event.startsAt, "startsAt"),
         endsAt: canonicalInstant(event.endsAt, "endsAt"),
         courseName: event.courseName,
+        studentName,
         teacherId: event.teacherId,
         teacherName: optionalText(event.teacherName)
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)

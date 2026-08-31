@@ -91,8 +91,9 @@ function teacherIdFromSourceLabel(teachers: readonly RecordValue[], label: strin
 
 function sameScheduleLink(left: unknown, right: TrialScheduleLink) {
   if (!record(left)) return false;
-  const leftSemantic = Object.fromEntries(Object.entries(left).filter(([key]) => key !== "matchedAt"));
-  const rightSemantic = Object.fromEntries(Object.entries(right).filter(([key]) => key !== "matchedAt"));
+  const metadataKeys = new Set(["matchedAt", "studentName"]);
+  const leftSemantic = Object.fromEntries(Object.entries(left).filter(([key]) => !metadataKeys.has(key)));
+  const rightSemantic = Object.fromEntries(Object.entries(right).filter(([key]) => !metadataKeys.has(key)));
   return JSON.stringify(leftSemantic) === JSON.stringify(rightSemantic);
 }
 

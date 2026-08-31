@@ -147,6 +147,57 @@ test("keeps the proven student name when a directly linked event has a generic c
   assert.equal(matches[0]?.studentName, "Heather孙晓琳");
 });
 
+test("extracts the complete student name from the verified 试听学员B course-title suffix", () => {
+  const eileenFields = {
+    ...extendedFields,
+    planner: "Eileen",
+    studentName: "Phyllis",
+  } as const satisfies LpFieldValues;
+  const base = {
+    lpItems: [{
+      id: "LP-TRIAL-B",
+      studentId: "STU-TRIAL-B",
+      workflowType: "试听 LP",
+      trialIntake: trialIntakeFromFields(eileenFields),
+    }],
+    students: [{ id: "STU-TRIAL-B", name: "Phyllis", owner: "Ella", planner: "Eileen" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    events: [{
+      eventId: "evt-trial-b",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "AES Year 6 English - Phyllis 嘟嘟试听",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Eileen" as const,
+    }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  } as const;
+
+  const matches = matchTrialScheduleEvents(base);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0]?.studentName, "Phyllis嘟嘟");
+  assert.equal(matches[0]?.link.studentName, "Phyllis嘟嘟");
+
+  const multiWordFields = { ...eileenFields, studentName: "Lily Zhang" } as const satisfies LpFieldValues;
+  const multiWordMatches = matchTrialScheduleEvents({
+    ...base,
+    lpItems: [{ ...base.lpItems[0], trialIntake: trialIntakeFromFields(multiWordFields) }],
+    students: [{ ...base.students[0], name: "Lily Zhang" }],
+    events: [{ ...base.events[0], eventId: "evt-trial-b-multi", courseName: "Year 9 English - Lily Zhang 晓琳试听" }],
+  });
+  assert.equal(multiWordMatches[0]?.studentName, "Lily Zhang晓琳");
+
+  assert.deepEqual(matchTrialScheduleEvents({
+    ...base,
+    lpItems: [{
+      ...base.lpItems[0],
+      trialIntake: trialIntakeFromFields({ ...eileenFields, planner: "Tara" }),
+    }],
+    students: [{ ...base.students[0], planner: "Tara" }],
+  }), []);
+});
+
 test("matches a teacher-change trial only when the raw Jiaowubao teacher exactly proves the requested new teacher", () => {
   const base = {
     lpItems: [{

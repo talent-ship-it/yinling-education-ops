@@ -160,7 +160,11 @@ export function buildTencentTrialLedgerMirrorRows(input: Readonly<{
       return {
         lpItemId: text(item.id),
         values: {
-          学生姓名: effectiveText(item, "studentName", text(intake.studentName) || text(student.name)),
+          学生姓名: effectiveText(
+            item,
+            "studentName",
+            text(schedule.studentName) || text(intake.studentName) || text(student.name),
+          ),
           家长微信名: effectiveText(item, "guardianWechat", text(student.guardianWechat) || text(student.guardian)),
           "LP 类型": canonicalOption(
             effectiveText(item, "workflowType", item.workflowType),
