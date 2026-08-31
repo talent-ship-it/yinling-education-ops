@@ -198,6 +198,53 @@ test("extracts the complete student name from the verified 试听学员B course-
   }), []);
 });
 
+test("does not confuse a short trial alias with letters inside another B-account student name", () => {
+  const shortAliasFields = {
+    ...extendedFields,
+    planner: "Eileen",
+    studentName: "AB",
+  } as const satisfies LpFieldValues;
+  const base = {
+    lpItems: [{
+      id: "LP-TRIAL-B-SHORT-ALIAS",
+      studentId: "STU-TRIAL-B-SHORT-ALIAS",
+      workflowType: "试听 LP",
+      trialIntake: trialIntakeFromFields(shortAliasFields),
+    }],
+    students: [{ id: "STU-TRIAL-B-SHORT-ALIAS", name: "AB", owner: "Ella", planner: "Eileen" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  } as const;
+
+  assert.deepEqual(matchTrialScheduleEvents({
+    ...base,
+    events: [{
+      eventId: "evt-trial-b-other-student",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "Year 5 English - Mabel Stone试听",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Eileen",
+    }],
+  }), []);
+
+  const exact = matchTrialScheduleEvents({
+    ...base,
+    events: [{
+      eventId: "evt-trial-b-exact-short-alias",
+      startsAt: "2026-08-30T03:00:00.000Z",
+      endsAt: "2026-08-30T04:00:00.000Z",
+      courseName: "Year 5 English - AB试听",
+      teacherId: "TEA-1",
+      visibleStudentIds: [],
+      trialPlannerHint: "Eileen",
+    }],
+  });
+  assert.equal(exact.length, 1);
+  assert.equal(exact[0]?.studentName, "AB");
+});
+
 test("matches a teacher-change trial only when the raw Jiaowubao teacher exactly proves the requested new teacher", () => {
   const base = {
     lpItems: [{

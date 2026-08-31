@@ -1629,6 +1629,11 @@ body {
 .to-do-row .due-label.pending { color:#78867e; font-family:inherit; font-weight:700; }
 .to-do-row .task-copy-static { cursor:default; }
 .to-do-row .complete-button { height:36px; width:36px; }
+@media (min-width:721px) {
+  .to-do-row { grid-template-columns:7px minmax(0,1fr) 58px 112px; }
+  .to-do-row .task-row-actions { flex-wrap:wrap; justify-self:end; width:112px; }
+  .to-do-row .task-row-actions .reply-button { flex:1 0 100%; }
+}
 .to-do-list + .text-button { margin:13px 15px; }
 .risk-row-static { cursor:default; grid-template-columns:29px 1fr; }
 .risk-row-static:hover { background:#fff; }

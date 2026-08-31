@@ -176,13 +176,35 @@ function structuredTrialStudentNameFromCourseTitle(courseName: unknown) {
   return STRUCTURED_TRIAL_STUDENT_NAME.test(candidate) ? candidate : undefined;
 }
 
+function studentNameUnitKind(unit: string) {
+  if (/[\p{Script=Latin}\p{M}\p{N}]/u.test(unit)) return "latin";
+  if (/\p{Script=Han}/u.test(unit)) return "han";
+  return "other";
+}
+
+function wholeStudentNameMatchAt(source: readonly string[], expected: readonly string[], start: number) {
+  if (!expected.length || !expected.every((unit, index) => source[start + index] === unit)) return false;
+  const before = source[start - 1];
+  const after = source[start + expected.length];
+  return (!before || studentNameUnitKind(before) !== studentNameUnitKind(expected[0]!))
+    && (!after || studentNameUnitKind(after) !== studentNameUnitKind(expected[expected.length - 1]!));
+}
+
+function courseTitleMatchesStudentName(courseName: unknown, expectedName: unknown) {
+  const expected = Array.from(normalize(expectedName));
+  if (!expected.length) return false;
+  const structuredName = structuredTrialStudentNameFromCourseTitle(courseName);
+  const source = Array.from(normalize(structuredName ?? courseName));
+  return source.some((_, start) => wholeStudentNameMatchAt(source, expected, start));
+}
+
 function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, directStudentMatch: boolean) {
   const source = text(courseName).normalize("NFKC");
   const expected = Array.from(normalize(expectedName));
   if (!source) return undefined;
 
   const structuredName = structuredTrialStudentNameFromCourseTitle(source);
-  if (structuredName && (directStudentMatch || normalize(structuredName).includes(expected.join("")))) {
+  if (structuredName && (directStudentMatch || courseTitleMatchesStudentName(structuredName, expectedName))) {
     return structuredName;
   }
 
@@ -200,7 +222,7 @@ function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, 
   }
 
   const matchAt = expected.length
-    ? searchable.findIndex((_, start) => expected.every((unit, index) => searchable[start + index] === unit))
+    ? searchable.findIndex((_, start) => wholeStudentNameMatchAt(searchable, expected, start))
     : -1;
   if (matchAt < 0) {
     const compactSource = compactTrialStudentName(source);
@@ -319,7 +341,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
         const start = new Date(event.startsAt).valueOf();
         if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
         const directStudentMatch = event.visibleStudentIds.includes(student.id);
-        const titleMatch = normalize(event.courseName).includes(nameKey);
+        const titleMatch = courseTitleMatchesStudentName(event.courseName, existingStudentName);
         const hint = event.trialPlannerHint ?? null;
         const plannerMatches = !hint || normalize(hint) === normalize(plannerName);
         const teacherMatches = !teacherChangeTrial
