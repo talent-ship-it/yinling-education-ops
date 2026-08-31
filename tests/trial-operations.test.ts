@@ -260,22 +260,28 @@ test("materializes intake-time handbook tasks without starting the paper-receive
     intake,
     now: "2026-08-28T02:00:00.000Z",
   });
-  assert.equal(tasks.length, 5);
+  assert.equal(tasks.length, 7);
   assert.deepEqual(tasks.map((task) => task.ruleKey), [
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}writing`,
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`,
     "trial.scheduling",
     `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+    `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+    `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-anomaly-72h`,
   ]);
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("paper-receive")), undefined);
   assert.equal(tasks.find((task) => task.ruleKey === "trial.scheduling")?.dueAt, "2026-08-29T02:00:00.000Z");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("parent-progress-48h"))?.dueAt, "2026-08-30T02:00:00.000Z");
+  assert.equal(tasks.find((task) => task.ruleKey?.endsWith("scheduling-anomaly-72h"))?.dueAt, "2026-08-31T02:00:00.000Z");
   assert.deepEqual(tasks.map((task) => task.title), [
     "《教务+教统》【要指定内容】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【要写作】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【发试卷】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【试听待排课】<Heather孙晓琳> <Daisy>",
     "《教务+教统》【向家长交待排课进度】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【二次向家长交待排课进度】<Heather孙晓琳> <Daisy>",
+    "《教务+教统》【试听排课进度反常】<Heather孙晓琳> <Daisy>",
   ]);
   assert.ok(tasks.every((task) => task.watchers?.includes("Ops Admin")));
 });
@@ -301,6 +307,8 @@ test("omits all four conditional follow-up branches when the handover says they 
     assert.deepEqual(tasks.map((task) => task.ruleKey), [
       "trial.scheduling",
       `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-anomaly-72h`,
     ]);
     assert.ok(!tasks.some((task) => ["specified-content", "writing", "paper-send", "paper-receive"]
       .some((suffix) => task.ruleKey?.endsWith(suffix))));
@@ -409,7 +417,7 @@ test("does not create the retired 4h and 8h teacher-reply reminders", () => {
   assert.deepEqual(replyTasks, []);
 });
 
-test("closes the pending-scheduling and 24h parent-update tasks after one real 教务宝 match", () => {
+test("closes the complete 24h, 48h, and 72h scheduling chain after one real 教务宝 match", () => {
   const manualTasks = generateTrialManualRequestTasks({
     lpItemId: "LP-1",
     studentId: "STU-1",
@@ -448,11 +456,16 @@ test("closes the pending-scheduling and 24h parent-update tasks after one real �
     completedAt: "2026-08-28T04:00:00.000Z",
   });
   const reminderIds = new Set(manualTasks.filter((task) => task.anchorBookingId === "LP-1"
-    && (task.ruleKey === "trial.scheduling" || task.ruleKey?.endsWith("parent-progress-24h")))
+    && [
+      "trial.scheduling",
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+      `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-anomaly-72h`,
+    ].includes(task.ruleKey ?? ""))
     .map((task) => task.id));
   const scheduling = completed.filter((task) => reminderIds.has(task.id));
 
-  assert.equal(scheduling.length, 2);
+  assert.equal(scheduling.length, 4);
   assert.ok(scheduling.every((task) => task.status === "done"
     && task.tone === "green"
     && task.result === "教务宝真实排课已匹配：evt-qa-1"

@@ -22,6 +22,10 @@ const schedulingPolicyMigration = readFileSync(
   new URL("../supabase/migrations/20260831000100_trial_scheduling_policy.sql", import.meta.url),
   "utf8",
 );
+const schedulingFeedbackMigration = readFileSync(
+  new URL("../supabase/migrations/20260831001100_restore_trial_scheduling_feedback_chain.sql", import.meta.url),
+  "utf8",
+);
 const runtimeFixture = readFileSync(
   new URL("./sql/trial-manual-lp-atomic-runtime.sql", import.meta.url),
   "utf8",
@@ -108,6 +112,20 @@ test("the latest scheduling policy creates one JWB-controlled pending task and r
   assert.match(schedulingPolicyMigration, /not \(task\.value \? 'legacyEvidence'\)/);
   assert.match(schedulingPolicyMigration, /mutate_lp_atomic_before_trial_scheduling_policy/);
   assert.match(schedulingPolicyMigration, /jiaowubao_trial_sync_manual_completion_valid/);
+});
+
+test("the boss-confirmed scheduling feedback restores 24h, 48h, and 72h tasks", () => {
+  assert.match(schedulingFeedbackMigration, /trial_scheduling_policy_tasks/);
+  assert.match(schedulingFeedbackMigration, /trial\.manual-request\.parent-progress-24h/);
+  assert.match(schedulingFeedbackMigration, /trial\.manual-request\.parent-progress-48h/);
+  assert.match(schedulingFeedbackMigration, /trial\.manual-request\.scheduling-anomaly-72h/);
+  assert.match(schedulingFeedbackMigration, /interval '24 hours'/i);
+  assert.match(schedulingFeedbackMigration, /interval '48 hours'/i);
+  assert.match(schedulingFeedbackMigration, /【向家长交待排课进度】/);
+  assert.match(schedulingFeedbackMigration, /【二次向家长交待排课进度】/);
+  assert.match(schedulingFeedbackMigration, /【试听排课进度反常】/);
+  assert.match(schedulingFeedbackMigration, /jiaowubao_trial_sync_manual_completion_valid/);
+  assert.doesNotMatch(schedulingFeedbackMigration, /teacher-reply-[48]h/);
 });
 
 test("trial task replacement preserves unrelated legacy evidence with sparse metadata", () => {

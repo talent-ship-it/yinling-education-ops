@@ -94,6 +94,7 @@ insert into internal.legacy_task_deadline_freezes(task_id)
 values ('TSK-LEGACY-SPARSE'), ('TSK-LEGACY-MATCH');
 
 \ir ../../supabase/migrations/20260831000100_trial_scheduling_policy.sql
+\ir ../../supabase/migrations/20260831001100_restore_trial_scheduling_feedback_chain.sql
 
 do $trial_manual_runtime$
 declare
@@ -176,6 +177,8 @@ begin
     'trial.manual-request.paper-receive',
     'trial.manual-request.paper-send',
     'trial.manual-request.parent-progress-24h',
+    'trial.manual-request.parent-progress-48h',
+    'trial.manual-request.scheduling-anomaly-72h',
     'trial.manual-request.specified-content',
     'trial.manual-request.writing',
     'trial.scheduling'

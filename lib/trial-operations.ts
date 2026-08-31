@@ -444,6 +444,8 @@ export const TRIAL_PENDING_SCHEDULING_RULE_KEY = "trial.scheduling";
 export const TRIAL_SCHEDULING_REMINDER_RULE_KEYS = Object.freeze([
   TRIAL_PENDING_SCHEDULING_RULE_KEY,
   `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
+  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+  `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-anomaly-72h`,
 ] as const);
 
 export function generateTrialManualRequestTasks(input: Readonly<{
@@ -471,6 +473,8 @@ export function generateTrialManualRequestTasks(input: Readonly<{
   const guardianWechat = text(input.guardianWechat) || "家长微信名未填写";
   const taskDetails = `<${input.studentName}> <${guardianWechat}>`;
   const schedulingDeadline = new Date(requestedAt.valueOf() + 24 * 60 * 60 * 1_000);
+  const secondProgressDeadline = new Date(requestedAt.valueOf() + 48 * 60 * 60 * 1_000);
+  const anomalyDeadline = new Date(requestedAt.valueOf() + 72 * 60 * 60 * 1_000);
   if (["需教务跟进", "需要跟进"].includes(input.specifiedContentStatus)) tasks.push(task({
     ...shared,
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}specified-content`,
@@ -508,6 +512,20 @@ export function generateTrialManualRequestTasks(input: Readonly<{
     ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-24h`,
     title: `《教务+教统》【向家长交待排课进度】${taskDetails}`,
     dueAt: schedulingDeadline,
+  }));
+  tasks.push(task({
+    ...shared,
+    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}parent-progress-48h`,
+    title: `《教务+教统》【二次向家长交待排课进度】${taskDetails}`,
+    dueAt: secondProgressDeadline,
+  }));
+  tasks.push(task({
+    ...shared,
+    ruleKey: `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}scheduling-anomaly-72h`,
+    title: `《教务+教统》【试听排课进度反常】${taskDetails}`,
+    dueAt: anomalyDeadline,
+    category: "排课",
+    tone: "red",
   }));
   return tasks;
 }
