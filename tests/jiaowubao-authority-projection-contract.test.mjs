@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, timeoutMigration, cronRoute, store, appSnapshot, browserParser] = await Promise.all([
+const [migration, timeoutMigration, guardMigration, cronRoute, store, appSnapshot, browserParser] = await Promise.all([
   readFile(new URL("../supabase/migrations/20260831000500_jiaowubao_authoritative_source_projection.sql", import.meta.url), "utf8"),
   readFile(new URL("../supabase/migrations/20260831000600_bound_jiaowubao_authority_projection_timeout.sql", import.meta.url), "utf8"),
+  readFile(new URL("../supabase/migrations/20260831000700_fix_jiaowubao_authority_projection_guard.sql", import.meta.url), "utf8"),
   readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/ops-store.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/app-snapshot/route.ts", import.meta.url), "utf8"),
@@ -34,6 +35,15 @@ test("the complete authority projection has a bounded function-only timeout", ()
   );
   assert.doesNotMatch(timeoutMigration, /alter\s+(?:database|role|system)\b/i);
   assert.doesNotMatch(timeoutMigration, /statement_timeout\s*=\s*'0'/i);
+});
+
+test("the shared immutable guard never resolves a field from the other table's row type", () => {
+  assert.match(guardMigration, /old_record jsonb := to_jsonb\(old\)/i);
+  assert.match(guardMigration, /new_record jsonb := to_jsonb\(new\)/i);
+  assert.match(guardMigration, /\(old_record ->> 'projection_run_id'\)::uuid/i);
+  assert.match(guardMigration, /raise exception using errcode = '55000'/i);
+  assert.doesNotMatch(guardMigration, /\b(?:old|new)\.(?:summary|projection_run_id)\b/i);
+  assert.doesNotMatch(guardMigration, /disable trigger|drop trigger/i);
 });
 
 test("projection is immutable, idempotent, multi-authority and never overwrites native records", () => {
