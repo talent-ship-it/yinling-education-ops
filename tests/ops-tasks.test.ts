@@ -118,6 +118,10 @@ test("presents retained legacy trial history with the current bracketed visual h
     { primary: "【二次向家长交待排课进度】", details: [] },
   );
   assert.deepEqual(
+    taskTitlePresentation("将 LP 发审核群并发给老师"),
+    { primary: "【将 LP 发审核群并发给老师】", details: [] },
+  );
+  assert.deepEqual(
     taskTitlePresentation("旧版首次交接任务", "student.initial-handover"),
     { primary: "【学生信息交接】", details: [] },
   );
