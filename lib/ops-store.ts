@@ -878,6 +878,7 @@ export const JIAOWUBAO_OPEN_API_SCHEDULE_ABORT_RPC = "abort_jiaowubao_open_api_s
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
+export const JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC = "project_jiaowubao_open_api_authority";
 export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
 export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
 
@@ -1035,6 +1036,24 @@ export type JiaowubaoOpenApiScheduleSnapshotReceipt = Readonly<{
 export type JiaowubaoOpenApiScheduleSnapshotPreflight = Readonly<{
   apiSourceKey: string;
   current: Readonly<{ revision: string }> | null;
+}>;
+
+export type JiaowubaoOpenApiAuthorityProjectionReceipt = Readonly<{
+  schemaVersion: 1;
+  authorityMode: "one_of_multiple";
+  tool: "query_schedule_list";
+  snapshotRevision: string;
+  projectionRunId: string;
+  checkedAt: string;
+  cadenceMinutes: 30;
+  coverage: Readonly<{
+    snapshotRows: number;
+    normalizedEntityRows: number;
+    matchedEntityRows: number;
+    sourceOnlyEntityRows: number;
+  }>;
+  replayed: boolean;
+  [key: string]: unknown;
 }>;
 
 export type JiaowubaoOpenApiScheduleSyncLease = Readonly<{
@@ -1673,6 +1692,22 @@ export function completeJiaowubaoOpenApiScheduleSnapshot(input: { runId: string;
     p_run_id: input.runId,
     p_actor: input.actor,
   });
+}
+
+/**
+ * Persists normalized authority entities and provenance-safe native matches
+ * for one exact completed Open API snapshot. It never overwrites native rows.
+ */
+export function projectJiaowubaoOpenApiAuthority(input: {
+  revision: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiAuthorityProjectionReceipt>(JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC, {
+    p_secret: secret,
+    p_revision: input.revision,
+    p_actor: input.actor,
+  }, { timeoutMs: 120_000 });
 }
 
 export function getJiaowubaoOpenApiScheduleSnapshotStatus(input: { runId: string; actor: "Ops Admin" }) {

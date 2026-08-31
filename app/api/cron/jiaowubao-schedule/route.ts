@@ -20,6 +20,7 @@ import {
   confirmJiaowubaoOpenApiScheduleSnapshotCurrent,
   getJiaowubaoOpenApiScheduleSnapshotPreflight,
   OpsStoreError,
+  projectJiaowubaoOpenApiAuthority,
   releaseJiaowubaoOpenApiScheduleSyncLease,
   stageJiaowubaoOpenApiScheduleSnapshotPage,
 } from "@/lib/ops-store";
@@ -105,11 +106,34 @@ function receiptMatchesPage(value: Readonly<Record<string, unknown>>, runId: str
   return value.runId === runId && value.pageIndex === pageIndex && value.rowCount === rowCount;
 }
 
+async function projectAuthority(revision: string, rowCount: number) {
+  const receipt = await projectJiaowubaoOpenApiAuthority({ revision, actor: ACTOR });
+  const coverage = receipt?.coverage;
+  const checkedAt = typeof receipt?.checkedAt === "string" ? new Date(receipt.checkedAt) : null;
+  if (receipt?.schemaVersion !== 1
+      || receipt?.authorityMode !== "one_of_multiple"
+      || receipt?.tool !== "query_schedule_list"
+      || receipt?.snapshotRevision !== revision
+      || !UUID.test(receipt?.projectionRunId ?? "")
+      || receipt?.cadenceMinutes !== 30
+      || !coverage
+      || coverage.snapshotRows !== rowCount
+      || !Number.isSafeInteger(coverage.normalizedEntityRows) || coverage.normalizedEntityRows < rowCount
+      || !Number.isSafeInteger(coverage.matchedEntityRows) || coverage.matchedEntityRows < 0
+      || !Number.isSafeInteger(coverage.sourceOnlyEntityRows) || coverage.sourceOnlyEntityRows < 0
+      || coverage.matchedEntityRows + coverage.sourceOnlyEntityRows !== coverage.normalizedEntityRows
+      || checkedAt === null || !Number.isFinite(checkedAt.valueOf())) {
+    throw new Error("authority_projection_receipt_invalid");
+  }
+  return receipt;
+}
+
 /**
  * Supabase pg_cron invokes this Vercel route every 30 minutes. It only replaces
  * the completed, immutable JWB source snapshot after every upstream page has
  * been staged and PostgreSQL verifies the expected current pointer. It then
- * projects every unambiguous trial LP/task match from that immutable source.
+ * projects every source entity and safe native match, then applies the narrow
+ * trial LP/task automation from the same immutable revision.
  */
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
@@ -152,12 +176,14 @@ export async function GET(request: Request) {
         snapshot.manifest.revision,
         snapshot.manifest.recordCount,
       )) throw new Error("confirmation_receipt_invalid");
+      phase = "project_authority";
+      const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
       phase = "project_trials";
       const trialProjection = await runJiaowubaoTrialAutoSync({
         snapshotRevision: snapshot.manifest.revision,
         window: jiaowubaoTrialProjectionWindow(window),
       });
-      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, trialProjection });
+      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, authorityProjection, trialProjection });
     }
 
     const envelope = buildJiaowubaoScheduleSnapshotEnvelope(snapshot, currentRevision);
@@ -166,12 +192,14 @@ export async function GET(request: Request) {
     const runId = exactRunId(begin?.runId);
     if (!runId) throw new Error("begin_receipt_invalid");
     if (begin.state === "complete") {
+      phase = "project_authority";
+      const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
       phase = "project_trials";
       const trialProjection = await runJiaowubaoTrialAutoSync({
         snapshotRevision: snapshot.manifest.revision,
         window: jiaowubaoTrialProjectionWindow(window),
       });
-      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, trialProjection });
+      return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, authorityProjection, trialProjection });
     }
     if (begin.state !== "staging") throw new Error("begin_receipt_invalid");
 
@@ -197,6 +225,8 @@ export async function GET(request: Request) {
       || !exactRevision(completed.rowsSha256) || !exactRevision(completed.payloadSha256)) {
       throw new Error("complete_receipt_invalid");
     }
+    phase = "project_authority";
+    const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
     phase = "project_trials";
     const trialProjection = await runJiaowubaoTrialAutoSync({
       snapshotRevision: snapshot.manifest.revision,
@@ -208,6 +238,7 @@ export async function GET(request: Request) {
       pageCount: snapshot.manifest.pageCount,
       rowCount: snapshot.manifest.recordCount,
       revision: snapshot.manifest.revision,
+      authorityProjection,
       trialProjection,
     });
   } catch (error) {

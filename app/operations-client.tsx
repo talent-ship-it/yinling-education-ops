@@ -52,6 +52,7 @@ import {
 
 import { cleanTimezone } from "@/lib/timezone";
 import { AccountLifecycleWorkspace } from "@/app/account-lifecycle-workspace";
+import { JiaowubaoAuthorityStatusPanel } from "@/app/jiaowubao-authority-status";
 import type { AccountDirectoryRecord } from "@/app/account-admin-lifecycle";
 import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
 import {
@@ -85,6 +86,7 @@ import {
   type Rules,
 } from "@/lib/ops-rules";
 import { opsSourceIsStale, partitionOpsSources } from "@/lib/ops-source-lifecycle";
+import { findJiaowubaoAuthorityStatus } from "@/lib/jiaowubao-authority-status";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel } from "@/lib/payroll-export";
 import {
@@ -3731,6 +3733,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
   const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, "思佳", "Tiffany", "Abby", "Tara"])).filter(Boolean).sort(), [currentOperator, ownerOptions]);
   const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
+  const jiaowubaoAuthorityStatus = useMemo(() => findJiaowubaoAuthorityStatus(syncSources), [syncSources]);
   const activeSources = sourceGroups.active;
   const archivedSources = sourceGroups.archived;
   const staleSources = useMemo(() => activeSources.filter((source) => opsSourceIsStale(source)), [activeSources]);
@@ -9964,6 +9967,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         }
       />
       <section className="sync-workspace">
+        {canUseAdminScope ? <JiaowubaoAuthorityStatusPanel status={jiaowubaoAuthorityStatus} /> : null}
         {canUseAdminScope ? <section className="panel import-preview-panel">
           <div className="panel-header">
             <div><h2>学生正式导入</h2><small>学生总表建档；不活跃且无课时不导入；教务宝补充课时与课包。</small></div>

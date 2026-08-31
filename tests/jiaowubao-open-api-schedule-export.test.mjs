@@ -56,11 +56,10 @@ test("schedule exporter writes owner-only page files and aggregate manifest", as
   assert.equal((await stat(join(out, "manifest.json"))).mode & 0o777, 0o600);
   const persisted = JSON.parse(await readFile(join(out, "page-0001.json"), "utf8"));
   assert.equal(persisted[0].cal_id, "1-0");
-  assert.deepEqual(persisted[0].stu_list, [{ mem_id: "MEM-0", name: "student", comment: "internal comment" }]);
+  assert.deepEqual(persisted[0].stu_list, [{ mem_id: "MEM-0", name: "student", comment: "internal comment", price: 99 }]);
   assert.equal(persisted[0].teacher_hour, 1.5);
   assert.equal(persisted[0].cont, "internal attendance note");
-  assert.equal("price" in persisted[0], false);
-  assert.equal("price_mem" in persisted[0], false);
+  assert.equal(persisted[0].price_mem, 99);
   assert.deepEqual(JSON.parse(await readFile(join(out, "page-0002.json"), "utf8"))[0], { cal_id: "2-0", ks_reception: 1, color: "#123456" });
   assert.deepEqual((await readdir(out)).sort(), ["manifest.json", "page-0001.json", "page-0002.json"]);
 });

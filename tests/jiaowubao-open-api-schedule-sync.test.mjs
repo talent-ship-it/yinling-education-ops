@@ -8,7 +8,7 @@ const {
   projectJiaowubaoScheduleSnapshotRecord,
 } = await import("../lib/jiaowubao-open-api-schedule-snapshot.ts");
 
-test("schedule snapshot keeps every documented non-price field, including private student evidence", async () => {
+test("schedule snapshot keeps every business field, including prices, private student evidence, and future fields", async () => {
   const snapshot = await collectJiaowubaoScheduleSnapshot(
     { start: "2026-08-22", end: "2026-08-22" },
     async ({ page }) => ({
@@ -21,6 +21,7 @@ test("schedule snapshot keeps every documented non-price field, including privat
         ks_reception: 1,
         try_arrive: 1,
         price_mem: 88,
+        future_business_field: { supplier_flag: true },
         stu_list: [
           { mem_id: "M-1", name: "Student", logo: "https://example.invalid/logo", comment: "private note", price: 88 },
           { mem_id: "M-2", name: "Second student", sign: 1, price: 99 },
@@ -39,13 +40,30 @@ test("schedule snapshot keeps every documented non-price field, including privat
     color: "#123456",
     ks_reception: 1,
     try_arrive: 1,
+    price_mem: 88,
+    future_business_field: { supplier_flag: true },
     stu_list: [
-      { mem_id: "M-1", name: "Student", logo: "https://example.invalid/logo", comment: "private note" },
-      { mem_id: "M-2", name: "Second student", sign: 1 },
+      { mem_id: "M-1", name: "Student", logo: "https://example.invalid/logo", comment: "private note", price: 88 },
+      { mem_id: "M-2", name: "Second student", sign: 1, price: 99 },
     ],
   });
-  assert.equal("price_mem" in record, false);
-  assert.equal("price" in record.stu_list[0], false);
+  assert.equal(record.price_mem, 88);
+  assert.equal(record.stu_list[0].price, 88);
+});
+
+test("schedule snapshot refuses credential-shaped fields instead of persisting them as business data", () => {
+  assert.throws(
+    () => projectJiaowubaoScheduleSnapshotRecord({ cal_id: "credential-row", api_key: "never-store" }),
+    /不允许持久化/,
+  );
+  assert.throws(
+    () => projectJiaowubaoScheduleSnapshotRecord({ cal_id: "nested-credential", extension: { access_token: "never-store" } }),
+    /不允许持久化/,
+  );
+  assert.throws(
+    () => projectJiaowubaoScheduleSnapshotRecord({ cal_id: "camel-credential", extension: { accessToken: "never-store" } }),
+    /不允许持久化/,
+  );
 });
 
 test("schedule snapshot fails closed on oversized student evidence rather than discarding it", () => {
@@ -58,14 +76,15 @@ test("schedule snapshot fails closed on oversized student evidence rather than d
   );
 });
 
-test("production uses a private 30-minute database schedule and publishes source evidence only after durable leasing", async () => {
-  const [vercel, route, migration, rpcGrantMigration, completionFix, unchangedConfirmation] = await Promise.all([
+test("production uses a private 30-minute database schedule and projects the completed source as one authority", async () => {
+  const [vercel, route, migration, rpcGrantMigration, completionFix, unchangedConfirmation, authorityMigration] = await Promise.all([
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000100_jiaowubao_open_api_schedule_v2_and_sync_lease.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000300_grant_server_jiaowubao_schedule_snapshot_rpc.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000400_fix_jiaowubao_schedule_snapshot_completion_hash.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260828000100_confirm_unchanged_jiaowubao_schedule_snapshot.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260831000500_jiaowubao_authoritative_source_projection.sql", import.meta.url), "utf8"),
   ]);
   const scheduleMigration = await readFile(new URL("../supabase/migrations/20260822000200_schedule_jiaowubao_open_api_sync_every_30_minutes.sql", import.meta.url), "utf8");
   assert.deepEqual(JSON.parse(vercel).crons, []);
@@ -75,6 +94,8 @@ test("production uses a private 30-minute database schedule and publishes source
   assert.match(route, /completeJiaowubaoOpenApiScheduleSnapshot/);
   assert.match(route, /confirmJiaowubaoOpenApiScheduleSnapshotCurrent/);
   assert.match(route, /runJiaowubaoTrialAutoSync/);
+  assert.match(route, /projectJiaowubaoOpenApiAuthority/);
+  assert.match(route, /phase = "project_authority"/);
   assert.match(route, /phase = "project_trials"/);
   assert.match(route, /phase = "confirm_current"/);
   assert.match(route, /下一次计划任务重试/);
@@ -115,4 +136,11 @@ test("production uses a private 30-minute database schedule and publishes source
   assert.match(unchangedConfirmation, /set published_at = confirmed_at/);
   assert.match(unchangedConfirmation, /confirmed_unchanged/);
   assert.match(unchangedConfirmation, /grant execute on function public\.confirm_jiaowubao_open_api_schedule_snapshot_current/);
+  assert.match(authorityMigration, /jiaowubao-schedule-export\/v3/);
+  assert.match(authorityMigration, /project_jiaowubao_open_api_authority/);
+  assert.match(authorityMigration, /authorityMode', 'one_of_multiple'/);
+  assert.match(authorityMigration, /record \? 'price_mem'/);
+  assert.match(authorityMigration, /record \? 'price'/);
+  assert.match(authorityMigration, /nativeRecordsOverwritten', false/);
+  assert.match(authorityMigration, /grant execute on function public\.project_jiaowubao_open_api_authority/);
 });

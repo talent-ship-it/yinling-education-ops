@@ -10,6 +10,10 @@ import {
   managedTrialPaymentStudentProjectionSnapshot,
 } from "@/lib/ops-access";
 import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import {
+  JIAOWUBAO_AUTHORITY_SOURCE_ID,
+  sanitizeJiaowubaoAuthoritySourceForBrowser,
+} from "@/lib/jiaowubao-authority-status";
 import { projectOperationalAuditEntry } from "@/lib/operational-audit";
 import { getOperationalAudit, getOpsSources, getOpsState } from "@/lib/ops-store";
 
@@ -44,11 +48,16 @@ export async function GET() {
     const [syncSources, operationalAudit] = sourceAccess
       ? await Promise.all([getOpsSources(), getOperationalAudit()])
       : [[], []];
+    const browserSyncSources = syncSources.flatMap((source) => {
+      if (source.source_id !== JIAOWUBAO_AUTHORITY_SOURCE_ID) return [source];
+      const sanitized = sanitizeJiaowubaoAuthoritySourceForBrowser(source);
+      return sanitized ? [sanitized] : [];
+    });
     return noStore({
       ...payload,
       ...(sourceAccess ? { audit: operationalAudit.map(projectOperationalAuditEntry) } : {}),
       versions,
-      syncSources,
+      syncSources: browserSyncSources,
       managedExamStudents: managedExamSnapshot.students,
       managedExamSnapshot,
       managedTrialPaymentSnapshot,

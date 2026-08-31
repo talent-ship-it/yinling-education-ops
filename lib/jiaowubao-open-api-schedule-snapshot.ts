@@ -6,7 +6,7 @@ import {
   type JiaowubaoScheduleListResponse,
 } from "@/lib/jiaowubao-open-api-node";
 
-export const JIAOWUBAO_SCHEDULE_SNAPSHOT_FORMAT = "jiaowubao-schedule-export/v2";
+export const JIAOWUBAO_SCHEDULE_SNAPSHOT_FORMAT = "jiaowubao-schedule-export/v3";
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY = "jwb-open-api-schedule";
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE = 100;
 // The cron runs within Vercel's five-minute function budget while deliberately
@@ -20,11 +20,8 @@ export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_STUDENTS_PER_RECORD = 1_000;
 
 type JsonRecord = Record<string, unknown>;
 
-/**
- * This is the documented schedule record surface, minus every price field.
- * The source is private evidence only: no field here creates a student,
- * Booking, package, payroll record, attendance record, or AVA permission.
- */
+/** Known fields are exported for diagnostics; v3 also retains new business
+ * fields returned by the supplier instead of silently dropping them. */
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_FIELDS = [
   "cal_id", "type", "appoint", "team_id", "team_title", "course_id", "course_title",
   "room_id", "room_title", "teacher_id", "teacher_title", "teacher_hour",
@@ -32,11 +29,11 @@ export const JIAOWUBAO_SCHEDULE_SNAPSHOT_FIELDS = [
   "dated", "time_start", "time_end", "cal_length", "hours", "cont", "created", "color", "live",
   "max_num", "mem_max", "mem_num", "mem_num_sign", "mem_num_not_sign", "mem_num_leave",
   "mem_leave", "mem_arrive", "arrive_percent", "mem_not_comment", "all_leave", "over",
-  "over_state", "over_time", "ks_num", "ks_mem", "ks_reception", "ks_not", "try_arrive", "stu_list",
+  "over_state", "over_time", "ks_num", "ks_mem", "ks_reception", "ks_not", "try_arrive", "price_mem", "stu_list",
 ] as const;
 
 export const JIAOWUBAO_SCHEDULE_STUDENT_FIELDS = [
-  "lesson_id", "mem_id", "type", "name", "logo", "sign", "sign_title", "arrive_title", "comment", "is_wx",
+  "lesson_id", "mem_id", "type", "name", "logo", "sign", "sign_title", "arrive_title", "comment", "is_wx", "price",
 ] as const;
 
 export type JiaowubaoScheduleSnapshotRecord = JsonRecord;
@@ -75,6 +72,39 @@ function fail(message: string): never {
 
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const FORBIDDEN_SOURCE_FIELD = /^(?:__proto__|prototype|constructor|sk|secret|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|session[_-]?token|password|authorization|cookie|api[_-]?key|client[_-]?secret|secret[_-]?key)$/iu;
+const MAX_JSON_DEPTH = 12;
+const MAX_OBJECT_FIELDS = 1_000;
+const MAX_GENERIC_ARRAY_ITEMS = 10_000;
+
+function assertSafeSourceField(field: string) {
+  if (!field || field.length > 240 || FORBIDDEN_SOURCE_FIELD.test(field)) {
+    fail("教务宝返回包含不允许持久化的字段。");
+  }
+}
+
+function cloneSourceJson(value: unknown, depth = 0): unknown {
+  if (depth > MAX_JSON_DEPTH) fail("教务宝返回的数据嵌套过深。");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) fail("教务宝返回包含无效数字。");
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_GENERIC_ARRAY_ITEMS) fail("教务宝返回的数组超过安全上限。");
+    return Object.freeze(value.map((item) => cloneSourceJson(item, depth + 1)));
+  }
+  if (!isRecord(value)) fail("教务宝返回包含无法持久化的数据类型。");
+  const entries = Object.entries(value);
+  if (entries.length > MAX_OBJECT_FIELDS) fail("教务宝返回的字段数量超过安全上限。");
+  const projected: JsonRecord = {};
+  for (const [field, item] of entries) {
+    assertSafeSourceField(field);
+    if (item !== undefined) projected[field] = cloneSourceJson(item, depth + 1);
+  }
+  return Object.freeze(projected);
 }
 
 function canonicalJson(value: unknown) {
@@ -119,26 +149,28 @@ function normalizedCalId(value: unknown) {
 
 function projectStudentEvidence(value: unknown) {
   if (!isRecord(value)) fail("教务宝排课学员记录无效。");
-  const projected: JsonRecord = {};
-  for (const field of JIAOWUBAO_SCHEDULE_STUDENT_FIELDS) {
-    if (value[field] !== undefined && value[field] !== null) projected[field] = value[field];
-  }
-  return Object.freeze(projected);
+  return cloneSourceJson(value) as Readonly<JsonRecord>;
 }
 
-/** Preserves every documented non-price field, with a strict structural allowlist. */
+/**
+ * Preserves the complete JSON business record, including prices and future
+ * supplier fields. Credential-shaped keys and unsupported JSON structures
+ * still fail closed before any snapshot can be published.
+ */
 export function projectJiaowubaoScheduleSnapshotRecord(value: unknown): JiaowubaoScheduleSnapshotRecord {
   if (!isRecord(value)) fail("教务宝返回的排课记录无效。");
   const projected: JsonRecord = { cal_id: normalizedCalId(value.cal_id) };
-  for (const field of JIAOWUBAO_SCHEDULE_SNAPSHOT_FIELDS) {
-    if (field === "cal_id" || field === "stu_list") continue;
-    if (value[field] !== undefined && value[field] !== null) projected[field] = value[field];
+  for (const [field, item] of Object.entries(value)) {
+    if (field === "cal_id" || field === "stu_list" || item === undefined) continue;
+    assertSafeSourceField(field);
+    projected[field] = cloneSourceJson(item, 1);
   }
   if (value.stu_list !== undefined && value.stu_list !== null) {
+    assertSafeSourceField("stu_list");
     if (!Array.isArray(value.stu_list) || value.stu_list.length > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_STUDENTS_PER_RECORD) {
       fail("教务宝排课学员明细无效。");
     }
-    projected.stu_list = value.stu_list.map(projectStudentEvidence);
+    projected.stu_list = Object.freeze(value.stu_list.map(projectStudentEvidence));
   }
   if (Buffer.byteLength(JSON.stringify(projected), "utf8") > 256 * 1024) {
     fail("教务宝单条排课记录超过安全上限。");

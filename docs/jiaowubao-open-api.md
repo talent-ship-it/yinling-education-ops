@@ -9,7 +9,9 @@ API 密钥只供服务端读取，变量名为 `JIAOWUBAO_OPEN_API_SK`。
 - 结课、签到、请假、到达、课时与考试统计；
 - API 返回的学员明细、姓名、头像、签到/到达状态和备注。
 
-定时导入会完整保留上述**所有已文档化的非价格字段**为私有、不可变的来源证据；顶层 `price_mem` 与学员明细中的 `price` 会在进入系统前丢弃。该 API 仍**不能**提供完整学员目录、合约、课时余额、LP、工资、老师 AVA 或写入能力。因此不能替代已有的 Excel 全量资料导入，也不会自动创建学生、Booking、任务、课包、身份关联或 AVA 占用。
+定时导入会把每条课表业务记录的完整 JSON 保存在私有、不可变的来源快照中，包括顶层 `price_mem`、学员明细中的 `price`，以及供应商后来新增的业务字段。凭证、token、密码、Cookie 等字段会失败关闭，永不持久化。价格值只保存在私有数据库，不会发送到浏览器。
+
+完成态快照随后会投影为学生、老师、课程、班级、教室和课表来源实体，并记录与现有系统资料的匹配、未匹配和冲突状态。教务宝是**多个权威来源之一**：稳定教务宝 ID 优先，完整姓名只在来源与系统两侧都唯一时作为后备；任何歧义都保留为来源实体，不覆盖腾讯总表、教师表、人工资料或原生 Booking。即使教务宝快照没有变化，只要系统学生、老师、课程或 Booking 的版本发生变化，下一次 30 分钟任务也会重新生成匹配投影。当前正式 Open API 合同仍只提供 `query_schedule_list`，因此完整学员目录、合约、课时余额和其他数据域要等供应商提供相应 Open API 工具后接入，不能用网页登录会话冒充无人值守同步。
 
 ## 生产环境：只在 Vercel 保存密钥
 
@@ -50,9 +52,9 @@ unset JIAOWUBAO_OPEN_API_SK
 
 ## 自动同步（生产）
 
-当前 Vercel 项目是 Hobby，不能运行每 30 分钟的 Vercel Cron。因此生产部署用 Supabase `pg_cron` 每 30 分钟经 `pg_net` 调用受独立 bearer token 保护的 `GET /api/cron/jiaowubao-schedule`。token 只以加密形式保存于 Supabase Vault 和 Vercel 的敏感环境变量 `JIAOWUBAO_SCHEDULE_SYNC_TOKEN`，不进入代码、迁移、Cron 命令、浏览器或日志。每次读取墨尔本当天起 31 天的课表，将所有页面分别写入不可变 staging；只有所有页均通过校验后才短事务发布新的完成态来源指针。若 API、网络或任一页失败，上一份完整快照保持不变；重复或重叠的 Cron 调用由数据库租约和来源指针 CAS 拦截。
+当前 Vercel 项目是 Hobby，不能运行每 30 分钟的 Vercel Cron。因此生产部署用 Supabase `pg_cron` 每 30 分钟经 `pg_net` 调用受独立 bearer token 保护的 `GET /api/cron/jiaowubao-schedule`。token 只以加密形式保存于 Supabase Vault 和 Vercel 的敏感环境变量 `JIAOWUBAO_SCHEDULE_SYNC_TOKEN`，不进入代码、迁移、Cron 命令、浏览器或日志。每次读取墨尔本当天起 31 天的课表，将所有页面分别写入不可变 staging；只有所有页均通过校验后才短事务发布新的完成态来源指针。发布后，同一事务合同会生成规范化权威实体、匹配率、异常和字段覆盖汇总，并刷新同步页的来源健康状态。无变化的 30 分钟检查也会更新最近成功检查时间。若 API、网络、任一页或投影失败，上一份完整快照保持可读；重复或重叠的 Cron 调用由数据库租约和来源指针 CAS 拦截。
 
-这一同步只处理 `query_schedule_list` 当前可以给出的课表数据。它与 Excel 导入、原生 Booking 和运营工作流分离；任何把 API 课节转成运营 Booking 的动作都必须经过单独的人工确认和审计。
+这一同步只处理 `query_schedule_list` 当前可以给出的课表数据。完整来源数据和规范化实体会长期入库，但不会静默创建或覆盖原生学生、老师、课程、Booking、课包或任务；任何原生业务写入仍需独立、可审计的业务合同。
 
 ## 一次性课表快照：导出后再分块写入
 
@@ -60,7 +62,8 @@ unset JIAOWUBAO_OPEN_API_SK
 `20260821220000_jiaowubao_open_api_schedule_snapshot_ingest.sql`、
 `20260821220001_jiaowubao_open_api_schedule_management_bridge.sql` 与
 `20260821220002_fix_jiaowubao_open_api_schedule_management_begin_precedence.sql`
-均已按受控发布流程应用后，才可以运行这个一次性流程。它只写入私有的 API 来源证据表；不会创建学生、原生 Booking、课包、任务、薪资、出勤或 AVA。
+以及 `20260831000500_jiaowubao_authoritative_source_projection.sql`
+均已按受控发布流程应用后，才可以运行这个一次性流程。它写入私有来源快照；计划任务会再生成规范化来源实体和安全匹配，但不会创建或覆盖原生学生、Booking、课包、任务、薪资、出勤或 AVA。
 
 先把 API 密钥只留在当前 shell，导出一个最多 31 天的 owner-only 本地目录：
 
