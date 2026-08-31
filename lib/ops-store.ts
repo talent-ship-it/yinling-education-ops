@@ -3014,7 +3014,8 @@ export function mutateExamFollowUpAtomic(input: {
 }
 
 /**
- * Atomically writes or clears only dueAt on a server-authorized legacy task.
+ * Atomically writes only dueAt on a server-authorized legacy task. Historical
+ * clear results remain in the receipt type solely for immutable replay.
  * The browser never supplies the task projection or a UTC timestamp.
  */
 export function mutateLegacyTaskDeadlineAtomic(input: {

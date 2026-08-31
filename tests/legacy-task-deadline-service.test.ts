@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertLegacyTaskDeadlineSetCommand,
   authorizeLegacyTaskDeadlineCommand,
   hasLegacyTaskDeadlineAdminAccess,
   legacyTaskDeadlineIntent,
@@ -9,7 +10,7 @@ import {
   melbourneDateTimeToUtc,
   parseLegacyTaskDeadlineCommand,
   prepareLegacyTaskDeadline,
-  type LegacyTaskDeadlineCommand,
+  type LegacyTaskDeadlineSetCommand,
 } from "../lib/legacy-task-deadline-service";
 import type { OpsStateRow } from "../lib/ops-store";
 
@@ -61,7 +62,7 @@ function rows(
   ];
 }
 
-function command(overrides: Partial<LegacyTaskDeadlineCommand> = {}): LegacyTaskDeadlineCommand {
+function command(overrides: Partial<LegacyTaskDeadlineSetCommand> = {}): LegacyTaskDeadlineSetCommand {
   return {
     commandKey: COMMAND_KEY,
     action: "set",
@@ -76,7 +77,7 @@ function errorCode(error: unknown) {
   return error instanceof LegacyTaskDeadlineServiceError ? error.code : "unexpected";
 }
 
-test("accepts only a closed legacy deadline command without a browser UTC timestamp or projection", () => {
+test("accepts set commands and only replay-shaped historical clear commands", () => {
   const parsed = parseLegacyTaskDeadlineCommand(command());
   assert.deepEqual(legacyTaskDeadlineIntent(parsed), {
     action: "set",
@@ -92,10 +93,12 @@ test("accepts only a closed legacy deadline command without a browser UTC timest
   }
   assert.throws(
     () => parseLegacyTaskDeadlineCommand({ ...command(), action: "clear", melbourneDateTime: "2026-08-19T18:00" }),
-    (error) => errorCode(error) === "clear_disabled",
+    (error) => errorCode(error) === "client_fields_forbidden",
   );
+  const clear = parseLegacyTaskDeadlineCommand({ ...command(), action: "clear", melbourneDateTime: undefined });
+  assert.deepEqual(legacyTaskDeadlineIntent(clear), { action: "clear", taskId: "TSK-LEGACY" });
   assert.throws(
-    () => parseLegacyTaskDeadlineCommand({ ...command(), action: "clear", melbourneDateTime: undefined }),
+    () => assertLegacyTaskDeadlineSetCommand(clear),
     (error) => errorCode(error) === "clear_disabled",
   );
   assert.throws(

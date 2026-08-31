@@ -14,6 +14,7 @@ import {
   type OpsStateRow,
 } from "@/lib/ops-store";
 import {
+  assertLegacyTaskDeadlineSetCommand,
   authorizeLegacyTaskDeadlineCommand,
   legacyTaskDeadlineIntent,
   parseLegacyTaskDeadlineCommand,
@@ -21,6 +22,7 @@ import {
   hasLegacyTaskDeadlineAdminAccess,
   LegacyTaskDeadlineServiceError,
 } from "@/lib/legacy-task-deadline-service";
+import { legacyTaskDeadlineHttpError } from "@/lib/legacy-task-deadline-http";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -92,15 +94,8 @@ async function readBoundedRequestBody(request: Request) {
 class LegacyTaskDeadlineRequestTooLargeError extends Error {}
 
 function serviceError(error: LegacyTaskDeadlineServiceError) {
-  if (error.code === "teacher_forbidden" || error.code === "admin_forbidden" || error.code === "archived_student_read_only") {
-    return noStore({ error: error.message, code: error.code }, 403);
-  }
-  if (error.code === "task_not_found") return noStore({ error: error.message, code: error.code }, 404);
-  if (["stale_expected_version", "task_not_legacy", "task_closed"].includes(error.code)) {
-    return noStore({ error: error.message, code: error.code }, 409);
-  }
-  if (error.code === "invalid_shared_state") return noStore({ error: error.message, code: error.code }, 503);
-  return noStore({ error: error.message, code: error.code }, 422);
+  const response = legacyTaskDeadlineHttpError(error);
+  return noStore(response.body, response.status);
 }
 
 function contractUnavailable() {
@@ -165,6 +160,10 @@ export async function POST(request: Request) {
         auditEntryId: replay[0].audit_entry_id,
       });
     }
+
+    // A historical clear may replay its immutable receipt above. A new clear
+    // stops here and can never reach the mutation RPC.
+    assertLegacyTaskDeadlineSetCommand(command);
 
     const prepared = prepareLegacyTaskDeadline({
       command,

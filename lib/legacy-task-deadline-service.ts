@@ -17,35 +17,45 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const MELBOURNE_DATE_TIME_PATTERN = /^([1-9]\d{3})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d)$/;
 const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 
-export type LegacyTaskDeadlineAction = "set";
+export type LegacyTaskDeadlineAction = "set" | "clear";
 
 /**
  * The browser submits a Melbourne wall-clock value, never a UTC instant. The
  * route converts and validates it on the server before the database repeats
  * the same validation under its row locks.
  */
-export type LegacyTaskDeadlineCommand = Readonly<{
+type LegacyTaskDeadlineCommandBase = Readonly<{
   commandKey: string;
-  action: LegacyTaskDeadlineAction;
   taskId: string;
-  melbourneDateTime: string;
   expectedVersions: Readonly<{ students: number; tasks: number }>;
 }>;
 
-export type LegacyTaskDeadlineIntent = Readonly<{
-  action: LegacyTaskDeadlineAction;
-  taskId: string;
+export type LegacyTaskDeadlineSetCommand = LegacyTaskDeadlineCommandBase & Readonly<{
+  action: "set";
   melbourneDateTime: string;
 }>;
+
+/** Accepted only so an already-committed historical clear can replay its receipt. */
+export type LegacyTaskDeadlineClearReplayCommand = LegacyTaskDeadlineCommandBase & Readonly<{
+  action: "clear";
+}>;
+
+export type LegacyTaskDeadlineCommand =
+  | LegacyTaskDeadlineSetCommand
+  | LegacyTaskDeadlineClearReplayCommand;
+
+export type LegacyTaskDeadlineIntent =
+  | Readonly<{ action: "set"; taskId: string; melbourneDateTime: string }>
+  | Readonly<{ action: "clear"; taskId: string }>;
 
 export type PreparedLegacyTaskDeadline = Readonly<{
   commandKey: string;
   commandIntent: LegacyTaskDeadlineIntent;
-  action: LegacyTaskDeadlineAction;
+  action: "set";
   taskId: string;
   melbourneDateTime: string;
   dueAt: string;
-  expectedVersions: LegacyTaskDeadlineCommand["expectedVersions"];
+  expectedVersions: LegacyTaskDeadlineSetCommand["expectedVersions"];
 }>;
 
 export type LegacyTaskDeadlineServiceErrorCode =
@@ -179,10 +189,9 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
   assertOnlyFields(value, COMMAND_FIELDS);
   const commandKey = requiredText(value.commandKey, "commandKey", 96);
   if (!COMMAND_KEY_PATTERN.test(commandKey)) fail("invalid_request", "commandKey 无效。");
-  if (value.action === "clear") {
-    fail("clear_disabled", "准确截止时间只能修改，不能清除。");
+  if (value.action !== "set" && value.action !== "clear") {
+    fail("invalid_request", "action 必须是 set 或历史 clear 重试。");
   }
-  if (value.action !== "set") fail("invalid_request", "action 必须是 set。");
   const taskId = requiredText(value.taskId, "taskId");
   if (!ID_PATTERN.test(taskId)) fail("invalid_request", "taskId 无效。");
   if (!isRecord(value.expectedVersions)) fail("invalid_request", "expectedVersions 缺失。");
@@ -191,6 +200,17 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
     students: version(value.expectedVersions.students, "expectedVersions.students"),
     tasks: version(value.expectedVersions.tasks, "expectedVersions.tasks"),
   };
+  if (value.action === "clear") {
+    if (value.melbourneDateTime !== undefined) {
+      fail("client_fields_forbidden", "历史 clear 重试不能附带新的日期或时间。");
+    }
+    return {
+      commandKey,
+      action: "clear",
+      taskId,
+      expectedVersions,
+    };
+  }
   const melbourneDateTime = requiredText(value.melbourneDateTime, "melbourneDateTime", 16);
   if (!MELBOURNE_DATE_TIME_PATTERN.test(melbourneDateTime)) {
     fail("invalid_request", "设置截止时间必须提供准确的墨尔本日期和时间。");
@@ -208,11 +228,23 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
 }
 
 export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineCommand): LegacyTaskDeadlineIntent {
+  if (command.action === "clear") {
+    return { action: "clear", taskId: command.taskId };
+  }
   return {
-    action: command.action,
+    action: "set",
     taskId: command.taskId,
     melbourneDateTime: command.melbourneDateTime,
   };
+}
+
+/** New clear commands are forbidden after the historical receipt lookup. */
+export function assertLegacyTaskDeadlineSetCommand(
+  command: LegacyTaskDeadlineCommand,
+): asserts command is LegacyTaskDeadlineSetCommand {
+  if (command.action === "clear") {
+    fail("clear_disabled", "准确截止时间只能修改，不能清除。");
+  }
 }
 
 function payloadRow(rows: readonly OpsStateRow[], entity: "students" | "tasks") {
@@ -268,7 +300,7 @@ export function authorizeLegacyTaskDeadlineCommand(input: {
  * It intentionally never sends a browser-provided tasks projection to SQL.
  */
 export function prepareLegacyTaskDeadline(input: {
-  command: LegacyTaskDeadlineCommand;
+  command: LegacyTaskDeadlineSetCommand;
   rows: readonly OpsStateRow[];
   actor: string;
   role: DemoSessionRole;

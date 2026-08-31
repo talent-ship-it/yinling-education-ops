@@ -24,7 +24,13 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.match(route, /parseLegacyTaskDeadlineCommand/);
   assert.match(route, /getOpsState\(\["students", "tasks"\]\)/);
   assert.ok(route.indexOf("authorizeLegacyTaskDeadlineCommand({") < route.indexOf("getLegacyTaskDeadlineCommandResult({"));
-  assert.ok(route.indexOf("getLegacyTaskDeadlineCommandResult({") < route.indexOf("prepareLegacyTaskDeadline({"));
+  const replayLookup = route.indexOf("getLegacyTaskDeadlineCommandResult({");
+  const clearWriteGate = route.indexOf("assertLegacyTaskDeadlineSetCommand(command)", replayLookup);
+  const prepare = route.indexOf("prepareLegacyTaskDeadline({", clearWriteGate);
+  const mutation = route.indexOf("mutateLegacyTaskDeadlineAtomic({", prepare);
+  assert.ok(replayLookup >= 0 && clearWriteGate > replayLookup, "historical clear receipts must replay before the write gate");
+  assert.ok(prepare > clearWriteGate && mutation > prepare, "new clear commands must stop before preparation and mutation");
+  assert.match(route, /legacyTaskDeadlineHttpError\(error\)/);
   assert.match(route, /mutateLegacyTaskDeadlineAtomic\(\{[\s\S]*commandKey: prepared\.commandKey[\s\S]*commandIntent: prepared\.commandIntent[\s\S]*expectedVersions: prepared\.expectedVersions[\s\S]*actor:/);
   assert.doesNotMatch(route, /putOpsState|addAudit|p_due_at|p_tasks|p_students/);
   assert.doesNotMatch(route, /const unchanged =|if \(unchanged\)/);
@@ -81,9 +87,11 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.match(toDoList, />补时间<\/button>/);
 });
 
-test("legacy deadline SQL locks students then tasks, replays before OCC, and changes only dueAt", async () => {
+test("historical 191008 SQL locks students then tasks, replays before OCC, and changes only dueAt", async () => {
   const sql = await readFile(migrationUrl, "utf8");
   const body = sqlFunction(sql, "public.mutate_legacy_task_deadline_atomic");
+  // This file pins the deployed 191008 migration itself. The later canonical
+  // deadline invariant disables new clear writes while preserving old receipts.
   const studentLock = body.indexOf("where s.entity = 'students' for update");
   const taskLock = body.indexOf("where s.entity = 'tasks' for update");
   const replay = body.indexOf("prior.command_key is not null");
