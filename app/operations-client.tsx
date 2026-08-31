@@ -4344,16 +4344,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const saveLegacyTaskDeadline = async (
-    action: "set" | "clear",
-    melbourneDateTime?: string,
-  ) => {
+  const saveLegacyTaskDeadline = async (melbourneDateTime: string) => {
     const task = legacyTaskDeadlineDraft;
     if (!task || legacyTaskDeadlineBusy || !canUseAdminScope || !isAdminView) return;
-    if (action === "set" && !melbourneDateTime) {
+    if (!melbourneDateTime) {
       notify("请选择准确的墨尔本截止日期和时间");
       return;
     }
+    const action = "set" as const;
     const commandIntent = JSON.stringify({
       action,
       taskId: task.id,
@@ -4397,7 +4395,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       if (body.applied === false) {
         notify(body.unchanged === true ? "截止时间没有变化" : "截止时间写入已确认，系统没有重复保存");
       } else {
-        notify(action === "set" ? "已记录准确的墨尔本截止日期和时间" : "已清除手动确认的截止时间");
+        notify("已记录准确的墨尔本截止日期和时间");
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : "历史任务截止时间保存失败；可重试");
@@ -4409,7 +4407,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const submitLegacyTaskDeadline = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const melbourneDateTime = String(new FormData(event.currentTarget).get("melbourneDateTime") ?? "").trim();
-    void saveLegacyTaskDeadline("set", melbourneDateTime);
+    void saveLegacyTaskDeadline(melbourneDateTime);
   };
 
   const mutateManagedExamFollowUp = async (
@@ -13827,7 +13825,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <div className="form-notice span-2"><CircleAlert size={16} /> 请输入准确截止时间。</div>
           <label className="span-2">任务<input value={legacyTaskDeadlineDraft.title} disabled /></label>
           <label className="span-2">截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : currentDateTimeValueInTimezone("Australia/Melbourne")} required /><small>按墨尔本时间保存。</small></label>
-          <footer>{legacyTaskDeadlineDraft.dueAt ? <button className="danger-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => void saveLegacyTaskDeadline("clear")}>清除准确时间</button> : null}<button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存准确时间"}</button></footer>
+          <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存准确时间"}</button></footer>
         </form>
       </Dialog>}
 

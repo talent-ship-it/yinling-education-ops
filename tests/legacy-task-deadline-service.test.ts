@@ -92,7 +92,11 @@ test("accepts only a closed legacy deadline command without a browser UTC timest
   }
   assert.throws(
     () => parseLegacyTaskDeadlineCommand({ ...command(), action: "clear", melbourneDateTime: "2026-08-19T18:00" }),
-    (error) => errorCode(error) === "client_fields_forbidden",
+    (error) => errorCode(error) === "clear_disabled",
+  );
+  assert.throws(
+    () => parseLegacyTaskDeadlineCommand({ ...command(), action: "clear", melbourneDateTime: undefined }),
+    (error) => errorCode(error) === "clear_disabled",
   );
   assert.throws(
     () => parseLegacyTaskDeadlineCommand({ ...command(), commandKey: COMMAND_KEY.toUpperCase() }),
@@ -147,19 +151,6 @@ test("derives only dueAt from the explicit Melbourne input and leaves legacy cop
   });
   assert.deepEqual(before[1]?.payload, [task()], "the source task snapshot must remain immutable");
 
-  const clear = prepareLegacyTaskDeadline({
-    command: command({
-      commandKey: "legacy-task-deadline:123e4567-e89b-42d3-a456-426614174001",
-      action: "clear",
-      melbourneDateTime: undefined,
-    }),
-    rows: rows(student(), task({ dueAt: "2026-08-19T08:00:00.000Z" })),
-    actor: "Ops Admin",
-    role: "limited-admin",
-    fullAdmin: false,
-  });
-  assert.deepEqual(clear.commandIntent, { action: "clear", taskId: "TSK-LEGACY" });
-  assert.equal(clear.dueAt, undefined);
 });
 
 test("permits only full or limited admins and fails closed for managed, closed, archived, or stale targets", () => {

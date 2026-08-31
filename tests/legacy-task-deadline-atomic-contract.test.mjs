@@ -34,6 +34,7 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.match(service, /Australia\/Melbourne/);
   assert.match(service, /melbourne_time_nonexistent/);
   assert.match(service, /melbourne_time_ambiguous/);
+  assert.match(service, /clear_disabled/);
   assert.match(service, /Object\.hasOwn\(task, "ruleKey"\)/);
   assert.match(service, /Object\.hasOwn\(task, "anchorBookingId"\)/);
   assert.match(service, /task\.status === "done"/);
@@ -59,6 +60,8 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.ok(deadlineHandlerEnd > deadlineHandlerStart, "legacy deadline handler boundary is invalid");
   const deadlineHandler = client.slice(deadlineHandlerStart, deadlineHandlerEnd);
   assert.match(deadlineHandler, /fetch\("\/api\/tasks\/legacy-deadline"/);
+  assert.match(deadlineHandler, /const action = "set" as const/);
+  assert.doesNotMatch(deadlineHandler, /"clear"/);
   assert.match(deadlineHandler, /legacyTaskDeadlineCommandKeysRef/);
   assert.match(deadlineHandler, /students: studentsShared\.version/);
   assert.match(deadlineHandler, /tasks: tasksShared\.version/);
@@ -67,7 +70,8 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   const deadlineModal = client.slice(client.indexOf('{modal === "legacyTaskDeadline"'), client.indexOf('{modal === "payrollNew"'));
   assert.doesNotMatch(deadlineModal, /发布后立即|N-1/);
   assert.match(deadlineModal, /Australia\/Melbourne/);
-  assert.match(deadlineModal, /清除准确时间/);
+  assert.doesNotMatch(deadlineModal, /清除准确时间/);
+  assert.match(deadlineModal, /保存准确时间/);
   const openDeadlineRepair = toDoList.indexOf('view === "todo" ? onRepairDeadline');
   const closedTaskReopen = toDoList.indexOf(': canReopen?.(task)', openDeadlineRepair);
   assert.ok(openDeadlineRepair >= 0, "open frozen tasks must expose the deadline repair action");

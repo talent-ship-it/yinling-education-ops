@@ -17,7 +17,7 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const MELBOURNE_DATE_TIME_PATTERN = /^([1-9]\d{3})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d)$/;
 const MELBOURNE_TIME_ZONE = "Australia/Melbourne";
 
-export type LegacyTaskDeadlineAction = "set" | "clear";
+export type LegacyTaskDeadlineAction = "set";
 
 /**
  * The browser submits a Melbourne wall-clock value, never a UTC instant. The
@@ -28,14 +28,14 @@ export type LegacyTaskDeadlineCommand = Readonly<{
   commandKey: string;
   action: LegacyTaskDeadlineAction;
   taskId: string;
-  melbourneDateTime?: string;
+  melbourneDateTime: string;
   expectedVersions: Readonly<{ students: number; tasks: number }>;
 }>;
 
 export type LegacyTaskDeadlineIntent = Readonly<{
   action: LegacyTaskDeadlineAction;
   taskId: string;
-  melbourneDateTime?: string;
+  melbourneDateTime: string;
 }>;
 
 export type PreparedLegacyTaskDeadline = Readonly<{
@@ -43,13 +43,14 @@ export type PreparedLegacyTaskDeadline = Readonly<{
   commandIntent: LegacyTaskDeadlineIntent;
   action: LegacyTaskDeadlineAction;
   taskId: string;
-  melbourneDateTime?: string;
-  dueAt?: string;
+  melbourneDateTime: string;
+  dueAt: string;
   expectedVersions: LegacyTaskDeadlineCommand["expectedVersions"];
 }>;
 
 export type LegacyTaskDeadlineServiceErrorCode =
   | "invalid_request"
+  | "clear_disabled"
   | "client_fields_forbidden"
   | "admin_forbidden"
   | "teacher_forbidden"
@@ -178,9 +179,10 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
   assertOnlyFields(value, COMMAND_FIELDS);
   const commandKey = requiredText(value.commandKey, "commandKey", 96);
   if (!COMMAND_KEY_PATTERN.test(commandKey)) fail("invalid_request", "commandKey 无效。");
-  if (value.action !== "set" && value.action !== "clear") {
-    fail("invalid_request", "action 必须是 set 或 clear。");
+  if (value.action === "clear") {
+    fail("clear_disabled", "准确截止时间只能修改，不能清除。");
   }
+  if (value.action !== "set") fail("invalid_request", "action 必须是 set。");
   const taskId = requiredText(value.taskId, "taskId");
   if (!ID_PATTERN.test(taskId)) fail("invalid_request", "taskId 无效。");
   if (!isRecord(value.expectedVersions)) fail("invalid_request", "expectedVersions 缺失。");
@@ -189,25 +191,19 @@ export function parseLegacyTaskDeadlineCommand(value: unknown): LegacyTaskDeadli
     students: version(value.expectedVersions.students, "expectedVersions.students"),
     tasks: version(value.expectedVersions.tasks, "expectedVersions.tasks"),
   };
-  const melbourneDateTime = value.melbourneDateTime === undefined
-    ? undefined
-    : requiredText(value.melbourneDateTime, "melbourneDateTime", 16);
-  if (value.action === "set") {
-    if (!melbourneDateTime || !MELBOURNE_DATE_TIME_PATTERN.test(melbourneDateTime)) {
-      fail("invalid_request", "设置截止时间必须提供准确的墨尔本日期和时间。");
-    }
-    // Validate user-facing DST failures before any state read/write. The SQL
-    // command independently repeats this exact safe conversion under lock.
-    melbourneDateTimeToUtc(melbourneDateTime);
-  } else if (melbourneDateTime !== undefined) {
-    fail("client_fields_forbidden", "清除截止时间不能附带新的日期或时间。");
+  const melbourneDateTime = requiredText(value.melbourneDateTime, "melbourneDateTime", 16);
+  if (!MELBOURNE_DATE_TIME_PATTERN.test(melbourneDateTime)) {
+    fail("invalid_request", "设置截止时间必须提供准确的墨尔本日期和时间。");
   }
+  // Validate user-facing DST failures before any state read/write. The SQL
+  // command independently repeats this exact safe conversion under lock.
+  melbourneDateTimeToUtc(melbourneDateTime);
   return {
     commandKey,
-    action: value.action,
+    action: "set",
     taskId,
     expectedVersions,
-    ...(melbourneDateTime ? { melbourneDateTime } : {}),
+    melbourneDateTime,
   };
 }
 
@@ -215,7 +211,7 @@ export function legacyTaskDeadlineIntent(command: LegacyTaskDeadlineCommand): Le
   return {
     action: command.action,
     taskId: command.taskId,
-    ...(command.melbourneDateTime ? { melbourneDateTime: command.melbourneDateTime } : {}),
+    melbourneDateTime: command.melbourneDateTime,
   };
 }
 
@@ -241,7 +237,7 @@ function legacyTask(rows: readonly OpsStateRow[], taskId: string) {
     fail("task_not_legacy", "系统规则任务的截止时间不能在这里手动修改。");
   }
   if (task.status === "done") {
-    fail("task_closed", "已完成任务不能补写或清除截止时间。");
+    fail("task_closed", "已完成任务不能补写或调整截止时间。");
   }
   if (typeof task.studentId !== "string" || !task.studentId.trim()) {
     fail("invalid_shared_state", "任务缺少有效学生关联。");
@@ -283,16 +279,14 @@ export function prepareLegacyTaskDeadline(input: {
     || identity.tasks.version !== input.command.expectedVersions.tasks) {
     fail("stale_expected_version", "学生或任务资料刚刚发生变化，请刷新后重试。");
   }
-  const dueAt = input.command.action === "set"
-    ? melbourneDateTimeToUtc(input.command.melbourneDateTime!).toISOString()
-    : undefined;
+  const dueAt = melbourneDateTimeToUtc(input.command.melbourneDateTime).toISOString();
   return {
     commandKey: input.command.commandKey,
     commandIntent: legacyTaskDeadlineIntent(input.command),
     action: input.command.action,
     taskId: input.command.taskId,
-    ...(input.command.melbourneDateTime ? { melbourneDateTime: input.command.melbourneDateTime } : {}),
-    ...(dueAt ? { dueAt } : {}),
+    melbourneDateTime: input.command.melbourneDateTime,
+    dueAt,
     expectedVersions: input.command.expectedVersions,
   };
 }
