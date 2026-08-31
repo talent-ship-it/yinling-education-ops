@@ -68,8 +68,13 @@ test("legacy deadline route accepts a closed command, reauthorizes before replay
   assert.doesNotMatch(deadlineModal, /发布后立即|N-1/);
   assert.match(deadlineModal, /Australia\/Melbourne/);
   assert.match(deadlineModal, /清除准确时间/);
-  assert.doesNotMatch(toDoList, /补时间/);
-  assert.doesNotMatch(toDoList, /deadline-edit-button/);
+  const openDeadlineRepair = toDoList.indexOf('view === "todo" ? onRepairDeadline');
+  const closedTaskReopen = toDoList.indexOf(': canReopen?.(task)', openDeadlineRepair);
+  assert.ok(openDeadlineRepair >= 0, "open frozen tasks must expose the deadline repair action");
+  assert.ok(closedTaskReopen > openDeadlineRepair, "closed tasks must branch to reopen instead of deadline repair");
+  assert.match(toDoList, /className="deadline-edit-button"/);
+  assert.match(toDoList, /onClick=\{\(\) => onRepairDeadline\(task\)\}/);
+  assert.match(toDoList, />补时间<\/button>/);
 });
 
 test("legacy deadline SQL locks students then tasks, replays before OCC, and changes only dueAt", async () => {
