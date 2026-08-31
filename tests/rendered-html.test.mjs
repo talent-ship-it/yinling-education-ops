@@ -103,6 +103,9 @@ test("shares the To Do UI across operations roles and leaves the teacher workspa
   assert.match(toDoList, /hidden=\{!expanded\}/);
   assert.match(toDoList, /formatCompactTaskDeadline\(task\.dueAt, deadlineTimeZone\)/);
   assert.match(toDoList, /taskTitlePresentation\(displayTitle, task\.ruleKey\)/);
+  assert.match(toDoList, /title="待补截止时间"/);
+  assert.match(client, /onRepairDeadline=\{canUseAdminScope && isAdminView/);
+  assert.match(client, /setLegacyTaskDeadlineDraft\(currentTask\)/);
   assert.match(client, /const taskDeadlineTimeZone = cleanTimezone\(displayPreferences\.timezone\)/);
   assert.match(client, /formatJiaowubaoTodayTaskTitle\(/);
   assert.match(toDoList, /deadlineTimeZoneLabel/);

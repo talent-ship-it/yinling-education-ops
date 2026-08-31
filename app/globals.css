@@ -1621,9 +1621,12 @@ body {
 .to-do-section.today .to-do-section-header h2 { color:#86550c; }
 .to-do-section.overdue .to-do-section-header { background:var(--red-soft); }
 .to-do-section.overdue .to-do-section-header h2 { color:#9c3f3b; }
+.to-do-section.pending-deadline .to-do-section-header { background:#f2f4f2; }
+.to-do-section.pending-deadline .to-do-section-header h2 { color:#68766e; }
 .task-dot.neutral { background:#98a49d; }
 .to-do-row .task-copy strong { font-size:13px; }
 .to-do-row .task-copy span,.to-do-row .due-label { font-size:11px; }
+.to-do-row .due-label.pending { color:#78867e; font-family:inherit; font-weight:700; }
 .to-do-row .task-copy-static { cursor:default; }
 .to-do-row .complete-button { height:36px; width:36px; }
 .to-do-list + .text-button { margin:13px 15px; }

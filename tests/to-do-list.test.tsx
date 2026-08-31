@@ -34,6 +34,7 @@ function render(
   filter: ToDoFilter = "all",
   deadlineTimeZone: TaskDeadlineTimeZone = "Australia/Melbourne",
   deadlineTimeFormat: "24h" | "12h" = "24h",
+  repairDeadlines = false,
 ) {
   return renderToStaticMarkup(
     <ToDoList
@@ -48,6 +49,8 @@ function render(
       onCannotDo={() => undefined}
       onReopen={() => undefined}
       onUpdateNote={() => undefined}
+      onRepairDeadline={repairDeadlines ? () => undefined : undefined}
+      canRepairDeadline={(candidate) => !Object.hasOwn(candidate, "ruleKey") && !Object.hasOwn(candidate, "anchorBookingId")}
       onTeacherReplied={() => undefined}
       onOpen={() => undefined}
     />,
@@ -150,11 +153,12 @@ test("renders only the plain handbook action as the headline and demotes details
 
 test("does not present a descriptive legacy due string as an exact deadline", () => {
   const html = render([task("unknown", "LP", "today", "发布后立即")]);
-  assert.match(html, /没有待处理事项/);
+  assert.match(html, /待补截止时间/);
+  assert.match(html, />待补时间</);
   assert.doesNotMatch(html, /发布后立即/);
 });
 
-test("does not expose manual deadline repair controls in To Do List", () => {
+test("keeps legacy tasks visible but non-actionable without deadline-repair authority", () => {
   const legacy = task("legacy-repair", "LP", "waiting", "发布后立即");
   const managed = {
     ...task("managed", "LP", "waiting", "规则文案"),
@@ -165,9 +169,20 @@ test("does not expose manual deadline repair controls in To Do List", () => {
     anchorBookingId: "LES-1",
   };
   const html = render([legacy, managed, anchored]);
-  assert.doesNotMatch(html, /补时间/);
-  assert.doesNotMatch(html, /补充截止时间/);
-  assert.doesNotMatch(html, /调整截止时间/);
+  assert.match(html, /待补截止时间/);
+  assert.equal((html.match(/>待补时间</g) ?? []).length, 3);
+  assert.doesNotMatch(html, /class="deadline-edit-button"/);
+  assert.doesNotMatch(html, /class="complete-button"/);
+  assert.doesNotMatch(html, /class="cannot-do-button"/);
+});
+
+test("offers exact deadline repair only for unbound legacy tasks when authorized", () => {
+  const legacy = task("legacy-repair", "LP", "waiting", "发布后立即");
+  const managed = { ...task("managed", "LP", "waiting", "规则文案"), ruleKey: "trial.parent-follow-up" };
+  const anchored = { ...task("anchored", "LP", "waiting", "规则文案"), anchorBookingId: "LES-1" };
+  const html = render([legacy, managed, anchored], "all", "Australia/Melbourne", "24h", true);
+  assert.equal((html.match(/class="deadline-edit-button"/g) ?? []).length, 1);
+  assert.match(html, /class="deadline-edit-button"[^>]*>补时间<\/button>/);
 });
 
 test("category filtering is exact and completed tasks stay hidden", () => {

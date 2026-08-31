@@ -24,6 +24,8 @@ export interface ToDoListProps {
   onCannotDo: (taskId: string, reason: string) => void;
   onReopen: (taskId: string) => void;
   onUpdateNote: (taskId: string, note: string) => void;
+  onRepairDeadline?: (task: OpsTask) => void;
+  canRepairDeadline?: (task: OpsTask) => boolean;
   onParentReplied?: (task: OpsTask) => void;
   onTeacherReplied?: (task: OpsTask) => void;
   onOpen: (task: OpsTask) => void;
@@ -60,13 +62,15 @@ function happenedToday(value: string | undefined, timeZone: TaskDeadlineTimeZone
 function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskListView, timeZone: TaskDeadlineTimeZone) {
   return tasks.filter((task) => {
     const inView = view === "todo"
-      ? isExecutableOpenTask(task)
+      ? task.status !== "done"
       : view === "cannot"
         ? task.status === "done" && task.completionOutcome === "cannot_do"
         : task.status === "done" && task.completionOutcome !== "cannot_do";
     if (!inView) return false;
     return filter === "all"
-      || (filter === "today" ? view === "todo" ? task.status === "today" : happenedToday(task.closedAt, timeZone) : task.category === filter);
+      || (filter === "today"
+        ? view === "todo" ? isExecutableOpenTask(task) && task.status === "today" : happenedToday(task.closedAt, timeZone)
+        : task.category === filter);
   });
 }
 
@@ -80,6 +84,8 @@ function TaskRows({
   onCannotDo,
   onReopen,
   onUpdateNote,
+  onRepairDeadline,
+  canRepairDeadline,
   onTeacherReplied,
   onOpen,
   canOpen,
@@ -87,7 +93,7 @@ function TaskRows({
   deadlineTimeZone,
   deadlineTimeZoneLabel,
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -104,6 +110,7 @@ function TaskRows({
     <div className="task-list" role="list">
       {tasks.map((task) => {
         const editing = editor?.taskId === task.id ? editor : null;
+        const executable = isExecutableOpenTask(task);
         const displayTitle = taskTitle?.(task) ?? task.title;
         const title = taskTitlePresentation(displayTitle, task.ruleKey);
         const supportingCopy = title.details.length === 0 || task.completionNote
@@ -131,6 +138,10 @@ function TaskRows({
               aria-label={`截止 ${deadline}`}
               title={`截止：${deadline} · ${deadlineTimeZoneLabel}`}
             >{deadline}</time>;
+            if (view === "todo" && !executable) return <span
+              className="due-label pending"
+              title="需要管理员补充准确截止时间后才可执行"
+            >待补时间</span>;
             return null;
           })()}
           <div className="task-row-actions">
@@ -148,7 +159,7 @@ function TaskRows({
               aria-label={`编辑备注：${title.primary}`}
               onClick={() => setEditor({ taskId: task.id, mode: "note", value: task.completionNote ?? "" })}
             ><Pencil size={14} /></button>
-            {view === "todo" ? <>
+            {view === "todo" && executable ? <>
               <button
                 className="cannot-do-button"
                 type="button"
@@ -163,7 +174,11 @@ function TaskRows({
                 aria-label={`完成：${title.primary}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button> : null}
-            </> : canReopen?.(task) !== false ? <button
+            </> : view === "todo" ? onRepairDeadline && canRepairDeadline?.(task) !== false ? <button
+              className="deadline-edit-button"
+              type="button"
+              onClick={() => onRepairDeadline(task)}
+            >补时间</button> : null : canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"
@@ -194,7 +209,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -220,6 +235,8 @@ export function ToDoList({
   onCannotDo,
   onReopen,
   onUpdateNote,
+  onRepairDeadline,
+  canRepairDeadline,
   onTeacherReplied,
   onOpen,
   canOpen,
@@ -231,10 +248,12 @@ export function ToDoList({
   const [expanded, setExpanded] = React.useState(true);
   const [view, setView] = React.useState<TaskListView>("todo");
   const filtered = filterTasks(tasks, filter, view, deadlineTimeZone);
-  const today = sortTasksByDueAt(filtered.filter((task) => view !== "todo" || task.status === "today"));
-  const overdue = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status === "overdue"));
-  const remaining = sortTasksByDueAt(filtered.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
+  const pendingDeadline = sortTasksByDueAt(filtered.filter((task) => view === "todo" && !isExecutableOpenTask(task)));
+  const actionable = view === "todo" ? filtered.filter(isExecutableOpenTask) : filtered;
+  const today = sortTasksByDueAt(actionable.filter((task) => view !== "todo" || task.status === "today"));
+  const overdue = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status === "overdue"));
+  const remaining = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">
@@ -276,6 +295,7 @@ export function ToDoList({
           {today.length > 0 && <TaskSection title="今日到期" className="today" tasks={today} {...rowProps} />}
           {overdue.length > 0 && <TaskSection title="已逾期" className="overdue" tasks={overdue} {...rowProps} />}
           {remaining.length > 0 && <TaskSection title="其余任务" className="remaining" tasks={remaining} {...rowProps} />}
+          {pendingDeadline.length > 0 && <TaskSection title="待补截止时间" className="pending-deadline" tasks={pendingDeadline} {...rowProps} />}
         </> : today.length > 0 ? <TaskSection title={view === "done" ? "已完成" : "无法完成"} className={view} tasks={today} {...rowProps} /> : null}
         {filtered.length === 0 && <div className="empty-inline" role="status" aria-live="polite">{view === "todo" ? "没有待处理事项" : view === "done" ? "还没有已完成任务" : "没有无法完成的任务"}</div>}
       </div>
