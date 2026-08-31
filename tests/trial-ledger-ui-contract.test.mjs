@@ -53,3 +53,25 @@ test("keeps all 13 persisted ledger fields editable through the dedicated atomic
   assert.match(client, /field-level|字段级|trialLedgerStoredValue/);
   assert.doesNotMatch(client, /const saveTrialLedgerField = .*lpShared\.mutateAndCommit/s);
 });
+
+test("offers actor-scoped filters, sortable numeric dates, continuous rows and live review statistics", () => {
+  const panelStart = client.indexOf('<section className="panel trial-ledger-panel"');
+  const panelEnd = client.indexOf('<section className="panel collection-shell"', panelStart);
+  const panel = client.slice(panelStart, panelEnd);
+
+  assert.match(client, /trialLedgerViewStorageKey\(sessionOperator\)/);
+  assert.match(client, /parseTrialLedgerViewState/);
+  assert.match(client, /filterAndSortTrialLedgerRows/);
+  assert.match(panel, /上课日期从/);
+  assert.match(panel, /上课日期至/);
+  assert.match(panel, /全部教务/);
+  assert.match(panel, /全部规划老师/);
+  assert.match(panel, /全部科目/);
+  assert.match(panel, /全部老师/);
+  assert.match(panel, /排序字段/);
+  assert.match(panel, /visibleTrialLedgerEntries\.map/);
+  assert.doesNotMatch(panel, /\.slice\(/);
+  assert.match(panel, /trialLedgerStats\.byStatus/);
+  assert.match(panel, /成功率只计算已明确为成功或失败的试听/);
+  assert.match(panel, /筛选只保存在当前登录账号，不影响其他人/);
+});
