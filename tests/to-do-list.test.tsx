@@ -112,7 +112,8 @@ test("renders today, overdue, then remaining sections and sorts each section by 
 
 test("shows the canonical deadline as a compact date, not legacy workflow copy", () => {
   const html = render([task("due", "LP", "today", "试听前 N-3 · 18:00", "2026-08-12T08:00:00.000Z")]);
-  assert.match(html, />截止 8月12日</);
+  assert.match(html, /aria-label="截止 8月12日"[^>]*>8月12日</);
+  assert.doesNotMatch(html, />截止 8月12日</);
   assert.match(html, /<time[^>]+dateTime="2026-08-12T08:00:00\.000Z"/);
   assert.match(html, /title="截止：8月12日 · 墨尔本"/);
   assert.doesNotMatch(html, /试听前 N-3/);
@@ -127,21 +128,22 @@ test("renders the same deadline instant in Beijing for operations and Melbourne 
   const operations = render([task("beijing", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai");
   const teachingControl = render([task("melbourne", "试听", "today", "legacy", deadline)], "all", "Australia/Melbourne");
 
-  assert.match(operations, />截止 8月12日</);
+  assert.match(operations, />8月12日</);
   assert.match(operations, /title="截止：8月12日 · 北京时间（中国）"/);
-  assert.match(teachingControl, />截止 8月13日</);
+  assert.match(teachingControl, />8月13日</);
   assert.match(teachingControl, /title="截止：8月13日 · 墨尔本"/);
   const twelveHour = render([task("twelve-hour", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai", "12h");
-  assert.match(twelveHour, />截止 8月12日</);
+  assert.match(twelveHour, />8月12日</);
 });
 
-test("renders only the bracketed handbook action as the headline and demotes details", () => {
+test("renders only the plain handbook action as the headline and demotes details", () => {
   const handbook = {
     ...task("handbook", "排课", "today", "今天", "2026-08-12T08:00:00.000Z"),
     title: "《教务+教统》【试听待排课】<Heather孙晓琳> <Daisy>",
   };
   const html = render([handbook]);
-  assert.match(html, /<strong>【试听待排课】<\/strong>/);
+  assert.match(html, /<strong>试听待排课<\/strong>/);
+  assert.doesNotMatch(html, /<strong>【/);
   assert.match(html, /<small class="task-title-details">Heather孙晓琳 · Daisy<\/small>/);
   assert.doesNotMatch(html, /教务\+教统/);
 });

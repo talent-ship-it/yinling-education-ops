@@ -424,8 +424,8 @@ const LEGACY_TASK_RULE_HEADLINES: Readonly<Record<string, string>> = {
 
 /**
  * Handbook task titles use 【】 for the action and <> for context. Keep the
- * exact persisted title for audit/history, but present only that action as the
- * visual headline and demote names/times to supporting text.
+ * exact persisted title for audit/history, but present the action without its
+ * authoring brackets and demote names/times to supporting text.
  */
 export function taskTitlePresentation(value: string, ruleKey?: string): TaskTitlePresentation {
   const title = value.trim();
@@ -437,11 +437,11 @@ export function taskTitlePresentation(value: string, ruleKey?: string): TaskTitl
     const legacyHeadline = (ruleKey ? LEGACY_TASK_RULE_HEADLINES[ruleKey] : undefined)
       ?? LEGACY_TRIAL_TASK_HEADLINES.find(([pattern]) => pattern.test(title))?.[1];
     return legacyHeadline
-      ? { primary: `【${legacyHeadline}】`, details }
+      ? { primary: legacyHeadline, details }
       : { primary: title, details: [] };
   }
   return {
-    primary: `【${primaryMatch[1]?.trim() ?? ""}】`,
+    primary: primaryMatch[1]?.trim() ?? "",
     details,
   };
 }

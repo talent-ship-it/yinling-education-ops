@@ -93,41 +93,41 @@ test("formats a compact task-list deadline without year or time", () => {
   assert.equal(formatCompactTaskDeadline("not-a-deadline"), undefined);
 });
 
-test("presents handbook action text as the headline and angle-bracket context as details", () => {
+test("presents handbook action text without authoring brackets and keeps context as details", () => {
   assert.deepEqual(
     taskTitlePresentation("《教务+教统》【试听待排课】<Heather孙晓琳> <Daisy>"),
-    { primary: "【试听待排课】", details: ["Heather孙晓琳", "Daisy"] },
+    { primary: "试听待排课", details: ["Heather孙晓琳", "Daisy"] },
   );
   assert.deepEqual(taskTitlePresentation("普通内部任务"), { primary: "普通内部任务", details: [] });
 });
 
-test("presents retained legacy trial history with the current bracketed visual hierarchy", () => {
+test("presents retained legacy trial history with the current plain visual hierarchy", () => {
   assert.deepEqual(
     taskTitlePresentation("试听 LP：核对交接信息 <历史学生>"),
-    { primary: "【试听 LP 交接】", details: ["历史学生"] },
+    { primary: "试听 LP 交接", details: ["历史学生"] },
   );
-  assert.deepEqual(taskTitlePresentation("完成试听排课"), { primary: "【试听待排课】", details: [] });
-  assert.deepEqual(taskTitlePresentation("审核试听 LP"), { primary: "【LP 定稿】", details: [] });
-  assert.deepEqual(taskTitlePresentation("紧急审核试听 LP"), { primary: "【今日 LP 定稿】", details: [] });
+  assert.deepEqual(taskTitlePresentation("完成试听排课"), { primary: "试听待排课", details: [] });
+  assert.deepEqual(taskTitlePresentation("审核试听 LP"), { primary: "LP 定稿", details: [] });
+  assert.deepEqual(taskTitlePresentation("紧急审核试听 LP"), { primary: "今日 LP 定稿", details: [] });
   assert.deepEqual(
     taskTitlePresentation("确认老师备课内容与资料"),
-    { primary: "【跟进老师备课内容】", details: [] },
+    { primary: "跟进老师备课内容", details: [] },
   );
   assert.deepEqual(
     taskTitlePresentation("向家长同步试听安排进度（第 2 次）"),
-    { primary: "【二次向家长交待排课进度】", details: [] },
+    { primary: "二次向家长交待排课进度", details: [] },
   );
   assert.deepEqual(
     taskTitlePresentation("将 LP 发审核群并发给老师"),
-    { primary: "【将 LP 发审核群并发给老师】", details: [] },
+    { primary: "将 LP 发审核群并发给老师", details: [] },
   );
   assert.deepEqual(
     taskTitlePresentation("旧版首次交接任务", "student.initial-handover"),
-    { primary: "【学生信息交接】", details: [] },
+    { primary: "学生信息交接", details: [] },
   );
   assert.deepEqual(
     taskTitlePresentation("旧版创建任务", "student.create-lp"),
-    { primary: "【创建 LP】", details: [] },
+    { primary: "创建 LP", details: [] },
   );
 });
 

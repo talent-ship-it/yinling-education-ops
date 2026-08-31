@@ -128,8 +128,9 @@ function TaskRows({
             if (deadline && task.dueAt) return <time
               className={`due-label ${task.status}`}
               dateTime={task.dueAt}
+              aria-label={`截止 ${deadline}`}
               title={`截止：${deadline} · ${deadlineTimeZoneLabel}`}
-            >截止 {deadline}</time>;
+            >{deadline}</time>;
             return null;
           })()}
           <div className="task-row-actions">
