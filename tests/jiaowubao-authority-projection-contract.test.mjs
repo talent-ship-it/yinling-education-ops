@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, cronRoute, store, appSnapshot, browserParser] = await Promise.all([
+const [migration, timeoutMigration, cronRoute, store, appSnapshot, browserParser] = await Promise.all([
   readFile(new URL("../supabase/migrations/20260831000500_jiaowubao_authoritative_source_projection.sql", import.meta.url), "utf8"),
+  readFile(new URL("../supabase/migrations/20260831000600_bound_jiaowubao_authority_projection_timeout.sql", import.meta.url), "utf8"),
   readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/ops-store.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/app-snapshot/route.ts", import.meta.url), "utf8"),
@@ -24,6 +25,15 @@ test("v3 keeps complete business JSON and rejects credential-shaped keys at the 
   assert.doesNotMatch(migration, /student_value \? 'price'/);
   assert.match(migration, /where record \? 'price_mem'/);
   assert.match(migration, /where record \? 'price'/);
+});
+
+test("the complete authority projection has a bounded function-only timeout", () => {
+  assert.match(
+    timeoutMigration,
+    /alter function public\.project_jiaowubao_open_api_authority\(text,text,text\)\s+set statement_timeout = '110s'/i,
+  );
+  assert.doesNotMatch(timeoutMigration, /alter\s+(?:database|role|system)\b/i);
+  assert.doesNotMatch(timeoutMigration, /statement_timeout\s*=\s*'0'/i);
 });
 
 test("projection is immutable, idempotent, multi-authority and never overwrites native records", () => {
