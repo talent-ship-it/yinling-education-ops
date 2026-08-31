@@ -131,20 +131,6 @@ function TaskRows({
             : <button className="task-copy" type="button" onClick={() => onOpen(task)}>
                 {copy}
               </button>}
-          {(() => {
-            const deadline = formatCompactTaskDeadline(task.dueAt, deadlineTimeZone);
-            if (deadline && task.dueAt) return <time
-              className={`due-label ${task.status}`}
-              dateTime={task.dueAt}
-              aria-label={`截止 ${deadline}`}
-              title={`截止：${deadline} · ${deadlineTimeZoneLabel}`}
-            >{deadline}</time>;
-            if (view === "todo" && !executable) return <span
-              className="due-label pending"
-              title="需要管理员补充准确截止时间后才可执行"
-            >待补时间</span>;
-            return null;
-          })()}
           <div className="task-row-actions">
             {view === "todo" && executable && onParentReplied && (task.ruleKey === "trial.parent-follow-up"
               || task.ruleKey === "trial.parent-no-reply-follow-up"
@@ -195,6 +181,20 @@ function TaskRows({
               aria-label={`恢复到待办：${title.primary}`}
               onClick={() => onReopen(task.id)}
             ><RotateCcw size={14} /><span>恢复</span></button> : null}
+            {(() => {
+              const deadline = formatCompactTaskDeadline(task.dueAt, deadlineTimeZone);
+              if (deadline && task.dueAt) return <time
+                className={`due-label ${task.status}`}
+                dateTime={task.dueAt}
+                aria-label={`截止 ${deadline}`}
+                title={`截止：${deadline} · ${deadlineTimeZoneLabel}`}
+              >{deadline}</time>;
+              if (view === "todo" && !executable) return <span
+                className="due-label pending"
+                title="需要管理员补充准确截止时间后才可执行"
+              >待补时间</span>;
+              return null;
+            })()}
           </div>
           {editing ? <form className="task-inline-editor" onSubmit={submitEditor}>
             <label>{editing.mode === "cannot" ? "无法完成原因（必填）" : "任务备注"}

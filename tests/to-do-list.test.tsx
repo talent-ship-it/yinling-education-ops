@@ -127,6 +127,16 @@ test("shows the canonical deadline as a compact date, not legacy workflow copy",
   assert.doesNotMatch(html, /Abby/);
 });
 
+test("renders the deadline after the task action buttons", () => {
+  const html = render([task("rightmost-date", "LP", "today", "今天", "2026-08-12T08:00:00.000Z")]);
+  const actionsAt = html.indexOf('class="task-row-actions"');
+  const completeAt = html.indexOf('aria-label="完成：任务 rightmost-date"');
+  const deadlineAt = html.indexOf('class="due-label today"');
+  assert.ok(actionsAt >= 0);
+  assert.ok(completeAt > actionsAt);
+  assert.ok(deadlineAt > completeAt);
+});
+
 test("renders the same deadline instant in Beijing for operations and Melbourne for teaching control", () => {
   const deadline = "2026-08-12T14:30:00.000Z";
   const operations = render([task("beijing", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai");
