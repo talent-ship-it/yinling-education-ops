@@ -125,6 +125,8 @@ test("trial task replacement preserves unrelated legacy evidence with sparse met
 
 test("the browser sends one complete command and performs no post-commit trial repair", () => {
   assert.match(client, /const fields = parsedLp\.fields as LpFieldValues/);
+  assert.match(client, /试听 LP 和所需任务已保存/);
+  assert.doesNotMatch(client, /24\/36\/48 小时任务已保存/);
   assert.doesNotMatch(client, /trialAtomicFields/);
   assert.doesNotMatch(client, /generateTrialManualRequestTasks/);
 

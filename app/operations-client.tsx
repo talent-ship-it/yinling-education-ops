@@ -12224,7 +12224,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         setModal(null);
         setActive("lp");
         addAudit("创建 LP 工作流", `${workflowStudent?.name ?? provisionalIntake?.guardianWechat ?? committedStudentId} · ${workflowType}`, "green");
-        notify(body.applied === false ? "LP 已确认，系统没有重复保存" : workflowType === "试听 LP" ? "试听 LP、二要一发与 24/36/48 小时任务已保存" : "已原子创建 LP 和对应强提醒");
+        notify(body.applied === false ? "LP 已确认，系统没有重复保存" : workflowType === "试听 LP" ? "试听 LP 和所需任务已保存" : "已原子创建 LP 和对应强提醒");
       } catch (error) {
         notify(error instanceof Error ? error.message : "LP 保存失败；可安全重试");
       } finally { lpAtomicBusyRef.current = false; }
