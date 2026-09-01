@@ -240,6 +240,10 @@ function planner(value: unknown): TrialPlanner | null {
   return TRIAL_PLANNERS.find((candidate) => normalize(candidate) === key) ?? null;
 }
 
+// Keep the generic-account prefix exact, while allowing only the known
+// descriptive suffixes used by 教务宝 labels (for example, 校长号1️⃣ 2026).
+const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:试听(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
+
 /** Converts the extended browser form into the separately persisted manual intake. */
 export function trialIntakeFromFields(fields: LpFieldValues): TrialIntake {
   const resolvedPlanner = planner(fields.planner);
@@ -282,9 +286,10 @@ export function trialPlannerHintFromParticipants(
   for (const participant of participants) {
     const key = normalize(participant.label);
     if (!key) continue;
-    if (/(试听(?:学员|学生|账号)?a|trial(?:student|account)?a)$/.test(key)) hints.add("Tara");
-    if (/(试听(?:学员|学生|账号)?b|trial(?:student|account)?b)$/.test(key)) hints.add("Eileen");
-    if (/(试听(?:学员|学生|账号)?c|trial(?:student|account)?c)$/.test(key)) hints.add("Abby");
+    const accountLetter = key.match(GENERIC_TRIAL_ACCOUNT_LABEL)?.[1];
+    if (accountLetter === "a") hints.add("Tara");
+    if (accountLetter === "b") hints.add("Eileen");
+    if (accountLetter === "c") hints.add("Abby");
   }
   return hints.size === 1 ? [...hints][0]! : null;
 }

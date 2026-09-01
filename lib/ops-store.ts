@@ -100,6 +100,50 @@ export type StudentFuAttachmentAtomicCommitResult = Readonly<{
   audit_entry_id: string;
 }>;
 
+export type WecomArchiveIngestResult = Readonly<{
+  inserted: number;
+  duplicates: number;
+  linked: number;
+  ambiguous: number;
+  pending: number;
+  projectedFiles: number;
+}>;
+
+export type WecomArchiveInboxRow = Readonly<{
+  message_id: string;
+  chat_id: string;
+  sender_id: string;
+  sent_at: string;
+  message_type: "text" | "image" | "file" | "mixed" | "other";
+  body: string | null;
+  classification: "handover" | "renewal_follow_up" | "trial_scheduling" | "other";
+  student_name_hint: string | null;
+  guardian_wechat_hint: string | null;
+  student_id: string | null;
+  match_status: "pending" | "ambiguous" | "linked";
+  media_count: number;
+  projected_at: string | null;
+  ingested_at: string;
+}>;
+
+export type WecomArchiveStatus = Readonly<{
+  total: number;
+  linked: number;
+  ambiguous: number;
+  pending: number;
+  latestSentAt: string | null;
+  latestIngestedAt: string | null;
+}>;
+
+export type WecomArchiveMedia = Readonly<{
+  id: string;
+  student_id: string;
+  file_name: string;
+  content_type: "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
+  byte_size: number;
+  content_base64: string;
+}>;
+
 export type RenewalFollowUpAtomicCommitResult = Readonly<{
   command_key: string;
   applied: boolean;
@@ -881,6 +925,11 @@ export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_sc
 export const JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC = "project_jiaowubao_open_api_authority";
 export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
 export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
+export const WECOM_ARCHIVE_INGEST_RPC = "ingest_wecom_archive_batch";
+export const WECOM_ARCHIVE_INBOX_RPC = "read_wecom_archive_inbox";
+export const WECOM_ARCHIVE_LINK_RPC = "link_wecom_archive_message";
+export const WECOM_ARCHIVE_MEDIA_RPC = "get_wecom_archive_media";
+export const WECOM_ARCHIVE_STATUS_RPC = "get_wecom_archive_status";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -1595,6 +1644,59 @@ export function recoverStaleLpParentProgressSchedulerRuns() {
 export function getOpsSources() {
   const { secret } = configuration();
   return rpc<OpsSourceRow[]>("get_ops_sources", { p_secret: secret });
+}
+
+/** Persists a worker-normalised WeCom batch and projects only unique exact matches. */
+export function ingestWecomArchiveBatch(input: {
+  records: readonly Readonly<Record<string, unknown>>[];
+  startedAt: string;
+  actor?: string;
+}) {
+  const { secret } = configuration();
+  return rpc<WecomArchiveIngestResult>(WECOM_ARCHIVE_INGEST_RPC, {
+    p_secret: secret,
+    p_records: input.records,
+    p_started_at: input.startedAt,
+    p_actor: input.actor ?? "WeCom Archive Worker",
+  });
+}
+
+export function readWecomArchiveInbox(limit = 100) {
+  const { secret } = configuration();
+  return rpc<WecomArchiveInboxRow[]>(WECOM_ARCHIVE_INBOX_RPC, {
+    p_secret: secret,
+    p_limit: limit,
+  });
+}
+
+/** Full-admin review action for records that could not be uniquely matched. */
+export function linkWecomArchiveMessage(input: { messageId: string; studentId: string; actor: string }) {
+  const { secret } = configuration();
+  return rpc<Readonly<{
+    messageId: string;
+    studentId: string;
+    messageProjected: boolean;
+    fileCount: number;
+    auditEntryId: string;
+  }>>(WECOM_ARCHIVE_LINK_RPC, {
+    p_secret: secret,
+    p_message_id: input.messageId,
+    p_student_id: input.studentId,
+    p_actor: input.actor,
+  });
+}
+
+export function getWecomArchiveMedia(id: string) {
+  const { secret } = configuration();
+  return rpc<WecomArchiveMedia | null>(WECOM_ARCHIVE_MEDIA_RPC, {
+    p_secret: secret,
+    p_id: id,
+  });
+}
+
+export function getWecomArchiveStatus() {
+  const { secret } = configuration();
+  return rpc<WecomArchiveStatus>(WECOM_ARCHIVE_STATUS_RPC, { p_secret: secret });
 }
 
 /** Server-only source snapshot writer; callers are cron/management code, never browser code. */

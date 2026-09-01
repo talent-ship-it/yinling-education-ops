@@ -63,6 +63,39 @@ test("maps only one unambiguous 教务宝 trial account to its planner", () => {
   assert.equal(trialPlannerHintFromParticipants([{ label: "正式学员" }]), null);
 });
 
+test("maps verified generic accounts with known descriptive suffixes", () => {
+  const verifiedLabels = [
+    ["试听学员A（校长号1️⃣） 2026", "Tara"],
+    ["试听学员B（校长号2️⃣） 2026", "Eileen"],
+    ["试听学员C（校长号3️⃣） 2026", "Abby"],
+    ["trial student B account 2026", "Eileen"],
+    ["试听账号C year 2026", "Abby"],
+  ] as const;
+
+  for (const [label, expectedPlanner] of verifiedLabels) {
+    assert.equal(trialPlannerHintFromParticipants([{ label }]), expectedPlanner, label);
+  }
+});
+
+test("rejects ambiguous account labels and letters inside ordinary student names", () => {
+  assert.equal(trialPlannerHintFromParticipants([
+    { label: "试听学员A（校长号1️⃣） 2026" },
+    { label: "试听学员B（校长号2️⃣） 2026" },
+  ]), null);
+  assert.equal(trialPlannerHintFromParticipants([{ label: "试听学员A试听学员B 2026" }]), null);
+
+  for (const label of [
+    "Mabel Stone",
+    "Student B 2026",
+    "试听学员Bobby",
+    "试听学员AB 2026",
+    "试听学员B（未知说明） 2026",
+    "正式学员B account 2026",
+  ]) {
+    assert.equal(trialPlannerHintFromParticipants([{ label }]), null, label);
+  }
+});
+
 test("matches a trial LP to real schedule evidence by full course-title name and planner hint", () => {
   const matches = matchTrialScheduleEvents({
     lpItems: [{ id: "LP-1", studentId: "STU-1", workflowType: "试听 LP", trialIntake: trialIntakeFromFields(extendedFields) }],

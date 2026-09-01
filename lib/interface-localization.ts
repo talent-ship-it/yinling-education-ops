@@ -80,6 +80,7 @@ const englishInterfacePhrases: Record<string, string> = {
   "已连接": "Connected",
   "待接入": "Not connected",
   "待 PoC": "Proof of concept pending",
+  "会话存档接入端已就绪": "Conversation archive endpoint ready",
   "只读来源": "Read-only source",
   "防覆盖": "Overwrite protection",
   "人工确认": "Manual confirmation",

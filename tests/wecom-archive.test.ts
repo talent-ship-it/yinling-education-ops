@@ -1,0 +1,172 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+
+import {
+  normalizeWecomArchiveBatch,
+  WecomArchiveParseError,
+} from "../lib/wecom-archive";
+
+const sentAt = "2026-09-01T00:15:00.000Z";
+
+function base(overrides: Record<string, unknown> = {}) {
+  return {
+    messageId: "synthetic-message-1",
+    chatId: "synthetic-room-1",
+    senderId: "synthetic-user-1",
+    sentAt,
+    messageType: "text",
+    text: "普通内部讨论",
+    media: [],
+    ...overrides,
+  };
+}
+
+test("normalises official aliases and detects a structured information handover", () => {
+  const [result] = normalizeWecomArchiveBatch({ records: [{
+    msgid: "synthetic-official-1",
+    roomid: "synthetic-room-1",
+    from: "synthetic-user-1",
+    msgtime: Date.parse(sentAt),
+    msgtype: "text",
+    action: "send",
+    tolist: ["synthetic-user-2"],
+    text: { content: "信息交接表\n学生姓名：Mia示例\n家长微信名：Parent-Synthetic\n科目：English" },
+    media: [],
+  }] });
+  assert.deepEqual(result, {
+    messageId: "synthetic-official-1",
+    chatId: "synthetic-room-1",
+    senderId: "synthetic-user-1",
+    sentAt,
+    messageType: "text",
+    text: "信息交接表\n学生姓名:Mia示例\n家长微信名:Parent-Synthetic\n科目:English",
+    classification: "handover",
+    studentNameHint: "Mia示例",
+    guardianWechatHint: "Parent-Synthetic",
+    media: [],
+  });
+});
+
+test("classifies renewal screenshots and extracts only one explicit student hint", () => {
+  const [result] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-renewal-1",
+    text: "🌻 Lydia示例，续费前跟进",
+    contextText: ["续费前跟进有了的话，Report群发聊天截图"],
+  })]);
+  assert.equal(result?.classification, "renewal_follow_up");
+  assert.equal(result?.studentNameHint, "Lydia示例");
+  assert.equal(result?.guardianWechatHint, null);
+
+  const [ambiguous] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-renewal-2",
+    text: "🌻 Lydia示例，续费前跟进\n🌸 Carlos示例，续费前跟进",
+  })]);
+  assert.equal(ambiguous?.classification, "renewal_follow_up");
+  assert.equal(ambiguous?.studentNameHint, null);
+});
+
+test("uses nearby context only for explicit guardian labels", () => {
+  const [result] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-context-1",
+    text: "信息交接表",
+    contextText: ["家长微信名：SyntheticParent", "销售老师说请尽快处理"],
+  })]);
+  assert.equal(result?.guardianWechatHint, "SyntheticParent");
+  assert.equal(result?.studentNameHint, null);
+});
+
+test("verifies downloaded media bytes, derives a digest, and upgrades the type to mixed", () => {
+  const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("synthetic-image")]);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const [result] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-media-1",
+    text: "续费前跟进截图",
+    media: [{
+      mediaKey: "synthetic-media-key-1",
+      fileName: "../follow-up.jpg",
+      contentType: "image/jpeg",
+      contentBase64: bytes.toString("base64"),
+      sha256: digest,
+    }],
+  })]);
+  assert.equal(result?.messageType, "mixed");
+  assert.equal(result?.classification, "renewal_follow_up");
+  assert.deepEqual(result?.media[0], {
+    mediaKey: "synthetic-media-key-1",
+    fileName: ".._follow-up.jpg",
+    contentType: "image/jpeg",
+    contentBase64: bytes.toString("base64"),
+    sha256: digest,
+  });
+});
+
+test("requires archive media bytes and rejects integrity or claimed-classification mismatches", () => {
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({ messageType: "image", text: "", media: [] })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "media_missing",
+  );
+  const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("synthetic-image")]);
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({
+      media: [{
+        mediaKey: "synthetic-media-key-2",
+        fileName: "image.png",
+        contentType: "image/png",
+        contentBase64: bytes.toString("base64"),
+      }],
+    })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "media_integrity_mismatch",
+  );
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({ classification: "handover" })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "classification_mismatch",
+  );
+});
+
+test("deduplicates exact retries but rejects conflicting message IDs and unexpected fields", () => {
+  const duplicate = base();
+  assert.equal(normalizeWecomArchiveBatch([duplicate, { ...duplicate }]).length, 1);
+  assert.throws(
+    () => normalizeWecomArchiveBatch([duplicate, { ...duplicate, text: "changed" }]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "idempotency_conflict",
+  );
+  assert.throws(
+    () => normalizeWecomArchiveBatch([{ ...duplicate, rawSecretPayload: "forbidden" }]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "unexpected_field",
+  );
+});
+
+test("rejects conflicting aliases and repeated media keys, and emits well-formed filenames", () => {
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({ msgid: "different-message-id" })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "alias_conflict",
+  );
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({ msgtime: Date.parse(sentAt) + 1_000 })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "alias_conflict",
+  );
+
+  const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("synthetic-image")]);
+  const media = {
+    mediaKey: "repeated-media-key",
+    fileName: "one.jpg",
+    contentType: "image/jpeg",
+    contentBase64: bytes.toString("base64"),
+  };
+  assert.throws(
+    () => normalizeWecomArchiveBatch([base({ media: [media, { ...media, fileName: "two.jpg" }] })]),
+    (error: unknown) => error instanceof WecomArchiveParseError && error.code === "duplicate_media_key",
+  );
+
+  const [normalised] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-well-formed-filename",
+    media: [{ ...media, mediaKey: "well-formed-media", fileName: `prefix-\ud800-${"😀".repeat(200)}.jpg` }],
+  })]);
+  const fileName = normalised?.media[0]?.fileName ?? "";
+  assert.doesNotThrow(() => encodeURIComponent(fileName));
+  assert.ok(Array.from(fileName).every((point) => {
+    const codePoint = point.codePointAt(0) ?? 0;
+    return codePoint < 0xd800 || codePoint > 0xdfff;
+  }));
+});

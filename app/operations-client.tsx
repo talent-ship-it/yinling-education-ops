@@ -10850,7 +10850,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <OwnershipRow
                 title="企业微信"
                 tone="amber"
-                label="待 PoC"
+                label="会话存档接入端已就绪"
               />
               <OwnershipRow
                 title="教务宝"
