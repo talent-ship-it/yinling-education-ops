@@ -49,10 +49,14 @@ export function hasStudentAttachmentMagicBytes(
 }
 
 export function sanitiseStudentAttachmentName(value: string, fallback: string) {
-  const clean = value
+  const normalized = value
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/[\\/]/g, "-")
-    .trim()
-    .slice(0, 180);
+    .trim();
+  const wellFormed = Array.from(normalized, (point) => {
+    const codePoint = point.codePointAt(0) ?? 0;
+    return codePoint >= 0xd800 && codePoint <= 0xdfff ? "\ufffd" : point;
+  });
+  const clean = wellFormed.slice(0, 180).join("");
   return clean || fallback;
 }

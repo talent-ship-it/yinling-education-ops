@@ -31,4 +31,8 @@ test("sanitises names before using them in download headers", () => {
   assert.equal(sanitiseStudentAttachmentName("../Report\r\n.pdf", "fallback.pdf"), "..-Report.pdf");
   assert.equal(sanitiseStudentAttachmentName("\u0000", "fallback.pdf"), "fallback.pdf");
   assert.equal(sanitiseStudentAttachmentName("a".repeat(200), "fallback.pdf").length, 180);
+  const unicodeName = sanitiseStudentAttachmentName(`${"a".repeat(179)}😀tail`, "fallback.pdf");
+  assert.equal(Array.from(unicodeName).length, 180);
+  assert.doesNotThrow(() => encodeURIComponent(unicodeName));
+  assert.doesNotThrow(() => encodeURIComponent(sanitiseStudentAttachmentName("broken-\ud800-name.jpg", "fallback.pdf")));
 });
