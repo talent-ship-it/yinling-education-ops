@@ -198,8 +198,12 @@ type Renewal = {
 type PayrollRow = {
   id: string;
   teacherId: string;
+  /** 教务宝教师端的当月总课时，是薪资核算的权威口径。 */
   lessons: number;
   trialLessons: number;
+  /** 从课程明细成功读取并关联到学生的课时；不能用它覆盖教师总课时。 */
+  matchedLessons?: number;
+  studentDetails?: Array<{ name: string; lessons: number; kind: "常规" | "试听"; matched: boolean }>;
   amount: number;
   status: "需核对" | "可审核" | "已锁定";
   note: string;
@@ -1547,10 +1551,52 @@ function OperationsWorkspace({ initialData }: { initialData?: ImportPayload }) {
 
   const renderPayroll = () => {
     const visiblePayroll = payroll.filter((row) => payrollFilter === "review" ? row.status === "需核对" : payrollFilter === "ready" ? row.status === "可审核" : payrollFilter === "locked" ? row.status === "已锁定" : true);
+    const officialLessons = payroll.reduce((total, row) => total + row.lessons + row.trialLessons, 0);
+    const matchedLessons = payroll.reduce((total, row) => total + (row.matchedLessons ?? 0), 0);
+    const unreconciledLessons = officialLessons - matchedLessons;
+    const importReconciliationPreview = () => {
+      const availableTeachers = recordTeachers.length ? recordTeachers : teachers;
+      const availableStudents = recordStudents.length ? recordStudents : students;
+      if (!availableTeachers.length) {
+        notify("需要先导入老师档案，才能建立课时核对记录");
+        return;
+      }
+      const studentName = (index: number, fallback: string) => availableStudents[index]?.name ?? fallback;
+      const teacher = (index: number) => availableTeachers[index] ?? availableTeachers[0];
+      const preview: PayrollRow[] = [
+        {
+          id: "PAY-AUG-001", teacherId: teacher(0).id, lessons: 91.5, trialLessons: 0, matchedLessons: 27, amount: 0, status: "需核对",
+          note: "教师总课时已导入；课程明细仅匹配到部分学生，剩余 64.5 小时待从教务宝课程记录补全。",
+          studentDetails: [
+            { name: studentName(0, "待匹配学生 A"), lessons: 12, kind: "常规", matched: true },
+            { name: studentName(1, "待匹配学生 B"), lessons: 9, kind: "常规", matched: true },
+            { name: studentName(2, "试听学生（待读取）"), lessons: 6, kind: "试听", matched: false },
+          ],
+        },
+        {
+          id: "PAY-AUG-002", teacherId: teacher(1).id, lessons: 13, trialLessons: 3, matchedLessons: 16, amount: 0, status: "可审核",
+          note: "教师总课时与学生明细一致；试听学生已单独标记。",
+          studentDetails: [
+            { name: studentName(3, "学生 C"), lessons: 8, kind: "常规", matched: true },
+            { name: studentName(4, "学生 D"), lessons: 5, kind: "常规", matched: true },
+            { name: studentName(5, "试听学生 E"), lessons: 3, kind: "试听", matched: true },
+          ],
+        },
+        {
+          id: "PAY-AUG-003", teacherId: teacher(2).id, lessons: 8, trialLessons: 0, matchedLessons: 0, amount: 0, status: "需核对",
+          note: "老师有总课时，但尚未读取到任何学生明细；保留该老师，不能当作零课时。",
+          studentDetails: [],
+        },
+      ];
+      setPayroll(preview);
+      addAudit("导入教务宝课时核对预览", "教师总课时、学生明细与试听课时已分开保存", "blue");
+      notify("已载入核对样例：请先补齐学生明细，再锁定薪资");
+    };
     return <>
-    <ViewHeading eyebrow="教务宝导入预览 · 人工锁定" title="课时与薪资" copy="导入数据后按已确认费率计算建议金额；所有异常、调整理由和最终确认人都必须可追溯。" actions={<button className="secondary-button" type="button" onClick={() => { setPayroll((current) => current.map((row) => row.status === "需核对" ? { ...row, status: "可审核", note: "模拟导入完成，等待人工审核" } : row)); addAudit("模拟导入教务宝数据", "已更新本地薪资预览，不影响真实教务宝", "blue"); notify("已完成样例导入与异常重算"); }}><Database size={17} /> 导入样例</button>} />
-    <section className="metric-grid payroll-metrics"><Metric tone="blue" icon={<FileText size={21} />} value={`${payroll.reduce((total, row) => total + row.lessons + row.trialLessons, 0)}`} label="导入课次" detail="教务宝样例数据" /><Metric tone="amber" icon={<CircleAlert size={21} />} value={`${payroll.filter((row) => row.status === "需核对").length}`} label="需要核对" detail="不会自动锁定" /><Metric tone="green" icon={<Wallet size={21} />} value={`$${payroll.reduce((total, row) => total + row.amount, 0).toLocaleString()}`} label="建议薪资" detail="等待人工审核" /><Metric tone="purple" icon={<ShieldCheck size={21} />} value={`${payroll.filter((row) => row.status === "已锁定").length}`} label="已锁定" detail="已记录确认人" /></section>
-    <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={payrollFilter} items={[{ id: "all", label: "全部", count: payroll.length }, { id: "review", label: "需核对", count: payroll.filter((item) => item.status === "需核对").length }, { id: "ready", label: "可审核", count: payroll.filter((item) => item.status === "可审核").length }, { id: "locked", label: "已锁定", count: payroll.filter((item) => item.status === "已锁定").length }]} onChange={setPayrollFilter} label="薪资保存视图" /><button className="secondary-button" type="button" disabled={!payroll.some((row) => row.status === "可审核")} onClick={() => { const count = payroll.filter((row) => row.status === "可审核").length; setPayroll((current) => current.map((row) => row.status === "可审核" ? { ...row, status: "已锁定", note: "已批量人工锁定" } : row)); addAudit("批量锁定薪资", `${count} 条可审核记录`, "green"); notify(`已锁定 ${count} 条可审核记录`); }}><ShieldCheck size={16} /> 批量锁定可审核</button></div><div className="collection-main"><div className="collection-head payroll-grid-row"><span>老师</span><span>常规 / 试听</span><span>建议金额</span><span>状态</span><span>说明</span><span>操作</span></div><div className="collection-viewport">{visiblePayroll.map((row) => { const teacher = teacherById(row.teacherId); return <div className="collection-row payroll-grid-row" key={row.id}><span className="table-person"><Avatar initials={teacher?.initials ?? "?"} tone="blue" /><span><strong>{teacher?.name}</strong><small>{teacher?.subjects.join(" · ")}</small></span></span><span>{row.lessons} / {row.trialLessons}</span><strong>${row.amount.toLocaleString()}</strong><StatusPill tone={statusTone(row.status)}>{row.status}</StatusPill><small>{row.note}</small>{row.status !== "已锁定" ? <button className="compact-button" type="button" onClick={() => { setPayroll((current) => current.map((item) => item.id === row.id ? { ...item, status: "已锁定", note: "已由当前操作员人工锁定" } : item)); addAudit("锁定薪资记录", `${teacher?.name} · $${row.amount.toLocaleString()}`, "green"); notify("已锁定本月演示薪资记录"); }}>人工锁定</button> : <span className="muted-cell">已完成</span>}</div>; })}</div></div></section>
+    <ViewHeading eyebrow="教务宝核对 · 总课时为权威口径" title="课时与薪资" copy="老师总课时与学生明细分开保存：学生、试听或映射遗漏时，会明确显示差额，绝不以不完整的学生合计覆盖老师总课时。" actions={<button className="secondary-button" type="button" onClick={importReconciliationPreview}><Database size={17} /> 导入核对样例</button>} />
+    <section className="metric-grid payroll-metrics"><Metric tone="blue" icon={<FileText size={21} />} value={`${officialLessons}`} label="老师总课时" detail="教务宝薪资核算口径" /><Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${matchedLessons}`} label="已列出学生课时" detail="含已识别试听课" /><Metric tone="amber" icon={<CircleAlert size={21} />} value={`${unreconciledLessons}`} label="待补齐课时" detail="不能自动归零或锁定" /><Metric tone="purple" icon={<ShieldCheck size={21} />} value={`${payroll.filter((row) => row.status === "已锁定").length}`} label="已锁定" detail="只锁定已人工确认记录" /></section>
+    <section className="payroll-guidance"><CircleAlert size={18} /><div><strong>本月先核对明细，再核对薪资</strong><span>“未列出”可能是教务宝学生姓名没有进入读取范围、试听学生未导入，或老师只有总课时而无学生行。差额会持续保留，直至补齐来源。</span></div></section>
+    <section className="panel collection-shell"><div className="view-bar"><ViewTabs value={payrollFilter} items={[{ id: "all", label: "全部", count: payroll.length }, { id: "review", label: "待补明细", count: payroll.filter((item) => item.status === "需核对").length }, { id: "ready", label: "明细已对齐", count: payroll.filter((item) => item.status === "可审核").length }, { id: "locked", label: "已锁定", count: payroll.filter((item) => item.status === "已锁定").length }]} onChange={setPayrollFilter} label="薪资保存视图" /><button className="secondary-button" type="button" disabled={!payroll.some((row) => row.status === "可审核")} onClick={() => { const count = payroll.filter((row) => row.status === "可审核").length; setPayroll((current) => current.map((row) => row.status === "可审核" ? { ...row, status: "已锁定", note: "已批量人工锁定；学生明细与教师总课时已对齐" } : row)); addAudit("批量锁定薪资", `${count} 条学生明细已对齐的记录`, "green"); notify(`已锁定 ${count} 条已对齐记录`); }}><ShieldCheck size={16} /> 锁定已对齐记录</button></div><div className="payroll-reconciliation-list">{visiblePayroll.length ? visiblePayroll.map((row) => { const teacher = teacherById(row.teacherId); const total = row.lessons + row.trialLessons; const detailHours = row.matchedLessons ?? 0; const gap = total - detailHours; return <article className={`payroll-reconciliation ${gap > 0 ? "needs-review" : "reconciled"}`} key={row.id}><header><span className="table-person"><Avatar initials={teacher?.initials ?? "?"} tone={gap > 0 ? "amber" : "green"} /><span><strong>{teacher?.name ?? "未关联老师"}</strong><small>{teacher?.subjects.join(" · ") || "请补老师档案"}</small></span></span><StatusPill tone={statusTone(row.status)}>{gap > 0 ? `待补 ${gap} 小时` : row.status}</StatusPill></header><div className="payroll-ledger"><div><span>老师总课时</span><strong>{total}</strong><small>常规 {row.lessons} · 试听 {row.trialLessons}</small></div><div><span>已列出学生</span><strong>{detailHours}</strong><small>{row.studentDetails?.length ?? 0} 位学生 / 试听记录</small></div><div className={gap > 0 ? "gap-cell" : "matched-cell"}><span>{gap > 0 ? "明细差额" : "核对结果"}</span><strong>{gap > 0 ? `${gap} 小时` : "已对齐"}</strong><small>{gap > 0 ? "等待补齐来源" : "可以进入人工薪资审核"}</small></div></div><div className="payroll-students"><span>学生明细</span>{row.studentDetails?.length ? row.studentDetails.map((detail, index) => <div key={`${detail.name}-${index}`} className={detail.matched ? "" : "unmatched-student"}><strong>{detail.name}</strong><small>{detail.kind} · {detail.lessons} 小时{detail.matched ? " · 已匹配" : " · 名称/试听待确认"}</small></div>) : <p>未读取到学生明细。此老师的 {total} 小时仍保留在总课时中，等待从教务宝课程记录补齐。</p>}</div><footer><small>{row.note}</small>{row.status !== "已锁定" ? <button className="compact-button" type="button" disabled={gap > 0} onClick={() => { setPayroll((current) => current.map((item) => item.id === row.id ? { ...item, status: "已锁定", note: "已由当前操作员人工锁定；明细已对齐" } : item)); addAudit("锁定薪资记录", `${teacher?.name ?? "未关联老师"} · 教师总课时 ${total}`, "green"); notify("已锁定已对齐的薪资记录"); }}>{gap > 0 ? "先补齐明细" : "人工锁定"}</button> : <span className="muted-cell">已完成</span>}</footer></article>; }) : <EmptyState title="尚未导入本月课时" detail="导入时需同时保留老师总课时、学生明细和试听标记；任何缺失都会进入待补齐列表。" />}</div></section>
     </>;
   };
 

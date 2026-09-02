@@ -71,3 +71,14 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.equal(packageJson.scripts.dev, "node scripts/dev-fixed-port.mjs");
   assert.match(devServer, /const PORT = 3001/);
 });
+
+test("keeps teacher payroll totals separate from incomplete student details", async () => {
+  const client = await read("../app/operations-client.tsx");
+
+  assert.match(client, /matchedLessons\?: number/);
+  assert.match(client, /studentDetails\?: Array/);
+  assert.match(client, /老师总课时与学生明细分开保存/);
+  assert.match(client, /const unreconciledLessons = officialLessons - matchedLessons/);
+  assert.match(client, /disabled=\{gap > 0\}/);
+  assert.match(client, /试听学生未导入/);
+});
