@@ -1,6 +1,6 @@
 # WeCom CLI bridge
 
-This small private service is the first-phase bridge between the operations site and the official [`wecom-cli`](https://github.com/WecomTeam/wecom-cli). It only performs one fixed action: send a confirmed Markdown text message to a preconfigured recipient. It cannot read group history, collect attachments, or run arbitrary CLI commands.
+This small private service is the first-phase bridge between the operations site and the official [`wecom-cli`](https://github.com/WecomTeam/wecom-cli). It only performs one fixed action: send a confirmed Markdown text message to a preconfigured recipient. It is deliberately not a group-history reader, attachment collector, or arbitrary CLI command runner.
 
 ## Before running it
 
@@ -11,7 +11,8 @@ This small private service is the first-phase bridge between the operations site
    wecom-cli --version
    wecom-cli auth show --status
    # Only if the status is "unauthorized":
-   wecom-cli auth init --noninteractive
+   # Choose the manual option when an approved Bot ID and Secret already exist.
+   wecom-cli auth init
    wecom-cli auth show --status
    ```
 
@@ -57,3 +58,4 @@ The website asks for the separate dispatch password before an actual send and is
 - One `deliveryId` is written to a durable file before the CLI is called. A duplicate request returns the original result rather than sending twice.
 - A command timeout or uncertain delivery stays durable as `in_flight` and returns a 5xx outcome to the website; it must be checked on the bridge host before any manual resend.
 - This phase supports text notifications only. It does **not** satisfy the meeting's automatic “信息交接表” extraction or image storage requirements. Those remain dependent on 企业微信会话内容存档 / 数据与智能专区 permissions and a separate inbound worker.
+- The six LP source groups registered for this project are external groups. An official smart bot cannot be added to them, so this bridge must never be configured to read them or replaced with personal-account scraping. See [`docs/wecom-cli-first-phase.md`](../../docs/wecom-cli-first-phase.md) for the approved source references and the required external-data path.
