@@ -39,6 +39,8 @@ export async function POST(request: Request) {
   const occurrenceId = queryText(url, "occurrenceId");
   const meetingId = queryText(url, "meetingId");
   const nonce = queryText(url, "nonce");
+  const issuedAtText = queryText(url, "issuedAt", 20);
+  const issuedAt = /^\d{10}$/u.test(issuedAtText) ? Number(issuedAtText) : Number.NaN;
   const signature = queryText(url, "signature");
 
   try {
@@ -47,6 +49,7 @@ export async function POST(request: Request) {
       occurrenceId,
       meetingId,
       nonce,
+      issuedAt,
       signature,
     })) {
       return response({ error: "Invalid callback signature.", code: "invalid_signature" }, 401);
@@ -81,7 +84,7 @@ export async function POST(request: Request) {
       return response({ error: "Attendance contract is not deployed.", code: "contract_unavailable" }, 503);
     }
     return response({
-      error: error instanceof Error ? error.message : "Analytics callback failed.",
+      error: "Analytics callback failed.",
       code: "callback_failed",
     }, 503);
   }

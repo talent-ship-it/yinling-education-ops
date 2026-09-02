@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { managedTrialPaymentTaskKind } from "@/lib/managed-trial-payment";
 import {
   buildOpsAccessContext,
@@ -87,9 +87,7 @@ export async function POST(request: Request) {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
-  const fullAdmin = resolved.session.user === DEMO_ADMIN_USER
-    && resolved.session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(resolved.session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const body = await request.json().catch(() => null);
   try {
     const command = parseTrialPaymentLifecycleCommand(body);

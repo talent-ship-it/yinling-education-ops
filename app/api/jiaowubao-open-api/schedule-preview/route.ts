@@ -2,7 +2,6 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   DEMO_LIMITED_ADMIN_USER,
   getCurrentDemoSession,
@@ -12,7 +11,7 @@ import {
   queryJiaowubaoScheduleList,
 } from "@/lib/jiaowubao-open-api";
 import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -228,9 +227,7 @@ export async function GET(request: Request) {
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   // Avoid loading the full operational state for ordinary staff/teacher
   // sessions. `buildOpsAccessContext` below remains the authoritative second
   // gate after the minimal identity check.

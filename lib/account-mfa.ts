@@ -96,15 +96,27 @@ function totpValue(secret: string, counter: number) {
   return String(binary % 10 ** TOTP_DIGITS).padStart(TOTP_DIGITS, "0");
 }
 
-export function verifyTotpCode(secret: string, code: unknown, now = new Date()) {
+export function matchTotpCounter(secret: string, code: unknown, now = new Date()) {
   const normalizedSecret = normaliseSecret(secret);
-  if (!normalizedSecret || typeof code !== "string" || !/^\d{6}$/u.test(code)) return false;
+  if (!normalizedSecret || typeof code !== "string" || !/^\d{6}$/u.test(code)) return null;
   const currentCounter = Math.floor(now.getTime() / 1000 / TOTP_STEP_SECONDS);
   const supplied = Buffer.from(code, "ascii");
-  return [-1, 0, 1].some((offset) => {
-    const expected = Buffer.from(totpValue(normalizedSecret, currentCounter + offset), "ascii");
-    return expected.length === supplied.length && timingSafeEqual(expected, supplied);
-  });
+  let matchedCounter: number | null = null;
+  for (const offset of [-1, 0, 1]) {
+    const candidateCounter = currentCounter + offset;
+    const expected = Buffer.from(totpValue(normalizedSecret, candidateCounter), "ascii");
+    if (expected.length === supplied.length && timingSafeEqual(expected, supplied)) {
+      // Check the complete tolerance window and retain the newest match. This
+      // avoids rejecting a current code in the rare event that adjacent TOTP
+      // counters produce the same six digits.
+      matchedCounter = Math.max(matchedCounter ?? candidateCounter, candidateCounter);
+    }
+  }
+  return matchedCounter;
+}
+
+export function verifyTotpCode(secret: string, code: unknown, now = new Date()) {
+  return matchTotpCounter(secret, code, now) !== null;
 }
 
 /** Test/support helper; callers must deliver the secret out of band. */

@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLegacyTaskDeadlineCommandResult,
   getOpsState,
@@ -40,9 +40,7 @@ async function requireHighTierAdmin() {
     return { response: noStore({ error: resolved.error }, resolved.status) } as const;
   }
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasLegacyTaskDeadlineAdminAccess(session.user, fullAdmin)
       || !hasDemoSessionPermission(session, "operations.write")
       || !hasUnrestrictedDemoSessionScope(session)) {

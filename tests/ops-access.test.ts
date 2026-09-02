@@ -762,17 +762,17 @@ test("a teacher-id scope includes roster-assigned students without a current boo
     .find((item) => item.entity === "students")?.payload as Array<{ id: string }>).map((student) => student.id), ["STU-THEA"]);
 });
 
-test("wildcard permissions require the independent full-admin proof", () => {
+test("wildcard permissions grant non-payroll operations while payroll retains elevation", () => {
   const primaryOnlyAdmin = buildOpsAccessContext(rows, "Nixon", false, {
     user: "Nixon",
     role: "admin",
     permissions: ["*"],
     scopeMembers: [{ kind: "all", key: "*" }],
   });
-  assert.equal(canReadOpsEntity(primaryOnlyAdmin, "students"), false);
+  assert.equal(canReadOpsEntity(primaryOnlyAdmin, "students"), true);
   assert.equal(canReadOpsEntity(primaryOnlyAdmin, "payroll"), false);
-  assert.equal(canWriteOpsEntity(primaryOnlyAdmin, "students"), false);
-  assert.equal(canReadUnrestrictedOpsData(primaryOnlyAdmin), false);
+  assert.equal(canWriteOpsEntity(primaryOnlyAdmin, "students"), true);
+  assert.equal(canReadUnrestrictedOpsData(primaryOnlyAdmin), true);
 
   const verifiedAdmin = buildOpsAccessContext(rows, "Nixon", true, {
     user: "Nixon",
@@ -784,6 +784,16 @@ test("wildcard permissions require the independent full-admin proof", () => {
   assert.equal(canReadOpsEntity(verifiedAdmin, "payroll"), true);
   assert.equal(canWriteOpsEntity(verifiedAdmin, "students"), true);
   assert.equal(canReadUnrestrictedOpsData(verifiedAdmin), true);
+});
+
+test("missing lifecycle permission and scope arrays fail closed", () => {
+  const incomplete = buildOpsAccessContext(rows, "Ops Admin", false, {
+    user: "Ops Admin",
+    role: "limited-admin",
+  });
+  assert.equal(canReadOpsEntity(incomplete, "students"), false);
+  assert.equal(canWriteOpsEntity(incomplete, "students"), false);
+  assert.equal(canReadUnrestrictedOpsData(incomplete), false);
 });
 
 test("teacher lifecycle permissions preserve assigned bookings and messages without broad writes", () => {

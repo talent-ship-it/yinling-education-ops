@@ -288,8 +288,8 @@ export function buildOpsAccessContext(
   signedIdentity?: DemoSessionRole | DemoSessionIdentity,
 ): OpsAccessContext {
   const signedRole = typeof signedIdentity === "string" ? signedIdentity : signedIdentity?.role;
-  const permissions = typeof signedIdentity === "object" && Array.isArray(signedIdentity.permissions)
-    ? new Set(signedIdentity.permissions)
+  const permissions = typeof signedIdentity === "object"
+    ? new Set(Array.isArray(signedIdentity.permissions) ? signedIdentity.permissions : [])
     : null;
   const scopeMembers = typeof signedIdentity === "object" && Array.isArray(signedIdentity.scopeMembers)
     ? signedIdentity.scopeMembers.filter((member) => member && typeof member.kind === "string" && typeof member.key === "string")
@@ -478,7 +478,7 @@ export function canReadOpsEntity(context: OpsAccessContext, entity: string) {
   if (entity === "audit" && context.restrictedStudentScope) return false;
   if (entity === "payroll") return context.fullAdmin;
   if (context.permissions) {
-    if (context.permissions.has("*")) return context.fullAdmin;
+    if (context.permissions.has("*")) return true;
     const required = entity === "bookings" || entity === "teachers"
       ? ["operations.read", "bookings.read.assigned"]
       : ["operations.read", "students.read.assigned"];
@@ -499,7 +499,7 @@ export function canWriteOpsEntity(context: OpsAccessContext, entity: string) {
   if (context.entityScope.size > 0 && !context.entityScope.has(entity)) return false;
   if (entity === "payroll") return context.fullAdmin;
   if (context.permissions) {
-    if (context.permissions.has("*")) return context.fullAdmin;
+    if (context.permissions.has("*")) return true;
     const required = entity === "bookings"
       ? ["operations.write", "bookings.write.assigned"]
       : entity === "messages"
@@ -522,8 +522,7 @@ export function canReadUnrestrictedOpsData(context: OpsAccessContext) {
   if (!context.fullAdmin && !context.limitedAdmin) return false;
   if (context.restrictedStudentScope || context.entityScope.size > 0) return false;
   if (context.permissions === null) return true;
-  return context.permissions.has("operations.read")
-    || (context.fullAdmin && context.permissions.has("*"));
+  return context.permissions.has("operations.read") || context.permissions.has("*");
 }
 
 /**

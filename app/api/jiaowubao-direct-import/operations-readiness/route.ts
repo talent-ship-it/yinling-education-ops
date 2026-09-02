@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoDirectOperationsReadiness,
   getOpsState,
@@ -61,9 +61,7 @@ export async function GET(request: Request) {
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
 
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
@@ -88,6 +86,6 @@ export async function GET(request: Request) {
         code: "jiaowubao_direct_operations_readiness_unavailable",
       }, 501);
     }
-    return noStore({ error: error instanceof Error ? error.message : "教务宝运营准备度读取失败。" }, 503);
+    return noStore({ error: "教务宝运营准备度读取失败。" }, 503);
   }
 }

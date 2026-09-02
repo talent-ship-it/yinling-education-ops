@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
   getWecomArchiveStatus,
@@ -35,9 +35,7 @@ async function fullAdminSession() {
     return { ok: false, error: resolved.error, status: resolved.status } as const;
   }
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   return fullAdmin
     ? { ok: true, session } as const
     : { ok: false, error: "只有超级管理员可以管理企业微信接入。", status: 403 } as const;

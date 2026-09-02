@@ -123,8 +123,8 @@ export async function POST(request: Request) {
       const rows = await getOpsState(["teachers"]);
       const teacherRow = rows.find((row) => row.entity === "teachers");
       if (!teacherRow) return noStore({ error: "老师名册尚未初始化。" }, 503);
-      currentMatches = legacyPasswordMatchesIdentity(currentPassword, session, teacherRow.payload);
-      newMatchesCurrent = legacyPasswordMatchesIdentity(newPassword, session, teacherRow.payload);
+      currentMatches = await legacyPasswordMatchesIdentity(currentPassword, session, teacherRow.payload);
+      newMatchesCurrent = await legacyPasswordMatchesIdentity(newPassword, session, teacherRow.payload);
     }
     if (!currentMatches) {
       return noStore({ error: "当前密码不正确。" }, 401);
@@ -132,10 +132,9 @@ export async function POST(request: Request) {
     await settleSuccessfulAuthAttempt(throttleKeys);
     if (newMatchesCurrent) return noStore({ error: "新密码不能与当前密码相同。", code: "password_reused" }, 400);
 
-    const secret = process.env.OPS_API_SECRET ?? "";
     const password = await hashAccountPassword(
       newPassword as string,
-      accountPasswordCommandSalt(commandKey, identityKey, secret),
+      accountPasswordCommandSalt(commandKey, identityKey),
     );
     const result = await rotateAccountPasswordAtomic({
       commandKey,
@@ -157,10 +156,11 @@ export async function POST(request: Request) {
       return changedButReauthenticationRequired();
     }
     const serverSession = createServerSessionToken();
+    if (!serverSession) return changedButReauthenticationRequired();
     const adminToken = session.user === DEMO_ADMIN_USER && session.role === "admin"
-      ? nixonSessionToken()
+      ? nixonSessionToken(serverSession.sessionId)
       : null;
-    if (!serverSession || (session.role === "admin" && !adminToken)) {
+    if (session.role === "admin" && !adminToken) {
       return changedButReauthenticationRequired();
     }
     const created = await createAccountSession({

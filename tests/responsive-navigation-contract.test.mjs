@@ -288,7 +288,7 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   assert.match(client, /canViewClassroom \? \(historicalBooking \?/);
   assert.doesNotMatch(client, /openCourseSource|courseSourceExpanded/);
   assert.match(classroom, /session\.role !== "admin" && session\.role !== "limited-admin" && session\.role !== "teacher"/);
-  assert.match(classroom, /session\.role === "admin"[\s\S]*hasValidNixonSession/);
+  assert.match(classroom, /hasFullAdminAccess\(session,/);
   assert.match(classroom, /canWriteBookings: canWriteOpsEntity\(access, "bookings"\)/);
   assert.match(classroom, /if \(!context\.canWriteBookings\) return noStore/);
   assert.match(appState, /if \(entities\?\.some\(\(entity\) => !canReadOpsEntity\(access, entity\)\)\)/);

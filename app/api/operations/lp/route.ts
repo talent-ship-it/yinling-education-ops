@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import {
   LpAtomicError,
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
   const { session } = resolved;
   const actor = session.user;
   if (session.role === "teacher") return noStore({ error: "老师账号不能创建或修订 LP。", code: "teacher_forbidden" }, 403);
-  const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const command = parseLpAtomicCommand(await request.json().catch(() => null));
@@ -90,6 +90,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883")) return noStore({ error: "LP 原子数据库合同尚未部署，当前不会降级为分散写入。", code: "lp_atomic_contract_unavailable", requiredRpc: LP_ATOMIC_COMMAND_RESULT_RPC }, 501);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) return noStore({ error: "学生、LP、任务或文件资料刚刚发生变化，请刷新后重试。", code: "version_conflict" }, 409);
     if (error instanceof OpsStoreError && error.code === "23505") return noStore({ error: "同一个 LP 命令已用于不同内容，请刷新后重试。", code: "idempotency_conflict" }, 409);
-    return noStore({ error: error instanceof Error ? error.message : "LP 保存失败。" }, 503);
+    return noStore({ error: "LP 保存失败。" }, 503);
   }
 }

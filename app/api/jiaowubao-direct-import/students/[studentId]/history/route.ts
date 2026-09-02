@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canAccessStudent, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getJiaowubaoDirectStudentHistory, getOpsState, OpsStoreError } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -34,9 +34,7 @@ export async function GET(_request: Request, context: { params: Promise<{ studen
   }
 
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
@@ -50,6 +48,6 @@ export async function GET(_request: Request, context: { params: Promise<{ studen
     if (missingReader(error)) {
       return noStore({ error: "教务宝只读资料数据库合同尚未部署。", code: "jiaowubao_direct_reader_unavailable" }, 501);
     }
-    return noStore({ error: error instanceof Error ? error.message : "教务宝补充资料读取失败。" }, 503);
+    return noStore({ error: "教务宝补充资料读取失败。" }, 503);
   }
 }

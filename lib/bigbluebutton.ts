@@ -105,12 +105,14 @@ function callbackOrigin() {
 
 function analyticsCallbackUrl(occurrenceId: string, meetingId: string) {
   const { secret } = configuration();
-  const nonce = bbbCallbackNonce(secret, occurrenceId, meetingId);
-  const signature = bbbCallbackSignature(secret, occurrenceId, meetingId, nonce);
+  const nonce = bbbCallbackNonce();
+  const issuedAt = Math.floor(Date.now() / 1_000);
+  const signature = bbbCallbackSignature(secret, occurrenceId, meetingId, nonce, issuedAt);
   const url = new URL("/api/classroom/analytics", callbackOrigin());
   url.searchParams.set("occurrenceId", occurrenceId);
   url.searchParams.set("meetingId", meetingId);
   url.searchParams.set("nonce", nonce);
+  url.searchParams.set("issuedAt", String(issuedAt));
   url.searchParams.set("signature", signature);
   return url.toString();
 }

@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   parseTeacherAbsenceCreationCommand,
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
   const actor = session.user;
-  const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (session.role === "teacher") return noStore({ error: "老师账号不能创建老师请假或代课流程。", code: "teacher_forbidden" }, 403);
   try {
     const body = await request.json().catch(() => null);
@@ -112,6 +112,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883")) return noStore({ error: "老师请假原子合同尚未部署，当前不会降级为分散写入。", code: "teacher_absence_creation_contract_unavailable", requiredRpc: TEACHER_ABSENCE_CREATION_ATOMIC_RPC }, 501);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) return noStore({ error: "课程、异常、学生、任务或老师资料刚刚发生变化，请刷新后重试。", code: "teacher_absence_creation_conflict" }, 409);
     if (error instanceof OpsStoreError && error.code === "23505") return noStore({ error: "同一个请假提交编号已用于不同内容，请刷新后重试。", code: "teacher_absence_creation_idempotency_conflict" }, 409);
-    return noStore({ error: error instanceof Error ? error.message : "老师请假流程创建失败。" }, 503);
+    return noStore({ error: "老师请假流程创建失败。" }, 503);
   }
 }

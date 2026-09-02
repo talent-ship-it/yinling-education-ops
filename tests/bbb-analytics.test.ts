@@ -94,15 +94,28 @@ test("rejects malformed sessions, breakout callbacks and metadata/booking mismat
   assert.throws(() => parseBbbAnalyticsPayload(duplicate), /duplicate external user IDs/);
 });
 
-test("callback URL credentials are deterministic, timing-safe, and bound to meeting + occurrence", () => {
+test("callback URL credentials are random, expiring, timing-safe, and bound to meeting + occurrence", () => {
   const secret = "bbb-shared-secret";
   const meetingId = meetingIdForOccurrenceValue(occurrenceId);
-  const nonce = bbbCallbackNonce(secret, occurrenceId, meetingId);
-  const signature = bbbCallbackSignature(secret, occurrenceId, meetingId, nonce);
-  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId, meetingId, nonce, signature }), true);
-  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId, meetingId: `${meetingId}-other`, nonce, signature }), false);
-  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId: "BOOK-B:2026-09-07", meetingId, nonce, signature }), false);
-  assert.equal(verifyBbbCallbackSignature({ secret: "wrong", occurrenceId, meetingId, nonce, signature }), false);
+  const now = new Date("2026-09-07T09:55:00.000Z");
+  const issuedAt = Math.floor(now.getTime() / 1_000);
+  const nonce = bbbCallbackNonce();
+  const signature = bbbCallbackSignature(secret, occurrenceId, meetingId, nonce, issuedAt);
+  assert.notEqual(nonce, bbbCallbackNonce());
+  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId, meetingId, nonce, issuedAt, signature }, now), true);
+  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId, meetingId: `${meetingId}-other`, nonce, issuedAt, signature }, now), false);
+  assert.equal(verifyBbbCallbackSignature({ secret, occurrenceId: "BOOK-B:2026-09-07", meetingId, nonce, issuedAt, signature }, now), false);
+  assert.equal(verifyBbbCallbackSignature({ secret: "wrong", occurrenceId, meetingId, nonce, issuedAt, signature }, now), false);
+  assert.equal(verifyBbbCallbackSignature(
+    { secret, occurrenceId, meetingId, nonce, issuedAt, signature },
+    new Date("2026-09-08T00:00:00.000Z"),
+  ), false);
+});
+
+test("rejects attendee duration that is not supported by join and leave evidence", () => {
+  const forged = analyticsPayload();
+  forged.data.attendees[0].duration = 3_590;
+  assert.throws(() => parseBbbAnalyticsPayload(forged), /does not match join\/leave evidence/);
 });
 
 test("meeting IDs differ for weekly occurrences in the same booking", () => {

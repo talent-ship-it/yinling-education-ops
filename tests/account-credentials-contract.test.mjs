@@ -68,6 +68,12 @@ const [
   read("../app/api/demo-logout/route.ts"),
   read("../app/operations-client.tsx"),
 ]);
+const [issuedPasswordNonceMigration, totpReplayMigration, nixonAuth, nixonAuthToken] = await Promise.all([
+  read("../supabase/migrations/20260902000100_randomize_issued_password_nonces.sql"),
+  read("../supabase/migrations/20260902000200_reject_replayed_totp_codes.sql"),
+  read("../lib/nixon-auth.ts"),
+  read("../lib/nixon-auth-token.ts"),
+]);
 
 test("account passwords and browser sessions use server-owned security material", () => {
   assert.match(credentials, /import "server-only"/);
@@ -76,9 +82,14 @@ test("account passwords and browser sessions use server-owned security material"
   assert.match(credentials, /timingSafeEqual/);
   assert.match(credentials, /ACCOUNT_PASSWORD_MIN_LENGTH = 12/);
   assert.match(credentials, /accountPasswordCommandSalt/);
+  assert.match(credentials, /ACCOUNT_PASSWORD_COMMAND_SECRET/);
+  assert.doesNotMatch(credentials, /OPS_API_SECRET/);
   assert.match(issuedPasswordCrypto, /import "server-only"/);
+  assert.match(issuedPasswordCrypto, /ACCOUNT_ISSUED_PASSWORD_SECRET/);
   assert.match(issuedPasswordCryptoCore, /aes-256-gcm/);
   assert.match(issuedPasswordCryptoCore, /createHmac\("sha256", secret\)/);
+  assert.match(issuedPasswordCryptoCore, /randomBytes\(12\)/);
+  assert.doesNotMatch(issuedPasswordCryptoCore, /deterministicIv/);
   assert.match(issuedPasswordCryptoCore, /cipher\.setAAD\(associatedData/);
   assert.match(issuedPasswordCryptoCore, /decipher\.setAuthTag/);
   assert.doesNotMatch(`${issuedPasswordCrypto}\n${issuedPasswordCryptoCore}`, /console\./);
@@ -89,6 +100,12 @@ test("account passwords and browser sessions use server-owned security material"
   assert.match(sessionToken, /parseServerSessionToken/);
   assert.match(auth, /getAccountSession\(envelope\.tokenHash\)/);
   assert.match(auth, /never downgraded to a legacy identity/);
+  assert.match(nixonAuth, /NIXON_PASSWORD_SALT/);
+  assert.match(nixonAuth, /verifyAccountPassword/);
+  assert.match(nixonAuth, /NIXON_SESSION_SECRET/);
+  assert.doesNotMatch(nixonAuth, /OPS_API_SECRET|ADMIN_PASSWORD_HASH\s*=/);
+  assert.match(nixonAuthToken, /randomBytes\(32\)/);
+  assert.match(nixonAuthToken, /expectedSessionId/);
 });
 
 test("credential and lifecycle tables stay private while secret-gated RPCs own mutations", () => {
@@ -113,6 +130,9 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(issuedPasswordValidationHotfix, /\{22,\}\$/);
   assert.doesNotMatch(issuedPasswordValidationHotfix, /\{22,900\}/);
   assert.doesNotMatch(issuedPasswordMigration, /password_plaintext/);
+  assert.match(issuedPasswordNonceMigration, /create or replace function public\.rotate_account_password_tx_v4/);
+  assert.match(issuedPasswordNonceMigration, /if rotated\.applied then/);
+  assert.match(issuedPasswordNonceMigration, /Reuse the envelope committed by that first request/);
   assert.match(passwordPolicyMigration, /set must_change_password = false/);
   assert.match(lifecycleHardeningMigration, /app_account_auth_throttles_updated_idx[\s\S]*updated_at/);
   assert.match(lifecycleHardeningMigration, /add column if not exists result_snapshot jsonb/);
@@ -142,13 +162,14 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
 });
 
 test("routes enforce full-admin boundaries and use atomic account operations", () => {
-  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v3"/);
+  assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v4"/);
   assert.match(store, /ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow"/);
   assert.match(store, /ACCOUNT_SESSION_CREATE_RPC = "create_account_session"/);
   assert.match(store, /ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa"/);
   assert.match(loginRoute, /ensureAccountDirectory/);
   assert.match(loginRoute, /getAccountMfaForLogin/);
-  assert.match(loginRoute, /verifyTotpCode/);
+  assert.match(loginRoute, /matchTotpCounter/);
+  assert.match(loginRoute, /consumeAccountMfaTotp/);
   assert.match(loginRoute, /mfaRequired: true/);
   assert.match(loginRoute, /createAccountSession/);
   assert.match(loginRoute, /expectedCredentialVersion: identity\.credentialVersion \?\? 0/);
@@ -168,7 +189,7 @@ test("routes enforce full-admin boundaries and use atomic account operations", (
   assert.match(changeRoute, /issuedPasswordCiphertext: null/);
   assert.doesNotMatch(changeRoute, /newPassword[^]*NextResponse\.json/);
 
-  assert.match(resetRoute, /hasValidNixonSession/);
+  assert.match(resetRoute, /hasFullAdminAccess/);
   assert.match(resetRoute, /getAccountDirectory/);
   assert.match(resetRoute, /accountId/);
   assert.match(resetRoute, /mustChangePassword: false/);
@@ -246,13 +267,19 @@ test("routes enforce full-admin boundaries and use atomic account operations", (
   assert.doesNotMatch(lifecycleHardeningMigration, /set\s+account_role\s*=\s*p_account_role/);
   assert.match(sessionsRoute, /targetAccountId !== context\.session\.accountId && !context\.fullAdmin/);
   assert.match(mfaRoute, /encryptMfaSecret/);
-  assert.match(mfaRoute, /verifyTotpCode/);
+  assert.match(mfaRoute, /matchTotpCounter/);
+  assert.match(mfaRoute, /consumeAccountMfaTotp/);
   assert.match(mfaRoute, /expireAuthCookies/);
+  assert.match(store, /ACCOUNT_MFA_TOTP_CONSUME_RPC = "consume_account_mfa_totp"/);
+  assert.match(totpReplayMigration, /last_accepted_totp_counter bigint/);
+  assert.match(totpReplayMigration, /p_counter <= coalesce\(mfa\.last_accepted_totp_counter, -1\)/);
+  assert.match(totpReplayMigration, /for update/);
 });
 
 test("authentication attempts are HMAC-keyed, database-throttled and logout reports ledger failures", () => {
   assert.match(rateLimiter, /createHmac\("sha256"/);
-  assert.match(rateLimiter, /OPS_API_SECRET/);
+  assert.match(rateLimiter, /ACCOUNT_AUTH_THROTTLE_SECRET/);
+  assert.doesNotMatch(rateLimiter, /OPS_API_SECRET/);
   assert.match(rateLimiter, /checkAccountAuthThrottle/);
   assert.match(rateLimiter, /admitAccountAuthAttempt/);
   assert.match(rateLimiter, /recordAccountAuthAttempt/);

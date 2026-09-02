@@ -54,8 +54,7 @@ export type JiaowubaoAuthorityStatus = Readonly<{
     sourceOnlyEntityRows: number;
     sourceSnapshotPersisted: true;
     normalizedProjectionPersisted: true;
-    nativeRecordsOverwritten: true;
-    nativeRecordsSynchronized: true;
+    nativeRecordsSynchronized: boolean;
     connectedTools: readonly ["query_schedule_list"];
   }>;
 }>;
@@ -158,14 +157,18 @@ export function parseJiaowubaoAuthorityStatus(source: unknown): JiaowubaoAuthori
   const normalizedEntityRows = integer(rawCoverage.normalizedEntityRows);
   const matchedEntityRows = integer(rawCoverage.matchedEntityRows);
   const sourceOnlyEntityRows = integer(rawCoverage.sourceOnlyEntityRows);
+  const nativeRecordsSynchronized = typeof rawCoverage.nativeRecordsSynchronized === "boolean"
+    ? rawCoverage.nativeRecordsSynchronized
+    : rawCoverage.nativeRecordsOverwritten === false
+      ? false
+      : null;
   if (!topLevelFields || !studentFields
       || rawPrices.persistedPrivately !== true || rawPrices.browserExposed !== false
       || typeof rawPrices.present !== "boolean"
       || integer(rawPrices.schedulePriceRecords) === null || integer(rawPrices.studentPriceRecords) === null
       || rawCoverage.sourceSnapshotPersisted !== true
       || rawCoverage.normalizedProjectionPersisted !== true
-      || rawCoverage.nativeRecordsOverwritten !== true
-      || rawCoverage.nativeRecordsSynchronized !== true
+      || nativeRecordsSynchronized === null
       || !Array.isArray(rawCoverage.connectedTools)
       || rawCoverage.connectedTools.length !== 1 || rawCoverage.connectedTools[0] !== "query_schedule_list"
       || integer(rawCoverage.snapshotRows) !== sourceRowCount
@@ -203,8 +206,7 @@ export function parseJiaowubaoAuthorityStatus(source: unknown): JiaowubaoAuthori
       sourceOnlyEntityRows,
       sourceSnapshotPersisted: true,
       normalizedProjectionPersisted: true,
-      nativeRecordsOverwritten: true,
-      nativeRecordsSynchronized: true,
+      nativeRecordsSynchronized,
       connectedTools: Object.freeze(["query_schedule_list"] as const),
     }),
   });

@@ -1,38 +1,89 @@
 import "server-only";
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import {
+  ACCOUNT_PASSWORD_ALGORITHM,
+  verifyAccountPassword,
+} from "@/lib/account-credentials";
+import type { DemoSessionIdentity } from "@/lib/demo-session-token";
+import { DEMO_ADMIN_USER } from "@/lib/demo-users";
+import {
+  createAdminElevationToken,
+  verifyAdminElevationToken,
+} from "@/lib/nixon-auth-token";
 
 export const NIXON_COOKIE_NAME = "yinling_nixon_auth";
 
-// Demo access is intentionally code-pinned so a stale Vercel variable cannot
-// silently change the agreed admin login during review.
-const ADMIN_PASSWORD_HASH = "7b404139cd395a7678c81f0e10969c74b243e75641e207d5902743807f062c52";
-
-function passwordHash() {
-  const configuredHash = process.env.NIXON_PASSWORD_HASH;
-  const allowOverride = process.env.ALLOW_NIXON_PASSWORD_OVERRIDE === "true";
-  return allowOverride && configuredHash ? configuredHash : ADMIN_PASSWORD_HASH;
+function configuredPasswordCredential(hash: string | undefined, salt: string | undefined) {
+  if (!hash || !salt) return null;
+  return {
+    password_algorithm: ACCOUNT_PASSWORD_ALGORITHM,
+    password_hash: hash.trim().toLowerCase(),
+    password_salt: salt.trim().toLowerCase(),
+  };
 }
 
-function safeEquals(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+async function matchesConfiguredPassword(
+  candidate: unknown,
+  hash: string | undefined,
+  salt: string | undefined,
+) {
+  const credential = configuredPasswordCredential(hash, salt);
+  return credential ? verifyAccountPassword(candidate, credential) : false;
 }
 
 export function matchesNixonPassword(candidate: unknown) {
-  if (typeof candidate !== "string" || !candidate) return false;
-  const candidateHash = createHash("sha256").update(candidate).digest("hex");
-  return safeEquals(candidateHash, passwordHash());
+  return matchesConfiguredPassword(
+    candidate,
+    process.env.NIXON_PASSWORD_HASH,
+    process.env.NIXON_PASSWORD_SALT,
+  );
 }
 
-export function nixonSessionToken() {
-  const secret = process.env.OPS_API_SECRET;
-  if (!secret) return null;
-  return createHmac("sha256", secret).update("yinling-nixon-session-v1").digest("hex");
+export function matchesLimitedAdminPassword(candidate: unknown) {
+  return matchesConfiguredPassword(
+    candidate,
+    process.env.LIMITED_ADMIN_PASSWORD_HASH,
+    process.env.LIMITED_ADMIN_PASSWORD_SALT,
+  );
 }
 
-export function hasValidNixonSession(value: string | undefined) {
-  const expected = nixonSessionToken();
-  return Boolean(value && expected && safeEquals(value, expected));
+function elevationSecret() {
+  const value = process.env.NIXON_SESSION_SECRET?.trim();
+  return value && /^[a-f0-9]{64}$/u.test(value) ? value : null;
+}
+
+/**
+ * This cookie is only a short-lived elevation marker. Every protected route
+ * also validates the opaque v5 account session against the revocable ledger.
+ */
+export function nixonSessionToken(sessionId: string, now = new Date()) {
+  const secret = elevationSecret();
+  return secret ? createAdminElevationToken({ secretHex: secret, sessionId, now }) : null;
+}
+
+export function hasValidNixonSession(
+  value: string | undefined,
+  expectedSessionId: string,
+  now = new Date(),
+) {
+  const secret = elevationSecret();
+  return secret ? verifyAdminElevationToken({
+    secretHex: secret,
+    token: value,
+    expectedSessionId,
+    now,
+  }) : false;
+}
+
+/** Full-admin authority is valid only inside a live, database-backed session. */
+export function hasFullAdminAccess(
+  session: DemoSessionIdentity,
+  elevationCookie: string | undefined,
+) {
+  return session.user === DEMO_ADMIN_USER
+    && session.role === "admin"
+    && typeof session.accountId === "string"
+    && typeof session.sessionId === "string"
+    && session.permissions?.includes("*") === true
+    && hasValidNixonSession(elevationCookie, session.sessionId);
 }

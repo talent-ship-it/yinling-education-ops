@@ -77,7 +77,6 @@ test("parses only aggregate Jiaowubao authority health and validates the 30-minu
   assert.ok(status);
   assert.equal(status.matches.student.matchRate, 80);
   assert.equal(status.prices.studentPriceRecords, 3);
-  assert.equal(status.coverage.nativeRecordsOverwritten, true);
   assert.equal(status.coverage.nativeRecordsSynchronized, true);
   assert.equal(jiaowubaoAuthorityCadenceHealthy(status, Date.parse("2026-08-31T05:40:00.000Z")), true);
   assert.equal(jiaowubaoAuthorityCadenceHealthy(status, Date.parse("2026-08-31T05:46:00.000Z")), false);
@@ -99,13 +98,19 @@ test("rejects inconsistent counts and strips any extra database payload before b
     },
   }), null);
   assert.equal(parseJiaowubaoAuthorityStatus({ ...source, row_count: 13 }), null);
-  assert.equal(parseJiaowubaoAuthorityStatus({
+  const pendingNativeSync = parseJiaowubaoAuthorityStatus({
     ...source,
     payload: {
       ...source.payload,
-      coverage: { ...source.payload.coverage, nativeRecordsSynchronized: false },
+      coverage: {
+        ...source.payload.coverage,
+        nativeRecordsOverwritten: false,
+        nativeRecordsSynchronized: undefined,
+      },
     },
-  }), null);
+  });
+  assert.equal(pendingNativeSync?.coverage.nativeRecordsSynchronized, false);
+  assert.equal("nativeRecordsOverwritten" in (pendingNativeSync?.coverage ?? {}), false);
 });
 
 test("renders sync health, match rates, anomaly counts and private price retention without values or IDs", () => {
@@ -129,4 +134,23 @@ test("renders a truthful waiting state before the projection migration is active
   const html = renderToStaticMarkup(<JiaowubaoAuthorityStatusPanel status={null} />);
   assert.match(html, /等待首次投影/);
   assert.match(html, /数据库投影尚未产生状态/);
+});
+
+test("keeps a legacy projection receipt visible while native synchronization is pending", () => {
+  const legacySource = {
+    ...source,
+    payload: {
+      ...source.payload,
+      coverage: {
+        ...source.payload.coverage,
+        nativeRecordsOverwritten: false,
+        nativeRecordsSynchronized: undefined,
+      },
+    },
+  };
+  const status = parseJiaowubaoAuthorityStatus(legacySource);
+  assert.ok(status);
+  const html = renderToStaticMarkup(<JiaowubaoAuthorityStatusPanel status={status} />);
+  assert.match(html, /现有系统资料同步尚未完成/);
+  assert.match(html, /现有系统资料同步待完成/);
 });

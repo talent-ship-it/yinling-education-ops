@@ -2,12 +2,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   commitStudentImportPlanAtomic,
   getLatestStudentImportSourceRows,
@@ -44,8 +43,7 @@ async function adminSession() {
   if (!("session" in resolved)) return { actor: null, fullAdmin: false, identity: null };
   const { session } = resolved;
   const actor = session.user;
-  const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   return { actor, fullAdmin, identity: session };
 }
 
@@ -132,7 +130,7 @@ export async function GET() {
     if (missingSourceRows(error)) return sourceRowsUnavailable(error);
     if (error instanceof StudentImportServiceError) return serviceError(error);
     if (error instanceof StudentImportError) return noStore({ error: error.message, code: error.code }, 422);
-    return noStore({ error: error instanceof Error ? error.message : "学生导入预检失败。" }, 503);
+    return noStore({ error: "学生导入预检失败。" }, 503);
   }
 }
 
@@ -196,6 +194,6 @@ export async function POST(request: Request) {
     )) {
       return noStore({ error: "学生资料或导入来源刚刚发生变化，请重新预检。", code: "import_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "学生导入提交失败。" }, 503);
+    return noStore({ error: "学生导入提交失败。" }, 503);
   }
 }

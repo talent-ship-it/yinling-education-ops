@@ -14,14 +14,20 @@ const binding = {
   secret: "unit-test-only-issued-password-secret",
 } as const;
 
-test("issued passwords round-trip deterministically for exact command retries", () => {
+test("issued passwords use unique AES-GCM nonces and round-trip", () => {
   const password = "ExampleSecure123";
   const first = encryptAccountIssuedPasswordWithSecret({ ...binding, password });
   const retry = encryptAccountIssuedPasswordWithSecret({ ...binding, password });
-  assert.equal(first, retry);
+  assert.notEqual(first, retry);
   assert.ok(!first.includes(password));
   assert.equal(decryptAccountIssuedPasswordWithSecret({
     ciphertext: first,
+    accountId: binding.accountId,
+    credentialVersion: binding.credentialVersion,
+    secret: binding.secret,
+  }), password);
+  assert.equal(decryptAccountIssuedPasswordWithSecret({
+    ciphertext: retry,
     accountId: binding.accountId,
     credentialVersion: binding.credentialVersion,
     secret: binding.secret,

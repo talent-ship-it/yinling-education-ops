@@ -20,7 +20,7 @@ import {
 } from "@/lib/account-rate-limit";
 import {
   decryptMfaSecret,
-  verifyTotpCode,
+  matchTotpCounter,
 } from "@/lib/account-mfa";
 import {
   createServerSessionToken,
@@ -31,6 +31,7 @@ import {
 import { NIXON_COOKIE_NAME, nixonSessionToken } from "@/lib/nixon-auth";
 import {
   createAccountSession,
+  consumeAccountMfaTotp,
   ensureAccountDirectory,
   getAccountMfaForLogin,
   getAppAccountCredential,
@@ -70,8 +71,8 @@ function sameIdentity(left: DemoSessionIdentity, right: DemoSessionIdentity) {
   return left.role === right.role && normaliseDemoIdentity(left.user) === normaliseDemoIdentity(right.user);
 }
 
-function resolveLegacyIdentity(candidate: unknown, teachersPayload: unknown): TeacherIdentityResolution {
-  const pinned = resolveDemoIdentity(candidate);
+async function resolveLegacyIdentity(candidate: unknown, teachersPayload: unknown): Promise<TeacherIdentityResolution> {
+  const pinned = await resolveDemoIdentity(candidate);
   // Admin credentials are dedicated secrets. Staff names are resolved with
   // the roster below so a colliding plain name can only select the teacher;
   // the role-qualified staff alias remains explicit.
@@ -136,14 +137,14 @@ async function resolveLoginIdentity(
 
     // Before an account adopts its own password, its existing review login is
     // still accepted only when it resolves back to the explicitly named user.
-    const legacy = resolveLegacyIdentity(password, teachersPayload);
+    const legacy = await resolveLegacyIdentity(password, teachersPayload);
     if ("identity" in legacy && sameIdentity(legacy.identity, requested.identity)) {
       return { identity: requested.identity, mustChangePassword: false, legacyAuthentication: true };
     }
     return { error: "账号或密码不正确。", status: 401 };
   }
 
-  const legacy = resolveLegacyIdentity(password, teachersPayload);
+  const legacy = await resolveLegacyIdentity(password, teachersPayload);
   if (!("identity" in legacy)) return legacy;
   try {
     const credential = await getAppAccountCredential(accountIdentityKey(legacy.identity.user, legacy.identity.role));
@@ -210,10 +211,6 @@ export async function POST(request: Request) {
     return privateJson({ error: resolved.error }, resolved.status);
   }
   const { identity } = resolved;
-  const adminToken = identity.role === "admin" ? nixonSessionToken() : null;
-  if (identity.role === "admin" && !adminToken) {
-    return privateJson({ error: "服务器访问配置尚未完成。" }, 503);
-  }
   const identityKey = accountIdentityKey(identity.user, identity.role);
   let directory;
   let mfaVerified = false;
@@ -246,9 +243,20 @@ export async function POST(request: Request) {
           401,
         );
       }
-      if (!verifyTotpCode(decryptMfaSecret(mfa.secret_ciphertext), mfaCode.trim())) {
+      const totpCounter = matchTotpCounter(decryptMfaSecret(mfa.secret_ciphertext), mfaCode.trim());
+      if (totpCounter === null) {
         return privateJson(
           { error: "验证码不正确或已过期。", mfaRequired: true },
+          401,
+        );
+      }
+      if (!await consumeAccountMfaTotp({
+        identityKey,
+        expectedMfaVersion: mfa.mfa_version,
+        counter: totpCounter,
+      })) {
+        return privateJson(
+          { error: "验证码已使用或已过期。", mfaRequired: true },
           401,
         );
       }
@@ -269,6 +277,12 @@ export async function POST(request: Request) {
 
   const serverSession = createServerSessionToken();
   if (!serverSession) {
+    return privateJson({ error: "服务器访问配置尚未完成。" }, 503);
+  }
+  const adminToken = identity.role === "admin"
+    ? nixonSessionToken(serverSession.sessionId)
+    : null;
+  if (identity.role === "admin" && !adminToken) {
     return privateJson({ error: "服务器访问配置尚未完成。" }, 503);
   }
   try {

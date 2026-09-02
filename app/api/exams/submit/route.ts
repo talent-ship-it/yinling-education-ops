@@ -1,14 +1,14 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   ExamSubmissionServiceError,
   examSubmissionIntent,
   parseExamSubmissionCommand,
   prepareExamSubmission,
 } from "@/lib/exam-submission-service";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   EXAM_SUBMISSION_ATOMIC_RPC,
@@ -56,9 +56,7 @@ export async function POST(request: Request) {
   if (session.role === "teacher") {
     return noStore({ error: "老师账号不能录入学生考试。", code: "teacher_forbidden" }, 403);
   }
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const command = parseExamSubmissionCommand(await request.json().catch(() => null));
@@ -145,6 +143,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && error.code === "23505") {
       return noStore({ error: "同一个考试提交编号已用于不同内容，请关闭窗口后重试。", code: "exam_submission_idempotency_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "考试保存失败。" }, 503);
+    return noStore({ error: "考试保存失败。" }, 503);
   }
 }

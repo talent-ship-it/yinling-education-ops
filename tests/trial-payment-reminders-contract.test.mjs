@@ -46,7 +46,7 @@ test("payment complete/reopen is replay-first and atomically owns the task plus 
   assert.match(route, /getOpsState\(\["bookings", "students", "lpItems", "tasks", "teachers"\]\)/);
   assert.match(route, /canWriteOpsTransaction\(authorization, "tasks", \["tasks", "lpItems"\]\)/);
   assert.match(route, /taskVisible/);
-  assert.match(route, /const fullAdmin = resolved\.session\.user === DEMO_ADMIN_USER/);
+  assert.match(route, /const fullAdmin = hasFullAdminAccess\(resolved\.session,/);
   assert.equal((route.match(/buildOpsAccessContext\([^;]+fullAdmin/g) ?? []).length, 2);
   assert.ok(
     route.indexOf("canWriteOpsTransaction(authorization, \"tasks\", [\"tasks\", \"lpItems\"])")

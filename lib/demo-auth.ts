@@ -1,8 +1,11 @@
 import "server-only";
 
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 
-import { matchesNixonPassword, nixonSessionToken } from "@/lib/nixon-auth";
+import {
+  matchesLimitedAdminPassword,
+  matchesNixonPassword,
+} from "@/lib/nixon-auth";
 import {
   DEMO_ADMIN_USER,
   DEMO_LIMITED_ADMIN_USER,
@@ -30,39 +33,35 @@ import {
   getOpsState,
   type AccountDirectoryRow,
   type AccountSessionResolution,
-  OpsStoreError,
 } from "@/lib/ops-store";
 export { normaliseDemoIdentity } from "@/lib/demo-session-token";
 export type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
 
 export const DEMO_COOKIE_NAME = "yinling_demo_auth";
-const FALLBACK_LIMITED_ADMIN_PASSWORD_HASH = "e982e31a4d006b0b470fb414182c7f44bfc1e6d931c1a79c7113c5196db3077f";
-
-function safeEquals(left: string, right: string) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
 
 /** Resolve only identities whose credentials are owned by this application. */
-export function resolveDemoIdentity(candidate: unknown): DemoSessionIdentity | null {
+export async function resolveDemoIdentity(candidate: unknown): Promise<DemoSessionIdentity | null> {
   if (typeof candidate !== "string" || !candidate.trim()) return null;
-  if (matchesNixonPassword(candidate)) return { user: DEMO_ADMIN_USER, role: "admin" };
-  const candidateHash = createHash("sha256").update(candidate).digest("hex");
-  const limitedAdminHash = process.env.LIMITED_ADMIN_PASSWORD_HASH || FALLBACK_LIMITED_ADMIN_PASSWORD_HASH;
-  if (safeEquals(candidateHash, limitedAdminHash)) return { user: DEMO_LIMITED_ADMIN_USER, role: "limited-admin" };
+  if (await matchesNixonPassword(candidate)) return { user: DEMO_ADMIN_USER, role: "admin" };
+  if (await matchesLimitedAdminPassword(candidate)) {
+    return { user: DEMO_LIMITED_ADMIN_USER, role: "limited-admin" };
+  }
 
   const identity = resolveDemoStaffAlias(candidate) ?? resolveDemoStaffName(candidate);
   return identity ? { user: identity, role: "staff" } : null;
 }
 
 /** Backwards-compatible username-only helper for non-teacher credentials. */
-export function resolveDemoUser(candidate: unknown): DemoUser | null {
-  return resolveDemoIdentity(candidate)?.user ?? null;
+export async function resolveDemoUser(candidate: unknown): Promise<DemoUser | null> {
+  return (await resolveDemoIdentity(candidate))?.user ?? null;
 }
 
 function sessionSecret() {
-  return nixonSessionToken();
+  const configured = process.env.DEMO_SESSION_SECRET?.trim();
+  if (!configured || !/^[a-f0-9]{64}$/u.test(configured)) return null;
+  return createHmac("sha256", Buffer.from(configured, "hex"))
+    .update("yinling-legacy-demo-session-signing-v1", "utf8")
+    .digest("base64url");
 }
 
 export function demoSessionToken(identity: DemoSessionIdentity, now = new Date()) {
@@ -83,10 +82,6 @@ type CurrentDemoSessionOptions = Readonly<{
   /** Only the session-status and self-service password routes may opt in. */
   allowPasswordChangeRequired?: boolean;
 }>;
-
-function accountLifecycleUnavailable(error: unknown) {
-  return error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883");
-}
 
 function serverSessionIdentity(session: AccountSessionResolution): DemoSessionIdentity {
   return {
@@ -163,26 +158,25 @@ export async function getCurrentDemoSession(
     const identityKey = accountIdentityKey(session.user, session.role);
     try {
       directory = await getAccountByIdentity(identityKey);
-    } catch (error) {
-      if (!accountLifecycleUnavailable(error)) {
-        return { error: "账号登录状态暂时无法核对，请稍后重试。", status: 503 };
-      }
+    } catch {
+      return { error: "账号登录状态暂时无法核对，请稍后重试。", status: 503 };
     }
-    if (directory && (
+    if (!directory) {
+      return { error: "账号登录状态已失效，请重新登录。", status: 401 };
+    }
+    if (
       directory.identity_key !== identityKey
       || directory.account_role !== session.role
       || normaliseDemoIdentity(directory.account_name) !== normaliseDemoIdentity(session.user)
       || directory.status !== "active"
       || !directory.legacy_session_allowed
-    )) {
+    ) {
       return { error: "账号登录状态已失效，请重新登录。", status: 401 };
     }
-    if (directory) {
-      const authorization = await getAccountAuthorization(directory.account_id, directory.account_id);
-      if (!authorization) return { error: "账号权限状态暂时无法核对，请稍后重试。", status: 503 };
-      permissions = authorization.permissions;
-      scopeMembers = authorization.scope_members;
-    }
+    const authorization = await getAccountAuthorization(directory.account_id, directory.account_id);
+    if (!authorization) return { error: "账号权限状态暂时无法核对，请稍后重试。", status: 503 };
+    permissions = authorization.permissions;
+    scopeMembers = authorization.scope_members;
     const authState = await getAppAccountAuthState(identityKey);
     if (authState) {
       const identityMatches = authState.identity_key === identityKey
@@ -207,7 +201,7 @@ export async function getCurrentDemoSession(
       return { error: "请先修改管理员重置的临时密码。", status: 403 };
     }
     return {
-      session: directory ? {
+      session: {
         ...session,
         accountId: directory.account_id,
         accessVersion: directory.access_version,
@@ -215,7 +209,7 @@ export async function getCurrentDemoSession(
         scopeVersion: directory.scope_version,
         permissions,
         scopeMembers,
-      } : session,
+      },
       mustChangePassword,
     };
   }
@@ -237,14 +231,12 @@ export async function getCurrentDemoSession(
       session: {
         ...current.identity,
         ...(session.credentialVersion === undefined ? {} : { credentialVersion: session.credentialVersion }),
-        ...(directory ? {
-          accountId: directory.account_id,
-          accessVersion: directory.access_version,
-          roleVersion: directory.role_version,
-          scopeVersion: directory.scope_version,
-          permissions,
-          scopeMembers,
-        } : {}),
+        accountId: directory.account_id,
+        accessVersion: directory.access_version,
+        roleVersion: directory.role_version,
+        scopeVersion: directory.scope_version,
+        permissions,
+        scopeMembers,
       },
       mustChangePassword,
     };

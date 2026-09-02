@@ -3,13 +3,12 @@ import "server-only";
 import { cookies } from "next/headers";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import type { DemoSessionIdentity } from "@/lib/demo-session-token";
 import {
-  hasValidNixonSession,
+  hasFullAdminAccess,
   NIXON_COOKIE_NAME,
 } from "@/lib/nixon-auth";
 
@@ -44,9 +43,7 @@ export async function resolveAccountRequestContext(options: Readonly<{
     context: {
       session,
       cookieValue,
-      fullAdmin: session.user === DEMO_ADMIN_USER
-        && session.role === "admin"
-        && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value),
+      fullAdmin: hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value),
     },
   };
 }

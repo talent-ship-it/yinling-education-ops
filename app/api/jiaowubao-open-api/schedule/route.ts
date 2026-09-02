@@ -3,10 +3,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { mapJiaowubaoSnapshotParticipants } from "@/lib/jiaowubao-open-api-schedule-reader";
 import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "@/lib/student-import";
 import { trialPlannerHintFromParticipants } from "@/lib/trial-operations";
 import {
@@ -542,9 +542,7 @@ export async function GET(request: Request) {
   if (new Date(windowEnd.value).getTime() <= new Date(windowStart.value).getTime()) return noStore({ error: "windowEnd 必须晚于 windowStart。" }, 400);
 
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
     const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);

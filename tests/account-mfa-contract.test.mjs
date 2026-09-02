@@ -3,12 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [mfa, route, login, migration, hardeningMigration] = await Promise.all([
+const [mfa, route, login, store, migration, hardeningMigration, replayMigration] = await Promise.all([
   read("../lib/account-mfa.ts"),
   read("../app/api/account/mfa/route.ts"),
   read("../app/api/demo-login/route.ts"),
+  read("../lib/ops-store.ts"),
   read("../supabase/migrations/20260827000700_account_lifecycle.sql"),
   read("../supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql"),
+  read("../supabase/migrations/20260902000200_reject_replayed_totp_codes.sql"),
 ]);
 
 test("MFA secrets use authenticated encryption and TOTP comparison is timing-safe", () => {
@@ -27,6 +29,9 @@ test("MFA secrets use authenticated encryption and TOTP comparison is timing-saf
 test("MFA setup reveals the secret only to its owner before confirmation", () => {
   assert.match(route, /resolveAccountRequestContext/);
   assert.match(route, /verifyAccountPassword\(currentPassword, credential\)/);
+  assert.match(route, /matchTotpCounter/);
+  assert.match(route, /consumeAccountMfaTotp/);
+  assert.match(route, /totp_replayed/);
   assert.match(route, /action === "begin" \|\| action === "verify"/);
   assert.match(route, /independent_password_required/);
   assert.match(route, /admitAuthAttempt\(throttleKeys\)/);
@@ -41,8 +46,14 @@ test("MFA setup reveals the secret only to its owner before confirmation", () =>
   assert.match(route, /return noStore\(\{ ok: true, secret, otpauthUri/);
   assert.match(route, /expireAuthCookies/);
   assert.match(login, /decryptMfaSecret/);
-  assert.match(login, /verifyTotpCode/);
+  assert.match(login, /matchTotpCounter/);
+  assert.match(login, /consumeAccountMfaTotp/);
   assert.match(login, /mfaRequired: true/);
+  assert.match(store, /ACCOUNT_MFA_TOTP_CONSUME_RPC = "consume_account_mfa_totp"/);
+  assert.match(replayMigration, /last_accepted_totp_counter bigint/);
+  assert.match(replayMigration, /p_counter <= coalesce\(mfa\.last_accepted_totp_counter, -1\)/);
+  assert.match(replayMigration, /Setup confirmation consumes its code before enabling MFA/);
+  assert.match(replayMigration, /where m\.account_id = target\.account_id[\s\S]*for update/);
   assert.match(migration, /revoke all on table internal\.app_account_mfa from public, anon, authenticated/);
   assert.match(migration, /where a\.identity_key = p_identity_key and a\.status = 'active'/);
   assert.match(migration, /'account\.mfa_setup_started'[\s\S]*jsonb_build_object\('mfaVersion', mfa\.mfa_version\)/);

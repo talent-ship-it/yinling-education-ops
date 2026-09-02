@@ -888,12 +888,13 @@ export const ACCOUNT_SESSION_READ_RPC = "read_account_session";
 export const ACCOUNT_SESSIONS_READ_RPC = "read_account_sessions";
 export const ACCOUNT_SESSION_REVOKE_RPC = "revoke_account_sessions";
 export const ACCOUNT_CURRENT_SESSION_REVOKE_RPC = "revoke_current_account_session";
-export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v3";
+export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v4";
 export const ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow";
 export const ACCOUNT_ISSUED_PASSWORD_SEED_RPC = "seed_account_issued_password_escrow";
 export const ACCOUNT_RECOVERY_ISSUE_RPC = "issue_account_recovery";
 export const ACCOUNT_RECOVERY_CONSUME_RPC = "consume_account_recovery";
 export const ACCOUNT_MFA_LOGIN_RPC = "read_account_mfa_for_login";
+export const ACCOUNT_MFA_TOTP_CONSUME_RPC = "consume_account_mfa_totp";
 export const ACCOUNT_MFA_READ_RPC = "read_account_mfa";
 export const ACCOUNT_MFA_BEGIN_RPC = "begin_account_mfa_setup";
 export const ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa";
@@ -3535,6 +3536,21 @@ export async function getAccountMfaForLogin(identityKey: string) {
     p_identity_key: identityKey,
   });
   return rows[0] ?? null;
+}
+
+export async function consumeAccountMfaTotp(input: {
+  identityKey: string;
+  expectedMfaVersion: number;
+  counter: number;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<Array<{ accepted: boolean }>>(ACCOUNT_MFA_TOTP_CONSUME_RPC, {
+    p_secret: secret,
+    p_identity_key: input.identityKey,
+    p_expected_mfa_version: input.expectedMfaVersion,
+    p_counter: input.counter,
+  });
+  return rows[0]?.accepted === true;
 }
 
 export async function getAccountMfa(accountId: string, actorAccountId = accountId) {

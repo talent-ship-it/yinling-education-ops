@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canAccessStudent, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, getWecomArchiveMedia } from "@/lib/ops-store";
 import { sanitiseStudentAttachmentName } from "@/lib/student-attachment-validation";
 
@@ -28,9 +28,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (!media?.content_base64) return noStore({ error: "未找到该企业微信附件。" }, 404);
     const rows = await getOpsState();
     const { session } = resolved;
-    const fullAdmin = session.user === DEMO_ADMIN_USER
-      && session.role === "admin"
-      && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const access = buildOpsAccessContext(rows, session.user, fullAdmin, session);
     if (!canReadOpsEntity(access, "files") || !canAccessStudent(access, media.student_id)) {
       return noStore({ error: "未找到该企业微信附件。" }, 404);
@@ -50,7 +48,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         "X-Content-Type-Options": "nosniff",
       },
     });
-  } catch (error) {
-    return noStore({ error: error instanceof Error ? error.message : "企业微信附件读取失败。" }, 503);
+  } catch {
+    return noStore({ error: "企业微信附件读取失败。" }, 503);
   }
 }

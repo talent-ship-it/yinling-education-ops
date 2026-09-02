@@ -1,13 +1,13 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   parseCompleteLessonOccurrenceRequest,
   prepareLessonOccurrenceSettlement,
   LessonOccurrenceServiceError,
 } from "@/lib/lesson-occurrence-service";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   completeLessonOccurrenceAtomic,
   getLessonAttendanceEvidence,
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   const { session } = resolved;
   const actor = session.user;
   if (session.role === "teacher") return noStore({ error: "老师账号不能执行课次结算。", code: "teacher_forbidden" }, 403);
-  const fullAdmin = actor === DEMO_ADMIN_USER && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const completionRequest = parseCompleteLessonOccurrenceRequest(await request.json().catch(() => null));
@@ -121,6 +121,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) {
       return noStore({ error: "这节课或相关余额刚刚发生变化，请刷新后重试。", code: "settlement_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "课次结算失败。" }, 503);
+    return noStore({ error: "课次结算失败。" }, 503);
   }
 }

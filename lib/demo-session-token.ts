@@ -42,17 +42,15 @@ export type ServerSessionEnvelope = Readonly<{
   tokenHash: string;
 }>;
 
-/** Legacy sessions without lifecycle authorization keep their historical role policy. */
+/** Missing lifecycle authorization is never interpreted as an unrestricted role. */
 export function hasDemoSessionPermission(identity: DemoSessionIdentity, permission: string) {
-  return identity.permissions === undefined
-    || identity.permissions.includes("*")
-    || identity.permissions.includes(permission);
+  return identity.permissions?.includes("*") === true
+    || identity.permissions?.includes(permission) === true;
 }
 
 /** Global review/import surfaces cannot safely project a partial student scope. */
 export function hasUnrestrictedDemoSessionScope(identity: DemoSessionIdentity) {
-  return identity.scopeMembers === undefined
-    || identity.scopeMembers.some((member) => member.kind === "all" && member.key === "*");
+  return identity.scopeMembers?.some((member) => member.kind === "all" && member.key === "*") === true;
 }
 
 type DemoSessionPayload = DemoSessionIdentity & Readonly<{

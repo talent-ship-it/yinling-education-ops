@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   buildOpsAccessContext,
   canReadOpsEntity,
@@ -14,7 +14,7 @@ import {
   mergeScopedPayload,
   OpsAccessError,
 } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { OpsRulesValidationError, parseRulesWrite } from "@/lib/ops-rules";
 import { assertOpsStateTransition, OpsStateTransitionError } from "@/lib/ops-state-transition";
 import {
@@ -31,7 +31,7 @@ async function sessionContext() {
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return resolved;
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   return { session: { actor: session.user, role: session.role, fullAdmin, identity: session } } as const;
 }
 
@@ -112,8 +112,8 @@ export async function GET(request: NextRequest) {
       ...(managedExamSnapshot ? { managedExamSnapshot } : {}),
       ...(managedTrialPaymentSnapshot ? { managedTrialPaymentSnapshot } : {}),
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "共享数据读取失败。";
+  } catch {
+    const message = "共享数据读取失败。";
     return noStore({ error: message }, 503);
   }
 }
@@ -203,7 +203,7 @@ export async function PUT(request: NextRequest) {
         accessChanged,
       }, 409);
     }
-    const message = error instanceof Error ? error.message : "共享数据保存失败。";
+    const message = "共享数据保存失败。";
     return noStore({ error: message }, 503);
   }
 }

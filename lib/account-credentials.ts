@@ -59,9 +59,12 @@ function derivePassword(password: string, saltHex: string) {
   });
 }
 
-export function accountPasswordCommandSalt(commandKey: string, identityKey: string, secret: string) {
-  if (!secret) throw new Error("账号凭据密钥尚未配置。");
-  return createHmac("sha256", secret)
+export function accountPasswordCommandSalt(commandKey: string, identityKey: string) {
+  const configured = process.env.ACCOUNT_PASSWORD_COMMAND_SECRET?.trim();
+  if (!configured || !/^[a-f0-9]{64}$/u.test(configured)) {
+    throw new Error("账号凭据命令密钥尚未配置。");
+  }
+  return createHmac("sha256", Buffer.from(configured, "hex"))
     .update(`yinling-account-command-salt-v1\u0000${commandKey}\u0000${identityKey}`)
     .digest("hex")
     .slice(0, 32);

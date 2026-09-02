@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import {
   createStudentWithTasksAtomic, getOpsState, getStudentCreationCommandResult,
@@ -44,7 +44,7 @@ async function renderStudentReplay(result: StudentCreationCommandResult, actor: 
     // A roster/role change is precisely the case where the signed actor still
     // owns the receipt but must not regain historic rows.
     if (!("session" in current) || current.session.user !== actor) return receiptOnly(result);
-    const fullAdmin = actor === DEMO_ADMIN_USER && current.session.role === "admin" && hasValidNixonSession(nixonCookieValue);
+    const fullAdmin = hasFullAdminAccess(current.session, nixonCookieValue);
     const rows = await getOpsState(["students", "tasks"]);
     if (!replayVisible(result, rows, actor, fullAdmin, current.session)) return receiptOnly(result);
     const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session));
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     if (replay[0]) return renderStudentReplay(replay[0], actor, cookieValue, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
     if (session.role === "teacher") return noStore({ error: "老师账号不能创建学生档案。", code: "teacher_forbidden" }, 403);
-    const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const rows = await getOpsState(["students", "tasks"]);
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!canWriteOpsTransaction(access, "students", ["students", "tasks"])
@@ -96,6 +96,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883")) return noStore({ error: "学生创建原子合同尚未部署，当前不会降级为分散写入。", code: "student_creation_contract_unavailable", requiredRpc: STUDENT_CREATION_ATOMIC_RPC }, 501);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) return noStore({ error: "学生或任务资料刚刚发生变化，请刷新后重试。", code: "version_conflict" }, 409);
     if (error instanceof OpsStoreError && error.code === "23505") return noStore({ error: "同一个学生创建命令已用于不同内容，请刷新后重试。", code: "idempotency_conflict" }, 409);
-    return noStore({ error: error instanceof Error ? error.message : "学生创建失败。" }, 503);
+    return noStore({ error: "学生创建失败。" }, 503);
   }
 }

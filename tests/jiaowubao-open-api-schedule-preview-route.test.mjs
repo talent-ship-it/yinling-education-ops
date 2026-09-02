@@ -9,7 +9,7 @@ const route = await readFile(new URL(
 
 test("JWB schedule preview is an admin-only no-store GET", () => {
   assert.match(route, /getCurrentDemoSession/);
-  assert.match(route, /hasValidNixonSession/);
+  assert.match(route, /hasFullAdminAccess/);
   assert.match(route, /buildOpsAccessContext/);
   assert.match(route, /DEMO_LIMITED_ADMIN_USER/);
   assert.match(route, /limitedAdminSession/);

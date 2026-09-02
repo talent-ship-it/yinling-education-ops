@@ -2,12 +2,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
   getTeacherAvailabilitySubmissions,
@@ -39,8 +38,7 @@ async function requireAdmin(permission: "operations.read" | "operations.write") 
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
   const { session } = resolved;
   const actor = session.user;
-  const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasTeacherAvailabilityReviewAdminAccess(actor, fullAdmin)
       || !hasDemoSessionPermission(session, permission)
       || !hasUnrestrictedDemoSessionScope(session)) {
@@ -103,7 +101,7 @@ export async function GET() {
     if (missingRpc(error)) return contractUnavailable();
     if (error instanceof TeacherAvailabilityReviewServiceError) return serviceError(error);
     return noStore({
-      error: error instanceof Error ? error.message : "AVA 审批列表读取失败。",
+      error: "AVA 审批列表读取失败。",
     }, 503);
   }
 }
@@ -162,13 +160,13 @@ export async function POST(request: Request) {
       }, 409);
     }
     if (error instanceof OpsStoreError && error.code === "P0002") {
-      return noStore({ error: error.message, code: "availability_review_not_found" }, 404);
+      return noStore({ error: "没有找到这份 AVA 提交。", code: "availability_review_not_found" }, 404);
     }
     if (error instanceof OpsStoreError && error.code === "22023") {
-      return noStore({ error: error.message, code: "invalid_availability_review" }, 422);
+      return noStore({ error: "AVA 审批内容无效。", code: "invalid_availability_review" }, 422);
     }
     return noStore({
-      error: error instanceof Error ? error.message : "AVA 审批失败。",
+      error: "AVA 审批失败。",
     }, 503);
   }
 }

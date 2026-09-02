@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
   OpsStoreError,
@@ -87,9 +87,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const allRows = await getOpsState();
-    const fullAdmin = actor === DEMO_ADMIN_USER
-      && session.role === "admin"
-      && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const access = buildOpsAccessContext(allRows, actor, fullAdmin, session);
     // This check is intentionally server-side and uses the same active scope
     // as the rest of the operations API.  Archived students never become a
@@ -145,6 +143,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof OpsStoreError && error.code === "42501") {
       return noStore({ error: "已归档学生不能新增资料。", code: "student_scope_forbidden" }, 403);
     }
-    return noStore({ error: error instanceof Error ? error.message : "资料登记失败。" }, 503);
+    return noStore({ error: "资料登记失败。" }, 503);
   }
 }

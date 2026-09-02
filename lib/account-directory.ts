@@ -193,12 +193,12 @@ export function resolveAccountDirectoryIdentity(
 }
 
 /** Verifies only the pre-migration review credential for one exact identity. */
-export function legacyPasswordMatchesIdentity(
+export async function legacyPasswordMatchesIdentity(
   password: unknown,
   target: DemoSessionIdentity,
   teachersPayload: unknown,
 ) {
-  const pinned = resolveDemoIdentity(password);
+  const pinned = await resolveDemoIdentity(password);
   const resolved = pinned && pinned.role !== "staff"
     ? { identity: pinned }
     : resolveTeacherIdentity(password, teachersPayload);

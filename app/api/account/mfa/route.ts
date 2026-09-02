@@ -5,8 +5,8 @@ import {
   decryptMfaSecret,
   encryptMfaSecret,
   generateTotpSecret,
+  matchTotpCounter,
   MfaConfigurationError,
-  verifyTotpCode,
 } from "@/lib/account-mfa";
 import {
   accountAuthThrottleKeys,
@@ -19,6 +19,7 @@ import { normaliseDemoIdentity } from "@/lib/demo-session-token";
 import {
   beginAccountMfaSetup,
   confirmAccountMfa,
+  consumeAccountMfaTotp,
   disableAccountMfa,
   getAppAccountCredential,
   getAccountMfa,
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
     expectedCredentialVersion: session.credentialVersion!,
     expectedAccessVersion: session.accessVersion!,
   } as const;
+  const identityKey = accountIdentityKey(session.user, session.role);
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const action = body?.action;
   if (action !== "begin" && action !== "verify" && action !== "disable") {
@@ -107,7 +109,6 @@ export async function POST(request: Request) {
       if (!currentPassword || Array.from(currentPassword).length > 256) {
         return noStore({ error: "请填写当前密码后继续设置 MFA。", code: "current_password_required" }, 400);
       }
-      const identityKey = accountIdentityKey(session.user, session.role);
       const credential = await getAppAccountCredential(identityKey);
       if (!credential) {
         return noStore({ error: "请先为当前账号设置独立密码，再启用 MFA。", code: "independent_password_required" }, 409);
@@ -143,8 +144,16 @@ export async function POST(request: Request) {
 
     if (!current) return noStore({ error: "请先开始设置 MFA。" }, 409);
     const code = typeof body?.code === "string" ? body.code.trim() : "";
-    if (!verifyTotpCode(decryptMfaSecret(current.secret_ciphertext), code)) {
+    const totpCounter = matchTotpCounter(decryptMfaSecret(current.secret_ciphertext), code);
+    if (totpCounter === null) {
       return noStore({ error: "验证码不正确或已过期。", code: "invalid_totp" }, 401);
+    }
+    if (!await consumeAccountMfaTotp({
+      identityKey,
+      expectedMfaVersion: current.mfa_version,
+      counter: totpCounter,
+    })) {
+      return noStore({ error: "验证码已使用或已过期。", code: "totp_replayed" }, 401);
     }
     try {
       await settleSuccessfulAuthAttempt(throttleKeys);

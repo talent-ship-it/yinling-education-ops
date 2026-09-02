@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLatestStudentImportSourceRows,
   getOpsState,
@@ -32,8 +32,7 @@ async function requireAdmin() {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
-  const fullAdmin = resolved.session.user === DEMO_ADMIN_USER && resolved.session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(resolved.session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasStudentImportAdminAccess(resolved.session.user, fullAdmin)
       || !hasDemoSessionPermission(resolved.session, "operations.write")
       || !hasUnrestrictedDemoSessionScope(resolved.session)) {
@@ -94,6 +93,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && error.code === "23505") {
       return noStore({ error: "该重复组已确认其他选择，请重新预检。", code: "master_duplicate_resolution_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "学生总表重复项确认失败。" }, 503);
+    return noStore({ error: "学生总表重复项确认失败。" }, 503);
   }
 }

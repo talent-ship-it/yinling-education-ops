@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoDirectScheduleMappingPriorityReview,
   JIAOWUBAO_DIRECT_SCHEDULE_MAPPING_PRIORITY_REVIEW_RPC,
@@ -35,9 +35,7 @@ async function requireHighTierAdmin() {
     return { response: noStore({ error: resolved.error }, resolved.status) } as const;
   }
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasTeacherImportAdminAccess(session.user, fullAdmin)
       || !hasDemoSessionPermission(session, "operations.read")
       || !hasUnrestrictedDemoSessionScope(session)) {
@@ -126,7 +124,7 @@ export async function GET(request: Request) {
     }
     if (error instanceof InvalidPriorityMappingRequest
       || (error instanceof OpsStoreError && error.code === "22023")) {
-      return noStore({ error: error.message, code: "invalid_jiaowubao_schedule_mapping_priority_request" }, 400);
+      return noStore({ error: "教务宝优先映射请求无效。", code: "invalid_jiaowubao_schedule_mapping_priority_request" }, 400);
     }
     return noStore({
       error: "当前教务宝映射待核对暂时无法读取；没有显示或写入任何推断结果。",

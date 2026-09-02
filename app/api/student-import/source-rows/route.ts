@@ -2,12 +2,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getLatestStudentImportSourceRows,
   OpsStoreError,
@@ -40,8 +39,7 @@ async function requireAdmin(permission: "operations.read" | "operations.write") 
   if (!("session" in resolved)) return { response: noStore({ error: resolved.error }, resolved.status) } as const;
   const { session } = resolved;
   const actor = session.user;
-  const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasStudentImportAdminAccess(actor, fullAdmin)
       || !hasDemoSessionPermission(session, permission)
       || !hasUnrestrictedDemoSessionScope(session)) {
@@ -106,7 +104,7 @@ export async function GET() {
     }
     return noStore({
       ready: false,
-      error: error instanceof Error ? error.message : "学生来源状态读取失败。",
+      error: "学生来源状态读取失败。",
     }, 503);
   }
 }
@@ -173,10 +171,10 @@ export async function POST(request: Request) {
       }, 409);
     }
     if (error instanceof OpsStoreError && error.code === "22023") {
-      return noStore({ error: error.message, code: "invalid_student_import_source_rows" }, 422);
+      return noStore({ error: "学生来源内容无效，请检查后重试。", code: "invalid_student_import_source_rows" }, 422);
     }
     return noStore({
-      error: error instanceof Error ? error.message : "学生来源录入失败。",
+      error: "学生来源录入失败。",
     }, 503);
   }
 }

@@ -89,8 +89,8 @@ export async function POST(request: Request) {
       return noStore({ error: "同一个 submissionKey 已用于另一份 AVA 内容。", code: "teacher_availability_submit_idempotency_conflict" }, 409);
     }
     if (error instanceof OpsStoreError && error.code === "22023") {
-      return noStore({ error: error.message, code: "invalid_teacher_availability_submission" }, 422);
+      return noStore({ error: "老师 AVA 提交内容无效。", code: "invalid_teacher_availability_submission" }, 422);
     }
-    return noStore({ error: error instanceof Error ? error.message : "老师 AVA 提交失败。" }, 503);
+    return noStore({ error: "老师 AVA 提交失败。" }, 503);
   }
 }

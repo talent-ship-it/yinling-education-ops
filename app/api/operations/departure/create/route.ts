@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   parseTeacherDepartureCreationCommand,
@@ -97,9 +97,7 @@ export async function POST(request: Request) {
     return noStore({ error: "老师账号不能创建离职交接流程。", code: "teacher_forbidden" }, 403);
   }
   const actor = session.user;
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const rawBody = await request.json().catch(() => null);
@@ -233,6 +231,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && error.code === "23505") {
       return noStore({ error: "同一个离职提交编号已用于不同内容，请关闭窗口后重试。", code: "teacher_departure_creation_idempotency_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "老师离职流程创建失败。" }, 503);
+    return noStore({ error: "老师离职流程创建失败。" }, 503);
   }
 }

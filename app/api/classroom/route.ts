@@ -10,9 +10,9 @@ import {
   meetingIdForOccurrence,
   meetingStatus,
 } from "@/lib/bigbluebutton";
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsEntity, filterOpsStateRows } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState } from "@/lib/ops-store";
 import { expandLessonOccurrences, type LegacyLessonSeries, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
 import { cleanTimezone } from "@/lib/timezone";
@@ -46,7 +46,7 @@ function handleError(error: unknown) {
   if (error instanceof BigBlueButtonError) {
     return noStore({ error: error.message, code: error.code }, error.status);
   }
-  return noStore({ error: error instanceof Error ? error.message : "在线教室操作失败。" }, 500);
+  return noStore({ error: "在线教室操作失败。" }, 500);
 }
 
 async function authorizedBooking(bookingId: string, occurrenceId: string, requestedSourceDate?: string) {
@@ -65,9 +65,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
   }
 
   const stateRows = await getOpsState(["students", "teachers", "bookings"]);
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const access = buildOpsAccessContext(stateRows, actor, fullAdmin, session);
   const visible = Object.fromEntries(filterOpsStateRows(stateRows, access).map((item) => [item.entity, item.payload]));
   const booking = rows(visible.bookings).find((item) => item.id === bookingId);

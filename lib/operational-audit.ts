@@ -1,4 +1,5 @@
 import type { OperationalAuditRecord } from "@/lib/ops-store";
+import { DEMO_ADMIN_USER } from "@/lib/demo-users";
 
 export type OperationalAuditEntry = Readonly<{
   id: string;
@@ -44,7 +45,7 @@ export function projectOperationalAuditEntry(record: OperationalAuditRecord): Op
   return {
     id: `AUD-${record.id}`,
     time: record.created_at,
-    actor: record.actor === "Nixon" ? "Admin" : record.actor,
+    actor: record.actor === DEMO_ADMIN_USER ? "Admin" : record.actor,
     action: actionLabel(record.action),
     detail: `${record.target_type} · ${record.target_id} · ${record.action}`,
     tone: actionTone(record.action),

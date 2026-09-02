@@ -39,11 +39,12 @@ test("implements shared Supabase state with conflict protection", async () => {
   assert.match(auth, /resolveDemoUser/);
   assert.match(auth, /matchesNixonPassword/);
   assert.match(auth, /role: "staff"/);
+  assert.match(auth, /DEMO_SESSION_SECRET/);
+  assert.doesNotMatch(auth, /OPS_API_SECRET/);
   assert.doesNotMatch(auth, /DEMO_ACCOUNT_PASSWORD_HASHES/);
   assert.doesNotMatch(auth, /process\.env\.NODE_ENV !== "production"/);
   assert.doesNotMatch(auth, /DEMO_PASSWORD/);
   assert.doesNotMatch(auth, /candidate[^\n]*===\s*["']admin["']/i);
-  assert.match(auth, /function safeEquals/);
 });
 
 test("limits staff and teacher views and keeps external source status read-only", async () => {
@@ -114,7 +115,7 @@ test("shares the To Do UI across operations roles and leaves the teacher workspa
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
-  const [client, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, auditRoute, nixonAuth, nixonLogin] = await Promise.all([
+  const [client, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, auditRoute, nixonAuth, nixonAuthToken] = await Promise.all([
     read("../app/operations-client.tsx"),
     read("../app/account-menu.tsx"),
     read("../app/api/demo-login/route.ts"),
@@ -124,7 +125,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
     read("../app/api/app-state/route.ts"),
     read("../app/api/audit/route.ts"),
     read("../lib/nixon-auth.ts"),
-    read("../app/api/nixon-login/route.ts"),
+    read("../lib/nixon-auth-token.ts"),
   ]);
 
   assert.match(client, /initialNixonUnlocked/);
@@ -168,7 +169,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(demoLogout, /maxAge: 0/);
   assert.match(snapshotRoute, /buildOpsAccessContext/);
   assert.match(snapshotRoute, /filterOpsStateRows/);
-  assert.match(snapshotRoute, /actor === DEMO_ADMIN_USER/);
+  assert.match(snapshotRoute, /hasFullAdminAccess\(session,/);
   assert.match(snapshotRoute, /sourceAccess = canReadUnrestrictedOpsData\(access\)/);
   assert.match(stateRoute, /filterOpsVersions/);
   assert.match(stateRoute, /mergeScopedPayload/);
@@ -181,12 +182,15 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(auditRoute, /操作审计只能由服务器业务事务生成/);
   assert.doesNotMatch(auditRoute, /body\?\.(?:action|detail|tone)|putOpsState/);
   assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_HASH/);
-  assert.match(nixonAuth, /process\.env\.OPS_API_SECRET/);
-  assert.match(nixonAuth, /createHash\("sha256"\)/);
+  assert.match(nixonAuth, /process\.env\.NIXON_PASSWORD_SALT/);
+  assert.match(nixonAuth, /verifyAccountPassword/);
+  assert.match(nixonAuth, /process\.env\.NIXON_SESSION_SECRET/);
+  assert.doesNotMatch(nixonAuth, /process\.env\.OPS_API_SECRET|createHash\("sha256"\)/);
+  assert.match(nixonAuthToken, /randomBytes\(32\)/);
+  assert.match(nixonAuthToken, /expectedSessionId/);
+  assert.match(nixonAuthToken, /ELEVATION_TOKEN_MAX_AGE_SECONDS/);
+  assert.match(demoLogin, /nixonSessionToken\(serverSession\.sessionId\)/);
   assert.doesNotMatch(nixonAuth, /YL-[A-Za-z0-9_-]{8,}/);
-  assert.match(nixonLogin, /httpOnly: true/);
-  assert.match(nixonLogin, /getCurrentDemoSession/);
-  assert.doesNotMatch(nixonLogin, /maxAge/);
   assert.doesNotMatch(client, /Admin Lite/);
 });
 
@@ -200,7 +204,6 @@ test("revalidates roster-backed teacher sessions on every protected API", async 
     "../app/api/fu-attachments/route.ts",
     "../app/api/fu-attachments/[id]/route.ts",
     "../app/api/lesson-occurrences/complete/route.ts",
-    "../app/api/nixon-login/route.ts",
     "../app/api/nixon-session/route.ts",
     "../app/api/operations/confirm/route.ts",
     "../app/api/operations/students/create/route.ts",

@@ -9,8 +9,10 @@ import {
 export { AccountIssuedPasswordError };
 
 function escrowSecret() {
-  const secret = process.env.OPS_API_SECRET;
-  if (!secret) throw new AccountIssuedPasswordError("账号发放密码加密配置尚未完成。");
+  const secret = process.env.ACCOUNT_ISSUED_PASSWORD_SECRET?.trim();
+  if (!secret || !/^[a-f0-9]{64}$/u.test(secret)) {
+    throw new AccountIssuedPasswordError("账号发放密码加密配置尚未完成。");
+  }
   return secret;
 }
 

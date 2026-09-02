@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   buildOpsAccessContext,
   canReadUnrestrictedOpsData,
@@ -9,7 +9,7 @@ import {
   managedExamStudentProjectionSnapshot,
   managedTrialPaymentStudentProjectionSnapshot,
 } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   JIAOWUBAO_AUTHORITY_SOURCE_ID,
   sanitizeJiaowubaoAuthoritySourceForBrowser,
@@ -37,7 +37,7 @@ export async function GET() {
   try {
     const rows = await getOpsState();
     const actor = session.user;
-    const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     const visibleRows = filterOpsStateRows(rows, access);
     const managedExamSnapshot = managedExamStudentProjectionSnapshot(rows, access);
@@ -62,8 +62,8 @@ export async function GET() {
       managedExamSnapshot,
       managedTrialPaymentSnapshot,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Supabase 真实资料读取失败。";
+  } catch {
+    const message = "Supabase 真实资料读取失败。";
     return noStore({ error: message }, 503);
   }
 }

@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import type { LessonAttendanceEvidence } from "./lesson-occurrences";
 
@@ -8,6 +8,9 @@ const OCCURRENCE_ID_PATTERN = /^.+:\d{4}-\d{2}-\d{2}$/;
 const MAX_ATTENDEES = 1_000;
 const MAX_SESSIONS_PER_ATTENDEE = 200;
 const MAX_MEETING_SECONDS = 24 * 60 * 60;
+const CALLBACK_MAX_AGE_SECONDS = 12 * 60 * 60;
+const CALLBACK_FUTURE_TOLERANCE_SECONDS = 5 * 60;
+const DURATION_TOLERANCE_SECONDS = 5;
 
 export class BbbAnalyticsError extends Error {
   constructor(
@@ -119,7 +122,7 @@ export function parseBbbAnalyticsPayload(value: unknown): BbbAnalyticsPayload {
   if (Date.parse(finishedAt) < Date.parse(startedAt)) {
     throw new BbbAnalyticsError("Meeting finish precedes its start.", "invalid_payload");
   }
-  const parsed: BbbAnalyticsPayload = {
+  const parsed = {
     version: requiredText(value.version, "version", 20),
     meetingId: requiredText(value.meeting_id, "meeting_id", 240),
     internalMeetingId: requiredText(value.internal_meeting_id, "internal_meeting_id", 240),
@@ -128,14 +131,44 @@ export function parseBbbAnalyticsPayload(value: unknown): BbbAnalyticsPayload {
     startedAt,
     finishedAt,
     attendees: attendeesValue.map(attendee),
-  };
-  if (new Set(parsed.attendees.map((item) => item.userId)).size !== parsed.attendees.length) {
+  } satisfies BbbAnalyticsPayload;
+  const meetingStart = Date.parse(parsed.startedAt);
+  const meetingFinish = Date.parse(parsed.finishedAt);
+  const meetingSeconds = Math.floor((meetingFinish - meetingStart) / 1_000);
+  if (Math.abs(parsed.durationSeconds - meetingSeconds) > DURATION_TOLERANCE_SECONDS) {
+    throw new BbbAnalyticsError("Meeting duration does not match its timestamps.", "invalid_payload");
+  }
+  const attendees = parsed.attendees.map((item, attendeeIndex) => {
+    let accumulatedSeconds = 0;
+    let previousLeave = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < item.joins.length; index += 1) {
+      const joinedAt = Date.parse(item.joins[index]);
+      const leftAt = Date.parse(item.leaves[index]);
+      if (joinedAt < meetingStart || leftAt > meetingFinish || joinedAt < previousLeave) {
+        throw new BbbAnalyticsError(
+          `data.attendees[${attendeeIndex}] has sessions outside the meeting timeline.`,
+          "invalid_payload",
+        );
+      }
+      accumulatedSeconds += Math.floor((leftAt - joinedAt) / 1_000);
+      previousLeave = leftAt;
+    }
+    if (Math.abs(item.durationSeconds - accumulatedSeconds) > DURATION_TOLERANCE_SECONDS) {
+      throw new BbbAnalyticsError(
+        `data.attendees[${attendeeIndex}].duration does not match join/leave evidence.`,
+        "invalid_payload",
+      );
+    }
+    return Object.freeze({ ...item, durationSeconds: accumulatedSeconds });
+  });
+  const validated = Object.freeze({ ...parsed, attendees }) satisfies BbbAnalyticsPayload;
+  if (new Set(validated.attendees.map((item) => item.userId)).size !== validated.attendees.length) {
     throw new BbbAnalyticsError("data.attendees contains duplicate external user IDs.", "invalid_payload");
   }
-  if (parsed.metadata.is_breakout?.toLowerCase() === "true") {
+  if (validated.metadata.is_breakout?.toLowerCase() === "true") {
     throw new BbbAnalyticsError("Breakout analytics cannot settle a lesson.", "breakout_forbidden", 422);
   }
-  return parsed;
+  return validated;
 }
 
 function metadataText(source: Readonly<Record<string, string>>, names: readonly string[]) {
@@ -165,9 +198,8 @@ function partyEvidence(payload: BbbAnalyticsPayload, userId: string) {
   if (!match) return undefined;
   return {
     userId,
-    // BBB's attendee duration is the provider's cumulative attendance value.
-    // Join/leave arrays are still strictly validated above, but using one
-    // canonical numeric field keeps the pure-domain and SQL classifiers equal.
+    // The provider's duration is accepted only after it agrees with the
+    // validated, non-overlapping join/leave timeline above.
     accumulatedSeconds: match.durationSeconds,
   };
 }
@@ -190,18 +222,22 @@ export function meetingIdForOccurrenceValue(occurrenceId: string) {
 
 function callbackKey(secret: string) {
   if (!secret.trim()) throw new BbbAnalyticsError("Callback secret is unavailable.", "missing_configuration", 503);
-  return createHmac("sha256", secret).update("yinling:bbb-analytics-callback:v1").digest();
+  return createHmac("sha256", secret).update("yinling:bbb-analytics-callback:v2").digest();
 }
 
-export function bbbCallbackNonce(secret: string, occurrenceId: string, meetingId: string) {
-  return createHmac("sha256", callbackKey(secret))
-    .update(`nonce\n${occurrenceId}\n${meetingId}`)
-    .digest("base64url");
+export function bbbCallbackNonce() {
+  return randomBytes(32).toString("base64url");
 }
 
-export function bbbCallbackSignature(secret: string, occurrenceId: string, meetingId: string, nonce: string) {
+export function bbbCallbackSignature(
+  secret: string,
+  occurrenceId: string,
+  meetingId: string,
+  nonce: string,
+  issuedAt: number,
+) {
   return createHmac("sha256", callbackKey(secret))
-    .update(`signature\n${occurrenceId}\n${meetingId}\n${nonce}`)
+    .update(`signature-v2\n${occurrenceId}\n${meetingId}\n${nonce}\n${issuedAt}`)
     .digest("base64url");
 }
 
@@ -210,18 +246,24 @@ export function verifyBbbCallbackSignature(input: {
   occurrenceId: string;
   meetingId: string;
   nonce: string;
+  issuedAt: number;
   signature: string;
-}) {
+}, now = new Date()) {
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(input.nonce) || !/^[A-Za-z0-9_-]{32,128}$/.test(input.signature)) return false;
-  const expectedNonce = bbbCallbackNonce(input.secret, input.occurrenceId, input.meetingId);
-  const expectedSignature = bbbCallbackSignature(input.secret, input.occurrenceId, input.meetingId, input.nonce);
-  const nonce = Buffer.from(input.nonce);
-  const nonceExpected = Buffer.from(expectedNonce);
+  const current = Math.floor(now.getTime() / 1_000);
+  if (!Number.isSafeInteger(input.issuedAt)
+      || input.issuedAt > current + CALLBACK_FUTURE_TOLERANCE_SECONDS
+      || input.issuedAt < current - CALLBACK_MAX_AGE_SECONDS) return false;
+  const expectedSignature = bbbCallbackSignature(
+    input.secret,
+    input.occurrenceId,
+    input.meetingId,
+    input.nonce,
+    input.issuedAt,
+  );
   const signature = Buffer.from(input.signature);
   const signatureExpected = Buffer.from(expectedSignature);
-  return nonce.length === nonceExpected.length
-    && signature.length === signatureExpected.length
-    && timingSafeEqual(nonce, nonceExpected)
+  return signature.length === signatureExpected.length
     && timingSafeEqual(signature, signatureExpected);
 }
 

@@ -3,9 +3,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canReadOpsEntity } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getJiaowubaoDirectScheduleWindow, getOpsState, OpsStoreError } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -219,9 +219,7 @@ export async function GET(request: Request) {
   }
 
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const rows = await getOpsState(["bookings", "students", "teachers"]);
@@ -299,6 +297,6 @@ export async function GET(request: Request) {
     if (missingReader(error)) {
       return noStore({ error: "教务宝只读课表数据库合同尚未部署。", code: "jiaowubao_direct_reader_unavailable" }, 501);
     }
-    return noStore({ error: error instanceof Error ? error.message : "教务宝导入课表读取失败。" }, 503);
+    return noStore({ error: "教务宝导入课表读取失败。" }, 503);
   }
 }

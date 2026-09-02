@@ -40,11 +40,17 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 
 ## Required Environment
 
-- `NIXON_PASSWORD_HASH` optional; the internal Admin password hash has a fallback for the current demo
-- `LIMITED_ADMIN_PASSWORD_HASH` optional; the limited Admin password hash has a fallback for the current demo
+- `NIXON_PASSWORD_HASH` and `NIXON_PASSWORD_SALT` — Admin legacy bootstrap credential using the application's `scrypt-v1` format (128 lowercase hexadecimal hash and 32 lowercase hexadecimal salt); there is no source-code fallback
+- `LIMITED_ADMIN_PASSWORD_HASH` and `LIMITED_ADMIN_PASSWORD_SALT` — limited Admin legacy bootstrap credential in the same `scrypt-v1` format; there is no source-code fallback
+- `DEMO_SESSION_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; signs only transitional legacy sessions
+- `NIXON_SESSION_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; signs session-bound Admin elevation markers
+- `ACCOUNT_PASSWORD_COMMAND_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; derives password-command salts
+- `ACCOUNT_ISSUED_PASSWORD_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; encrypts Admin-issued password escrow
+- `ACCOUNT_AUTH_THROTTLE_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; pseudonymizes authentication throttle dimensions
+- `MFA_ENCRYPTION_KEY` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; encrypts TOTP secrets
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `OPS_API_SECRET`
+- `OPS_API_SECRET` — database RPC authentication only; do not reuse it for any key above
 - `STUDENT_IMPORT_IDENTITY_REVIEW_TOKEN_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; never reuse `OPS_API_SECRET`
 - `WECOM_ARCHIVE_BRIDGE_TOKEN` — independent high-entropy bearer token used only by the authorised conversation-archive worker
 - `WECOM_ARCHIVE_STARTED_AT` — exact ISO timestamp; records before this post-join cutoff are rejected

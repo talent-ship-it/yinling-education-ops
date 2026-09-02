@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canAccessStudent, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { getOpsState, OpsStoreError, putStudentFuAttachmentAtomic } from "@/lib/ops-store";
 import { isFuAttachmentCategory, type FuAttachmentCategory } from "@/lib/student-records";
 import {
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const allRows = await getOpsState();
-    const fullAdmin = actor === "Nixon" && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const access = buildOpsAccessContext(allRows, actor, fullAdmin, session);
     if (!canAccessStudent(access, studentId)) return noStore({ error: "未找到该学生档案。" }, 404);
     if (!canWriteOpsTransaction(access, "files", ["files", "students"])) return noStore({ error: "当前账号不能新增学生附件。" }, 403);
@@ -125,6 +125,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof OpsStoreError && error.code === "42501") {
       return noStore({ error: "已归档学生不能新增附件。", code: "student_scope_forbidden" }, 403);
     }
-    return noStore({ error: error instanceof Error ? error.message : "附件归档失败。" }, 503);
+    return noStore({ error: "附件归档失败。" }, 503);
   }
 }

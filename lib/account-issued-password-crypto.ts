@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 
 const ENVELOPE_PATTERN = /^v1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{22,900})$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -26,19 +26,10 @@ function associatedData(accountId: string, credentialVersion: number) {
   return Buffer.from(`yinling-account-issued-password-v1\u0000${accountId.toLowerCase()}\u0000${credentialVersion}`, "utf8");
 }
 
-function deterministicIv(key: Buffer, commandKey: string, accountId: string, credentialVersion: number) {
+function validateCommandKey(commandKey: string) {
   if (!COMMAND_KEY_PATTERN.test(commandKey)) {
     throw new AccountIssuedPasswordError("账号发放密码命令无效。");
   }
-  return createHmac("sha256", key)
-    .update("yinling-account-issued-password-iv-v1\u0000", "utf8")
-    .update(commandKey.toLowerCase(), "utf8")
-    .update("\u0000", "utf8")
-    .update(accountId.toLowerCase(), "utf8")
-    .update("\u0000", "utf8")
-    .update(String(credentialVersion), "utf8")
-    .digest()
-    .subarray(0, 12);
 }
 
 export function encryptAccountIssuedPasswordWithSecret(input: Readonly<{
@@ -49,11 +40,14 @@ export function encryptAccountIssuedPasswordWithSecret(input: Readonly<{
   secret: string;
 }>) {
   validateBinding(input.accountId, input.credentialVersion);
+  validateCommandKey(input.commandKey);
   if (!input.password || Array.from(input.password).length > 128) {
     throw new AccountIssuedPasswordError("账号发放密码内容无效。");
   }
   const key = escrowKey(input.secret);
-  const iv = deterministicIv(key, input.commandKey, input.accountId, input.credentialVersion);
+  // AES-GCM requires a unique nonce for every encryption under the same key.
+  // Database idempotency preserves the first envelope for exact command replays.
+  const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(associatedData(input.accountId, input.credentialVersion));
   const encrypted = Buffer.concat([cipher.update(input.password, "utf8"), cipher.final()]);

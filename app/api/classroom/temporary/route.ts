@@ -9,8 +9,8 @@ import {
   createTemporaryTestMeeting,
   meetingIdForOccurrence,
 } from "@/lib/bigbluebutton";
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { displayTimezoneOptions } from "@/lib/display-preferences";
 import {
   bookingCapacityCommandIntent,
@@ -115,7 +115,7 @@ function errorResponse(error: unknown) {
       return noStore({ error: "同一个临时课堂命令使用了不同内容，请刷新后重试。", code: "booking_capacity_idempotency_conflict" }, 409);
     }
   }
-  return noStore({ error: error instanceof Error ? error.message : "临时课堂创建失败，请稍后重试。" }, 503);
+  return noStore({ error: "临时课堂创建失败，请稍后重试。" }, 503);
 }
 
 function meetingLinks(meetingId: string, requestKey: string) {
@@ -158,9 +158,7 @@ export async function POST(request: NextRequest) {
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   const adminScope = fullAdmin || (session.user === DEMO_LIMITED_ADMIN_USER && session.role === "limited-admin");
   if (!adminScope) return noStore({ error: "只有管理员可以创建临时课堂。", code: "classroom_scope_forbidden" }, 403);
 

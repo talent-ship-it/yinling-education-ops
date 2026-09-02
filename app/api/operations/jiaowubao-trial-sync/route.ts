@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoTrialSyncCommandResult,
   getOpsState,
@@ -73,9 +73,7 @@ export async function POST(request: Request) {
   const { session } = resolved;
   const actor = session.user;
   if (session.role === "teacher") return noStore({ error: "老师账号不能同步试听 LP。", code: "teacher_forbidden" }, 403);
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const command = parseJiaowubaoTrialSyncCommand(await request.json().catch(() => null));
@@ -188,6 +186,6 @@ export async function POST(request: Request) {
       || error.message.includes("snapshot_revision_conflict"))) {
       return noStore({ error: "教务宝课表快照已变化，请刷新后重试。", code: "source_changed" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "试听排课同步失败。" }, 503);
+    return noStore({ error: "试听排课同步失败。" }, 503);
   }
 }

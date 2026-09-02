@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   prepareRenewalFollowUp,
   isCreateIfMissingRenewal,
@@ -11,7 +11,7 @@ import {
   renewalFollowUpIntent,
   RenewalFollowUpServiceError,
 } from "@/lib/renewal-follow-up-service";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   getOpsState,
@@ -142,9 +142,7 @@ export async function POST(request: NextRequest) {
   const { session } = resolved;
   const actor = session.user;
   if (session.role === "teacher") return noStore({ error: "老师账号不能记录续课跟进。", code: "teacher_forbidden" }, 403);
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   let requiredRpc = RENEWAL_FOLLOW_UP_ATOMIC_RPC;
   try {
@@ -234,6 +232,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof OpsStoreError && error.code === "42501") {
       return noStore({ error: "当前账号不能操作该学生的续课资料。", code: "student_scope_forbidden" }, 403);
     }
-    return noStore({ error: error instanceof Error ? error.message : "续课跟进保存失败。" }, 503);
+    return noStore({ error: "续课跟进保存失败。" }, 503);
   }
 }

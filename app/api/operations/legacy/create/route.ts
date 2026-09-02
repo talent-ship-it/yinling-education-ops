@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "@/lib/ops-access";
 import { getLegacyOperationTaskCommandResult, getOpsState, LEGACY_OPERATION_TASK_ATOMIC_RPC, mutateLegacyOperationTaskAtomic, OpsStoreError, type LegacyOperationTaskCommandResult, type OpsStateRow } from "@/lib/ops-store";
 import { LegacyOperationTaskError, legacyOperationTaskIntent, parseLegacyOperationTaskCommand, prepareLegacyOperationTask } from "@/lib/legacy-operation-task-service";
@@ -43,7 +43,7 @@ async function renderLegacyReplay(result: LegacyOperationTaskCommandResult, acto
     // A roster/role/assignment change must not turn a committed receipt into
     // a 403 or leak the historic projection.
     if (!("session" in current) || current.session.user !== actor) return receiptOnly(result);
-    const fullAdmin = actor === DEMO_ADMIN_USER && current.session.role === "admin" && hasValidNixonSession(nixonCookieValue);
+    const fullAdmin = hasFullAdminAccess(current.session, nixonCookieValue);
     const rows = await getOpsState(["bookings", "operations", "tasks", "students", "teachers"]);
     if (!replayVisible(result, rows, actor, fullAdmin, current.session)) return receiptOnly(result);
     const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, actor, fullAdmin, current.session));
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     if (replay[0]) return renderLegacyReplay(replay[0], actor, cookieValue, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
     if (session.role === "teacher") return noStore({ error: "老师账号不能创建教务异常流程。", code: "teacher_forbidden" }, 403);
-    const fullAdmin = actor === DEMO_ADMIN_USER && session.role === "admin" && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+    const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
     const rows = await getOpsState(["bookings", "operations", "students", "tasks", "teachers"]);
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     if (!canWriteOpsTransaction(access, "operations", ["operations", "tasks"])
@@ -87,6 +87,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && (error.code === "PGRST202" || error.code === "42883")) return noStore({ error: "教务异常原子合同尚未部署，当前不会降级为分散写入。", code: "operation_task_contract_unavailable", requiredRpc: LEGACY_OPERATION_TASK_ATOMIC_RPC }, 501);
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) return noStore({ error: "异常或任务资料刚刚发生变化，请刷新后重试。", code: "version_conflict" }, 409);
     if (error instanceof OpsStoreError && error.code === "23505") return noStore({ error: "同一个异常命令已用于不同内容，请刷新后重试。", code: "idempotency_conflict" }, 409);
-    return noStore({ error: error instanceof Error ? error.message : "教务异常保存失败。" }, 503);
+    return noStore({ error: "教务异常保存失败。" }, 503);
   }
 }

@@ -1,8 +1,8 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { DEMO_ADMIN_USER, DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { buildOpsAccessContext, canOperateStudent, filterOpsStateRows } from "@/lib/ops-access";
 import {
   OperationConfirmationError,
@@ -64,9 +64,7 @@ export async function POST(request: Request) {
   if (session.role === "teacher") {
     return noStore({ error: "老师账号不能最终确认永久换师。", code: "teacher_forbidden" }, 403);
   }
-  const fullAdmin = actor === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
 
   try {
     const command = parsePermanentTeacherReplacementCommand(await request.json().catch(() => null));
@@ -176,6 +174,6 @@ export async function POST(request: Request) {
     if (error instanceof OpsStoreError && error.code === "23505") {
       return noStore({ error: "同一个永久换师命令已使用不同内容提交，请刷新后重试。", code: "permanent_teacher_replacement_idempotency_conflict" }, 409);
     }
-    return noStore({ error: error instanceof Error ? error.message : "永久换师失败。" }, 503);
+    return noStore({ error: "永久换师失败。" }, 503);
   }
 }

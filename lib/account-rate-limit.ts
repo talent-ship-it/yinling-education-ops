@@ -15,8 +15,10 @@ export type AccountAuthThrottlePurpose = "login" | "mfa" | "password";
 export class AccountAuthThrottleConfigurationError extends Error {}
 
 function throttleSecret() {
-  const secret = process.env.OPS_API_SECRET?.trim();
-  if (!secret) throw new AccountAuthThrottleConfigurationError("OPS_API_SECRET is required for authentication throttling.");
+  const secret = process.env.ACCOUNT_AUTH_THROTTLE_SECRET?.trim();
+  if (!secret || !/^[a-f0-9]{64}$/u.test(secret)) {
+    throw new AccountAuthThrottleConfigurationError("ACCOUNT_AUTH_THROTTLE_SECRET is required for authentication throttling.");
+  }
   return secret;
 }
 
@@ -25,7 +27,7 @@ function throttleDigest(
   dimension: "network" | "identity",
   value: string,
 ) {
-  const digest = createHmac("sha256", throttleSecret())
+  const digest = createHmac("sha256", Buffer.from(throttleSecret(), "hex"))
     .update("yinling-account-auth-throttle-v1\u0000", "utf8")
     .update(purpose, "utf8")
     .update("\u0000", "utf8")

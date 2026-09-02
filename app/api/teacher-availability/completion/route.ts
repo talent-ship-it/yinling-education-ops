@@ -2,12 +2,11 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import { hasDemoSessionPermission, hasUnrestrictedDemoSessionScope } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getOpsState,
   getTeacherAvailabilityCompletionPendingTeacherIds,
@@ -58,9 +57,7 @@ export async function GET() {
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
 
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!hasTeacherAvailabilityReviewAdminAccess(session.user, fullAdmin)
       || !hasDemoSessionPermission(session, "operations.read")
       || !hasUnrestrictedDemoSessionScope(session)) {
@@ -92,7 +89,7 @@ export async function GET() {
       return noStore({ error: error.message, code: error.code }, 503);
     }
     return noStore({
-      error: error instanceof Error ? error.message : "老师 AVA 完整度暂时无法读取。",
+      error: "老师 AVA 完整度暂时无法读取。",
     }, 503);
   }
 }

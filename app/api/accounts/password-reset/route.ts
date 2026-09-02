@@ -9,12 +9,11 @@ import {
 } from "@/lib/account-credentials";
 import { encryptAccountIssuedPassword } from "@/lib/account-issued-password";
 import {
-  DEMO_ADMIN_USER,
   DEMO_COOKIE_NAME,
   getCurrentDemoSession,
 } from "@/lib/demo-auth";
 import { normaliseDemoIdentity } from "@/lib/demo-session-token";
-import { hasValidNixonSession, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
+import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getAccountDirectory,
   getAppAccountCredential,
@@ -43,9 +42,7 @@ export async function POST(request: Request) {
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) return noStore({ error: resolved.error }, resolved.status);
   const { session } = resolved;
-  const fullAdmin = session.user === DEMO_ADMIN_USER
-    && session.role === "admin"
-    && hasValidNixonSession(cookieStore.get(NIXON_COOKIE_NAME)?.value);
+  const fullAdmin = hasFullAdminAccess(session, cookieStore.get(NIXON_COOKIE_NAME)?.value);
   if (!fullAdmin) return noStore({ error: "仅超级管理员可以重置其他账号密码。" }, 403);
   if (!session.accountId) return noStore({ error: "账号目录尚未建立，请退出后重新登录。" }, 409);
 
@@ -78,7 +75,7 @@ export async function POST(request: Request) {
 
     const password = await hashAccountPassword(
       body?.newPassword as string,
-      accountPasswordCommandSalt(commandKey, identityKey, process.env.OPS_API_SECRET ?? ""),
+      accountPasswordCommandSalt(commandKey, identityKey),
     );
     const issuedPasswordCiphertext = encryptAccountIssuedPassword({
       password: body?.newPassword as string,
