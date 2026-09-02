@@ -92,7 +92,7 @@ type Section =
 
 type Tone = "neutral" | "blue" | "green" | "amber" | "red" | "purple";
 type TaskStatus = "overdue" | "today" | "upcoming" | "waiting" | "done";
-type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | null;
+type ModalKind = "student" | "studentEdit" | "studentEvidence" | "task" | "booking" | "temporaryClassroom" | "operation" | "renewal" | "file" | "template" | "lp" | "ava" | "payrollNew" | "payrollEdit" | "wecomAuthorize" | null;
 type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
@@ -324,9 +324,18 @@ type Message = {
   studentId: string;
   kind: string;
   recipient: string;
+  recipientRef?: string;
   body: string;
-  status: "待人工确认" | "仅内部" | "已记录发送";
+  status: "待人工确认" | "仅内部" | "发送中" | "已发送" | "发送失败" | "已记录发送";
   createdAt: string;
+  deliveryId?: string;
+  sentAt?: string;
+  failureCode?: string | null;
+};
+
+type WecomRecipient = {
+  ref: string;
+  label: string;
 };
 
 type FileRecord = {
@@ -1285,6 +1294,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [modal, setModal] = useState<ModalKind>(null);
+  const [wecomRecipients, setWecomRecipients] = useState<WecomRecipient[]>([]);
+  const [wecomRecipientsError, setWecomRecipientsError] = useState("");
+  const [dispatchingMessageId, setDispatchingMessageId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [operatorMenuOpen, setOperatorMenuOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -1409,6 +1421,32 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ? `${staleSources.length} 个来源已超过 36 小时未读取`
       : `外部来源截至 ${formatSourceTime(latestSourceSync?.toISOString(), displayPreferences)}`;
   const displayedRules = rulesDraftTouched ? rulesDraft : rules;
+
+  useEffect(() => {
+    let active = true;
+    if (!isAdminSession) {
+      setWecomRecipients([]);
+      setWecomRecipientsError("");
+      return () => { active = false; };
+    }
+    fetch("/api/integrations/wecom/recipients", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || "企业微信收件对象读取失败。");
+        return Array.isArray(body.recipients) ? body.recipients as WecomRecipient[] : [];
+      })
+      .then((recipients) => {
+        if (!active) return;
+        setWecomRecipients(recipients.filter((recipient) => recipient && typeof recipient.ref === "string" && typeof recipient.label === "string"));
+        setWecomRecipientsError("");
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setWecomRecipients([]);
+        setWecomRecipientsError(error instanceof Error ? error.message : "企业微信收件对象读取失败。");
+      });
+    return () => { active = false; };
+  }, [isAdminSession]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
     const viewedAs = currentOperator !== sessionOperator ? ` · 当前查看 ${operatorLabel(currentOperator)} 视图` : "";
@@ -2054,39 +2092,61 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     setModal("ava");
   };
 
-  const recordMessage = (messageOrEvent?: Message | React.MouseEvent<HTMLButtonElement>) => {
-    const visibleMessages = scopedMessages.filter((entry) => {
-      const matchesQuery = `${entry.kind} ${entry.recipient} ${studentById(entry.studentId)?.name ?? ""}`.toLowerCase().includes(messageQuery.trim().toLowerCase());
-      if (!matchesQuery) return false;
-      if (messageFilter === "open") return entry.status !== "已记录发送";
-      if (messageFilter === "confirm") return entry.status === "待人工确认";
-      if (messageFilter === "sent") return entry.status === "已记录发送";
-      if (messageFilter === "internal") return entry.status === "仅内部";
-      return true;
-    });
-    const explicitMessage = messageOrEvent && "kind" in messageOrEvent ? messageOrEvent : undefined;
-    const message = explicitMessage ?? visibleMessages.find((entry) => entry.id === selectedMessageState?.id) ?? visibleMessages[0];
-    if (!message) return;
-    if (message.status === "已记录发送") return;
-    const recipient = message.recipient.trim();
-    if (!recipient || /待关联|待确认|未知/.test(recipient)) {
-      notify("收件对象尚未映射，不能记录为已发送");
+  const dispatchMessage = async (message: Message) => {
+    if (!isAdminSession || message.status !== "待人工确认" || !message.recipientRef) return;
+    setDispatchingMessageId(message.id);
+    try {
+      const response = await fetch("/api/integrations/wecom/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId: message.id, expectedMessagesVersion: messagesShared.version }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 403 && body.code === "authorization_required") {
+        setModal("wecomAuthorize");
+        notify("发送前请完成企业微信二次授权。");
+        return;
+      }
+      if (response.status === 202) {
+        notify("投递结果暂不确定；消息已保留为发送中，请不要重复发送。");
+        return;
+      }
+      if (!response.ok) {
+        notify(body.error || "企业微信发送失败，请检查收件对象与 bridge 配置。");
+        return;
+      }
+      addAudit("提交企业微信消息", `${message.kind} → ${message.recipient}`, "green");
+      notify("已提交到企业微信 CLI bridge，状态会自动同步。");
+    } catch {
+      notify("企业微信发送服务暂时不可用；没有标记为已发送。");
+    } finally {
+      setDispatchingMessageId(null);
+    }
+  };
+
+  const authorizeWecomDispatch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!isAdminSession) {
+      notify("需要完整管理员权限才能授权企业微信发送。");
       return;
     }
-    requestConfirmation({
-      title: "确认记录为已发送",
-      detail: `${message.kind} → ${recipient}`,
-      items: ["系统不会实际发送企业微信消息", "此操作只记录人工已经完成发送"],
-      confirmLabel: "确认已人工发送",
-      onConfirm: () => {
-        setMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, status: "已记录发送" } : entry));
-        addAudit("记录消息发送", `${message.kind} → ${recipient}`, "green");
-        notify("已记录为人工发送", () => {
-          setMessages((current) => current.map((entry) => entry.id === message.id ? { ...entry, status: message.status } : entry));
-          addAudit("撤销消息发送记录", `${message.kind} → ${recipient}`, "amber");
-        });
-      },
-    });
+    const password = String(new FormData(event.currentTarget).get("password") ?? "");
+    try {
+      const response = await fetch("/api/integrations/wecom/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        notify(body.error || "企业微信发送授权失败。");
+        return;
+      }
+      setModal(null);
+      notify("企业微信发送已授权 15 分钟。请再次确认后发送消息。");
+    } catch {
+      notify("企业微信发送授权服务暂时不可用。");
+    }
   };
 
   const resetDemo = () => {
@@ -3896,15 +3956,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderMessages = () => {
+    const statusToneForMessage = (status: Message["status"]): Tone => {
+      if (status === "已发送" || status === "已记录发送") return "green";
+      if (status === "待人工确认" || status === "发送中") return "amber";
+      if (status === "发送失败") return "red";
+      return "blue";
+    };
     const visibleMessages = scopedMessages.filter((message) => {
       const matchesQuery =
         `${message.kind} ${message.recipient} ${studentById(message.studentId)?.name ?? ""}`
           .toLowerCase()
           .includes(messageQuery.trim().toLowerCase());
       if (!matchesQuery) return false;
-      if (messageFilter === "open") return message.status !== "已记录发送";
+      if (messageFilter === "open") return !["已发送", "已记录发送"].includes(message.status);
       if (messageFilter === "confirm") return message.status === "待人工确认";
-      if (messageFilter === "sent") return message.status === "已记录发送";
+      if (messageFilter === "sent") return message.status === "已发送" || message.status === "已记录发送";
       if (messageFilter === "internal") return message.status === "仅内部";
       return true;
     });
@@ -3918,7 +3984,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <ViewHeading
             eyebrow="按学生关系路由 · 发送前确认"
             title="消息队列"
-            copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
+            copy="CLI 第一期只支持人工确认后的内部企业微信文字通知；群聊内容、附件和历史不会被读取。"
             actions={
               <button
                 className="primary-button"
@@ -3932,7 +3998,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <section className="panel collection-shell">
             <EmptyState
               title="暂无真实消息记录"
-              detail="当前 Supabase 没有导入消息队列；后续接入企业微信后会在这里显示。"
+              detail="当前 Supabase 没有导入消息队列；新建内部提醒后，可选择已登记的企业微信收件对象。"
             />
           </section>
         </>
@@ -3944,7 +4010,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <ViewHeading
             eyebrow="按学生关系路由 · 发送前确认"
             title="消息队列"
-            copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
+            copy="CLI 第一期只支持人工确认后的内部企业微信文字通知；群聊内容、附件和历史不会被读取。"
             actions={
               <button
                 className="primary-button"
@@ -3959,10 +4025,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <ViewTabs
               value={messageFilter}
               items={[
-                { id: "open", label: "待处理", count: scopedMessages.filter((item) => item.status !== "已记录发送").length },
+                { id: "open", label: "待处理", count: scopedMessages.filter((item) => !["已发送", "已记录发送"].includes(item.status)).length },
                 { id: "confirm", label: "待人工确认", count: scopedMessages.filter((item) => item.status === "待人工确认").length },
                 { id: "internal", label: "仅内部", count: scopedMessages.filter((item) => item.status === "仅内部").length },
-                { id: "sent", label: "已记录发送", count: scopedMessages.filter((item) => item.status === "已记录发送").length },
+                { id: "sent", label: "已发送", count: scopedMessages.filter((item) => item.status === "已发送" || item.status === "已记录发送").length },
                 { id: "all", label: "全部", count: scopedMessages.length },
               ]}
               onChange={setMessageFilter}
@@ -3983,14 +4049,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       );
     }
     const recipientUnresolved =
-      !selectedMessage.recipient.trim() ||
-      /待关联|待确认|未知/.test(selectedMessage.recipient);
+      !selectedMessage.recipientRef ||
+      !wecomRecipients.some((recipient) => recipient.ref === selectedMessage.recipientRef);
+    const canDispatch = isAdminSession && selectedMessage.status === "待人工确认" && !recipientUnresolved;
+    const isDispatching = dispatchingMessageId === selectedMessage.id || selectedMessage.status === "发送中";
     return (
       <>
         <ViewHeading
           eyebrow="按学生关系路由 · 发送前确认"
           title="消息队列"
-          copy="像收件箱一样集中搜索和筛选；左侧选择消息，右侧确认收件对象和内容，避免在长列表中误操作。"
+          copy="CLI 第一期只支持人工确认后的内部企业微信文字通知；群聊内容、附件和历史不会被读取。"
           actions={
             <button
               className="primary-button"
@@ -4009,7 +4077,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 id: "open",
                 label: "待处理",
                 count: scopedMessages.filter(
-                  (item) => item.status !== "已记录发送",
+                  (item) => !["已发送", "已记录发送"].includes(item.status),
                 ).length,
               },
               {
@@ -4027,9 +4095,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               },
               {
                 id: "sent",
-                label: "已记录发送",
+                label: "已发送",
                 count: scopedMessages.filter(
-                  (item) => item.status === "已记录发送",
+                  (item) => item.status === "已发送" || item.status === "已记录发送",
                 ).length,
               },
               { id: "all", label: "全部", count: scopedMessages.length },
@@ -4059,9 +4127,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                           setMobilePreview("message");
                         }}
                       >
-                        <span
-                          className={`route-icon ${message.status === "待人工确认" ? "amber" : "blue"}`}
-                        >
+                        <span className={`route-icon ${statusToneForMessage(message.status)}`}>
                           <MessageCircle size={18} />
                         </span>
                         <span>
@@ -4072,15 +4138,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                           <em>{message.body}</em>
                         </span>
                         <span>
-                          <StatusPill
-                            tone={
-                              message.status === "待人工确认"
-                                ? "amber"
-                                : message.status === "已记录发送"
-                                  ? "green"
-                                  : "blue"
-                            }
-                          >
+                          <StatusPill tone={statusToneForMessage(message.status)}>
                             {message.status}
                           </StatusPill>
                           <small>{message.createdAt}</small>
@@ -4096,11 +4154,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 )}
               </div>
               <div className="send-log">
-                <strong>安全边界</strong>
+                <strong>CLI 第一期边界</strong>
                 <p>
-                  <CircleAlert size={15} /> 当前只记录发送意图，未连接企业微信
-                  API。
+                  <CircleAlert size={15} /> 只会向预先映射的内部对象发送确认后的文字通知；不会读取企业微信群、图片或附件。
                 </p>
+                {wecomRecipientsError ? (
+                  <p><CircleAlert size={15} /> {wecomRecipientsError}</p>
+                ) : (
+                  <p>{wecomRecipients.length ? `已登记 ${wecomRecipients.length} 个可发送的内部对象。` : "尚未登记可发送对象；消息会继续留在内部队列。"}</p>
+                )}
               </div>
             </article>
             <aside
@@ -4119,15 +4181,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   <p className="eyebrow">发送前预览</p>
                   <h2>{selectedMessage.kind}</h2>
                 </div>
-                <StatusPill
-                  tone={
-                    selectedMessage.status === "待人工确认"
-                      ? "amber"
-                      : selectedMessage.status === "已记录发送"
-                        ? "green"
-                        : "blue"
-                  }
-                >
+                <StatusPill tone={statusToneForMessage(selectedMessage.status)}>
                   {selectedMessage.status}
                 </StatusPill>
               </div>
@@ -4148,23 +4202,28 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <div className="message-bubble">{selectedMessage.body}</div>
               <div className="preview-foot">
                 <CircleAlert size={16} />{" "}
-                真实外部消息仍需企业微信权限、收件对象映射与人工确认。
+                发送前需要独立二次授权；收件对象、正文和状态都由服务器重新读取，浏览器不能传入 CLI 命令或群 ID。
               </div>
               <button
                 className="primary-button full"
                 type="button"
-                disabled={
-                  selectedMessage.status === "已记录发送" ||
-                  recipientUnresolved
-                }
-                onClick={recordMessage}
+                disabled={!canDispatch || isDispatching}
+                onClick={() => void dispatchMessage(selectedMessage)}
               >
                 <Send size={16} />{" "}
-                {selectedMessage.status === "已记录发送"
-                  ? "已记录发送"
-                  : recipientUnresolved
-                    ? "先关联收件对象"
-                  : "记录为已发送"}
+                {isDispatching
+                  ? "正在确认投递状态"
+                  : selectedMessage.status === "已发送" || selectedMessage.status === "已记录发送"
+                    ? "已发送"
+                    : selectedMessage.status === "发送失败"
+                      ? "发送失败，不能自动重试"
+                      : !isAdminSession
+                        ? "需要完整管理员权限"
+                        : recipientUnresolved
+                          ? "收件对象未映射"
+                          : selectedMessage.status === "待人工确认"
+                            ? "发送到企业微信"
+                            : "当前不可发送"}
               </button>
             </aside>
           </div>
@@ -4862,10 +4921,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <div className="integration-list">
               <OwnershipRow
-                title="企业微信"
-                detail="需要应用权限、员工与客户群映射"
+                title="企业微信 CLI"
+                detail={wecomRecipients.length
+                  ? `已登记 ${wecomRecipients.length} 个内部文字通知对象；bridge 和机器人授权仍需单独验证。`
+                  : "CLI 出站桥接代码已就绪；尚未登记可发送对象或验证 bridge。"}
+                tone={wecomRecipients.length ? "blue" : "amber"}
+                label={wecomRecipients.length ? "已登记收件对象" : "待配置"}
+              />
+              <OwnershipRow
+                title="企业微信入站资料"
+                detail="“信息交接表”识别和群内图片归档仍需会话内容存档权限；CLI 不会读取群聊、图片或附件。"
                 tone="amber"
-                label="待 PoC"
+                label="暂未接入"
               />
               <OwnershipRow
                 title="教务宝"
@@ -6741,7 +6808,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const submitTemplate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const data = new FormData(event.currentTarget); const studentId = String(data.get("studentId") ?? selectedStudent.id); const kind = String(data.get("kind") ?? "内部提醒"); const body = String(data.get("body") ?? "").trim(); if (!body) return;
-    const message: Message = { id: id("MSG"), studentId, kind, recipient: String(data.get("recipient") ?? "内部负责人"), body, status: "待人工确认", createdAt: `今天 ${nowLabel()}` };
+    const recipientRef = String(data.get("recipientRef") ?? "");
+    const recipient = isAdminSession ? wecomRecipients.find((item) => item.ref === recipientRef) : undefined;
+    const message: Message = { id: id("MSG"), studentId, kind, recipient: recipient?.label ?? "仅内部队列", recipientRef: recipient?.ref, body, status: recipient ? "待人工确认" : "仅内部", createdAt: `今天 ${nowLabel()}` };
     setMessages((current) => [message, ...current]); setSelectedMessageId(message.id); addAudit("创建消息待确认", `${kind} · ${studentById(studentId)?.name}`, "blue"); setModal(null); setActive("messages"); notify("消息已加入队列，等待人工确认");
   };
 
@@ -7057,10 +7126,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitTemplate}>
           <label>关联学生<input name="studentId" list="message-student-options" defaultValue={selectedStudent.id} placeholder="输入姓名或学生 ID 搜索" /><datalist id="message-student-options">{recordStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</datalist></label>
           <label>消息类型<input name="kind" defaultValue="内部提醒" required /></label>
-          <label className="span-2">收件对象<input name="recipient" defaultValue="内部负责人" required /></label>
+          <label className="span-2">投递对象<select name="recipientRef" defaultValue=""><option value="">仅内部队列（不发送）</option>{isAdminSession && wecomRecipients.map((recipient) => <option value={recipient.ref} key={recipient.ref}>{recipient.label}</option>)}</select></label>
           <label className="span-2">消息正文<textarea name="body" rows={5} placeholder="输入需要人工确认的消息内容" required /></label>
-          <div className="form-notice span-2"><CircleAlert size={16} /> 此操作只创建待确认队列，不会通过企业微信向任何人发送消息。</div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 创建不会立即发送。选择已登记对象后，仍须在消息详情里二次授权并人工确认；CLI 不读取企业微信群或附件。{wecomRecipientsError ? ` ${wecomRecipientsError}` : ""}</div>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><MessageSquare size={16} /> 创建待确认消息</button></footer>
+        </form>
+      </Dialog>}
+
+      {modal === "wecomAuthorize" && isAdminSession && <Dialog title="企业微信发送二次授权" onClose={() => setModal(null)}>
+        <form className="form-grid" onSubmit={authorizeWecomDispatch}>
+          <label className="span-2">发送授权密码<input name="password" type="password" autoComplete="current-password" autoFocus required /></label>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 授权只在此浏览器保留 15 分钟，且只允许发送已在服务器登记的消息和收件对象。</div>
+          <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><ShieldCheck size={16} /> 授权发送</button></footer>
         </form>
       </Dialog>}
     </main>
