@@ -45,3 +45,8 @@ next-env.d.ts
 
 # private WeCom CLI bridge delivery ledger
 .wecom-cli-bridge-deliveries.json
+
+# local deployment and Supabase CLI state
+/.wrangler/
+/dist/
+/supabase/.temp/
