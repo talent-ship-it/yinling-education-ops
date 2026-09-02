@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AccountIssuedPasswordError,
   decryptAccountIssuedPasswordWithSecret,
+  decryptAccountIssuedPasswordWithSecretFallback,
   encryptAccountIssuedPasswordWithSecret,
 } from "../lib/account-issued-password-crypto";
 
@@ -60,5 +61,43 @@ test("issued password ciphertext rejects tampering", () => {
     accountId: binding.accountId,
     credentialVersion: binding.credentialVersion,
     secret: binding.secret,
+  }), AccountIssuedPasswordError);
+});
+
+test("legacy issued passwords are marked for one-time rewrap", () => {
+  const password = "ExampleSecure123";
+  const currentSecret = "current-issued-password-secret";
+  const legacySecret = "legacy-ops-secret";
+  const currentCiphertext = encryptAccountIssuedPasswordWithSecret({
+    ...binding,
+    password,
+    secret: currentSecret,
+  });
+  const legacyCiphertext = encryptAccountIssuedPasswordWithSecret({
+    ...binding,
+    password,
+    secret: legacySecret,
+  });
+
+  assert.deepEqual(decryptAccountIssuedPasswordWithSecretFallback({
+    ciphertext: currentCiphertext,
+    accountId: binding.accountId,
+    credentialVersion: binding.credentialVersion,
+    currentSecret,
+    legacySecret,
+  }), { password, requiresRewrap: false });
+  assert.deepEqual(decryptAccountIssuedPasswordWithSecretFallback({
+    ciphertext: legacyCiphertext,
+    accountId: binding.accountId,
+    credentialVersion: binding.credentialVersion,
+    currentSecret,
+    legacySecret,
+  }), { password, requiresRewrap: true });
+  assert.throws(() => decryptAccountIssuedPasswordWithSecretFallback({
+    ciphertext: legacyCiphertext,
+    accountId: binding.accountId,
+    credentialVersion: binding.credentialVersion,
+    currentSecret,
+    legacySecret: null,
   }), AccountIssuedPasswordError);
 });

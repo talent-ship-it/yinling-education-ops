@@ -213,6 +213,11 @@ export type AccountIssuedPasswordEscrowResult = Readonly<{
   audit_entry_id: string | null;
 }>;
 
+export type AccountIssuedPasswordRewrapResult = Readonly<{
+  applied: boolean;
+  audit_entry_id: string | null;
+}>;
+
 export type AccountRole = "admin" | "limited-admin" | "staff" | "teacher";
 export type AccountStatus = "invited" | "active" | "disabled";
 
@@ -890,6 +895,7 @@ export const ACCOUNT_SESSION_REVOKE_RPC = "revoke_account_sessions";
 export const ACCOUNT_CURRENT_SESSION_REVOKE_RPC = "revoke_current_account_session";
 export const ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v4";
 export const ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow";
+export const ACCOUNT_ISSUED_PASSWORD_REWRAP_RPC = "rewrap_account_issued_password_escrow";
 export const ACCOUNT_ISSUED_PASSWORD_SEED_RPC = "seed_account_issued_password_escrow";
 export const ACCOUNT_RECOVERY_ISSUE_RPC = "issue_account_recovery";
 export const ACCOUNT_RECOVERY_CONSUME_RPC = "consume_account_recovery";
@@ -3495,6 +3501,25 @@ export async function getAccountIssuedPasswordEscrow(input: {
   const rows = await rpc<AccountIssuedPasswordEscrowResult[]>(ACCOUNT_ISSUED_PASSWORD_READ_RPC, {
     p_secret: secret,
     p_account_id: input.accountId,
+    p_actor_account_id: input.actorAccountId,
+  });
+  return rows[0] ?? null;
+}
+
+export async function rewrapAccountIssuedPasswordEscrow(input: {
+  accountId: string;
+  expectedCredentialVersion: number;
+  expectedCiphertext: string;
+  rewrappedCiphertext: string;
+  actorAccountId: string;
+}) {
+  const { secret } = configuration();
+  const rows = await rpc<AccountIssuedPasswordRewrapResult[]>(ACCOUNT_ISSUED_PASSWORD_REWRAP_RPC, {
+    p_secret: secret,
+    p_account_id: input.accountId,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_ciphertext: input.expectedCiphertext,
+    p_rewrapped_ciphertext: input.rewrappedCiphertext,
     p_actor_account_id: input.actorAccountId,
   });
   return rows[0] ?? null;

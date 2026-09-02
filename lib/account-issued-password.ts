@@ -2,8 +2,9 @@ import "server-only";
 
 import {
   AccountIssuedPasswordError,
-  decryptAccountIssuedPasswordWithSecret,
+  decryptAccountIssuedPasswordWithSecretFallback,
   encryptAccountIssuedPasswordWithSecret,
+  type AccountIssuedPasswordDecryption,
 } from "@/lib/account-issued-password-crypto";
 
 export { AccountIssuedPasswordError };
@@ -14,6 +15,14 @@ function escrowSecret() {
     throw new AccountIssuedPasswordError("账号发放密码加密配置尚未完成。");
   }
   return secret;
+}
+
+function legacyEscrowSecret(currentSecret: string) {
+  // Passwords issued before ACCOUNT_ISSUED_PASSWORD_SECRET was introduced
+  // were encrypted with OPS_API_SECRET. Keep that key decrypt-only while the
+  // read path atomically rewraps each legacy envelope under the dedicated key.
+  const secret = process.env.OPS_API_SECRET?.trim();
+  return secret && secret !== currentSecret ? secret : null;
 }
 
 export function encryptAccountIssuedPassword(input: Readonly<{
@@ -30,5 +39,18 @@ export function decryptAccountIssuedPassword(input: Readonly<{
   accountId: string;
   credentialVersion: number;
 }>) {
-  return decryptAccountIssuedPasswordWithSecret({ ...input, secret: escrowSecret() });
+  return decryptAccountIssuedPasswordForMigration(input).password;
+}
+
+export function decryptAccountIssuedPasswordForMigration(input: Readonly<{
+  ciphertext: string;
+  accountId: string;
+  credentialVersion: number;
+}>): AccountIssuedPasswordDecryption {
+  const currentSecret = escrowSecret();
+  return decryptAccountIssuedPasswordWithSecretFallback({
+    ...input,
+    currentSecret,
+    legacySecret: legacyEscrowSecret(currentSecret),
+  });
 }

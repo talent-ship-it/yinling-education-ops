@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { accountIdentityKey, verifyAccountPassword } from "@/lib/account-credentials";
-import { decryptAccountIssuedPassword } from "@/lib/account-issued-password";
+import {
+  accountIdentityKey,
+  createAccountCommandKey,
+  verifyAccountPassword,
+} from "@/lib/account-credentials";
+import {
+  decryptAccountIssuedPasswordForMigration,
+  encryptAccountIssuedPassword,
+} from "@/lib/account-issued-password";
 import { resolveAccountRequestContext } from "@/lib/account-request-context";
 import { normaliseDemoIdentity } from "@/lib/demo-session-token";
 import {
@@ -9,6 +16,7 @@ import {
   getAccountIssuedPasswordEscrow,
   getAppAccountCredential,
   OpsStoreError,
+  rewrapAccountIssuedPasswordEscrow,
 } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -60,11 +68,12 @@ export async function POST(request: Request) {
       return noStore({ ok: true, available: false, state: "stale" });
     }
 
-    const password = decryptAccountIssuedPassword({
+    const decryption = decryptAccountIssuedPasswordForMigration({
       ciphertext: escrow.ciphertext,
       accountId: target.account_id,
       credentialVersion,
     });
+    const { password } = decryption;
     const identityKey = accountIdentityKey(target.account_name, target.account_role);
     const credential = await getAppAccountCredential(identityKey);
     const matches = credential
@@ -79,6 +88,28 @@ export async function POST(request: Request) {
         error: "当前发放密码已无法通过账号校验，请为该账号重置新密码。",
         code: "issued_password_verification_failed",
       }, 409);
+    }
+
+    if (decryption.requiresRewrap) {
+      const rewrappedCiphertext = encryptAccountIssuedPassword({
+        password,
+        accountId: target.account_id,
+        credentialVersion,
+        commandKey: createAccountCommandKey("password-escrow"),
+      });
+      const rewrapped = await rewrapAccountIssuedPasswordEscrow({
+        accountId: target.account_id,
+        expectedCredentialVersion: credentialVersion,
+        expectedCiphertext: escrow.ciphertext,
+        rewrappedCiphertext,
+        actorAccountId: context.session.accountId,
+      });
+      if (!rewrapped?.applied) {
+        return noStore({
+          error: "账号发放密码状态刚刚已更新，请重新查看。",
+          code: "issued_password_rewrap_conflict",
+        }, 409);
+      }
     }
 
     return noStore({

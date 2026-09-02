@@ -68,9 +68,10 @@ const [
   read("../app/api/demo-logout/route.ts"),
   read("../app/operations-client.tsx"),
 ]);
-const [issuedPasswordNonceMigration, totpReplayMigration, nixonAuth, nixonAuthToken] = await Promise.all([
+const [issuedPasswordNonceMigration, totpReplayMigration, issuedPasswordRewrapMigration, nixonAuth, nixonAuthToken] = await Promise.all([
   read("../supabase/migrations/20260902000100_randomize_issued_password_nonces.sql"),
   read("../supabase/migrations/20260902000200_reject_replayed_totp_codes.sql"),
+  read("../supabase/migrations/20260902000300_rewrap_legacy_issued_passwords.sql"),
   read("../lib/nixon-auth.ts"),
   read("../lib/nixon-auth-token.ts"),
 ]);
@@ -133,6 +134,10 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
   assert.match(issuedPasswordNonceMigration, /create or replace function public\.rotate_account_password_tx_v4/);
   assert.match(issuedPasswordNonceMigration, /if rotated\.applied then/);
   assert.match(issuedPasswordNonceMigration, /Reuse the envelope committed by that first request/);
+  assert.match(issuedPasswordRewrapMigration, /create or replace function public\.rewrap_account_issued_password_escrow/);
+  assert.match(issuedPasswordRewrapMigration, /actor\.status <> 'active' or not actor\.super_admin/);
+  assert.match(issuedPasswordRewrapMigration, /escrow\.ciphertext <> p_expected_ciphertext/);
+  assert.match(issuedPasswordRewrapMigration, /account\.issued_password_rewrapped/);
   assert.match(passwordPolicyMigration, /set must_change_password = false/);
   assert.match(lifecycleHardeningMigration, /app_account_auth_throttles_updated_idx[\s\S]*updated_at/);
   assert.match(lifecycleHardeningMigration, /add column if not exists result_snapshot jsonb/);
@@ -164,6 +169,7 @@ test("credential and lifecycle tables stay private while secret-gated RPCs own m
 test("routes enforce full-admin boundaries and use atomic account operations", () => {
   assert.match(store, /ACCOUNT_PASSWORD_ROTATE_RPC = "rotate_account_password_tx_v4"/);
   assert.match(store, /ACCOUNT_ISSUED_PASSWORD_READ_RPC = "read_account_issued_password_escrow"/);
+  assert.match(store, /ACCOUNT_ISSUED_PASSWORD_REWRAP_RPC = "rewrap_account_issued_password_escrow"/);
   assert.match(store, /ACCOUNT_SESSION_CREATE_RPC = "create_account_session"/);
   assert.match(store, /ACCOUNT_MFA_CONFIRM_RPC = "confirm_account_mfa"/);
   assert.match(loginRoute, /ensureAccountDirectory/);
@@ -204,6 +210,8 @@ test("routes enforce full-admin boundaries and use atomic account operations", (
   assert.match(issuedPasswordRoute, /resolveAccountRequestContext/);
   assert.match(issuedPasswordRoute, /context\.fullAdmin/);
   assert.match(issuedPasswordRoute, /decryptAccountIssuedPassword/);
+  assert.match(issuedPasswordRoute, /rewrapAccountIssuedPasswordEscrow/);
+  assert.match(issuedPasswordRoute, /decryption\.requiresRewrap/);
   assert.match(issuedPasswordRoute, /verifyAccountPassword\(password, credential\)/);
   assert.match(issuedPasswordRoute, /"Cache-Control": "private, no-store, max-age=0"/);
   assert.doesNotMatch(issuedPasswordRoute, /console\./);

@@ -7,6 +7,11 @@ const AUTH_TAG_LENGTH = 16;
 
 export class AccountIssuedPasswordError extends Error {}
 
+export type AccountIssuedPasswordDecryption = Readonly<{
+  password: string;
+  requiresRewrap: boolean;
+}>;
+
 function escrowKey(secret: string) {
   if (!secret) throw new AccountIssuedPasswordError("账号发放密码加密配置尚未完成。");
   return createHmac("sha256", secret)
@@ -80,5 +85,31 @@ export function decryptAccountIssuedPasswordWithSecret(input: Readonly<{
     return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
   } catch {
     throw new AccountIssuedPasswordError("账号发放密码密文无法验证。");
+  }
+}
+
+export function decryptAccountIssuedPasswordWithSecretFallback(input: Readonly<{
+  ciphertext: string;
+  accountId: string;
+  credentialVersion: number;
+  currentSecret: string;
+  legacySecret: string | null;
+}>): AccountIssuedPasswordDecryption {
+  const binding = {
+    ciphertext: input.ciphertext,
+    accountId: input.accountId,
+    credentialVersion: input.credentialVersion,
+  };
+  try {
+    return {
+      password: decryptAccountIssuedPasswordWithSecret({ ...binding, secret: input.currentSecret }),
+      requiresRewrap: false,
+    };
+  } catch (error) {
+    if (!input.legacySecret || input.legacySecret === input.currentSecret) throw error;
+    return {
+      password: decryptAccountIssuedPasswordWithSecret({ ...binding, secret: input.legacySecret }),
+      requiresRewrap: true,
+    };
   }
 }

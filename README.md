@@ -50,7 +50,7 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 - `MFA_ENCRYPTION_KEY` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; encrypts TOTP secrets
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `OPS_API_SECRET` — database RPC authentication only; do not reuse it for any key above
+- `OPS_API_SECRET` — database RPC authentication only for new data. Password escrow created before `ACCOUNT_ISSUED_PASSWORD_SECRET` existed is decrypt-only compatible with this key and is atomically rewrapped under the dedicated key when an administrator reveals it.
 - `STUDENT_IMPORT_IDENTITY_REVIEW_TOKEN_SECRET` — independent 256-bit key encoded as exactly 64 lowercase hexadecimal characters; never reuse `OPS_API_SECRET`
 - `WECOM_ARCHIVE_BRIDGE_TOKEN` — independent high-entropy bearer token used only by the authorised conversation-archive worker
 - `WECOM_ARCHIVE_STARTED_AT` — exact ISO timestamp; records before this post-join cutoff are rejected
