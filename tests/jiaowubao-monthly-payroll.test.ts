@@ -23,6 +23,7 @@ import { collectPagesUntilEmpty } from "../lib/jiaowubao/pagination.ts";
 import { normalizeJiaowubaoScheduleResponse } from "../lib/jiaowubao/schedule-client.ts";
 import { createMonthlyPayrollSnapshot, readMonthlyPayrollSnapshot } from "../lib/jiaowubao/monthly-payroll-snapshot.ts";
 import { createMonthlyPayrollWorkbook, monthlyPayrollFilename } from "../lib/payroll/monthly-workbook.ts";
+import { normalizeCompletedLessonFacts } from "../lib/jiaowubao/completed-lesson-facts.ts";
 
 const completedLesson = (overrides: Record<string, unknown> = {}) => ({
   branch_id: 7,
@@ -117,6 +118,22 @@ test("only accepts a valid monthly period", () => {
   assert.throws(() => nonFutureMonthlyPeriod("2026-09", augustInMelbourne), /未来月份/);
   assert.equal(completedMonthlyPeriod("2026-07", augustInMelbourne), "2026-07");
   assert.throws(() => completedMonthlyPeriod("2026-08", augustInMelbourne), /已经结束/);
+});
+
+test("completed lesson facts remain ID-linked, deduplicated, and primary-teacher-only", () => {
+  const facts = normalizeCompletedLessonFacts([
+    completedLesson({ branch_id: 7, cal_id: 1, mem_id: "00501", mem_title: "Ava", teacher_id: 201, teacher_title: "Crystal", dated: "2026-08-03", hours: 1, sign: 1, sign_title: "已到达" }),
+    completedLesson({ branch_id: 7, cal_id: 1, mem_id: 501, mem_title: "Wrong duplicate", teacher_id: 201, teacher_title: "Crystal", dated: "2026-08-03", hours: 1, sign: 1, sign_title: "已到达" }),
+    completedLesson({ branch_id: 7, cal_id: 2, mem_id: 501, mem_title: "Ava", teacher_id: 201, teacher_title: "Crystal", dated: "2026-08-05", hours: 1.5, sign: 0, sign_title: "请假", teacher_s: 888 }),
+  ]);
+  assert.deepEqual(facts.summary, { uniqueLessons: 2, completedHours: 2.5 });
+  assert.deepEqual(facts.students[0], {
+    memberId: "501", memberName: "Ava", completedLessons: 2, completedHours: 2.5,
+    attendance: { arrived: 1, leave: 1, other: 0 },
+    latestLesson: { dated: "2026-08-05", course: "Y9 English", hours: 1.5, attendance: "请假" },
+  });
+  assert.deepEqual(facts.teachers, [{ teacherId: "201", teacherName: "Crystal", completedLessons: 2, completedHours: 2.5 }]);
+  assert.throws(() => normalizeCompletedLessonFacts([completedLesson({ over: 0 })]), /over=1/);
 });
 
 test("keeps requesting pages after a vendor-capped short page until an empty page", async () => {

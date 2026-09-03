@@ -147,6 +147,8 @@ type Student = {
   renewalMonth?: string;
   renewalDate?: string;
   sourceRow?: number;
+  /** Manually confirmed `query_lesson_list.mem_id`; never inferred from a name. */
+  jiaowubaoMemberId?: string;
 };
 
 type Teacher = {
@@ -169,6 +171,8 @@ type Teacher = {
   availabilitySlots?: AvailabilitySlot[];
   offlineArea?: string;
   sourceCategories?: string[];
+  /** Manually confirmed primary-teacher ID from `query_lesson_list.teacher_id`. */
+  jiaowubaoTeacherId?: string;
 };
 
 type Task = {
@@ -366,6 +370,15 @@ type JiaowubaoMonthlySync = {
   payroll: JiaowubaoPayrollRow[];
   unassignedStudentDetails: JiaowubaoPayrollStudentDetail[];
   snapshot: string;
+};
+
+type JiaowubaoCompletedFactsSync = {
+  period: string;
+  pages: number;
+  requestedMemberIds: string[];
+  students: Array<{ memberId: string; memberName: string; completedLessons: number; completedHours: number; attendance: { arrived: number; leave: number; other: number }; latestLesson: { dated: string; course: string; hours: number; attendance: string } | null }>;
+  teachers: Array<{ teacherId: string; teacherName: string; completedLessons: number; completedHours: number }>;
+  summary: { uniqueLessons: number; completedHours: number };
 };
 
 type JiaowubaoMemberDirectory = {
@@ -1379,6 +1392,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoSyncing, setJiaowubaoSyncing] = useState(false);
   const [jiaowubaoExporting, setJiaowubaoExporting] = useState(false);
   const [jiaowubaoSync, setJiaowubaoSync] = useState<JiaowubaoMonthlySync | null>(null);
+  const [jiaowubaoCompletedFactsSyncing, setJiaowubaoCompletedFactsSyncing] = useState(false);
+  const [jiaowubaoCompletedFacts, setJiaowubaoCompletedFacts] = useState<JiaowubaoCompletedFactsSync | null>(null);
   const [jiaowubaoMembersSyncing, setJiaowubaoMembersSyncing] = useState(false);
   const [jiaowubaoMembers, setJiaowubaoMembers] = useState<JiaowubaoMemberDirectory | null>(null);
   const [jiaowubaoMemberKeyword, setJiaowubaoMemberKeyword] = useState("");
@@ -1389,6 +1404,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoScheduleOver, setJiaowubaoScheduleOver] = useState<"all" | "completed" | "pending">("all");
   const [jiaowubaoScheduleSyncing, setJiaowubaoScheduleSyncing] = useState(false);
   const [jiaowubaoSchedule, setJiaowubaoSchedule] = useState<JiaowubaoScheduleSync | null>(null);
+  const completedStudentFactsByMemberId = useMemo(
+    () => new Map((jiaowubaoCompletedFacts?.students ?? []).map((fact) => [fact.memberId, fact])),
+    [jiaowubaoCompletedFacts],
+  );
+  const completedTeacherFactsByTeacherId = useMemo(
+    () => new Map((jiaowubaoCompletedFacts?.teachers ?? []).map((fact) => [fact.teacherId, fact])),
+    [jiaowubaoCompletedFacts],
+  );
   const availablePayrollMonths = useMemo(
     () => Array.from(new Set(payroll.map((row) => row.month).filter((month): month is string => Boolean(month)))).sort().reverse(),
     [payroll],
@@ -2692,6 +2715,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <Metric tone="blue" icon={<ListTodo size={21} />} value={visibleTasks.length.toString()} label="待处理" detail={`今天到期 ${today} 项`} onClick={() => { setTaskFilter("all"); }} />
         <Metric tone="red" icon={<AlertTriangle size={21} />} value={overdue.toString()} label="已逾期" detail="需要立即处理" onClick={() => { setTaskFilter("overdue"); }} />
         <Metric tone="amber" icon={<Clock3 size={21} />} value={lowHours.toString()} label="低于 5 课时" detail="只统计在读/待续课" onClick={() => setActive("renewals")} />
+        {jiaowubaoCompletedFacts && <Metric tone="purple" icon={<Database size={21} />} value={formatHours(jiaowubaoCompletedFacts.summary.completedHours)} label="已关联已消课" detail={`${jiaowubaoCompletedFacts.period} · ${jiaowubaoCompletedFacts.summary.uniqueLessons} 条，仅作事实核对`} onClick={() => setActive("payroll")} />}
         <Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${Math.round((operatorTasks.filter((task) => task.status === "done").length / Math.max(operatorTasks.length, 1)) * 100)}%`} label="已完成" detail={currentOperator === "Nixon" ? "全局任务" : `${currentOperator} 的任务`} onClick={() => setActive(isAdminView ? "audit" : "dashboard")} />
       </section>
       <section className="dashboard-grid">
@@ -2738,7 +2762,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => setModal("studentEdit")} onEvidence={() => setModal("studentEvidence")} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
+          {visibleSelectedStudent ? <StudentDetail student={visibleSelectedStudent} completedFact={visibleSelectedStudent.jiaowubaoMemberId ? completedStudentFactsByMemberId.get(visibleSelectedStudent.jiaowubaoMemberId) : undefined} completedFactsPeriod={jiaowubaoCompletedFacts?.period} tasks={scopedTasks} bookings={scopedBookings} files={scopedFiles} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} mobileOpen={mobilePreview === "student"} canEditStatus={!isTeacherView} onClose={() => setMobilePreview(null)} onFiles={() => { setMobilePreview(null); setActive("files"); }} onSchedule={() => { setMobilePreview(null); openNewBooking(visibleSelectedStudent.id); }} onEdit={() => setModal("studentEdit")} onEvidence={() => setModal("studentEvidence")} onStatus={(status) => updateStudentStatus(visibleSelectedStudent, status)} /> : <aside className="record-preview"><EmptyState title="没有可显示的学生" detail="调整筛选条件后再选择学生。" /></aside>}
         </div>
       </section>
     </>;
@@ -2773,7 +2797,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={(page) => { setTeacherPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(visibleSelectedTeacher)}%</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>可接余量</span><strong>{visibleSelectedTeacher.capacity > 0 ? `${Math.max(0, visibleSelectedTeacher.capacity - visibleSelectedTeacher.load)} 节` : "待确认"}</strong></div></div><div className="detail-section availability-converter"><span>AVA 换算显示</span><select className="filter-select" value={scheduleTimezone} onChange={(event) => updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) })} aria-label="AVA 显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? option.en : option.zh}</option>)}</select><strong className={`availability-value ${(visibleSelectedTeacher.availabilitySlots?.length ?? 0) ? "structured" : "raw"}`}>{availabilityInTimezone(visibleSelectedTeacher, scheduleTimezone, displayPreferences)}</strong><p>来源：{visibleSelectedTeacher.availabilityUpdated ?? "教师总表"} · 原时区 {timezoneLabel(visibleSelectedTeacher.availabilityTimezone ?? visibleSelectedTeacher.timezone, displayPreferences.language)}</p></div><button className="primary-button full" type="button" disabled={!visibleSelectedTeacher.acceptsStudents} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
+          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><p>{visibleSelectedTeacher.id} · {(visibleSelectedTeacher.departments ?? ["待确认"]).join(" / ")}</p><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>与 {selectedStudent.name} 的匹配度</span><strong>{teacherMatch(visibleSelectedTeacher)}%</strong><small>{visibleSelectedTeacher.note}</small></div><div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div><p>{visibleSelectedTeacher.subjectDetail ?? "以教师总表原始范围为准"}</p></div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>可接余量</span><strong>{visibleSelectedTeacher.capacity > 0 ? `${Math.max(0, visibleSelectedTeacher.capacity - visibleSelectedTeacher.load)} 节` : "待确认"}</strong></div></div>{visibleSelectedTeacher.jiaowubaoTeacherId && <div className="detail-section source-detail"><span>教务宝主教已结课事实 · ID {visibleSelectedTeacher.jiaowubaoTeacherId}</span>{completedTeacherFactsByTeacherId.get(visibleSelectedTeacher.jiaowubaoTeacherId) ? <><strong>{jiaowubaoCompletedFacts?.period} · {formatHours(completedTeacherFactsByTeacherId.get(visibleSelectedTeacher.jiaowubaoTeacherId)?.completedHours ?? 0)} · {completedTeacherFactsByTeacherId.get(visibleSelectedTeacher.jiaowubaoTeacherId)?.completedLessons} 节</strong><p>仅汇总接口明确标为主教（teacher_id）的已消课记录；助教没有文档化的课时分配，不会被计入。</p></> : <><strong>{jiaowubaoCompletedFacts?.period ? "未返回该主教 ID 的已结课记录" : "尚未同步"}</strong><p>不会按老师姓名猜配。</p></>}</div>}<form className="detail-section" onSubmit={(event) => { event.preventDefault(); const value = String(new FormData(event.currentTarget).get("jiaowubaoTeacherId") ?? "").trim().replace(/^0+(?=\d)/, ""); if (value && (!/^\d+$/.test(value) || /^0+$/.test(value))) { notify("教务宝教师 ID 必须是正整数；留空可移除关联"); return; } setTeachers((current) => current.map((teacher) => teacher.id === visibleSelectedTeacher.id ? { ...teacher, jiaowubaoTeacherId: value || undefined } : teacher)); addAudit("关联教务宝教师 ID", `${visibleSelectedTeacher.name} · ${value || "已移除"}`, "blue"); notify("老师教务宝 ID 已保存；下次同步将只按此 ID 显示主教已结课事实"); }}><span>教务宝主教 ID</span><input name="jiaowubaoTeacherId" inputMode="numeric" defaultValue={visibleSelectedTeacher.jiaowubaoTeacherId ?? ""} placeholder="仅填已核验的 teacher_id" /><p>不按姓名关联。保存后可同步该老师作为主教的已结课事实。</p><button className="secondary-button" type="submit">保存教务宝 ID</button></form><div className="detail-section availability-converter"><span>AVA 换算显示</span><select className="filter-select" value={scheduleTimezone} onChange={(event) => updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) })} aria-label="AVA 显示时区">{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? option.en : option.zh}</option>)}</select><strong className={`availability-value ${(visibleSelectedTeacher.availabilitySlots?.length ?? 0) ? "structured" : "raw"}`}>{availabilityInTimezone(visibleSelectedTeacher, scheduleTimezone, displayPreferences)}</strong><p>来源：{visibleSelectedTeacher.availabilityUpdated ?? "教师总表"} · 原时区 {timezoneLabel(visibleSelectedTeacher.availabilityTimezone ?? visibleSelectedTeacher.timezone, displayPreferences.language)}</p></div><button className="primary-button full" type="button" disabled={!visibleSelectedTeacher.acceptsStudents} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
         </div>
       </section>
     </>;
@@ -3720,6 +3744,29 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       }
     };
 
+    const syncLinkedCompletedFacts = async () => {
+      const memberIds = [...new Set(students.map((student) => student.jiaowubaoMemberId).filter((value): value is string => Boolean(value)))];
+      if (!memberIds.length) {
+        notify("请先在学生档案中保存已核验的教务宝学员 ID；系统不会按姓名猜配。");
+        return;
+      }
+      setJiaowubaoCompletedFactsSyncing(true);
+      try {
+        const response = await fetch("/api/jiaowubao/completed-lessons/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ period: jiaowubaoPeriod, memberIds }) });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body || typeof body !== "object" || body.period !== jiaowubaoPeriod || !Array.isArray(body.students) || !Array.isArray(body.teachers) || !body.summary) {
+          throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : "教务宝已结课事实返回的数据格式不完整。");
+        }
+        const sync = body as JiaowubaoCompletedFactsSync;
+        setJiaowubaoCompletedFacts(sync);
+        notify(`已同步 ${sync.period} ${sync.summary.uniqueLessons} 条已关联学生的已结课记录；未修改任何合约或剩余课时。`);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "教务宝已结课事实同步失败，请稍后重试。");
+      } finally {
+        setJiaowubaoCompletedFactsSyncing(false);
+      }
+    };
+
     const syncJiaowubaoMembers = async () => {
       const query = {
         keyword: jiaowubaoMemberKeyword.trim(),
@@ -3966,12 +4013,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   onChange={(event) => {
                     setJiaowubaoPeriod(event.target.value);
                     setJiaowubaoSync(null);
+                    setJiaowubaoCompletedFacts(null);
                   }}
                   aria-label="教务宝核对月份"
                 />
               </label>
               <button className="secondary-button" type="button" disabled={jiaowubaoSyncing || jiaowubaoExporting} onClick={syncJiaowubaoMonthlyPayroll}>
                 <RefreshCw className={jiaowubaoSyncing ? "spin" : ""} size={17} /> {jiaowubaoSyncing ? "正在读取…" : "同步已消课"}
+              </button>
+              <button className="secondary-button" type="button" disabled={jiaowubaoCompletedFactsSyncing || jiaowubaoSyncing || jiaowubaoExporting} onClick={syncLinkedCompletedFacts}>
+                <Link2 className={jiaowubaoCompletedFactsSyncing ? "spin" : ""} size={17} /> {jiaowubaoCompletedFactsSyncing ? "正在关联…" : "同步已关联档案"}
               </button>
               <button className="primary-button" type="button" disabled={jiaowubaoSyncing || jiaowubaoExporting || jiaowubaoSync?.period !== jiaowubaoPeriod} onClick={downloadJiaowubaoMonthlyPayroll}>
                 <Download size={17} /> {jiaowubaoExporting ? "正在生成…" : "下载教务宝完整版"}
@@ -4024,6 +4075,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </div>
             )}
           </section>
+          {jiaowubaoCompletedFacts?.period === jiaowubaoPeriod && <section className="panel payroll-jiaowubao-member-lookup"><div><p className="eyebrow">只读档案事实 · query_lesson_list / over=1</p><h3>已关联档案的已消课数据</h3><p>本月已返回 {jiaowubaoCompletedFacts.summary.uniqueLessons} 条、{formatHours(jiaowubaoCompletedFacts.summary.completedHours)}。学生和老师页面仅在各自保存了准确教务宝 ID 时展示；不会改变剩余课时、合约或薪资。</p></div><div className="payroll-jiaowubao-member-results"><strong>{jiaowubaoCompletedFacts.students.length} 位关联学生 · {jiaowubaoCompletedFacts.teachers.length} 位主教</strong><small>只按 mem_id / teacher_id；结果保留在当前浏览器，切换月份后需重新同步。</small></div></section>}
           {jiaowubaoSync?.period === jiaowubaoPeriod && (
             <div className="payroll-jiaowubao-results" aria-live="polite">
               <section className="metric-grid payroll-jiaowubao-metrics">
@@ -6275,6 +6327,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       notify("学生姓名和课程不能为空");
       return;
     }
+    const jiaowubaoMemberId = String(data.get("jiaowubaoMemberId") ?? "").trim().replace(/^0+(?=\d)/, "");
+    if (jiaowubaoMemberId && (!/^\d+$/.test(jiaowubaoMemberId) || /^0+$/.test(jiaowubaoMemberId))) {
+      notify("教务宝学员 ID 必须是正整数；留空可移除关联");
+      return;
+    }
     const before = selectedStudent;
     setStudents((current) =>
       current.map((student) =>
@@ -6297,13 +6354,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 data.get("location") ?? student.location ?? "VIC",
               ),
               timezone: cleanTimezone(data.get("timezone")),
+              jiaowubaoMemberId: jiaowubaoMemberId || undefined,
             }
           : student,
       ),
     );
     addAudit(
       "编辑学生档案",
-      `${before.name}（${before.id}）· ${isAdminView ? "姓名/课程/负责人" : "姓名/课程"}资料已更新`,
+      `${before.name}（${before.id}）· ${isAdminView ? "姓名/课程/负责人" : "姓名/课程"}资料已更新${jiaowubaoMemberId !== (before.jiaowubaoMemberId ?? "") ? " · 教务宝学员 ID 已调整" : ""}`,
       "blue",
     );
     setModal(null);
@@ -7402,6 +7460,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>规划老师<select name="planner" defaultValue={selectedStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option></select></label>
           <label>所在地<select name="location" defaultValue={selectedStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(selectedStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+          <label>教务宝学员 ID<input name="jiaowubaoMemberId" inputMode="numeric" defaultValue={selectedStudent.jiaowubaoMemberId ?? ""} placeholder="仅填已核验的 mem_id" /><small>只按该 ID 同步已结课数据，不按姓名匹配。</small></label>
           <label className="span-2">家长 / 沟通对象<input name="guardian" defaultValue={selectedStudent.guardian} /></label>
           <label className="span-2">注意事项<textarea name="notes" rows={3} defaultValue={selectedStudent.notes ?? ""} /></label>
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存修改</button></footer>
@@ -7588,7 +7647,7 @@ function TeacherAvaBoard({ teacher, teachers, bookings, studentById, targetTimez
     {!teacher.availabilitySlots?.length ? <div className="ava-unstructured"><CircleAlert size={18} /><div><strong>{english ? "This teacher's availability is still unstructured text, so a safe booking calendar cannot be generated." : "这位老师的 AVA 仍是原始文本，不能安全地生成可约日历。"}</strong><span>{teacher.availability || (english ? "No availability received yet" : "尚未收到可用时间")}</span><small>{english ? "Enter confirmed weekday, start, and end times before using availability for booking conflicts or cover-teacher matching." : "录入结构化的星期、开始和结束时间后，系统才会用于排课冲突和代课候选筛选。"}</small></div></div> : view === "week" ? <div className="ava-week-grid">{weekDates.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article key={day.date}><strong>{day.label}</strong><span>{timezoneLabel(targetTimezone, preferences.language)}</span><div>{daySlots.length ? daySlots.map(renderSlot) : <p className="ava-empty-day">{english ? "No available times" : "无可约时段"}</p>}{renderBookings(day.date)}</div></article>; })}</div> : <div className="ava-month"><header><button className="icon-button" type="button" aria-label={english ? "Previous month" : "上一个月"} onClick={() => onMonthOffset(monthOffset - 1)}><ChevronLeft size={16} /></button><strong>{month.label}</strong><button className="icon-button" type="button" aria-label={english ? "Next month" : "下一个月"} onClick={() => onMonthOffset(monthOffset + 1)}><ChevronRight size={16} /></button></header><div className="ava-month-weekdays">{weekdays.map((day) => <span key={day}>{day}</span>)}</div><div className="ava-month-grid">{month.days.map((day) => { const daySlots = slots.filter((slot) => slot.date === day.date); return <article className={day.inMonth ? "" : "outside"} key={day.date}><strong>{day.day}</strong><div>{daySlots.map(renderSlot)}{renderBookings(day.date)}</div></article>; })}</div></div>}
   </section>;
 }
-function StudentDetail({ student, tasks, bookings, files, teacherById, preferences, mobileOpen, canEditStatus = true, onClose, onFiles, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
+function StudentDetail({ student, completedFact, completedFactsPeriod, tasks, bookings, files, teacherById, preferences, mobileOpen, canEditStatus = true, onClose, onFiles, onSchedule, onEdit, onEvidence, onStatus }: { student: Student; completedFact?: JiaowubaoCompletedFactsSync["students"][number]; completedFactsPeriod?: string; tasks: Task[]; bookings: Booking[]; files: FileRecord[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; mobileOpen: boolean; canEditStatus?: boolean; onClose: () => void; onFiles: () => void; onSchedule: () => void; onEdit: () => void; onEvidence: () => void; onStatus: (status: Student["status"]) => void }) {
   const english = preferences.language === "en-AU";
   const studentTasks = tasks.filter((task) => task.studentId === student.id && task.status !== "done");
   const nextBooking = bookings
@@ -7606,6 +7665,7 @@ function StudentDetail({ student, tasks, bookings, files, teacherById, preferenc
     <div className="detail-top"><Avatar initials={student.initials} tone={statusTone(student.status)} /><div><p>{student.id}</p><h2>{student.name}</h2><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill></div></div>
     <div className="student-facts"><span><small>{english ? "Current grade" : "当前年级"}</small><strong>{currentGrade(student)}</strong>{student.gradeBaseYear && student.gradeBaseYear < new Date().getFullYear() ? <em>{english ? `Automatically progressed from the ${student.gradeBaseYear} record` : `由 ${student.gradeBaseYear} 年记录自动升级`}</em> : null}</span><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Operations owner" : "负责教务"}</small><strong>{student.owner}</strong><em>{english ? `Plan: ${student.planner ?? "Unassigned"}` : `规划：${student.planner ?? "待分配"}`}</em></span><span><small>{english ? "Remaining / contract lessons" : "剩余 / 合约课时"}</small><strong className={lowHours ? "low-hours" : ""}>{student.remainingHours === undefined ? (english ? "Pending import" : "待导入") : `${student.remainingHours} / ${student.contractHours ?? "?"} ${english ? "lessons" : "节"}`}</strong><em>{student.contractEffectiveDate ? (english ? `Effective ${student.contractEffectiveDate}` : `生效 ${student.contractEffectiveDate}`) : lowHours ? (english ? "High-priority reminder active" : "已进入强提醒") : student.status === "停课" || student.status === "非在读" || student.status === "不活跃" ? (english ? "No reminder for this status" : "当前状态不提醒") : (english ? "Threshold: 5 lessons" : "阈值 5 节")}</em></span></div>
     {student.jwbSyncStatus && <div className="detail-section source-detail"><span>教务宝只读同步</span><strong>{student.jwbSyncStatus} · {student.jwbSyncedAt}</strong><p>课时与合约数据来自只读镜像；本系统不会回写教务宝。</p></div>}
+    {student.jiaowubaoMemberId && <div className="detail-section source-detail"><span>教务宝已结课事实 · ID {student.jiaowubaoMemberId}</span>{completedFact ? <><strong>{completedFactsPeriod} · {formatHours(completedFact.completedHours)} · {completedFact.completedLessons} 节</strong><p>出席 {completedFact.attendance.arrived} · 请假/缺席 {completedFact.attendance.leave} · 其他 {completedFact.attendance.other}{completedFact.latestLesson ? ` · 最近 ${completedFact.latestLesson.dated} ${completedFact.latestLesson.course}` : ""}</p></> : <><strong>{completedFactsPeriod ? `${completedFactsPeriod} 未返回该 ID 的已结课记录` : "尚未同步"}</strong><p>仅按已确认学员 ID 查询；不会按姓名补配，也不会改动合约或剩余课时。</p></>}</div>}
     <div className="detail-section"><span>{english ? "Course and teacher" : "课程与老师"}</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
     <div className="detail-section split"><div><span>{english ? "LP type" : "LP 类型"}</span><strong>{student.lpNeed ?? (english ? "Not set" : "未设置")}</strong></div><div><span>{english ? "Files" : "资料"}</span><button className="inline-link" type="button" onClick={onFiles}>{files.filter((file) => file.studentId === student.id).length || student.files} {english ? "indexed files" : "项索引"} <ChevronRight size={14} /></button></div></div>
     <div className="detail-section split"><div><span>{english ? "Report progress" : "Report 进度"}</span><strong>{student.reportProgress ?? (english ? "No record" : "未记录")}</strong></div><div><span>{english ? "Latest follow-up" : "最近跟进"}</span><strong>{student.followUp ?? (english ? "No record" : "未记录")}</strong></div></div>

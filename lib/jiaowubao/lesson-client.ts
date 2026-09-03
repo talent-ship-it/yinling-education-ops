@@ -393,3 +393,47 @@ export async function fetchCompletedLessons(periodValue: string, trialMemberIds:
 
   return { lessons: [...lessons.values()], pages };
 }
+
+/**
+ * Reads completed lessons for an explicit, audited set of JiaoWuBao member
+ * IDs. This is deliberately separate from the full-month payroll reader:
+ * callers must supply each local profile's confirmed external ID and this
+ * function never broadens the request to a name search or an all-member list.
+ */
+export async function fetchCompletedLessonsForMembers(periodValue: string, memberIdsInput: Iterable<string>): Promise<{ lessons: JsonObject[]; pages: number }> {
+  const period = parseMonthlyPeriod(periodValue);
+  const memberIds = [...new Set([...memberIdsInput].map((value) => value.trim().replace(/^0+(?=\d)/, "")).filter((value) => /^\d+$/.test(value) && !/^0+$/.test(value)))];
+  if (!memberIds.length) {
+    throw new JiaowubaoLessonApiError("请至少提供一位已确认的教务宝学员 ID。", "configuration");
+  }
+
+  const config = lessonListConfig();
+  const lessons = new Map<string, JsonObject>();
+  let pages = 0;
+  for (const memberId of memberIds) {
+    const result = await collectPagesUntilEmpty({
+      maxPages: config.maxPages,
+      requestPage: async (page) => {
+        const response = await requestPage(config, {
+          start: period.start,
+          end: period.end,
+          sign: -1,
+          over: 1,
+          mem_id: Number(memberId),
+          page,
+          limit: config.pageSize,
+        });
+        for (const row of response.rows) {
+          if (Number(row.over) !== 1) throw new JiaowubaoLessonApiError("教务宝返回了未结课记录，已停止同步。", "protocol");
+          if (String(row.mem_id).replace(/^0+(?=\d)/, "") !== memberId) throw new JiaowubaoLessonApiError("教务宝返回了不属于已确认学员 ID 的记录，已停止同步。", "protocol");
+        }
+        return response.rows;
+      },
+      recordKey,
+      protocolError: (message) => new JiaowubaoLessonApiError(message, "protocol"),
+    });
+    pages += result.pages;
+    for (const row of result.rows) lessons.set(recordKey(row), row);
+  }
+  return { lessons: [...lessons.values()], pages };
+}
