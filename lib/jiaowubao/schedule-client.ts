@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  configuredJiaowubaoGatewaySk,
   documentedGatewayScheduleRequest,
   JIAOWUBAO_GATEWAY_DEFAULT_URL,
   JIAOWUBAO_GATEWAY_PAGE_LIMIT,
@@ -98,8 +99,8 @@ function isObject(value: unknown): value is JsonObject {
 }
 
 function requiredGatewaySk() {
-  const value = process.env.JIAOWUBAO_GATEWAY_SK?.trim();
-  if (!value) throw new JiaowubaoScheduleApiError("缺少 JIAOWUBAO_GATEWAY_SK 环境变量。", "configuration");
+  const value = configuredJiaowubaoGatewaySk();
+  if (!value) throw new JiaowubaoScheduleApiError("缺少 JIAOWUBAO_GATEWAY_SK（或旧变量 JIAOWUBAO_OPEN_API_SK）环境变量。", "configuration");
   return value;
 }
 

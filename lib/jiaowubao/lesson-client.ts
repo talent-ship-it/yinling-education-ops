@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  configuredJiaowubaoGatewaySk,
   documentedGatewayLessonRequest,
   JIAOWUBAO_GATEWAY_DEFAULT_URL,
   JIAOWUBAO_GATEWAY_MAX_429_RETRIES,
@@ -107,7 +108,10 @@ function validatedEndpointUrl(value: string, name: string, environment: NodeJS.P
 }
 
 function gatewayLessonListConfig(environment: NodeJS.ProcessEnv): LessonListConfig | null {
-  const sk = environment.JIAOWUBAO_GATEWAY_SK?.trim();
+  const sk = configuredJiaowubaoGatewaySk({
+    JIAOWUBAO_GATEWAY_SK: environment.JIAOWUBAO_GATEWAY_SK,
+    JIAOWUBAO_OPEN_API_SK: environment.JIAOWUBAO_OPEN_API_SK,
+  });
   if (!sk) return null;
   const url = validatedEndpointUrl(environment.JIAOWUBAO_GATEWAY_URL?.trim() || JIAOWUBAO_GATEWAY_DEFAULT_URL, "JIAOWUBAO_GATEWAY_URL", environment, true);
   return {

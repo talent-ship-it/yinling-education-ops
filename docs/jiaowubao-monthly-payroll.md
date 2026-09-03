@@ -28,11 +28,11 @@ JIAOWUBAO_TRIAL_MEMBER_IDS=123,456,789
 
 ## 连接配置
 
-把 [jiaowubao-monthly-payroll.env.example](jiaowubao-monthly-payroll.env.example) 中的教务宝变量填入**部署环境**，不要放到浏览器代码、Git 仓库、GitHub Actions 日志或 Excel 文件。
+网站运行时变量应填入 Vercel 项目的 **Production Environment Variables**，不要放到浏览器代码、Git 仓库、GitHub Actions 日志或 Excel 文件。Vercel 的变量更新会在下一次由 GitHub `main` 触发的部署生效。
 
 ### 已确认的开放 API 网关
 
-已按「开放 API 网关」文档接入其 JSON 协议，并以无效测试密钥确认国内 HTTPS 网关可达且会返回 `401`。部署只需提供管理端分配的 `JIAOWUBAO_GATEWAY_SK`；应用会固定发送：
+已按「开放 API 网关」文档接入其 JSON 协议，并以无效测试密钥确认国内 HTTPS 网关可达且会返回 `401`。Vercel Production 只需提供管理端分配的 `JIAOWUBAO_GATEWAY_SK`；已有项目的旧变量 `JIAOWUBAO_OPEN_API_SK` 也会被服务器端兼容读取，避免为了改名导出或复制现有密钥。应用会固定发送：
 
 ```json
 {
@@ -94,7 +94,7 @@ JIAOWUBAO_LESSON_LIST_AUTH_VALUE=<供应商给出的授权值>
 
 `.github/workflows/jiaowubao-monthly-payroll.yml` 在每月第一天后的安全时段运行，也可手动补跑。它在单一 GitHub Actions job 内直接调用同一套网关和工作簿生成代码，再立即上传该次结果。它是每月**正式完整版**的生成入口：完整月份即使需要 100+ 个限流分页请求，也不会受网站函数超时影响。
 
-在网站部署环境配置下列应用变量：
+在 Vercel Production 环境配置下列应用变量：
 
 - `JIAOWUBAO_GATEWAY_SK`：管理端分配并获 `query_lesson_list` 授权的密钥；如要启用学员核验/排课总览，还需分别获 `query_member_simple_list` / `query_schedule_list` 授权；
 - `JIAOWUBAO_TRIAL_MEMBER_IDS`：经学校确认的三个试听 B 账号 ID；
