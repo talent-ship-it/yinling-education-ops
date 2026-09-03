@@ -338,10 +338,22 @@ test("uses the confirmed trial-name convention without losing the B account", ()
         team_title: "试听班级",
         course_title: "English Spelling (WA)",
       }),
+      completedLesson({
+        cal_id: 1007,
+        mem_title: "试听学员 B",
+        team_title: "试听班级",
+        course_title: "Y9 Chemistry - Wesley Wu试听",
+      }),
+      completedLesson({
+        cal_id: 1008,
+        mem_title: "试听学员 B",
+        team_title: "试听班级",
+        course_title: "Year1 English - Josie lin试听",
+      }),
     ],
   });
 
-  const [className, courseName, conflict, unresolved, englishClassName, courseOnlyEnglish] = report.lessons;
+  const [className, courseName, conflict, unresolved, englishClassName, courseOnlyEnglish, courseSuffixName, lowercaseCourseSuffixName] = report.lessons;
   assert.equal(className?.memberName, "试听学员 B");
   assert.equal(className?.displayStudentName, "Zachary 张泽睿");
   assert.equal(className?.studentNameSource, "trial_team_title_prefix");
@@ -355,6 +367,10 @@ test("uses the confirmed trial-name convention without losing the B account", ()
   assert.equal(englishClassName?.studentNameSource, "trial_team_title_prefix");
   assert.equal(courseOnlyEnglish?.displayStudentName, "试听学员 B");
   assert.equal(courseOnlyEnglish?.studentNameSource, "trial_account_unresolved");
+  assert.equal(courseSuffixName?.displayStudentName, "Wesley Wu");
+  assert.equal(courseSuffixName?.studentNameSource, "trial_course_title_suffix");
+  assert.equal(lowercaseCourseSuffixName?.displayStudentName, "Josie lin");
+  assert.equal(lowercaseCourseSuffixName?.studentNameSource, "trial_course_title_suffix");
   assert.ok(report.warnings.some((warning) => warning.includes("未能从班级名称或课程名称安全提取")));
   assert.ok(report.warnings.some((warning) => warning.includes("班级名称和课程名称疑似对应不同学生")));
 });

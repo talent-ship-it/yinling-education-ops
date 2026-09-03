@@ -10,6 +10,7 @@ export type StudentNameSource =
   | "member_title"
   | "trial_team_title_prefix"
   | "trial_course_title_prefix"
+  | "trial_course_title_suffix"
   | "trial_name_conflict"
   | "trial_account_unresolved";
 
@@ -250,6 +251,15 @@ function trialNamePrefix(value: string, allowEnglishNameWithLocation = false): s
   return englishName?.[1] ? englishName[1].replace(/\s+/g, " ").trim() : null;
 }
 
+function trialNameCourseSuffix(value: string): string | null {
+  // Live trial-B records use a course such as “Y9 Chemistry - Wesley Wu试听”.
+  // Requiring both the final 试听 marker and the preceding course separator
+  // avoids treating a plain course title (for example “English Spelling”) as
+  // a student name. The name itself may be English-only or English+Chinese.
+  const match = value.match(/(?:^|[-—–])\s*([A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)*\s*[\u3400-\u9FFF]{0,8})\s*试听\s*$/u);
+  return match?.[1] ? match[1].replace(/\s+/g, " ").trim() : null;
+}
+
 function displayStudentIdentity(memberName: string, teamTitle: string, courseTitle: string, kind: TrialKind): {
   name: string;
   source: StudentNameSource;
@@ -258,7 +268,8 @@ function displayStudentIdentity(memberName: string, teamTitle: string, courseTit
   const candidates = [
     { name: trialNamePrefix(teamTitle, true), source: "trial_team_title_prefix" as const },
     { name: trialNamePrefix(courseTitle), source: "trial_course_title_prefix" as const },
-  ].filter((candidate): candidate is { name: string; source: "trial_team_title_prefix" | "trial_course_title_prefix" } => Boolean(candidate.name));
+    { name: trialNameCourseSuffix(courseTitle), source: "trial_course_title_suffix" as const },
+  ].filter((candidate): candidate is { name: string; source: "trial_team_title_prefix" | "trial_course_title_prefix" | "trial_course_title_suffix" } => Boolean(candidate.name));
   if (!candidates.length) return { name: memberName, source: "trial_account_unresolved" };
   if (new Set(candidates.map((candidate) => candidate.name)).size > 1) {
     return { name: memberName, source: "trial_name_conflict" };
