@@ -4,6 +4,7 @@ import test from "node:test";
 import ExcelJS from "exceljs";
 
 import {
+  configuredJiaowubaoGatewaySk,
   documentedGatewayLessonRequest,
   documentedGatewayMemberRequest,
   documentedGatewayScheduleRequest,
@@ -69,6 +70,12 @@ test("uses the documented gateway envelope for the complete per-student tool", (
     tool: "query_schedule_list",
     params: { page: 1, limit: 100 },
   });
+});
+
+test("prefers the new gateway key while accepting the existing server-only key name", () => {
+  assert.equal(configuredJiaowubaoGatewaySk({ JIAOWUBAO_GATEWAY_SK: "new-key", JIAOWUBAO_OPEN_API_SK: "old-key" }), "new-key");
+  assert.equal(configuredJiaowubaoGatewaySk({ JIAOWUBAO_OPEN_API_SK: "old-key" }), "old-key");
+  assert.equal(configuredJiaowubaoGatewaySk({}), null);
 });
 
 test("uses bounded rate-limit recovery only for non-interactive gateway runners", () => {

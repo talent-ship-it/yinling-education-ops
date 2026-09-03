@@ -22,6 +22,23 @@ let latestGatewayRequestAt = 0;
 let pendingGatewayRequest: Promise<void> = Promise.resolve();
 
 /**
+ * `JIAOWUBAO_OPEN_API_SK` existed in the production project before the
+ * documented gateway integration was named. Keep this server-only fallback
+ * so adding the new feature does not require exporting an existing secret.
+ */
+type JiaowubaoGatewayEnvironment = {
+  JIAOWUBAO_GATEWAY_SK?: string;
+  JIAOWUBAO_OPEN_API_SK?: string;
+};
+
+export function configuredJiaowubaoGatewaySk(environment: JiaowubaoGatewayEnvironment = {
+  JIAOWUBAO_GATEWAY_SK: process.env.JIAOWUBAO_GATEWAY_SK,
+  JIAOWUBAO_OPEN_API_SK: process.env.JIAOWUBAO_OPEN_API_SK,
+}) {
+  return environment.JIAOWUBAO_GATEWAY_SK?.trim() || environment.JIAOWUBAO_OPEN_API_SK?.trim() || null;
+}
+
+/**
  * Serializes all gateway tools inside one server process. The documented cap is
  * per institution and interface; this deliberately more-conservative queue
  * avoids local bursts across tools. Separate serverless instances still fail
