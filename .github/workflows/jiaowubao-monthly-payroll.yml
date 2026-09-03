@@ -1,0 +1,75 @@
+name: Generate monthly JiaoWuBao hours workbook
+
+on:
+  schedule:
+    # Shortly after the first Melbourne day is complete. The server resolves
+    # the previous completed month using Australia/Melbourne, so daylight-saving
+    # changes do not affect which month is exported.
+    - cron: "30 15 1 * *"
+  workflow_dispatch:
+    inputs:
+      period:
+        description: "补跑月份（YYYY-MM；留空则导出上一个完整月份）"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Never overlap a scheduled export with a manual re-run: the gateway permits
+# only 20 calls/minute per institution and tool.
+concurrency:
+  group: jiaowubao-monthly-payroll
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    # 500 pages take about 26 minutes at the vendor's rolling rate limit;
+    # two bounded 429 recovery waits still fit within this hard ceiling.
+    timeout-minutes: 40
+    # Create this GitHub Environment with restricted access before adding its
+    # secrets. The workbook artifact contains student/attendance information.
+    environment: jiaowubao-payroll
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      # Generate in this single GitHub Actions job rather than through a
+      # deployed web-function request. A complete month can require 100+
+      # rate-limited gateway calls and must not be cut short by host timeouts.
+      - name: Generate complete workbook from the documented gateway
+        env:
+          JIAOWUBAO_GATEWAY_SK: ${{ secrets.JIAOWUBAO_GATEWAY_SK }}
+          JIAOWUBAO_TRIAL_MEMBER_IDS: ${{ secrets.JIAOWUBAO_TRIAL_MEMBER_IDS }}
+          JIAOWUBAO_GATEWAY_URL: ${{ vars.JIAOWUBAO_GATEWAY_URL }}
+          JIAOWUBAO_LESSON_LIST_MAX_PAGES: ${{ vars.JIAOWUBAO_LESSON_LIST_MAX_PAGES }}
+          JIAOWUBAO_GATEWAY_RETRY_429: "true"
+          PERIOD: ${{ inputs.period }}
+        run: |
+          test -n "$JIAOWUBAO_GATEWAY_SK"
+          if [ -n "$PERIOD" ] && ! echo "$PERIOD" | grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])$'; then
+            echo "period must be YYYY-MM" >&2
+            exit 1
+          fi
+          if [ -n "$PERIOD" ]; then
+            npm run generate:jiaowubao-monthly-payroll -- "$PERIOD"
+          else
+            npm run generate:jiaowubao-monthly-payroll
+          fi
+          unzip -t jiaowubao-monthly-hours-complete.xlsx >/dev/null
+
+      - name: Retain workbook
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiaowubao-monthly-hours-complete
+          path: jiaowubao-monthly-hours-complete.xlsx
+          # Student and attendance data: keep repository/action access limited.
+          retention-days: 30

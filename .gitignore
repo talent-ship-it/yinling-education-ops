@@ -37,6 +37,7 @@ yarn-error.log*
 next-env.d.ts
 /outputs/
 /output/
+/jiaowubao-monthly-hours-complete.xlsx
 /\.playwright/
 /\.playwright-cli/
 /work/
