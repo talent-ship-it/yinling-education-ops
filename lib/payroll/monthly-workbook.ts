@@ -79,6 +79,7 @@ function teacherNames(lesson: MonthlyPayrollReport["lessons"][number]) {
 function studentNameSourceLabel(source: MonthlyPayrollReport["lessons"][number]["studentNameSource"]): string {
   if (source === "trial_team_title_prefix") return "试听班级名称前缀（待核对）";
   if (source === "trial_course_title_prefix") return "试听课程名称前缀（待核对）";
+  if (source === "trial_course_title_suffix") return "试听课程名称后缀（待核对）";
   if (source === "trial_name_conflict") return "试听班级/课程名称冲突，保留 B 账号";
   if (source === "trial_account_unresolved") return "试听 B 账号，未解析真实姓名";
   return "教务宝学员名称";
@@ -87,6 +88,7 @@ function studentNameSourceLabel(source: MonthlyPayrollReport["lessons"][number][
 function studentNameNote(detail: MonthlyPayrollReport["teachers"][number]["studentDetails"][number]): string {
   if (detail.nameSource === "trial_team_title_prefix") return `真实姓名取自班级名称前缀（待核对；原账号：${detail.sourceStudentName}）`;
   if (detail.nameSource === "trial_course_title_prefix") return `真实姓名取自课程名称前缀（待核对；原账号：${detail.sourceStudentName}）`;
+  if (detail.nameSource === "trial_course_title_suffix") return `真实姓名取自课程名称“ - 姓名试听”后缀（待核对；原账号：${detail.sourceStudentName}）`;
   if (detail.nameSource === "trial_name_conflict") return `试听班级名称和课程名称疑似不同学生，保留 B 账号（账号：${detail.sourceStudentName}）`;
   if (detail.nameSource === "trial_account_unresolved") return `试听 B 账号未解析真实姓名（账号：${detail.sourceStudentName}）`;
   return "";
@@ -261,7 +263,7 @@ function createNotesSheet(report: MonthlyPayrollReport): WorkbookSheet {
     ["原始记录", `${report.summary.sourceRows} 条来源行；${report.summary.uniqueLessons} 个唯一课节。`, false],
     ["老师月度总课时", "当前工具文档未提供老师月度汇总或角色分配课时。工作簿保留全部学生/课节明细，但不以推导课时自动计算薪资或锁定。", true],
     ["试听分类", report.source.trialMemberIds.length ? `仅以下教务宝试听账号 ID 被明确配置为试听：${report.source.trialMemberIds.join(", ")}。` : "未配置试听账号 ID 映射；课节保留为“待分类”，不会按名称或课型猜测。", report.source.trialMemberIds.length === 0],
-    ["试听真实姓名", "对已确认的试听 B 账号，班级/课程名称开头精确匹配“英文名+中文名”时才作为显示学生姓名；班级名称另支持“Rita Wu (NZL)”这类英文名加地区后缀。原始账号始终保留在原始明细。两者冲突或未匹配时保持 B 账号并标记待核对。", true],
+    ["试听真实姓名", "对已确认的试听 B 账号，班级/课程名称开头精确匹配“英文名+中文名”或课程名称末端精确匹配“ - 英文名[中文名]试听”时才作为显示学生姓名；班级名称另支持“Rita Wu (NZL)”这类英文名加地区后缀。原始账号始终保留在原始明细。两者冲突或未匹配时保持 B 账号并标记待核对。", true],
     ["多人课程", "同一课节出现多个学生或多个老师时，系统不会把同一小时数重复算进每位老师或学生。需教务宝提供角色课时分配后才可完成薪资核对。", true],
     ["薪资费率", "接口中的 price 是课程价格，不作为老师课时费率；本工作簿不自动填写薪资。", true],
     ["生成时间", report.generatedAt, false],
