@@ -3759,11 +3759,38 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         }
         const sync = body as JiaowubaoCompletedFactsSync;
         setJiaowubaoCompletedFacts(sync);
+        const comparable = (value: string) => value.normalize("NFKC").toLocaleLowerCase("en").replace(/[\s·・.，,，'’`\-—_()（）\[\]【】]/g, "");
+        const sourceTeachers = new Map(sync.teachers.map((teacher) => [comparable(teacher.teacherName), teacher.teacherId]));
+        setTeachers((current) => current.map((teacher) => !teacher.jiaowubaoTeacherId && sourceTeachers.has(comparable(teacher.name)) ? { ...teacher, jiaowubaoTeacherId: sourceTeachers.get(comparable(teacher.name)) } : teacher));
         notify(`已同步 ${sync.period} ${sync.summary.uniqueLessons} 条已关联学生的已结课记录；未修改任何合约或剩余课时。`);
       } catch (error) {
         notify(error instanceof Error ? error.message : "教务宝已结课事实同步失败，请稍后重试。");
       } finally {
         setJiaowubaoCompletedFactsSyncing(false);
+      }
+    };
+
+    const resolveStudentIdsByExactName = async () => {
+      const candidates = students.filter((student) => !student.jiaowubaoMemberId && student.name.trim().length >= 2).slice(0, 15);
+      if (!candidates.length) {
+        notify("当前没有待关联的学生档案。");
+        return;
+      }
+      setJiaowubaoMembersSyncing(true);
+      try {
+        const response = await fetch("/api/jiaowubao/member-links/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ candidates: candidates.map((student) => ({ localId: student.id, name: student.name })) }) });
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !body || typeof body !== "object" || !Array.isArray(body.results)) throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : "教务宝姓名匹配返回的数据格式不完整。");
+        const matched = new Map((body.results as Array<{ localId: string; status: string; memberId: string | null }>).filter((result) => result.status === "matched" && result.memberId).map((result) => [result.localId, result.memberId as string]));
+        setStudents((current) => current.map((student) => matched.has(student.id) ? { ...student, jiaowubaoMemberId: matched.get(student.id) } : student));
+        const ambiguous = (body.results as Array<{ status: string }>).filter((result) => result.status === "ambiguous").length;
+        const notFound = (body.results as Array<{ status: string }>).filter((result) => result.status === "not_found").length;
+        if (matched.size) addAudit("按姓名精确关联教务宝学员 ID", `${matched.size} 位唯一匹配；${ambiguous} 位多结果；${notFound} 位未找到`, "blue");
+        notify(`已关联 ${matched.size} 位学生；${ambiguous} 位多结果、${notFound} 位未找到，均未写入。可继续处理下一批。`);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "教务宝姓名精确匹配失败。");
+      } finally {
+        setJiaowubaoMembersSyncing(false);
       }
     };
 
@@ -4054,6 +4081,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </label>
               <button className="secondary-button" type="button" disabled={jiaowubaoMembersSyncing || jiaowubaoSyncing || jiaowubaoExporting} onClick={syncJiaowubaoMembers}>
                 <Search className={jiaowubaoMembersSyncing ? "spin" : ""} size={17} /> {jiaowubaoMembersSyncing ? "正在查询…" : "查询学员"}
+              </button>
+              <button className="secondary-button" type="button" disabled={jiaowubaoMembersSyncing || jiaowubaoSyncing || jiaowubaoExporting} onClick={resolveStudentIdsByExactName}>
+                <Link2 className={jiaowubaoMembersSyncing ? "spin" : ""} size={17} /> 按姓名精确关联（15）
               </button>
             </div>
             {jiaowubaoMembers && (
