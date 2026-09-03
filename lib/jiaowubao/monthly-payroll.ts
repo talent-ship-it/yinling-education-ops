@@ -210,10 +210,10 @@ export function completedMonthlyPeriod(value: string, now = new Date()): string 
 }
 
 /**
- * The business rule is that trials use exactly three dedicated JWB student
- * accounts. A blank setting intentionally leaves every record unclassified;
- * malformed or partial mappings fail closed rather than silently turning a
- * missing B account into a regular lesson.
+ * Trials are stored in dedicated JWB student accounts. The active account set
+ * can change as the school opens or retires accounts, so this accepts one or
+ * more explicitly confirmed IDs. A blank setting intentionally leaves every
+ * record unclassified; malformed or duplicate mappings still fail closed.
  */
 export function parseTrialMemberIds(value: string | undefined): Set<string> {
   if (!value?.trim()) return new Set();
@@ -224,9 +224,6 @@ export function parseTrialMemberIds(value: string | undefined): Set<string> {
   const ids = suppliedIds.map((id) => id.replace(/^0+(?=\d)/, ""));
   if (new Set(ids).size !== ids.length) {
     throw new Error("JIAOWUBAO_TRIAL_MEMBER_IDS 包含重复的教务宝学员 ID。" );
-  }
-  if (ids.length !== 3) {
-    throw new Error("JIAOWUBAO_TRIAL_MEMBER_IDS 必须完整配置三个试听 B 账号 ID，或留空使所有课节保持待分类。" );
   }
   return new Set(ids);
 }

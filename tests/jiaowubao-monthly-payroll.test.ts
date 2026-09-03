@@ -107,11 +107,11 @@ test("only accepts a valid monthly period", () => {
   assert.throws(() => parseMonthlyPeriod("2026-13"), /有效/);
   assert.throws(() => parseMonthlyPeriod("August"), /YYYY-MM/);
   assert.deepEqual([...parseTrialMemberIds("501, 502, 503")], ["501", "502", "503"]);
+  assert.deepEqual([...parseTrialMemberIds("501")], ["501"]);
   assert.deepEqual([...parseTrialMemberIds("00501, 502, 503")], ["501", "502", "503"]);
   assert.deepEqual([...parseTrialMemberIds("")], []);
   assert.throws(() => parseTrialMemberIds("501,trial"), /正整数/);
   assert.throws(() => parseTrialMemberIds("501,00501"), /重复/);
-  assert.throws(() => parseTrialMemberIds("501,502"), /三个试听 B 账号/);
   const augustInMelbourne = new Date("2026-08-15T00:00:00.000Z");
   assert.equal(nonFutureMonthlyPeriod("2026-08", augustInMelbourne), "2026-08");
   assert.throws(() => nonFutureMonthlyPeriod("2026-09", augustInMelbourne), /未来月份/);

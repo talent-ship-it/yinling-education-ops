@@ -74,11 +74,12 @@ export function previousCompletedMonth(now = new Date()): string {
 
 export async function generateMonthlyPayroll(periodInput?: string): Promise<MonthlyPayrollSync> {
   const period = completedMonthlyPeriod(periodInput ?? previousCompletedMonth());
-  const fetched = await fetchCompletedLessons(period);
+  const trialMemberIds = parseTrialMemberIds(process.env.JIAOWUBAO_TRIAL_MEMBER_IDS);
+  const fetched = await fetchCompletedLessons(period, trialMemberIds);
   const report = buildMonthlyPayrollReport({
     period,
     lessons: fetched.lessons,
-    trialMemberIds: parseTrialMemberIds(process.env.JIAOWUBAO_TRIAL_MEMBER_IDS),
+    trialMemberIds,
   });
   const payroll = report.teachers.map((teacher) => {
     return {

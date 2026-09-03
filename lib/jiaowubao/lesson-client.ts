@@ -249,14 +249,16 @@ function responseList(payload: unknown, config: Pick<LessonListConfig, "mode" | 
 
   const data = isObject(payload.data) ? payload.data : null;
   if (config.mode === "gateway") {
-    if (Array.isArray(data?.lists)) {
-      throw new JiaowubaoLessonApiError("当前网关返回的是 query_schedule_list 课节汇总，不含多人课的完整学生明细；不能生成完整版。请为该 sk 授权 query_lesson_list。", "protocol");
+    // The supplied document calls this field `list`, while the live
+    // query_lesson_list gateway returns its per-student rows as `lists`.
+    // Keep accepting the documented shape, but never substitute the separate
+    // query_schedule_list tool: the envelope's `tool` value remains fixed.
+    const list = Array.isArray(data?.list) ? data.list : Array.isArray(data?.lists) ? data.lists : null;
+    if (!list) {
+      throw new JiaowubaoLessonApiError("教务宝网关成功响应中没有 data.list 或 data.lists 逐学生课时数组，已停止导出以避免漏学生。", "protocol");
     }
-    if (!Array.isArray(data?.list)) {
-      throw new JiaowubaoLessonApiError("教务宝网关成功响应中没有 data.list 逐学生课时数组，已停止导出以避免漏学生。", "protocol");
-    }
-    if (!data.list.every(isObject)) throw new JiaowubaoLessonApiError("教务宝网关课时列表中存在非对象记录。", "protocol");
-    return { rows: data.list };
+    if (!list.every(isObject)) throw new JiaowubaoLessonApiError("教务宝网关课时列表中存在非对象记录。", "protocol");
+    return { rows: list };
   }
 
   const candidates = [payload.list, payload.rows, payload.lists, data?.list, data?.rows, data?.lists];
@@ -352,27 +354,42 @@ async function requestPage(config: LessonListConfig, params: JsonObject): Promis
   }
 }
 
-export async function fetchCompletedLessons(periodValue: string): Promise<{ lessons: JsonObject[]; pages: number }> {
+export async function fetchCompletedLessons(periodValue: string, trialMemberIds: Iterable<string> = []): Promise<{ lessons: JsonObject[]; pages: number }> {
   const period = parseMonthlyPeriod(periodValue);
   const config = lessonListConfig();
-  const result = await collectPagesUntilEmpty({
-    maxPages: config.maxPages,
-    requestPage: async (page) => {
-      const response = await requestPage(config, {
-        start: period.start,
-        end: period.end,
-        sign: -1,
-        over: 1,
-        page,
-        limit: config.pageSize,
-      });
-      for (const row of response.rows) {
-        if (Number(row.over) !== 1) throw new JiaowubaoLessonApiError("教务宝返回了未结课记录，已停止导入。", "protocol");
-      }
-      return response.rows;
-    },
-    recordKey,
-    protocolError: (message) => new JiaowubaoLessonApiError(message, "protocol"),
-  });
-  return { lessons: result.rows, pages: result.pages };
+  const memberIds = [...new Set([...trialMemberIds].map((value) => value.trim()).filter((value) => /^\d+$/.test(value)))];
+  if (config.mode === "gateway" && memberIds.length === 0) {
+    throw new JiaowubaoLessonApiError("网关 query_lesson_list 需要 JIAOWUBAO_TRIAL_MEMBER_IDS；当前账号的接口要求以 mem_id 查询，未配置时不能安全生成完整试听报表。", "configuration");
+  }
+
+  const scopedMemberIds = config.mode === "gateway" ? memberIds : [null];
+  const lessons = new Map<string, JsonObject>();
+  let pages = 0;
+
+  for (const memberId of scopedMemberIds) {
+    const result = await collectPagesUntilEmpty({
+      maxPages: config.maxPages,
+      requestPage: async (page) => {
+        const response = await requestPage(config, {
+          start: period.start,
+          end: period.end,
+          sign: -1,
+          over: 1,
+          page,
+          limit: config.pageSize,
+          ...(memberId ? { mem_id: Number(memberId) } : {}),
+        });
+        for (const row of response.rows) {
+          if (Number(row.over) !== 1) throw new JiaowubaoLessonApiError("教务宝返回了未结课记录，已停止导入。", "protocol");
+        }
+        return response.rows;
+      },
+      recordKey,
+      protocolError: (message) => new JiaowubaoLessonApiError(message, "protocol"),
+    });
+    pages += result.pages;
+    for (const row of result.rows) lessons.set(recordKey(row), row);
+  }
+
+  return { lessons: [...lessons.values()], pages };
 }
