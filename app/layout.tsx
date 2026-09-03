@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yinling-education-ops.vercel.app"),
   title: "吟领教务 | Learning Operations",
   description: "Internal education operations demo for scheduling, Learning Plans, reminders and data coordination.",
   openGraph: {

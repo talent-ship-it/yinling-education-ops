@@ -2437,3 +2437,463 @@ body {
     zoom:1.06;
   }
 }
+
+.payroll-jiaowubao-panel {
+  margin-bottom:18px;
+  overflow:hidden;
+}
+
+.payroll-jiaowubao-header {
+  align-items:flex-start;
+  gap:16px;
+}
+
+.payroll-jiaowubao-header > div:first-child {
+  min-width:0;
+}
+
+.payroll-jiaowubao-copy {
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.5;
+  margin:5px 0 0;
+  max-width:680px;
+}
+
+.payroll-jiaowubao-notice {
+  border-top:1px solid var(--line);
+  margin:0;
+  padding:11px 16px;
+}
+
+.payroll-jiaowubao-results {
+  padding:16px;
+}
+
+.payroll-jiaowubao-metrics {
+  margin-bottom:14px;
+}
+
+.payroll-jiaowubao-exceptions {
+  background:#fff7e8;
+  border:1px solid #f0ddb3;
+  color:#76551b;
+  display:grid;
+  font-size:10px;
+  gap:7px;
+  margin-bottom:14px;
+  padding:11px;
+}
+
+.payroll-jiaowubao-exceptions p {
+  align-items:flex-start;
+  display:flex;
+  gap:6px;
+  line-height:1.45;
+  margin:0;
+}
+
+.payroll-jiaowubao-exceptions svg {
+  flex:0 0 auto;
+  margin-top:1px;
+}
+
+.payroll-jiaowubao-list {
+  display:grid;
+  gap:10px;
+  max-height:650px;
+  overflow:auto;
+}
+
+.payroll-jiaowubao-teacher {
+  border:1px solid var(--line);
+  border-radius:6px;
+  overflow:hidden;
+}
+
+.payroll-jiaowubao-teacher > header {
+  align-items:center;
+  background:#f5f8f6;
+  display:flex;
+  gap:12px;
+  justify-content:space-between;
+  padding:11px 12px;
+}
+
+.payroll-jiaowubao-teacher > header > span {
+  display:grid;
+  gap:3px;
+  min-width:0;
+}
+
+.payroll-jiaowubao-teacher > header strong {
+  font-size:12px;
+}
+
+.payroll-jiaowubao-teacher > header small,
+.payroll-jiaowubao-facts small,
+.payroll-jiaowubao-students small {
+  color:var(--muted);
+  font-size:9px;
+}
+
+.payroll-jiaowubao-facts {
+  border-bottom:1px solid #edf1ee;
+  display:grid;
+  gap:8px;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  padding:10px 12px;
+}
+
+.payroll-jiaowubao-facts span {
+  display:grid;
+  gap:3px;
+}
+
+.payroll-jiaowubao-facts strong {
+  font-family:"DM Mono",monospace;
+  font-size:10px;
+}
+
+.payroll-jiaowubao-note {
+  color:#617067;
+  font-size:10px;
+  line-height:1.45;
+  margin:0;
+  padding:10px 12px;
+}
+
+.payroll-jiaowubao-students > div {
+  align-items:center;
+  border-top:1px solid #edf1ee;
+  display:grid;
+  font-size:10px;
+  gap:10px;
+  grid-template-columns:minmax(155px,1.2fr) minmax(120px,1fr) 94px 82px;
+  padding:9px 12px;
+}
+
+.payroll-jiaowubao-students > div > span:first-child {
+  display:grid;
+  gap:2px;
+  min-width:0;
+}
+
+.payroll-jiaowubao-students strong {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.payroll-jiaowubao-students > strong {
+  font-family:"DM Mono",monospace;
+  text-align:right;
+}
+
+.payroll-jiaowubao-member-lookup {
+  border-top:1px solid var(--line);
+  display:grid;
+  gap:12px;
+  padding:16px;
+}
+
+.payroll-jiaowubao-member-lookup h3 {
+  font-size:13px;
+  margin:3px 0 0;
+}
+
+.payroll-jiaowubao-member-lookup > div:first-child > p:last-child,
+.payroll-jiaowubao-member-results > p {
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.5;
+  margin:5px 0 0;
+}
+
+.payroll-jiaowubao-member-controls {
+  align-items:end;
+  display:grid;
+  gap:9px;
+  grid-template-columns:minmax(180px,1.5fr) minmax(105px,.8fr) minmax(105px,.8fr) auto;
+}
+
+.payroll-jiaowubao-member-controls label {
+  display:grid;
+  gap:5px;
+}
+
+.payroll-jiaowubao-member-controls label > span {
+  color:var(--muted);
+  font-size:9px;
+  font-weight:700;
+}
+
+.payroll-jiaowubao-member-controls input {
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:5px;
+  color:var(--ink);
+  font:inherit;
+  font-size:11px;
+  min-height:36px;
+  min-width:0;
+  padding:0 9px;
+}
+
+.payroll-jiaowubao-member-results {
+  background:#f7faf8;
+  border:1px solid #dce9e2;
+  border-radius:6px;
+  padding:11px;
+}
+
+.payroll-jiaowubao-member-results > header {
+  align-items:center;
+  display:flex;
+  font-size:11px;
+  justify-content:space-between;
+}
+
+.payroll-jiaowubao-member-results > header small,
+.payroll-jiaowubao-member-list small {
+  color:var(--muted);
+  font-size:9px;
+}
+
+.payroll-jiaowubao-member-list {
+  border-top:1px solid #dce9e2;
+  display:grid;
+  margin-top:10px;
+}
+
+.payroll-jiaowubao-member-list > div {
+  align-items:center;
+  border-bottom:1px solid #e7efea;
+  display:flex;
+  font-size:10px;
+  gap:12px;
+  justify-content:space-between;
+  padding:8px 0;
+}
+
+.payroll-jiaowubao-member-list > div > span {
+  display:grid;
+  gap:2px;
+  min-width:0;
+}
+
+.payroll-jiaowubao-member-list > div > span strong {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.payroll-jiaowubao-member-list > p {
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.45;
+  margin:8px 0 0;
+}
+
+@media (max-width:760px) {
+  .payroll-jiaowubao-header {
+    align-items:stretch;
+    display:grid;
+  }
+
+  .payroll-jiaowubao-header .toolbar-actions {
+    display:grid;
+    grid-template-columns:1fr;
+  }
+
+  .payroll-jiaowubao-header .toolbar-actions > * {
+    width:100%;
+  }
+
+  .payroll-jiaowubao-facts {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .payroll-jiaowubao-students > div {
+    grid-template-columns:minmax(135px,1fr) 78px;
+  }
+
+  .payroll-jiaowubao-students > div > span:nth-child(2),
+  .payroll-jiaowubao-students > div > span:nth-child(3) {
+    display:none;
+  }
+
+  .payroll-jiaowubao-member-controls {
+    grid-template-columns:1fr;
+  }
+
+  .payroll-jiaowubao-member-controls .secondary-button {
+    justify-content:center;
+  }
+
+  .payroll-jiaowubao-member-list > div {
+    align-items:flex-start;
+    display:grid;
+    gap:4px;
+  }
+}
+
+.jiaowubao-schedule-panel {
+  margin-bottom:18px;
+  overflow:hidden;
+}
+
+.jiaowubao-schedule-header {
+  align-items:flex-start;
+  gap:16px;
+}
+
+.jiaowubao-schedule-header > div:first-child {
+  min-width:0;
+}
+
+.jiaowubao-schedule-header p:last-child {
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.5;
+  margin:5px 0 0;
+  max-width:650px;
+}
+
+.jiaowubao-schedule-controls {
+  align-items:end;
+  display:grid;
+  gap:8px;
+  grid-template-columns:120px 120px 96px auto;
+}
+
+.jiaowubao-schedule-controls label {
+  display:grid;
+  gap:4px;
+}
+
+.jiaowubao-schedule-controls label > span {
+  color:var(--muted);
+  font-size:9px;
+  font-weight:700;
+}
+
+.jiaowubao-schedule-controls input,
+.jiaowubao-schedule-controls select {
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:5px;
+  color:var(--ink);
+  font:inherit;
+  font-size:10px;
+  min-height:36px;
+  min-width:0;
+  padding:0 8px;
+}
+
+.jiaowubao-schedule-notice {
+  border-top:1px solid var(--line);
+  margin:0;
+  padding:11px 16px;
+}
+
+.jiaowubao-schedule-results {
+  padding:16px;
+}
+
+.jiaowubao-schedule-metrics {
+  margin-bottom:14px;
+}
+
+.jiaowubao-schedule-list {
+  display:grid;
+  gap:10px;
+  max-height:650px;
+  overflow:auto;
+}
+
+.jiaowubao-schedule-list > article {
+  border:1px solid var(--line);
+  border-radius:6px;
+  overflow:hidden;
+}
+
+.jiaowubao-schedule-list > article > header {
+  align-items:center;
+  background:#f5f8f6;
+  display:flex;
+  gap:10px;
+  justify-content:space-between;
+  padding:10px 12px;
+}
+
+.jiaowubao-schedule-list > article > header span {
+  display:grid;
+  gap:3px;
+  min-width:0;
+}
+
+.jiaowubao-schedule-list > article > header strong {
+  font-size:11px;
+}
+
+.jiaowubao-schedule-list > article > header small,
+.jiaowubao-schedule-facts small {
+  color:var(--muted);
+  font-size:9px;
+}
+
+.jiaowubao-schedule-facts {
+  display:grid;
+  gap:8px;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  padding:10px 12px;
+}
+
+.jiaowubao-schedule-facts span {
+  display:grid;
+  gap:3px;
+  min-width:0;
+}
+
+.jiaowubao-schedule-facts strong {
+  font-size:10px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.jiaowubao-schedule-list > article > p {
+  border-top:1px solid #edf1ee;
+  color:#617067;
+  font-size:10px;
+  line-height:1.5;
+  margin:0;
+  padding:9px 12px;
+}
+
+.jiaowubao-schedule-more {
+  color:var(--muted);
+  font-size:10px;
+  line-height:1.45;
+  margin:0;
+}
+
+@media (max-width:760px) {
+  .jiaowubao-schedule-header {
+    display:grid;
+  }
+
+  .jiaowubao-schedule-controls {
+    grid-template-columns:1fr 1fr;
+  }
+
+  .jiaowubao-schedule-controls .secondary-button {
+    grid-column:1 / -1;
+    justify-content:center;
+  }
+
+  .jiaowubao-schedule-facts {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}

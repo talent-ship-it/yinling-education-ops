@@ -4,7 +4,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const NIXON_COOKIE_NAME = "yinling_nixon_auth";
 
-// Demo access is intentionally code-pinned so a stale Vercel variable cannot
+// Demo access is intentionally code-pinned so a stale deployment variable cannot
 // silently change the agreed admin login during review.
 const ADMIN_PASSWORD_HASH = "7b404139cd395a7678c81f0e10969c74b243e75641e207d5902743807f062c52";
 

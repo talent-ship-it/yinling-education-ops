@@ -319,6 +319,105 @@ type PayrollLine = {
   sourceRow?: number;
 };
 
+type JiaowubaoPayrollStudentDetail = {
+  name: string;
+  lessons: number;
+  kind: "常规" | "试听" | "待分类";
+  matched: boolean;
+  attendance: string;
+  course: string;
+  dated: string;
+};
+
+type JiaowubaoPayrollRow = {
+  id: string;
+  teacherId: string;
+  teacherName: string;
+  sourceTeacherId: string;
+  period: string;
+  authoritativeTotalHours: null;
+  derivedTeacherHours: number;
+  unclassifiedHours: number;
+  lessons: number;
+  trialLessons: number;
+  matchedLessons: number;
+  amount: number;
+  status: "需核对";
+  note: string;
+  studentDetails: JiaowubaoPayrollStudentDetail[];
+};
+
+type JiaowubaoMonthlySync = {
+  period: string;
+  pages: number;
+  summary: {
+    sourceRows: number;
+    uniqueLessons: number;
+    uniqueTeachers: number;
+    sourceStudentHours: number;
+    derivedTeacherHours: number;
+    unmatchedTeacherLessonGroups: number;
+    unresolvedClassificationGroups: number;
+    lessonsWithoutTeachers: number;
+    unclassifiedLessons: number;
+    unclassifiedStudentHours: number;
+  };
+  warnings: string[];
+  payroll: JiaowubaoPayrollRow[];
+  unassignedStudentDetails: JiaowubaoPayrollStudentDetail[];
+  snapshot: string;
+};
+
+type JiaowubaoMemberDirectory = {
+  pages: number;
+  members: Array<{
+    memberId: string;
+    memberName: string | null;
+    teacherId: string | null;
+    teamId: string | null;
+  }>;
+};
+
+type JiaowubaoScheduleSync = {
+  pages: number;
+  source: "query_schedule_list";
+  summary: {
+    lessons: number;
+    completedLessons: number;
+    pendingLessons: number;
+    members: number;
+    signedMembers: number;
+    arrivedMembers: number;
+    leaveMembers: number;
+    consumedHours: number;
+    scheduledHours: number;
+    allLeaveLessons: number;
+  };
+  lessons: Array<{
+    calendarId: string;
+    dated: string;
+    timeStart: string | null;
+    timeEnd: string | null;
+    classType: number | null;
+    completed: boolean;
+    className: string | null;
+    courseName: string | null;
+    roomName: string | null;
+    memberCount: number | null;
+    arrivedCount: number | null;
+    consumedHours: number | null;
+    scheduledHours: number | null;
+    allLeave: boolean | null;
+    studentDetailPolicy: "aggregate-only";
+    teachers: Array<{
+      role: "授课老师" | "助教" | "第三老师";
+      teacherId: string | null;
+      teacherName: string | null;
+      hours: number | null;
+    }>;
+  }>;
+};
+
 type Message = {
   id: string;
   studentId: string;
@@ -753,6 +852,19 @@ function formatInstant(date: Date, timezone: string, preferences = defaultDispla
 function formatHours(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return "待匹配";
   return `${Number(value.toFixed(2)).toLocaleString()} 小时`;
+}
+
+function previousCompletedPayrollPeriod(now = new Date()) {
+  const values = new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Melbourne",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(now);
+  const value = (type: Intl.DateTimeFormatPartTypes) => values.find((part) => part.type === type)?.value;
+  const year = Number(value("year"));
+  const month = Number(value("month"));
+  const previous = new Date(Date.UTC(year, month - 2, 1));
+  return String(previous.getUTCFullYear()) + "-" + String(previous.getUTCMonth() + 1).padStart(2, "0");
 }
 
 function formatMoney(amount: number, currency: PayrollRow["currency"] = "AUD") {
@@ -1263,6 +1375,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [payrollPage, setPayrollPage] = useState(1);
   const [selectedPayrollId, setSelectedPayrollId] = useState("");
   const [payrollDraft, setPayrollDraft] = useState<PayrollRow | null>(null);
+  const [jiaowubaoPeriod, setJiaowubaoPeriod] = useState(previousCompletedPayrollPeriod);
+  const [jiaowubaoSyncing, setJiaowubaoSyncing] = useState(false);
+  const [jiaowubaoExporting, setJiaowubaoExporting] = useState(false);
+  const [jiaowubaoSync, setJiaowubaoSync] = useState<JiaowubaoMonthlySync | null>(null);
+  const [jiaowubaoMembersSyncing, setJiaowubaoMembersSyncing] = useState(false);
+  const [jiaowubaoMembers, setJiaowubaoMembers] = useState<JiaowubaoMemberDirectory | null>(null);
+  const [jiaowubaoMemberKeyword, setJiaowubaoMemberKeyword] = useState("");
+  const [jiaowubaoMemberTeacherId, setJiaowubaoMemberTeacherId] = useState("");
+  const [jiaowubaoMemberTeamId, setJiaowubaoMemberTeamId] = useState("");
+  const [jiaowubaoScheduleStart, setJiaowubaoScheduleStart] = useState(() => isoDateInTimezone(new Date(), "Australia/Melbourne"));
+  const [jiaowubaoScheduleEnd, setJiaowubaoScheduleEnd] = useState(() => shiftIsoDate(isoDateInTimezone(new Date(), "Australia/Melbourne"), 6));
+  const [jiaowubaoScheduleOver, setJiaowubaoScheduleOver] = useState<"all" | "completed" | "pending">("all");
+  const [jiaowubaoScheduleSyncing, setJiaowubaoScheduleSyncing] = useState(false);
+  const [jiaowubaoSchedule, setJiaowubaoSchedule] = useState<JiaowubaoScheduleSync | null>(null);
   const availablePayrollMonths = useMemo(
     () => Array.from(new Set(payroll.map((row) => row.month).filter((month): month is string => Boolean(month)))).sort().reverse(),
     [payroll],
@@ -2684,6 +2810,125 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>;
   };
 
+  const syncJiaowubaoSchedule = async () => {
+    if (!jiaowubaoScheduleStart || !jiaowubaoScheduleEnd) {
+      notify("请填写教务宝排课查询的开始和结束日期。");
+      return;
+    }
+    const payload: { start: string; end: string; over?: number } = {
+      start: jiaowubaoScheduleStart,
+      end: jiaowubaoScheduleEnd,
+    };
+    if (jiaowubaoScheduleOver === "completed") payload.over = 1;
+    if (jiaowubaoScheduleOver === "pending") payload.over = 0;
+
+    setJiaowubaoScheduleSyncing(true);
+    setJiaowubaoSchedule(null);
+    try {
+      const response = await fetch("/api/jiaowubao/schedule/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+          ? body.error
+          : "教务宝排课查询失败，请稍后重试。";
+        throw new Error(message);
+      }
+      if (
+        !body
+        || typeof body !== "object"
+        || typeof body.pages !== "number"
+        || !Array.isArray(body.lessons)
+        || !("summary" in body)
+      ) {
+        throw new Error("教务宝排课查询返回的数据格式不完整，请检查网关配置。");
+      }
+      const sync = body as JiaowubaoScheduleSync;
+      setJiaowubaoSchedule(sync);
+      notify("已读取 " + String(sync.lessons.length) + " 节教务宝排课；结果仅用于当前浏览器核对。");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "教务宝排课查询失败，请稍后重试。");
+    } finally {
+      setJiaowubaoScheduleSyncing(false);
+    }
+  };
+
+  const renderJiaowubaoSchedulePanel = () => {
+    if (!canViewPayroll) return null;
+    return (
+      <section className="panel jiaowubao-schedule-panel" aria-labelledby="jiaowubao-schedule-title">
+        <div className="panel-header jiaowubao-schedule-header">
+          <div>
+            <p className="eyebrow">教务宝开放 API · query_schedule_list</p>
+            <h2 id="jiaowubao-schedule-title">教务宝课节总览</h2>
+            <p>原始排课、教师课时和汇总考勤的只读核对。多人课不会使用不完整的 <strong>stu_list</strong>，也不会同步到系统排课、学生、老师或薪资。</p>
+          </div>
+          <div className="jiaowubao-schedule-controls">
+            <label>
+              <span>开始日期</span>
+              <input type="date" value={jiaowubaoScheduleStart} onChange={(event) => setJiaowubaoScheduleStart(event.target.value)} aria-label="教务宝排课开始日期" />
+            </label>
+            <label>
+              <span>结束日期</span>
+              <input type="date" value={jiaowubaoScheduleEnd} onChange={(event) => setJiaowubaoScheduleEnd(event.target.value)} aria-label="教务宝排课结束日期" />
+            </label>
+            <label>
+              <span>结课状态</span>
+              <select value={jiaowubaoScheduleOver} onChange={(event) => setJiaowubaoScheduleOver(event.target.value as "all" | "completed" | "pending")} aria-label="教务宝排课结课状态">
+                <option value="all">全部</option>
+                <option value="completed">已结课</option>
+                <option value="pending">未结课</option>
+              </select>
+            </label>
+            <button className="secondary-button" type="button" disabled={jiaowubaoScheduleSyncing} onClick={syncJiaowubaoSchedule}>
+              <RefreshCw className={jiaowubaoScheduleSyncing ? "spin" : ""} size={17} /> {jiaowubaoScheduleSyncing ? "正在读取…" : "读取排课"}
+            </button>
+          </div>
+        </div>
+        <div className="form-notice jiaowubao-schedule-notice">
+          <CircleAlert size={16} />
+          <span>每次最多核对 31 天、200 节排课；结果更多时会拒绝部分返回，请缩小日期或结课状态后再查。网关限流时会直接提示稍后重试，不会在网页请求中长时间等待。</span>
+        </div>
+        {jiaowubaoSchedule && (
+          <div className="jiaowubao-schedule-results" aria-live="polite">
+            <section className="metric-grid jiaowubao-schedule-metrics">
+              <Metric tone="blue" icon={<CalendarDays size={21} />} value={String(jiaowubaoSchedule.summary.lessons)} label="排课课节" detail={String(jiaowubaoSchedule.pages) + " 页完整分页"} />
+              <Metric tone="green" icon={<Users size={21} />} value={String(jiaowubaoSchedule.summary.arrivedMembers)} label="实际到达" detail={String(jiaowubaoSchedule.summary.members) + " 位课节学员"} />
+              <Metric tone="purple" icon={<Clock3 size={21} />} value={formatHours(jiaowubaoSchedule.summary.consumedHours)} label="已消课时" detail={"应排 " + formatHours(jiaowubaoSchedule.summary.scheduledHours)} />
+              <Metric tone="amber" icon={<CircleAlert size={21} />} value={String(jiaowubaoSchedule.summary.allLeaveLessons)} label="全员请假课节" detail={String(jiaowubaoSchedule.summary.pendingLessons) + " 节未结课"} />
+            </section>
+            {jiaowubaoSchedule.lessons.length ? (
+              <div className="jiaowubao-schedule-list" aria-label="教务宝只读课节总览">
+                {jiaowubaoSchedule.lessons.slice(0, 50).map((lesson) => (
+                  <article key={lesson.calendarId}>
+                    <header>
+                      <span>
+                        <strong>{lesson.dated} · {[lesson.timeStart, lesson.timeEnd].filter(Boolean).join("–") || "时间未返回"}</strong>
+                        <small>课节 ID：{lesson.calendarId} · 班级类型：{lesson.classType ?? "未返回"} · {lesson.studentDetailPolicy === "aggregate-only" ? "仅汇总学员数据" : ""}</small>
+                      </span>
+                      <StatusPill tone={lesson.completed ? "green" : "amber"}>{lesson.completed ? "已结课" : "未结课"}</StatusPill>
+                    </header>
+                    <div className="jiaowubao-schedule-facts">
+                      <span><small>班级 / 课程</small><strong>{lesson.className || "班级未返回"} · {lesson.courseName || "课程未返回"}</strong></span>
+                      <span><small>课节学员 / 到达</small><strong>{lesson.memberCount ?? "未返回"} / {lesson.arrivedCount ?? "未返回"}</strong></span>
+                      <span><small>消课 / 应排</small><strong>{formatHours(lesson.consumedHours)} / {formatHours(lesson.scheduledHours)}</strong></span>
+                      <span><small>教室</small><strong>{lesson.roomName || "未设"}</strong></span>
+                    </div>
+                    <p>{lesson.teachers.length ? lesson.teachers.map((teacher) => teacher.role + "：" + (teacher.teacherName || "教务宝未返回教师") + "（" + (teacher.hours === null ? "课时未返回" : formatHours(teacher.hours)) + "）").join(" · ") : "教务宝未返回教师资料"}</p>
+                  </article>
+                ))}
+                {jiaowubaoSchedule.lessons.length > 50 && <p className="jiaowubao-schedule-more">另有 {jiaowubaoSchedule.lessons.length - 50} 节排课未在此预览；本次结果没有写入共享排课。</p>}
+              </div>
+            ) : <EmptyState title="查询范围内没有教务宝排课" detail="这是一份完整空结果；可调整日期或结课状态后重新核对。" />}
+          </div>
+        )}
+      </section>
+    );
+  };
+
   const renderSchedule = () => {
     const weekDays = weekDatesForTimezone(scheduleTimezone, displayPreferences);
     const weekRangeLabel = `${formatDisplayDate(new Date(`${weekDays[0]?.date}T12:00:00Z`), scheduleTimezone, displayPreferences)} - ${formatDisplayDate(new Date(`${weekDays.at(-1)?.date}T12:00:00Z`), scheduleTimezone, displayPreferences)}`;
@@ -2710,12 +2955,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!scopedBookings.length) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        {renderJiaowubaoSchedulePanel()}
         <section className="panel collection-shell"><EmptyState title="暂无真实排课数据" detail="当前 Supabase 只导入了学生和老师档案；排课数据导入后会在这里显示。" /></section>
       </>;
     }
     if (!displayedBooking || !displayedBookingSeries) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy="当前筛选没有匹配课程，不会继续显示之前选中的课程详情。" actions={<><button className="secondary-button" type="button" onClick={() => { setScheduleFilter("all"); setScheduleDay("all"); setSchedulePage(1); }}>清除排课筛选</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button></>} />
+        {renderJiaowubaoSchedulePanel()}
         <section className="panel collection-shell"><EmptyState title="当前筛选下没有排课" detail="清除筛选后再选择需要处理的课程。" /></section>
       </>;
     }
@@ -2724,6 +2971,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!bookingStudent || !bookingTeacher) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy="当前课程缺少有效关联，不会继续显示其他课程的详情。" actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        {renderJiaowubaoSchedulePanel()}
         <section className="panel collection-shell"><EmptyState title="课程关联资料不完整" detail="课程缺少有效的学生或老师内部 ID，请先在数据来源中修复关联。" /></section>
       </>;
     }
@@ -2732,6 +2980,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const historicalBooking = isPastBooking(displayedBooking);
     return <>
       <ViewHeading eyebrow={isTeacherView ? "老师个人课表 · 时区自动换算" : "统一时点 + IANA 时区 + AVA 占用锁定"} title={isTeacherView ? "我的排课" : "排课与时区检查"} copy={isTeacherView ? "这里只显示自己的课程；创建约课时会固定当前老师，并检查学生、老师时间冲突和 AVA。" : "排课统一保存为准确时点；可以一键切换墨尔本、阿德莱德、悉尼、布里斯班、珀斯和中国时间，并检查重叠、结构化 AVA 与夏令时风险。"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+      {renderJiaowubaoSchedulePanel()}
       <section className="panel schedule-shell">
         <div className="calendar-toolbar"><div className="segmented"><button className={scheduleMode === "week" ? "active" : ""} type="button" onClick={() => setScheduleMode("week")}>{displayPreferences.language === "en-AU" ? "Week" : "周视图"}</button><button className={scheduleMode === "agenda" ? "active" : ""} type="button" onClick={() => { setScheduleMode("agenda"); setSchedulePage(1); }}>{displayPreferences.language === "en-AU" ? "List" : "日程列表"}</button></div><strong>{weekRangeLabel}</strong><div className="toolbar-actions"><select className="filter-select" value={scheduleDay} onChange={(event) => { setScheduleDay(event.target.value); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule date" : "排课日期筛选"}><option value="all">{displayPreferences.language === "en-AU" ? "All dates" : "全部日期"}</option>{weekDays.map((day) => <option value={day.date} key={day.date}>{day.label}</option>)}</select>{scheduleMode === "week" && <select className="filter-select" value={scheduleDensity} onChange={(event) => updateDisplayPreferences({ density: event.target.value as DisplayPreferences["density"] })} aria-label={displayPreferences.language === "en-AU" ? "Week view density" : "周视图显示密度"}><option value="comfortable">{displayPreferences.language === "en-AU" ? "Comfortable" : "放大显示"}</option><option value="compact">{displayPreferences.language === "en-AU" ? "Compact" : "紧凑显示"}</option></select>}<select className="filter-select" value={scheduleTimezone} onChange={(event) => { updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) }); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule timezone" : "排课显示时区"}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? `Display: ${option.en}` : `显示：${option.zh}`}</option>)}</select><select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label={displayPreferences.language === "en-AU" ? "Schedule filter" : "排课筛选"}><option value="all">{displayPreferences.language === "en-AU" ? "All lessons" : "全部课程"}</option><option value="pending">{displayPreferences.language === "en-AU" ? "Pending" : "待确认"}</option><option value="trial">{displayPreferences.language === "en-AU" ? "Trials only" : "仅试听"}</option><option value="dst">{displayPreferences.language === "en-AU" ? "DST review" : "夏令时需复核"}</option></select></div></div>
         <div className={`timezone-audit ${dstRiskBookings.length ? "warning" : "ok"}`}><Clock3 size={17} /><span><strong>{dstRiskBookings.length ? `${dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化` : "当前长期课未发现跨地区夏令时变化"}</strong><small>系统会按 IANA 时区自动换算；发生相对时差变化时保留课程并要求教务复核，不会静默改时间。</small></span></div>
@@ -3388,6 +3637,132 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderPayroll = () => {
+    const syncJiaowubaoMonthlyPayroll = async () => {
+      if (!/^\d{4}-\d{2}$/.test(jiaowubaoPeriod)) {
+        notify("请选择要核对的完整月份。");
+        return;
+      }
+
+      setJiaowubaoSyncing(true);
+      try {
+        const response = await fetch("/api/jiaowubao/monthly-payroll/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ period: jiaowubaoPeriod }),
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+            ? body.error
+            : "教务宝课时同步失败，请稍后重试。";
+          throw new Error(message);
+        }
+        if (
+          !body ||
+          typeof body !== "object" ||
+          typeof body.period !== "string" ||
+          body.period !== jiaowubaoPeriod ||
+          typeof body.snapshot !== "string" ||
+          !Array.isArray(body.payroll) ||
+          !Array.isArray(body.unassignedStudentDetails) ||
+          !Array.isArray(body.warnings) ||
+          !body.summary ||
+          typeof body.summary !== "object" ||
+          typeof body.summary.sourceRows !== "number"
+        ) {
+          throw new Error("教务宝返回的数据格式不完整，请检查网关配置。");
+        }
+        const sync = body as JiaowubaoMonthlySync;
+        setJiaowubaoSync(sync);
+        notify("已读取 " + sync.period + " 教务宝已消课数据；结果仅供核对，未覆盖人工薪资。");
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "教务宝课时同步失败，请稍后重试。");
+      } finally {
+        setJiaowubaoSyncing(false);
+      }
+    };
+
+    const downloadJiaowubaoMonthlyPayroll = async () => {
+      const snapshot = jiaowubaoSync?.period === jiaowubaoPeriod ? jiaowubaoSync.snapshot : "";
+      if (!snapshot) {
+        notify("请先同步并核对当前月份，再下载完整版。");
+        return;
+      }
+
+      setJiaowubaoExporting(true);
+      try {
+        const response = await fetch("/api/jiaowubao/monthly-payroll/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshot }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+            ? body.error
+            : "完整课时表生成失败，请稍后重试。";
+          throw new Error(message);
+        }
+
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = jiaowubaoPeriod.replace("-", "年") + "月教务宝课时表_完整版.xlsx";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        notify("教务宝完整版已开始下载。");
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "完整课时表生成失败，请稍后重试。");
+      } finally {
+        setJiaowubaoExporting(false);
+      }
+    };
+
+    const syncJiaowubaoMembers = async () => {
+      const query = {
+        keyword: jiaowubaoMemberKeyword.trim(),
+        teacherId: jiaowubaoMemberTeacherId.trim(),
+        teamId: jiaowubaoMemberTeamId.trim(),
+      };
+      if (!query.keyword && !query.teacherId && !query.teamId) {
+        notify("请至少填写学员关键词、教师 ID 或班级 ID；系统不会全量下载学员目录。");
+        return;
+      }
+      setJiaowubaoMembersSyncing(true);
+      setJiaowubaoMembers(null);
+      try {
+        const response = await fetch("/api/jiaowubao/members/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(query),
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+            ? body.error
+            : "教务宝学员目录同步失败，请稍后重试。";
+          throw new Error(message);
+        }
+        if (
+          !body ||
+          typeof body !== "object" ||
+          typeof body.pages !== "number" ||
+          !Array.isArray(body.members)
+        ) {
+          throw new Error("教务宝学员目录返回的数据格式不完整，请检查网关配置。");
+        }
+        const directory = body as JiaowubaoMemberDirectory;
+        setJiaowubaoMembers(directory);
+        notify("已读取 " + String(directory.members.length) + " 位教务宝学员；结果仅用于当前浏览器核对。");
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "教务宝学员目录同步失败，请稍后重试。");
+      } finally {
+        setJiaowubaoMembersSyncing(false);
+      }
+    };
+
     const visiblePayroll = monthPayroll.filter((row) => {
       const matchesStatus =
         payrollFilter === "review"
@@ -3574,6 +3949,129 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </>
           }
         />
+        <section className="panel payroll-jiaowubao-panel" aria-labelledby="jiaowubao-monthly-payroll-title">
+          <div className="panel-header payroll-jiaowubao-header">
+            <div>
+              <p className="eyebrow">教务宝开放 API · 已消课 over=1</p>
+              <h2 id="jiaowubao-monthly-payroll-title">月度课时完整表</h2>
+              <p className="payroll-jiaowubao-copy">按教师、学生、课时逐条核对；同步结果只保留在当前浏览器，绝不会覆盖人工费率、薪资或锁定记录。每月正式完整表由 GitHub Actions 直接生成，避免依赖网站长请求。</p>
+            </div>
+            <div className="toolbar-actions">
+              <label className="payroll-month-picker">
+                <span>核对月份</span>
+                <input
+                  type="month"
+                  value={jiaowubaoPeriod}
+                  max={previousCompletedPayrollPeriod()}
+                  onChange={(event) => {
+                    setJiaowubaoPeriod(event.target.value);
+                    setJiaowubaoSync(null);
+                  }}
+                  aria-label="教务宝核对月份"
+                />
+              </label>
+              <button className="secondary-button" type="button" disabled={jiaowubaoSyncing || jiaowubaoExporting} onClick={syncJiaowubaoMonthlyPayroll}>
+                <RefreshCw className={jiaowubaoSyncing ? "spin" : ""} size={17} /> {jiaowubaoSyncing ? "正在读取…" : "同步已消课"}
+              </button>
+              <button className="primary-button" type="button" disabled={jiaowubaoSyncing || jiaowubaoExporting || jiaowubaoSync?.period !== jiaowubaoPeriod} onClick={downloadJiaowubaoMonthlyPayroll}>
+                <Download size={17} /> {jiaowubaoExporting ? "正在生成…" : "下载教务宝完整版"}
+              </button>
+            </div>
+          </div>
+          <div className="form-notice payroll-jiaowubao-notice">
+            <CircleAlert size={16} />
+            <span>数据源固定为教务宝 <strong>query_lesson_list</strong>，只提取已消课记录。试听 B 账号必须在部署环境配置；未配置或无法识别的学生会明确列为“待分类”，不会被静默遗漏。大月份请以 GitHub Actions artifact 为正式完整版；网页核对若运行时超时会失败，不会输出部分表格。</span>
+          </div>
+          <section className="payroll-jiaowubao-member-lookup" aria-labelledby="jiaowubao-member-lookup-title">
+            <div>
+              <p className="eyebrow">可选核验 · query_member_simple_list</p>
+              <h3 id="jiaowubao-member-lookup-title">学员目录查询</h3>
+              <p>按关键词、教师 ID 或班级 ID 查询；为保护资料，不支持浏览器全量下载，结果最多读取两页且不会写回学生资料或薪资。</p>
+            </div>
+            <div className="payroll-jiaowubao-member-controls">
+              <label>
+                <span>学员关键词</span>
+                <input value={jiaowubaoMemberKeyword} onChange={(event) => setJiaowubaoMemberKeyword(event.target.value)} placeholder="姓名关键词（至少 2 个字符）" aria-label="教务宝学员关键词" />
+              </label>
+              <label>
+                <span>教师 ID</span>
+                <input inputMode="numeric" value={jiaowubaoMemberTeacherId} onChange={(event) => setJiaowubaoMemberTeacherId(event.target.value)} placeholder="可选" aria-label="教务宝教师 ID" />
+              </label>
+              <label>
+                <span>班级 ID</span>
+                <input inputMode="numeric" value={jiaowubaoMemberTeamId} onChange={(event) => setJiaowubaoMemberTeamId(event.target.value)} placeholder="可选" aria-label="教务宝班级 ID" />
+              </label>
+              <button className="secondary-button" type="button" disabled={jiaowubaoMembersSyncing || jiaowubaoSyncing || jiaowubaoExporting} onClick={syncJiaowubaoMembers}>
+                <Search className={jiaowubaoMembersSyncing ? "spin" : ""} size={17} /> {jiaowubaoMembersSyncing ? "正在查询…" : "查询学员"}
+              </button>
+            </div>
+            {jiaowubaoMembers && (
+              <div className="payroll-jiaowubao-member-results" aria-live="polite">
+                <header>
+                  <strong>只读查询结果</strong>
+                  <small>{jiaowubaoMembers.pages} 页 · {jiaowubaoMembers.members.length} 位学员</small>
+                </header>
+                <p>接口文档未提供成功响应字段样例；以下仅显示网关返回并通过 ID 校验的资料，首份真实授权样例确认前不能用作薪资或试听映射依据。</p>
+                <div className="payroll-jiaowubao-member-list">
+                  {jiaowubaoMembers.members.slice(0, 20).map((member) => (
+                    <div key={member.memberId}>
+                      <span><strong>{member.memberName || "网关未提供可核验姓名"}</strong><small>学员 ID：{member.memberId}</small></span>
+                      <small>教师：{member.teacherId || "未返回"} · 班级：{member.teamId || "未返回"}</small>
+                    </div>
+                  ))}
+                  {jiaowubaoMembers.members.length > 20 && <p>另有 {jiaowubaoMembers.members.length - 20} 位结果未在此预览；请缩小条件后再核验。</p>}
+                </div>
+              </div>
+            )}
+          </section>
+          {jiaowubaoSync?.period === jiaowubaoPeriod && (
+            <div className="payroll-jiaowubao-results" aria-live="polite">
+              <section className="metric-grid payroll-jiaowubao-metrics">
+                <Metric tone="blue" icon={<Database size={21} />} value={String(jiaowubaoSync.summary.sourceRows)} label="来源记录" detail={String(jiaowubaoSync.pages) + " 页完整分页"} />
+                <Metric tone="green" icon={<Users size={21} />} value={String(jiaowubaoSync.summary.uniqueTeachers)} label="教师" detail={String(jiaowubaoSync.payroll.length) + " 位保留学生明细"} />
+                <Metric tone="purple" icon={<Clock3 size={21} />} value={formatHours(jiaowubaoSync.summary.sourceStudentHours)} label="学生课时" detail="按每位学生逐条保留" />
+                <Metric tone="amber" icon={<CircleAlert size={21} />} value={formatHours(jiaowubaoSync.summary.unclassifiedStudentHours)} label="待分类课时" detail={String(jiaowubaoSync.unassignedStudentDetails.length) + " 条需补映射"} />
+              </section>
+              {(jiaowubaoSync.warnings.length > 0 || jiaowubaoSync.unassignedStudentDetails.length > 0) && (
+                <div className="payroll-jiaowubao-exceptions">
+                  {jiaowubaoSync.warnings.map((warning, index) => <p key={[warning, index].join("-")}><CircleAlert size={14} /> {warning}</p>)}
+                  {jiaowubaoSync.unassignedStudentDetails.slice(0, 20).map((detail, index) => <p key={[detail.dated, detail.name, index].join("-")}><CircleAlert size={14} /> 待分类：{detail.name} · {formatHours(detail.lessons)} · {detail.course || "课程待确认"} · {detail.dated}</p>)}
+                  {jiaowubaoSync.unassignedStudentDetails.length > 20 && <p><CircleAlert size={14} /> 另有 {jiaowubaoSync.unassignedStudentDetails.length - 20} 条待分类明细，已包含在下载的完整表中。</p>}
+                </div>
+              )}
+              <div className="payroll-jiaowubao-list" aria-label="按教师核对的教务宝课时">
+                {jiaowubaoSync.payroll.map((row) => (
+                  <article className="payroll-jiaowubao-teacher" key={row.id}>
+                    <header>
+                      <span>
+                        <strong>{row.teacherName || "教师待确认"}</strong>
+                        <small>教务宝教师 ID：{row.sourceTeacherId || "未提供"} · {row.studentDetails.length} 条学生明细</small>
+                      </span>
+                      <StatusPill tone="amber">需核对</StatusPill>
+                    </header>
+                    <div className="payroll-jiaowubao-facts">
+                      <span><small>派生教师课时</small><strong>{formatHours(row.derivedTeacherHours)}</strong></span>
+                      <span><small>常规 / 试听</small><strong>{formatHours(row.lessons)} / {formatHours(row.trialLessons)}</strong></span>
+                      <span><small>已匹配学生课时</small><strong>{formatHours(row.matchedLessons)}</strong></span>
+                      <span><small>待分类课时</small><strong>{formatHours(row.unclassifiedHours)}</strong></span>
+                    </div>
+                    <p className="payroll-jiaowubao-note">{row.note || "教务宝未提供可直接用于薪资的教师月度总课时；请人工核对后再录入薪资表。"}</p>
+                    <div className="payroll-jiaowubao-students">
+                      {row.studentDetails.map((detail, index) => (
+                        <div key={[row.id, detail.dated, detail.name, index].join("-")}>
+                          <span><strong>{detail.name || "学生待确认"}</strong><small>{detail.kind} · {detail.attendance || "考勤待确认"}</small></span>
+                          <span>{detail.course || "课程待确认"}</span>
+                          <span>{detail.dated || "日期待确认"}</span>
+                          <strong>{formatHours(detail.lessons)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
         <section className="metric-grid payroll-metrics">
           <Metric
             tone="blue"
@@ -4869,9 +5367,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               />
               <OwnershipRow
                 title="教务宝"
-                detail="学生课时、课程目录与本周排课已只读镜像；不会回写教务宝"
-                tone="green"
-                label="只读已接入"
+                detail="开放 API 已接入已消课课时、完整分页与月度完整版导出；配置 SK 和三个试听 B 账号 ID 后启用，不会回写教务宝。学生课时、课程目录与本周排课已只读镜像；不会回写教务宝。"
+                tone="amber"
+                label="待配置密钥"
               />
               <OwnershipRow
                 title="腾讯表格"

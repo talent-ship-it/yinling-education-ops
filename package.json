@@ -9,7 +9,8 @@
     "dev": "node scripts/dev-fixed-port.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --import tsx --test tests/ops-access.test.ts tests/timezone.test.ts tests/display-preferences.test.ts tests/payroll-export.test.ts tests/rendered-html.test.mjs",
+    "generate:jiaowubao-monthly-payroll": "node --conditions=react-server --import tsx scripts/generate-jiaowubao-monthly-payroll.ts",
+    "test": "npm run build && node --conditions=react-server --import tsx --test tests/ops-access.test.ts tests/timezone.test.ts tests/display-preferences.test.ts tests/payroll-export.test.ts tests/jiaowubao-monthly-payroll.test.ts tests/jiaowubao-payroll-ui.test.ts tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern .next"
   },
   "dependencies": {
@@ -19,13 +20,15 @@
     "next": "^16.2.11",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "react-loading-skeleton": "3.5.0"
+    "react-loading-skeleton": "3.5.0",
+    "server-only": "0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "exceljs": "^4.4.0",
     "eslint": "9.39.4",
     "eslint-config-next": "^16.2.11",
     "tailwindcss": "4.2.1",
