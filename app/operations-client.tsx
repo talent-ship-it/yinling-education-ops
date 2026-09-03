@@ -149,6 +149,9 @@ type Student = {
   sourceRow?: number;
   /** Manually confirmed `query_lesson_list.mem_id`; never inferred from a name. */
   jiaowubaoMemberId?: string;
+  jiaowubaoCompletedPeriod?: string;
+  jiaowubaoCompletedHours?: number;
+  jiaowubaoCompletedLessons?: number;
 };
 
 type Teacher = {
@@ -173,6 +176,9 @@ type Teacher = {
   sourceCategories?: string[];
   /** Manually confirmed primary-teacher ID from `query_lesson_list.teacher_id`. */
   jiaowubaoTeacherId?: string;
+  jiaowubaoCompletedPeriod?: string;
+  jiaowubaoCompletedHours?: number;
+  jiaowubaoCompletedLessons?: number;
 };
 
 type Task = {
@@ -2702,6 +2708,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const nearestExam = operatorExamStudents[0];
     const firstLowHours = operatorLowHourStudents[0];
     const pendingAva = recordTeachers.filter((teacher) => (teacher.availabilityStatus ?? "待确认") === "待确认").length;
+    const latestCompletedPeriod = operatorStudents.map((student) => student.jiaowubaoCompletedPeriod).filter((period): period is string => Boolean(period)).sort().at(-1);
+    const latestCompletedStudents = latestCompletedPeriod ? operatorStudents.filter((student) => student.jiaowubaoCompletedPeriod === latestCompletedPeriod) : [];
+    const latestCompletedHours = latestCompletedStudents.reduce((sum, student) => sum + (student.jiaowubaoCompletedHours ?? 0), 0);
     const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} title="今天先处理什么" copy={`${currentOperator === "Nixon" ? "全局管理视图" : `${currentOperator} 的个人工作视图`} · 所有提醒都指向学生、触发原因、负责人和下一步动作。当前使用：${dataSnapshot.label}。`} actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
@@ -2715,7 +2724,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <Metric tone="blue" icon={<ListTodo size={21} />} value={visibleTasks.length.toString()} label="待处理" detail={`今天到期 ${today} 项`} onClick={() => { setTaskFilter("all"); }} />
         <Metric tone="red" icon={<AlertTriangle size={21} />} value={overdue.toString()} label="已逾期" detail="需要立即处理" onClick={() => { setTaskFilter("overdue"); }} />
         <Metric tone="amber" icon={<Clock3 size={21} />} value={lowHours.toString()} label="低于 5 课时" detail="只统计在读/待续课" onClick={() => setActive("renewals")} />
-        {jiaowubaoCompletedFacts && <Metric tone="purple" icon={<Database size={21} />} value={formatHours(jiaowubaoCompletedFacts.summary.completedHours)} label="已关联已消课" detail={`${jiaowubaoCompletedFacts.period} · ${jiaowubaoCompletedFacts.summary.uniqueLessons} 条，仅作事实核对`} onClick={() => setActive("payroll")} />}
+        {latestCompletedPeriod && <Metric tone="purple" icon={<Database size={21} />} value={formatHours(latestCompletedHours)} label="已关联已消课" detail={`${latestCompletedPeriod} · ${latestCompletedStudents.length} 位学生，仅作事实核对`} onClick={() => setActive("students")} />}
         <Metric tone="green" icon={<CheckCircle2 size={21} />} value={`${Math.round((operatorTasks.filter((task) => task.status === "done").length / Math.max(operatorTasks.length, 1)) * 100)}%`} label="已完成" detail={currentOperator === "Nixon" ? "全局任务" : `${currentOperator} 的任务`} onClick={() => setActive(isAdminView ? "audit" : "dashboard")} />
       </section>
       <section className="dashboard-grid">
@@ -2758,7 +2767,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <article className="collection-main">
             <div className="collection-head student-grid"><input type="checkbox" disabled={!isAdminView} checked={pageSelected} aria-label={english ? "Select students on this page" : "选择本页学生"} onChange={() => setSelectedStudentIds(pageSelected ? selectedStudentIds.filter((studentId) => !pageIds.includes(studentId)) : Array.from(new Set([...selectedStudentIds, ...pageIds])))} /><span>{isTeacherView && english ? "Student / grade / course" : "学生 / 年级 / 课程"}</span><span>{isTeacherView && english ? "Status / teacher" : "学员状态 / 老师"}</span><span>{isTeacherView && english ? "Operations owner" : "负责教务"}</span><span>{isTeacherView && english ? "Next step" : "下一步"}</span></div>
             <div className="collection-viewport">
-              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView} checked={selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}</small></span></button><button className="row-cell stacked" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
+              {pagedStudents.length ? pagedStudents.map((student) => <div className={`collection-row student-grid ${visibleSelectedStudent?.id === student.id ? "selected" : ""}`} key={student.id}><input type="checkbox" disabled={!isAdminView} checked={selectedStudentIds.includes(student.id)} aria-label={`${english ? "Select" : "选择"} ${student.name}`} onChange={() => toggleStudentSelection(student.id)} /><button className="row-primary table-person" type="button" onClick={() => openStudentPreview(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.id} · {currentGrade(student)} · {student.course}{student.jiaowubaoCompletedPeriod ? ` · ${student.jiaowubaoCompletedPeriod} 已消 ${formatHours(student.jiaowubaoCompletedHours ?? 0)}` : ""}</small></span></button><button className="row-cell stacked" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", displayPreferences.language)} · {displayTerm(student.status, displayPreferences.language)}</StatusPill><small>{student.teacher}</small></button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}>{student.owner}</button><button className="row-cell" type="button" onClick={() => openStudentPreview(student.id)}><StatusPill tone={student.nextTone}>{student.next}</StatusPill></button></div>) : <EmptyState title={isTeacherView && english ? "No matching students" : "没有符合条件的学生"} detail={isTeacherView && english ? "Adjust your search or switch the saved view and try again." : "调整搜索或切换保存视图后再试。"} />}
             </div>
             <Pagination page={safeStudentPage} total={filteredStudents.length} pageSize={pageSize} onPage={(page) => { setStudentPage(page); setMobilePreview(null); }} />
           </article>
@@ -2792,7 +2801,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <div className="collection-viewport">
               {pagedTeachers.length ? pagedTeachers.map((teacher) => {
                 const ava = availabilitySummary(teacher);
-                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span className="teacher-load"><strong>{teacher.capacity > 0 ? `${teacher.load}/${teacher.capacity} 节` : "待确认"}</strong><small>{teacher.capacity > 0 ? `${Math.max(0, teacher.capacity - teacher.load)} 节余量` : "未导入实际课时"}</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
+                return <button className={`collection-row teacher-grid-row ${visibleSelectedTeacher?.id === teacher.id ? "selected" : ""}`} type="button" key={teacher.id} onClick={() => { setSelectedTeacherId(teacher.id); setMobilePreview("teacher"); }}><span className="table-person"><Avatar initials={teacher.initials} tone={teacher.acceptsStudents ? "green" : "neutral"} /><span><strong>{teacher.name}</strong><small>{teacher.subjects.slice(0, 2).join(" · ")} · {(teacher.departments ?? []).join("/")}{teacher.jiaowubaoCompletedPeriod ? ` · ${teacher.jiaowubaoCompletedPeriod} 已消 ${formatHours(teacher.jiaowubaoCompletedHours ?? 0)}` : ""}</small></span></span><strong className="match-score">{teacherMatch(teacher)}%</strong><span className="teacher-load"><strong>{teacher.capacity > 0 ? `${teacher.load}/${teacher.capacity} 节` : "待确认"}</strong><small>{teacher.capacity > 0 ? `${Math.max(0, teacher.capacity - teacher.load)} 节余量` : "未导入实际课时"}</small></span><span className={`teacher-availability ${ava.raw ? "raw" : ""}`}><strong>{ava.title}</strong><small>{ava.detail}</small></span><StatusPill tone={teacher.acceptsStudents ? "green" : teacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{teacher.availabilityStatus ?? (teacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></button>;
               }) : <EmptyState title="没有匹配的老师" detail="切换视图或清除搜索条件。" />}
             </div>
             <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={(page) => { setTeacherPage(page); setMobilePreview(null); }} />
@@ -3759,9 +3768,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         }
         const sync = body as JiaowubaoCompletedFactsSync;
         setJiaowubaoCompletedFacts(sync);
+        const studentFacts = new Map(sync.students.map((student) => [student.memberId, student]));
+        setStudents((current) => current.map((student) => {
+          const fact = student.jiaowubaoMemberId ? studentFacts.get(student.jiaowubaoMemberId) : undefined;
+          return student.jiaowubaoMemberId ? { ...student, jiaowubaoCompletedPeriod: sync.period, jiaowubaoCompletedHours: fact?.completedHours ?? 0, jiaowubaoCompletedLessons: fact?.completedLessons ?? 0 } : student;
+        }));
         const comparable = (value: string) => value.normalize("NFKC").toLocaleLowerCase("en").replace(/[\s·・.，,，'’`\-—_()（）\[\]【】]/g, "");
         const sourceTeachers = new Map(sync.teachers.map((teacher) => [comparable(teacher.teacherName), teacher.teacherId]));
-        setTeachers((current) => current.map((teacher) => !teacher.jiaowubaoTeacherId && sourceTeachers.has(comparable(teacher.name)) ? { ...teacher, jiaowubaoTeacherId: sourceTeachers.get(comparable(teacher.name)) } : teacher));
+        const teacherFacts = new Map(sync.teachers.map((teacher) => [teacher.teacherId, teacher]));
+        setTeachers((current) => current.map((teacher) => {
+          const sourceId = teacher.jiaowubaoTeacherId ?? sourceTeachers.get(comparable(teacher.name));
+          const fact = sourceId ? teacherFacts.get(sourceId) : undefined;
+          return sourceId ? { ...teacher, jiaowubaoTeacherId: sourceId, jiaowubaoCompletedPeriod: sync.period, jiaowubaoCompletedHours: fact?.completedHours ?? 0, jiaowubaoCompletedLessons: fact?.completedLessons ?? 0 } : teacher;
+        }));
         notify(`已同步 ${sync.period} ${sync.summary.uniqueLessons} 条已关联学生的已结课记录；未修改任何合约或剩余课时。`);
       } catch (error) {
         notify(error instanceof Error ? error.message : "教务宝已结课事实同步失败，请稍后重试。");
