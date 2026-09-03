@@ -16,13 +16,13 @@
 
 ## 试听账号规则
 
-试听不是靠课程 `type` 猜测。请将教务宝中承载试听排课的三个 B 账号的 `mem_id` 写入：
+试听不是靠课程 `type` 猜测。请将教务宝中当前承载试听排课的账号 `mem_id` 写入：
 
 ```text
 JIAOWUBAO_TRIAL_MEMBER_IDS=123,456,789
 ```
 
-三个 ID 必须由学校确认并且完整配置。留空时系统安全地将所有课节列为「待分类」；不是恰好三个 ID、格式错误或重复 ID 都会直接失败，不会把遗漏的试听账号误算为常规。
+每个 ID 都必须由学校确认；可配置一个或多个当前启用的账号。留空时系统安全地将所有课节列为「待分类」；格式错误或重复 ID 会直接失败，不会把未确认账号误算为常规。当前月份只启用 B 账号时，配置 B 的单个 ID 即可。
 
 会议记录提到课程名称，截图则显示真实试听学生名在「班级」字段；接口分别叫 `course_title` 和 `team_title`。对已配置为试听的 B 账号，系统会检查两者开头是否精确匹配「英文名 + 中文名」；班级字段另支持截图中的 `Rita Wu (NZL)` 这类「英文名 + 地区后缀」。只匹配一处，或两处匹配同一姓名时，才将其作为**显示学生姓名**；两处不一致或都未匹配时不会猜测，仍显示原始 `mem_title` B 账号并标为待核对。为避免把课程名误认成学生，纯英文格式不会从 `course_title` 提取。原始账号始终保留在「课节原始明细」中。若学校后续提供权威的 B 账号—学生映射或查询接口，应以该权威来源替换此待核对显示规则。
 
@@ -97,14 +97,14 @@ JIAOWUBAO_LESSON_LIST_AUTH_VALUE=<供应商给出的授权值>
 在 Vercel Production 环境配置下列应用变量：
 
 - `JIAOWUBAO_GATEWAY_SK`：管理端分配并获 `query_lesson_list` 授权的密钥；如要启用学员核验/排课总览，还需分别获 `query_member_simple_list` / `query_schedule_list` 授权；
-- `JIAOWUBAO_TRIAL_MEMBER_IDS`：经学校确认的三个试听 B 账号 ID；
+- `JIAOWUBAO_TRIAL_MEMBER_IDS`：经学校确认、当前启用的试听账号 ID（一个或多个）；
 - `JIAOWUBAO_MONTHLY_PAYROLL_CRON_SECRET`：至少 32 字符的随机值；仅保护可选的 Bearer 导出/诊断端点；
 - `JIAOWUBAO_MONTHLY_PAYROLL_SNAPSHOT_SECRET`：至少 32 字符随机值；用于浏览器核对/下载同一快照。
 
 在 GitHub 仓库中先创建名为 `jiaowubao-payroll` 的 **Environment**，限制可运行人和可读 Secrets 的成员，再在该 Environment 的 Actions secrets 中配置：
 
 - `JIAOWUBAO_GATEWAY_SK`：与部署环境一致的网关密钥；
-- `JIAOWUBAO_TRIAL_MEMBER_IDS`：与部署环境一致的三个试听 B 账号 ID；尚未确认时可留空，生成器会把全部课节标为待分类而不是猜测。
+- `JIAOWUBAO_TRIAL_MEMBER_IDS`：与部署环境一致的当前试听账号 ID；尚未确认时可留空，生成器会把全部课节标为待分类而不是猜测。
 
 如果部署环境覆盖了默认网关地址或 `JIAOWUBAO_LESSON_LIST_MAX_PAGES`，也在该 Environment 的 Actions variables 中配置同名变量。自动任务不会调用部署后的网页端点，也不需要快照或 cron 密钥；它独占单个 GitHub job、启用有界 429 恢复重试，密钥不会写入日志或工作簿。
 
