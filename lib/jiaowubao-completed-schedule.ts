@@ -145,6 +145,25 @@ function text(value: unknown, field: string, maximum = 240) {
   return parsed;
 }
 
+function sourceTeamTitleKind(value: unknown) {
+  if (typeof value === "number") return value === 0 ? "number-zero" : "number-nonzero";
+  if (typeof value === "boolean") return value ? "boolean-true" : "boolean-false";
+  if (Array.isArray(value)) return value.length === 0 ? "array-empty" : "array-nonempty";
+  if (isRecord(value)) return Object.keys(value).length === 0 ? "object-empty" : "object-nonempty";
+  return typeof value;
+}
+
+function sourceTeamTitle(value: unknown) {
+  // This field has used legacy sentinel shapes. Until a shape is explicitly
+  // confirmed, fail closed while exposing only a fixed structural category in
+  // the private scheduler log—never the source value, object keys, or row.
+  if (value === 0) return null;
+  if (value !== undefined && value !== null && value !== "" && typeof value !== "string") {
+    fail(`教务宝已结课排课的 team_title 无效（${sourceTeamTitleKind(value)}）。`);
+  }
+  return text(value, "team_title");
+}
+
 function optionalDecimal(value: unknown, field: string, minimum: number, maximum: number) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = typeof value === "number"
@@ -261,7 +280,7 @@ export function projectJiaowubaoCompletedScheduleRecord(
     // Older one-to-one rows use numeric 0 as the supplier's no-team-title
     // sentinel. Normalize only that raw boundary value; persisted DTOs remain
     // strictly string|null and every other non-string still fails closed.
-    teamTitle: value.team_title === 0 ? null : text(value.team_title, "team_title"),
+    teamTitle: sourceTeamTitle(value.team_title),
     teachers: scheduleTeachers(value),
     completedAt: text(value.over_time, "over_time", 80),
   });

@@ -37,6 +37,16 @@ function sourceRecord(overrides = {}) {
   };
 }
 
+function thrownMessage(action) {
+  try {
+    action();
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    return error.message;
+  }
+  assert.fail("expected action to throw");
+}
+
 test("completed schedule snapshot keeps one role-specific teacher credit per event", () => {
   const record = projectJiaowubaoCompletedScheduleRecord(
     sourceRecord(),
@@ -105,6 +115,28 @@ test("completed schedule normalizes only the supplier's numeric zero team-title 
     async ({ page }) => ({ lists: page === 1 ? [sourceRecord({ team_title: 0 })] : [] }),
   );
   assert.doesNotThrow(() => assertJiaowubaoCompletedScheduleSnapshotIntegrity(snapshot));
+});
+
+test("invalid raw team-title diagnostics expose only a fixed structural category", () => {
+  const period = { start: "2026-08-01", end: "2026-08-31" };
+  const privateMarker = "must-not-reach-the-log";
+  const cases = [
+    [false, "boolean-false"],
+    [true, "boolean-true"],
+    [1, "number-nonzero"],
+    [[], "array-empty"],
+    [[privateMarker], "array-nonempty"],
+    [{}, "object-empty"],
+    [{ [privateMarker]: privateMarker }, "object-nonempty"],
+  ];
+
+  for (const [teamTitle, kind] of cases) {
+    const message = thrownMessage(
+      () => projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: teamTitle }), period),
+    );
+    assert.equal(message, `教务宝已结课排课的 team_title 无效（${kind}）。`);
+    assert.equal(message.includes(privateMarker), false);
+  }
 });
 
 test("completed schedule collector pins over=1 and only stops after an explicit empty page", async () => {
