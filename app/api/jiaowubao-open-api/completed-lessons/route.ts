@@ -13,7 +13,7 @@ import {
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_MAX_PAGES,
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_PAGE_SIZE,
 } from "@/lib/jiaowubao-completed-lesson-pagination";
-import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-sync";
+import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-resumable-sync";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
@@ -302,9 +302,14 @@ export async function POST(request: Request) {
   } catch {
     return noStore({ error: "请求内容无效。" }, 400);
   }
-  if (!payload || Object.keys(payload).length !== 1) return noStore({ error: "请求内容无效。" }, 400);
+  const keys = payload ? Object.keys(payload) : [];
+  if (!payload || !keys.includes("month") || keys.some((key) => key !== "month" && key !== "force")) {
+    return noStore({ error: "请求内容无效。" }, 400);
+  }
   const month = exactMonth(payload.month);
   if (!month) return noStore({ error: "month 必须使用 YYYY-MM。" }, 400);
+  const force = payload.force === undefined ? false : payload.force === true;
+  if (payload.force !== undefined && !force) return noStore({ error: "force 必须为 true。" }, 400);
   try {
     validateJiaowubaoClosedCompletedLessonMonth(month);
   } catch {
@@ -314,12 +319,18 @@ export async function POST(request: Request) {
     return noStore({ error: "已消课同步请求过于频繁，请稍后再试。", code: "jiaowubao_completed_lesson_rate_limited" }, 429);
   }
   try {
-    const sync = await syncJiaowubaoCompletedLessonMonth({ month });
-    if (sync.outcome === "already_running") {
+    const sync = await syncJiaowubaoCompletedLessonMonth({ month, force });
+    if (sync.outcome === "already_running" || sync.outcome === "in_progress") {
       return noStore({
         outcome: sync.outcome,
         month,
         retryAfterSeconds: sync.retryAfterSeconds ?? 0,
+        ...(sync.outcome === "in_progress" ? {
+          memberCount: sync.memberCount ?? 0,
+          completedMemberCount: sync.completedMemberCount ?? 0,
+          rowCount: sync.rowCount ?? 0,
+          sourcePageCount: sync.sourcePageCount ?? 0,
+        } : {}),
       }, 202);
     }
     return noStore({ sync });

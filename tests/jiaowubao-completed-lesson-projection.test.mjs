@@ -126,6 +126,23 @@ test("archived students remain available to a historical completed-month identit
   assert.equal(projection.items[0].displayStudentName, "Former Learner");
 });
 
+test("durable historical JWB member IDs remain valid identity evidence", () => {
+  const rows = stateRows();
+  rows[0].payload.push({
+    id: "stu-historical",
+    name: "Historical Learner",
+    importArchived: true,
+    historicalJwbSnapshot: { retained: { jwbSourceRow: 704 } },
+  });
+  const record = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ mem_id: 704, mem_title: "Historical Learner", type: 1, course_title: "Historical English" }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: rows });
+  assert.equal(projection.items[0].studentId, "stu-historical");
+  assert.equal(projection.items[0].studentMatch, "source_id");
+});
+
 test("schedule role credits count once while group student evidence stays itemized", () => {
   const records = [
     projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: 701, hours: 1 }), { start: "2026-08-01", end: "2026-08-31" }),
