@@ -7,6 +7,7 @@ const {
   collectJiaowubaoCompletedScheduleSnapshot,
   collectJiaowubaoCompletedScheduleSnapshotWithMemberIds,
   projectJiaowubaoCompletedScheduleRecord,
+  readJiaowubaoCompletedScheduleSnapshotRecord,
 } = await import("../lib/jiaowubao-completed-schedule.ts");
 
 function sourceRecord(overrides = {}) {
@@ -79,6 +80,31 @@ test("completed schedule drops only the supplier's blank zero-hour teacher senti
     // reconciliation instead of being silently discarded.
     { role: "third", id: null, name: null, hours: 0.5 },
   ]);
+});
+
+test("completed schedule normalizes only the supplier's numeric zero team-title sentinel", async () => {
+  const period = { start: "2026-08-01", end: "2026-08-31" };
+  const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: 0 }), period);
+  assert.equal(record.teamTitle, null);
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(record), record);
+
+  for (const teamTitle of [1, {}, []]) {
+    assert.throws(
+      () => projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: teamTitle }), period),
+      /team_title 无效/,
+    );
+  }
+
+  assert.throws(
+    () => readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, teamTitle: 0 }),
+    /teamTitle 无效/,
+  );
+
+  const snapshot = await collectJiaowubaoCompletedScheduleSnapshot(
+    period,
+    async ({ page }) => ({ lists: page === 1 ? [sourceRecord({ team_title: 0 })] : [] }),
+  );
+  assert.doesNotThrow(() => assertJiaowubaoCompletedScheduleSnapshotIntegrity(snapshot));
 });
 
 test("completed schedule collector pins over=1 and only stops after an explicit empty page", async () => {
