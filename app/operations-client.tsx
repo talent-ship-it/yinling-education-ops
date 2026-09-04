@@ -90,8 +90,12 @@ import { findJiaowubaoAuthorityStatus } from "@/lib/jiaowubao-authority-status";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel, type PayrollExportRow } from "@/lib/payroll-export";
 import {
+  currentJiaowubaoPayrollExportEvidence,
+  JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON,
   jiaowubaoPayrollStudentAggregationKey,
+  jiaowubaoPayrollSourceVersionIsCurrent,
   overlayPersistedPayrollWithJiaowubaoEvidence,
+  payrollLockSnapshotIsCurrent,
   reviewOnlyPersistedPayrollWithJiaowubaoEvidence,
 } from "@/lib/jiaowubao-completed-lesson-payroll-evidence";
 import {
@@ -183,6 +187,7 @@ import {
 } from "@/app/jiaowubao-imported-schedule";
 import {
   completeJiaowubaoCompletedMonthEvidencePages,
+  jiaowubaoCompletedMonthEvidenceMatchesExportVersion,
   jiaowubaoCompletedMonthEvidenceReadyForPayrollLock,
   parseJiaowubaoCompletedMonthEvidencePage,
   type JiaowubaoCompletedLessonFeed,
@@ -1576,6 +1581,7 @@ function useSharedState<T>(
   }, [entity, onSync]);
 
   const getCurrentVersion = useCallback(() => versionRef.current, []);
+  const getCurrentValue = useCallback(() => valueRef.current, []);
 
   const mutateAndCommit = useCallback((desired: SharedStateDesired<T>) => {
     if (readOnly) return Promise.reject(new Error(`${entity} 只读，不能保存`));
@@ -1761,7 +1767,7 @@ function useSharedState<T>(
     return queued;
   }, [actor, entity, onSync, readOnly, scopeVersionsKey]);
 
-  return [value, setValue, { version, applyRemote, getCurrentVersion, mutateAndCommit }] as const;
+  return [value, setValue, { version, applyRemote, getCurrentVersion, getCurrentValue, mutateAndCommit }] as const;
 }
 
 function nowLabel(preferences = defaultDisplayPreferences()) {
@@ -2861,6 +2867,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     [payrollState],
   );
   const commitPayroll = payrollShared.mutateAndCommit;
+  const getCurrentPayrollState = payrollShared.getCurrentValue;
+  const getCurrentPayrollVersion = payrollShared.getCurrentVersion;
   const mutatePayrollAndCommit = useCallback((desired: SharedStateDesired<PayrollRow[]>) => (
     commitPayroll((current) => {
       const currentSummaryRows = current.filter((row): row is PayrollRow => !("kind" in row));
@@ -3242,6 +3250,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [jiaowubaoCompletedLessonLoading, setJiaowubaoCompletedLessonLoading] = useState(false);
   const [jiaowubaoCompletedLessonError, setJiaowubaoCompletedLessonError] = useState(false);
   const [jiaowubaoCompletedLessonSyncing, setJiaowubaoCompletedLessonSyncing] = useState(false);
+  const [jiaowubaoCompletedLessonExporting, setJiaowubaoCompletedLessonExporting] = useState(false);
+  const jiaowubaoCompletedLessonExportRunRef = useRef(false);
   const jiaowubaoCompletedLessonEvidenceByTeacherMonth = useMemo(() => {
     const evidence = new Map<string, Readonly<{
       summary: JiaowubaoCompletedLessonTeacherSummary;
@@ -3400,24 +3410,42 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const persisted = payroll.map((row, sourceIndex): PayrollDisplayRow => {
       const ordinal = persistedOrdinals.get(row.id) ?? 0;
       persistedOrdinals.set(row.id, ordinal + 1);
+      const currentFeedForRow = jiaowubaoCompletedLessonFeed?.state === "complete"
+        && jiaowubaoCompletedLessonFeed.month === row.month
+        ? jiaowubaoCompletedLessonFeed
+        : null;
       const source = jiaowubaoCompletedLessonEvidenceByTeacherMonth.get(payrollTeacherMonthKey(row.teacherId, row.month));
       const sourceEvidence = source ? {
           sourceHours: source.summary.sourceHours,
           sourceLessonCount: source.summary.sourceLessonCount,
           sourceNoShowHours: null,
           lines: source.lines,
+        } : currentFeedForRow ? {
+          sourceHours: null,
+          sourceLessonCount: null,
+          sourceNoShowHours: null,
+          lines: [] as PayrollLine[],
         } : null;
       const refreshed = source && sourceEvidence
         ? overlayPersistedPayrollWithJiaowubaoEvidence(row, sourceEvidence)
         : null;
-      const sourceReviewReason = source && refreshed
-        ? !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary)
-          ? jiaowubaoCompletedLessonSourceReviewLabel(source.summary)
-          : refreshed.hourVariance !== null && Math.abs(refreshed.hourVariance) > 0.01
-            ? "薪资表课时与教务宝课时不一致"
-            : null
+      const sourceReviewReason = currentFeedForRow && sourceEvidence
+        ? !source
+          ? "当前月份没有教务宝来源资料"
+          : !jiaowubaoPayrollSourceVersionIsCurrent({
+            persistedSourceRevision: row.sourceRevision,
+            persistedProjectionRevision: row.sourceProjectionRevision,
+            currentSourceRevision: currentFeedForRow.revision,
+            currentProjectionRevision: currentFeedForRow.projectionRevision,
+          })
+            ? JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON
+            : !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary)
+              ? jiaowubaoCompletedLessonSourceReviewLabel(source.summary)
+              : refreshed && refreshed.hourVariance !== null && Math.abs(refreshed.hourVariance) > 0.01
+                ? "薪资表课时与教务宝课时不一致"
+                : null
         : null;
-      const displayRow = source && sourceEvidence && sourceReviewReason
+      const displayRow = sourceEvidence && sourceReviewReason
         ? reviewOnlyPersistedPayrollWithJiaowubaoEvidence(row, sourceEvidence, {
           reviewReason: sourceReviewReason,
         })
@@ -3439,7 +3467,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       };
     });
     return [...persisted, ...automatic];
-  }, [automaticPayrollRows, jiaowubaoCompletedLessonEvidenceByTeacherMonth, payroll]);
+  }, [automaticPayrollRows, jiaowubaoCompletedLessonEvidenceByTeacherMonth, jiaowubaoCompletedLessonFeed, payroll]);
   const availablePayrollMonths = useMemo(
     () => Array.from(new Set(payrollDisplayRows.map((row) => row.month).filter((month): month is string => Boolean(month)))).sort().reverse(),
     [payrollDisplayRows],
@@ -4374,7 +4402,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [displayPreferences.language]);
 
   const syncJiaowubaoCompletedLessons = async () => {
-    if (jiaowubaoCompletedLessonSyncing) return;
+    if (jiaowubaoCompletedLessonSyncing || jiaowubaoCompletedLessonExporting) return;
     const month = activePayrollMonth;
     setJiaowubaoCompletedLessonSyncing(true);
     setJiaowubaoCompletedLessonError(false);
@@ -9686,6 +9714,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       syncing: jiaowubaoCompletedLessonSyncing,
     });
     const canExportCurrentPayroll = hasReadyJiaowubaoEvidenceForPayrollMonth
+      && !jiaowubaoCompletedLessonExporting
       && (monthPayroll.length > 0 || unmatchedJiaowubaoPayrollExportRows.length > 0);
     const cnyTotal = monthPayroll
       .filter((row) => row.currency === "CNY")
@@ -9698,19 +9727,72 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         total + (row.teacherTotalHours ?? row.lessons + row.trialLessons),
       0,
     );
-    const jiaowubaoPayrollLockBlockReason = (row: PayrollDisplayRow) => {
-      if (!hasReadyJiaowubaoEvidenceForPayrollMonth || row.month !== activePayrollMonth) {
+    const jiaowubaoPayrollSourceLockBlockReason = (
+      row: PayrollRow,
+      feed: JiaowubaoCompletedLessonFeed | null,
+    ) => {
+      if (feed?.state !== "complete" || feed.month !== row.month) {
         return "该月份的教务宝双源资料尚未完整读取；请先完成同步并核对后再锁定。";
-      }
-      if (row.paymentReviewOnly) {
-        return "该老师当前只有待核对来源资料，不能锁定或付款。";
       }
       const source = jiaowubaoCompletedLessonEvidenceByTeacherMonth.get(
         payrollTeacherMonthKey(row.teacherId, row.month),
       );
-      return source && !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary)
+      if (!source) {
+        return "该老师没有当前月份的教务宝来源资料，不能锁定或付款。";
+      }
+      if (!jiaowubaoPayrollSourceVersionIsCurrent({
+        persistedSourceRevision: row.sourceRevision,
+        persistedProjectionRevision: row.sourceProjectionRevision,
+        currentSourceRevision: feed.revision,
+        currentProjectionRevision: feed.projectionRevision,
+      })) {
+        return `${JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON}，不能锁定或付款。`;
+      }
+      return !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary)
         ? "该老师的教务宝课时或试听分类仍待核对，不能锁定或付款。"
         : null;
+    };
+    const jiaowubaoPayrollLockBlockReason = (row: PayrollDisplayRow) => {
+      if (!hasReadyJiaowubaoEvidenceForPayrollMonth || row.month !== activePayrollMonth) {
+        return "该月份的教务宝双源资料尚未完整读取；请先完成同步并核对后再锁定。";
+      }
+      const sourceBlockReason = jiaowubaoPayrollSourceLockBlockReason(row, jiaowubaoCompletedLessonFeed);
+      if (sourceBlockReason) return sourceBlockReason;
+      return row.paymentReviewOnly
+        ? "该老师当前只有待核对来源资料，不能锁定或付款。"
+        : null;
+    };
+    const revalidateJiaowubaoPayrollLock = async (rows: readonly PayrollRow[]) => {
+      const reviewedFeed = jiaowubaoCompletedLessonFeed;
+      if (reviewedFeed?.state !== "complete" || reviewedFeed.month !== activePayrollMonth) {
+        notify("该月份的教务宝双源资料尚未完整读取；请先完成同步并核对后再锁定。");
+        return null;
+      }
+      let freshFeed: JiaowubaoCompletedLessonFeed;
+      try {
+        freshFeed = await loadAllJiaowubaoCompletedLessonPages({ month: activePayrollMonth });
+      } catch {
+        notify("锁定前无法读取最新教务宝双源资料；本次未锁定，请稍后重试。");
+        return null;
+      }
+      if (!jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+        current: reviewedFeed,
+        fresh: freshFeed,
+        month: activePayrollMonth,
+      })) {
+        setJiaowubaoCompletedLessonFeed(freshFeed);
+        setJiaowubaoCompletedLessonError(false);
+        notify("教务宝来源或姓名映射已更新；页面已刷新，请核对最新资料后再锁定。");
+        return null;
+      }
+      const sourceBlockReason = rows
+        .map((row) => jiaowubaoPayrollSourceLockBlockReason(row, freshFeed))
+        .find((reason) => reason !== null);
+      if (sourceBlockReason) {
+        notify(sourceBlockReason);
+        return null;
+      }
+      return freshFeed;
     };
     const hasUnresolvedJiaowubaoEvidence = (row: PayrollDisplayRow) => {
       return jiaowubaoPayrollLockBlockReason(row) !== null;
@@ -9750,11 +9832,20 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ],
         confirmLabel: "确认锁定",
         onConfirm: async () => {
+          const freshFeed = await revalidateJiaowubaoPayrollLock([row]);
+          if (!freshFeed) return;
+          const currentRows = getCurrentPayrollState()
+            .filter((item): item is PayrollRow => !("kind" in item));
+          if (!payrollLockSnapshotIsCurrent(currentRows[sourceIndex], row)) {
+            notify("薪资资料已更新，请核对后重试。");
+            return;
+          }
           try {
             await mutatePayrollAndCommit((current) => {
-              if (current[sourceIndex]?.id !== row.id) {
-                throw new Error("薪资列表已变化，请刷新后重试");
-              }
+              const currentRow = current[sourceIndex];
+              if (!payrollLockSnapshotIsCurrent(currentRow, row)) throw new Error("薪资资料已更新，请核对后重试");
+              const sourceBlockReason = jiaowubaoPayrollSourceLockBlockReason(currentRow, freshFeed);
+              if (sourceBlockReason) throw new Error(sourceBlockReason);
               return current.map((item, index) =>
                 index === sourceIndex ? {
                     ...item,
@@ -9824,11 +9915,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ],
         confirmLabel: `锁定 ${readyRows.length} 条`,
         onConfirm: async () => {
+          const expectedRows = readyTargets.map((target) => target.row);
+          const freshFeed = await revalidateJiaowubaoPayrollLock(expectedRows);
+          if (!freshFeed) return;
+          const currentRows = getCurrentPayrollState()
+            .filter((item): item is PayrollRow => !("kind" in item));
+          if (readyTargets.some((target) => !payrollLockSnapshotIsCurrent(currentRows[target.sourceIndex], target.row))) {
+            notify("薪资资料已更新，请核对后重试。");
+            return;
+          }
           const readyIndexes = new Set(readyTargets.map((target) => target.sourceIndex));
           try {
             await mutatePayrollAndCommit((current) => {
-              if (readyTargets.some((target) => current[target.sourceIndex]?.id !== target.row.id)) {
-                throw new Error("薪资列表已变化，请刷新后重试");
+              for (const target of readyTargets) {
+                const currentRow = current[target.sourceIndex];
+                if (!payrollLockSnapshotIsCurrent(currentRow, target.row)) {
+                  throw new Error("薪资资料已更新，请核对后重试");
+                }
+                const sourceBlockReason = jiaowubaoPayrollSourceLockBlockReason(currentRow, freshFeed);
+                if (sourceBlockReason) throw new Error(sourceBlockReason);
               }
               return current.map((row, index) =>
                 readyIndexes.has(index) ? {
@@ -9861,70 +9966,144 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       });
     };
 
-    const exportCurrentPayroll = () => {
+    const exportCurrentPayroll = async () => {
+      if (jiaowubaoCompletedLessonExportRunRef.current) return;
       if (!hasReadyJiaowubaoEvidenceForPayrollMonth || !jiaowubaoCompletedLessonFeed) {
         notify("该月份的教务宝双源资料尚未完整读取，不能导出完整版。");
         return;
       }
-      const unmatchedSourceRows = unmatchedJiaowubaoPayrollExportRows;
-      const exportRows: PayrollExportRow[] = [
-        ...monthPayroll.map((row): PayrollExportRow => {
-          const source = jiaowubaoCompletedLessonEvidenceByTeacherMonth.get(
-            payrollTeacherMonthKey(row.teacherId, row.month),
+      const month = activePayrollMonth;
+      const reviewedFeed = jiaowubaoCompletedLessonFeed;
+      const renderedPayrollPayload = JSON.stringify(payrollState);
+      const payrollPayloadAtStart = JSON.stringify(getCurrentPayrollState());
+      const payrollVersionAtStart = getCurrentPayrollVersion();
+      if (payrollPayloadAtStart !== renderedPayrollPayload) {
+        notify("薪资资料已更新，请核对后重试。");
+        return;
+      }
+      const payrollSnapshotStillCurrent = () => (
+        getCurrentPayrollVersion() === payrollVersionAtStart
+        && JSON.stringify(getCurrentPayrollState()) === payrollPayloadAtStart
+      );
+      jiaowubaoCompletedLessonExportRunRef.current = true;
+      setJiaowubaoCompletedLessonExporting(true);
+      try {
+        let freshFeed: JiaowubaoCompletedLessonFeed;
+        try {
+          freshFeed = await loadAllJiaowubaoCompletedLessonPages({ month });
+        } catch {
+          notify("导出前无法读取最新教务宝双源资料；本次未下载，请稍后重试。");
+          return;
+        }
+        if (!payrollSnapshotStillCurrent()) {
+          notify("薪资资料已更新，请核对后重试。");
+          return;
+        }
+        if (!jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+          current: reviewedFeed,
+          fresh: freshFeed,
+          month,
+        })) {
+          setJiaowubaoCompletedLessonFeed(freshFeed);
+          setJiaowubaoCompletedLessonError(false);
+          notify(freshFeed.state === "complete"
+            ? "教务宝来源或姓名映射已更新；页面已刷新，请核对最新资料后重新导出。"
+            : "该月份目前没有完整已发布的教务宝快照，不能导出完整版。");
+          return;
+        }
+        try {
+          const unmatchedSourceRows = unmatchedJiaowubaoPayrollExportRows;
+          const exportRows: PayrollExportRow[] = [
+            ...monthPayroll.map((row): PayrollExportRow => {
+              const source = jiaowubaoCompletedLessonEvidenceByTeacherMonth.get(
+                payrollTeacherMonthKey(row.teacherId, row.month),
+              );
+              const currentEvidence = currentJiaowubaoPayrollExportEvidence(source);
+              const sourceVersionIsCurrent = jiaowubaoPayrollSourceVersionIsCurrent({
+                persistedSourceRevision: row.sourceRevision,
+                persistedProjectionRevision: row.sourceProjectionRevision,
+                currentSourceRevision: freshFeed.revision,
+                currentProjectionRevision: freshFeed.projectionRevision,
+              });
+              const paymentMode = row.paymentReviewOnly || !source || !sourceVersionIsCurrent || row.status === "需核对"
+                ? "review_only"
+                : "payable";
+              return {
+                teacherKey: source?.summary.identityKey ?? `internal:${row.teacherId}`,
+                teacherId: row.teacherId,
+                sourceTeacherId: source?.summary.sourceTeacherId,
+                teacherName: teacherById(row.teacherId)?.name ?? row.teacherName ?? row.teacherId,
+                month: row.month ?? month,
+                section: row.section ?? "教师薪资",
+                currency: row.currency ?? "AUD",
+                status: paymentMode === "review_only" ? "需核对" : row.status,
+                payrollHours: paymentMode === "review_only" ? 0 : row.teacherTotalHours ?? row.lessons + row.trialLessons,
+                sourceHours: currentEvidence.sourceHours,
+                sourceLessonCount: currentEvidence.sourceLessonCount,
+                amount: paymentMode === "review_only" ? 0 : row.amount,
+                bankName: paymentMode === "review_only" ? undefined : row.bankName,
+                bankAccount: paymentMode === "review_only" ? undefined : row.bankAccount,
+                paymentNote: paymentMode === "review_only" ? undefined : row.paymentNote ?? row.note,
+                lockedBy: paymentMode === "review_only" ? undefined : row.lockedBy,
+                lockedAt: paymentMode === "review_only" ? undefined : row.lockedAt,
+                paymentMode,
+                lines: currentEvidence.lines,
+              };
+            }),
+            ...unmatchedSourceRows,
+          ];
+          const teacherLessonSourceKeysByTeacher = new Map(
+            [...freshFeed.teacherEvidenceSourceKeys.entries()].map(([teacherKey, sourceKeys]) => [
+              teacherKey,
+              [...sourceKeys].sort(),
+            ] as const),
           );
-          const paymentMode = row.paymentReviewOnly || !source || row.status === "需核对"
-            ? "review_only"
-            : "payable";
-          return {
-            teacherKey: source?.summary.identityKey ?? `internal:${row.teacherId}`,
-            teacherId: row.teacherId,
-            sourceTeacherId: source?.summary.sourceTeacherId,
-            teacherName: teacherById(row.teacherId)?.name ?? row.teacherName ?? row.teacherId,
-            month: row.month ?? activePayrollMonth,
-            section: row.section ?? "教师薪资",
-            currency: row.currency ?? "AUD",
-            status: paymentMode === "review_only" ? "需核对" : row.status,
-            payrollHours: paymentMode === "review_only" ? 0 : row.teacherTotalHours ?? row.lessons + row.trialLessons,
-            sourceHours: source?.summary.sourceHours ?? row.sourceHours,
-            sourceLessonCount: source?.summary.sourceLessonCount ?? row.sourceLessonCount,
-            amount: paymentMode === "review_only" ? 0 : row.amount,
-            bankName: paymentMode === "review_only" ? undefined : row.bankName,
-            bankAccount: paymentMode === "review_only" ? undefined : row.bankAccount,
-            paymentNote: paymentMode === "review_only" ? undefined : row.paymentNote ?? row.note,
-            lockedBy: paymentMode === "review_only" ? undefined : row.lockedBy,
-            lockedAt: paymentMode === "review_only" ? undefined : row.lockedAt,
-            paymentMode,
-            lines: (row.lines ?? []).map((line) => ({
-              ...line,
-              ...(line.evidenceOnly ? { evidenceOnly: true } : {}),
-            })),
-          };
-        }),
-        ...unmatchedSourceRows,
-      ];
-      downloadPayrollExcel({
-        month: activePayrollMonth,
-        generatedAt: new Date().toISOString(),
-        rows: exportRows,
-        evidence: {
-          revision: jiaowubaoCompletedLessonFeed.revision,
-          projectionRevision: jiaowubaoCompletedLessonFeed.projectionRevision,
-          publishedAt: jiaowubaoCompletedLessonFeed.publishedAt,
-          lessonRowCount: jiaowubaoCompletedLessonFeed.rowCount,
-          scheduleRowCount: jiaowubaoCompletedLessonFeed.scheduleRowCount,
-          matchCounts: {
-            matchedStudents: jiaowubaoCompletedLessonFeed.matchedStudentCount,
-            unmatchedStudents: jiaowubaoCompletedLessonFeed.unmatchedStudentCount,
-            ambiguousStudents: jiaowubaoCompletedLessonFeed.ambiguousStudentCount,
-            matchedTeachers: jiaowubaoCompletedLessonFeed.matchedTeacherCount,
-            unmatchedTeachers: jiaowubaoCompletedLessonFeed.unmatchedTeacherCount,
-            ambiguousTeachers: jiaowubaoCompletedLessonFeed.ambiguousTeacherCount,
-          },
-          lessons: jiaowubaoCompletedLessonFeed.items,
-          schedules: jiaowubaoCompletedLessonFeed.scheduleEvents,
-        },
-      });
-      addAudit("导出月度课时 XLSX", `${activePayrollMonth} · ${exportRows.length} 位老师`, "blue");
+          // Persisted/internal review-only rows may have no current JWB role.
+          // Give each one an explicit empty expectation so the workbook can
+          // still require a unique row and reject any stale student evidence.
+          for (const row of exportRows) {
+            if (!teacherLessonSourceKeysByTeacher.has(row.teacherKey)) {
+              teacherLessonSourceKeysByTeacher.set(row.teacherKey, []);
+            }
+          }
+          const teacherLessonSourceKeys = [...teacherLessonSourceKeysByTeacher.entries()]
+            .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+            .map(([teacherKey, sourceKeys]) => ({ teacherKey, sourceKeys }));
+          if (!payrollSnapshotStillCurrent()) {
+            notify("薪资资料已更新，请核对后重试。");
+            return;
+          }
+          downloadPayrollExcel({
+            month,
+            generatedAt: new Date().toISOString(),
+            rows: exportRows,
+            evidence: {
+              revision: freshFeed.revision,
+              projectionRevision: freshFeed.projectionRevision,
+              publishedAt: freshFeed.publishedAt,
+              lessonRowCount: freshFeed.rowCount,
+              scheduleRowCount: freshFeed.scheduleRowCount,
+              teacherLessonSourceKeys,
+              matchCounts: {
+                matchedStudents: freshFeed.matchedStudentCount,
+                unmatchedStudents: freshFeed.unmatchedStudentCount,
+                ambiguousStudents: freshFeed.ambiguousStudentCount,
+                matchedTeachers: freshFeed.matchedTeacherCount,
+                unmatchedTeachers: freshFeed.unmatchedTeacherCount,
+                ambiguousTeachers: freshFeed.ambiguousTeacherCount,
+              },
+              lessons: freshFeed.items,
+              schedules: freshFeed.scheduleEvents,
+            },
+          });
+          addAudit("导出月度课时 XLSX", `${month} · ${exportRows.length} 位老师`, "blue");
+        } catch {
+          notify("薪资工作簿校验或下载准备失败；本次未下载，请核对重复老师和来源明细后重试。");
+        }
+      } finally {
+        jiaowubaoCompletedLessonExportRunRef.current = false;
+        setJiaowubaoCompletedLessonExporting(false);
+      }
     };
 
     return (
@@ -9939,6 +10118,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <input
                   type="month"
                   value={activePayrollMonth}
+                  disabled={jiaowubaoCompletedLessonExporting}
                   onChange={(event) => {
                     setPayrollMonthSelection(event.target.value);
                     setPayrollPage(1);
@@ -9947,19 +10127,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   aria-label="薪资月份"
                 />
               </label>
-              <button className="secondary-button" type="button" disabled={!canExportCurrentPayroll} onClick={exportCurrentPayroll}>
-                <Download size={17} /> 导出本月 Excel
+              <button className="secondary-button" type="button" disabled={!canExportCurrentPayroll} onClick={() => void exportCurrentPayroll()}>
+                <Download size={17} /> {jiaowubaoCompletedLessonExporting ? "校验来源…" : "导出本月 Excel"}
               </button>
               <button
                 className="secondary-button"
                 type="button"
-                disabled={jiaowubaoCompletedLessonLoading || jiaowubaoCompletedLessonSyncing || activePayrollMonth >= melbourneExamMonth}
+                disabled={jiaowubaoCompletedLessonLoading || jiaowubaoCompletedLessonSyncing || jiaowubaoCompletedLessonExporting || activePayrollMonth >= melbourneExamMonth}
                 title={activePayrollMonth >= melbourneExamMonth ? "只能同步已完整结束的墨尔本自然月" : undefined}
                 onClick={() => void syncJiaowubaoCompletedLessons()}
               >
                 <RefreshCw size={17} /> {jiaowubaoCompletedLessonSyncing ? "正在同步已消课…" : "同步教务宝已消课"}
               </button>
-              <button className="primary-button" type="button" onClick={() => setModal("payrollNew")}>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={jiaowubaoCompletedLessonExporting}
+                onClick={() => setModal("payrollNew")}
+              >
                 <UserPlus size={17} /> 新增老师薪资
               </button>
             </>
@@ -10052,7 +10237,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <button
                 className="secondary-button"
                 type="button"
-                disabled={!hasReadyJiaowubaoEvidenceForPayrollMonth || !monthPayroll.some((row) => row.status === "可审核")}
+                disabled={jiaowubaoCompletedLessonExporting || !hasReadyJiaowubaoEvidenceForPayrollMonth || !monthPayroll.some((row) => row.status === "可审核")}
                 onClick={lockAllReadyPayroll}
               >
                 <ShieldCheck size={16} /> 批量锁定可审核
@@ -10261,6 +10446,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   <button
                     className="secondary-button full"
                     type="button"
+                    disabled={jiaowubaoCompletedLessonExporting}
                     onClick={() => {
                       const persisted = selectedPayroll.sourceIndex === null
                         ? automaticPayrollRows.find((row) => row.id === selectedPayroll.id)
@@ -10309,7 +10495,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     <button
                       className="primary-button full"
                       type="button"
-                      disabled={Boolean(jiaowubaoPayrollLockBlockReason(selectedPayroll))}
+                      disabled={jiaowubaoCompletedLessonExporting || Boolean(jiaowubaoPayrollLockBlockReason(selectedPayroll))}
                       onClick={() => lockPayrollRow(selectedPayroll)}
                     >
                       <ShieldCheck size={16} /> 人工锁定此老师薪资
