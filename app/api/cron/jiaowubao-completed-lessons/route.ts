@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { parseJiaowubaoCompletedLessonCronOperation } from "@/lib/jiaowubao-completed-lesson-cron-request";
 import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-resumable-sync";
 import { JiaowubaoOpenApiError } from "@/lib/jiaowubao-open-api-node";
 import { getJiaowubaoCompletedLessonPendingMonth } from "@/lib/ops-store";
@@ -71,14 +72,22 @@ function safeSyncFailure(error: unknown) {
 
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
-  let month = previousMelbourneMonth();
+  const operation = parseJiaowubaoCompletedLessonCronOperation(request.url);
+  if (!operation) return noStore({ error: "Not found" }, 404);
+  let month = operation.month ?? previousMelbourneMonth();
   try {
-    const pending = await getJiaowubaoCompletedLessonPendingMonth({ actor: "Ops Admin" });
-    if (!pending || (pending.month !== null && (typeof pending.month !== "string" || !/^\d{4}-\d{2}$/u.test(pending.month)))) {
-      throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
+    if (!operation.force) {
+      const pending = await getJiaowubaoCompletedLessonPendingMonth({ actor: "Ops Admin" });
+      if (!pending || (pending.month !== null && (typeof pending.month !== "string" || !/^\d{4}-\d{2}$/u.test(pending.month)))) {
+        throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
+      }
+      month = pending.month ?? month;
     }
-    month = pending.month ?? month;
-    const sync = await syncJiaowubaoCompletedLessonMonth({ month });
+    const sync = await syncJiaowubaoCompletedLessonMonth({
+      month,
+      force: operation.force,
+      forceIfBlockedOnly: operation.force,
+    });
     const status = sync.outcome === "already_running" || sync.outcome === "in_progress" ? 202 : 200;
     return noStore(sync, status);
   } catch (error) {

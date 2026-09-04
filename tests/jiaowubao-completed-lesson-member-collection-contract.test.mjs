@@ -152,6 +152,16 @@ test("deterministic supplier rejection blocks automatic retries but manual refre
   assert.match(operationsClient, /JSON\.stringify\(\{ month, force: true \}\)/);
 });
 
+test("scheduler bearer force is checked against the blocked run after acquiring the same-month lease", () => {
+  const lease = sync.indexOf("await claimJiaowubaoCompletedLessonSyncLease");
+  const collection = sync.indexOf("await getJiaowubaoCompletedLessonMemberCollection", lease);
+  const blockedOnly = sync.indexOf("forceIfBlockedOnly && collection?.state !== \"blocked\"", collection);
+  const reset = sync.indexOf("if (collection?.state === \"blocked\")", blockedOnly);
+  assert.ok(lease >= 0 && collection > lease && blockedOnly > collection && reset > blockedOnly);
+  assert.match(sync, /forceIfBlockedOnly && !force[\s\S]*blocked_force_invalid/);
+  assert.match(cronRoute, /forceIfBlockedOnly: operation\.force/);
+});
+
 test("both server routes use the resumable sync and expose progress without source records", () => {
   for (const route of [cronRoute, browserRoute]) {
     assert.match(route, /jiaowubao-completed-lesson-resumable-sync/);

@@ -141,5 +141,8 @@ test("only `over=1` completed evidence reaches the browser route and scheduled j
   assert.match(cronRoute, /\? "schedules"/);
   assert.match(cronRoute, /kind: "source_validation"/);
   assert.match(cronRoute, /failure: safeSyncFailure\(error\)/);
+  assert.match(cronRoute, /if \(!hasCronSecret\(request\)\)[\s\S]*parseJiaowubaoCompletedLessonCronOperation\(request\.url\)/);
+  assert.match(cronRoute, /if \(!operation\.force\)[\s\S]*getJiaowubaoCompletedLessonPendingMonth/);
+  assert.match(cronRoute, /syncJiaowubaoCompletedLessonMonth\(\{[\s\S]*force: operation\.force,[\s\S]*forceIfBlockedOnly: operation\.force/);
   assert.doesNotMatch(cronRoute, /failure:\s*error\b|console\.error\([^\n]*,\s*error\b/);
 });

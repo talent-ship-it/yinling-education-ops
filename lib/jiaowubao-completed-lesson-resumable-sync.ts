@@ -359,9 +359,14 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
   month: string;
   now?: number;
   force?: boolean;
+  forceIfBlockedOnly?: boolean;
 }>): Promise<JiaowubaoCompletedLessonSyncResult> {
   const now = input.now ?? Date.now();
   const force = input.force === true;
+  const forceIfBlockedOnly = input.forceIfBlockedOnly === true;
+  if (forceIfBlockedOnly && !force) {
+    throw new Error("jiaowubao_completed_lesson_blocked_force_invalid");
+  }
   const period = validateJiaowubaoClosedCompletedLessonMonth(input.month, new Date(now));
   const runKey = `jwb-completed-lessons-sync:${now}:${period.month}`;
   const workerStartedAt = Date.now();
@@ -381,6 +386,12 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       await getJiaowubaoCompletedLessonMemberCollection({ month: period.month, runKey, actor: ACTOR }),
       period.month,
     );
+    // This check runs only after the same-month lease is acquired. A delayed
+    // bearer replay therefore cannot force a second rebuild after another
+    // recovery has already advanced the month beyond its blocked run.
+    if (forceIfBlockedOnly && collection?.state !== "blocked") {
+      throw new Error("jiaowubao_completed_lesson_blocked_force_unavailable");
+    }
     if (collection?.state === "blocked" && !force) return blockedResult(collection);
 
     const preflight = await getJiaowubaoCompletedLessonSnapshotPreflight({ month: period.month, actor: ACTOR });
