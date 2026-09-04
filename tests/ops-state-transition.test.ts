@@ -1148,6 +1148,56 @@ test("payroll summary writes validate month, status, currency, amounts, teachers
   }, payrollLedger]), rejected);
 });
 
+test("completed Jiaowubao student evidence never multiplies a teacher payroll total", () => {
+  const current = [payrollSummary, payrollLedger];
+  const completedEvidence = {
+    id: "PAY-JWB-2",
+    teacherId: "T-2",
+    teacherName: "Teacher Two",
+    month: "2026-09",
+    section: "教务宝已消课",
+    currency: "AUD",
+    lessons: 1,
+    trialLessons: 1,
+    teacherTotalHours: 2,
+    teacherTotalAmount: 60,
+    sourceHours: 2,
+    sourceLessonCount: 2,
+    amount: 60,
+    status: "需核对",
+    note: "已消课来源",
+    source: "jiaowubao-completed-lessons",
+    lineCount: 3,
+    lines: [
+      { studentName: "Student One", hours: 1, rate: 0, subtotal: 0, evidenceOnly: true },
+      { studentName: "Student Two", hours: 1, rate: 0, subtotal: 0, evidenceOnly: true },
+      { studentName: "Trial Student", hours: 1, rate: 0, subtotal: 0, evidenceOnly: true },
+    ],
+    rateRange: [30],
+  };
+  transition("payroll", current, [payrollSummary, completedEvidence, payrollLedger]);
+
+  assert.throws(() => transition("payroll", current, [payrollSummary, {
+    ...completedEvidence,
+    amount: 90,
+    teacherTotalAmount: 90,
+  }, payrollLedger]), rejected);
+  assert.throws(() => transition("payroll", current, [payrollSummary, {
+    ...completedEvidence,
+    lines: [
+      ...completedEvidence.lines.slice(0, 2),
+      { studentName: "Trial Student", hours: 1, rate: 30, subtotal: 30, evidenceOnly: true },
+    ],
+  }, payrollLedger]), rejected);
+  assert.throws(() => transition("payroll", current, [payrollSummary, {
+    ...completedEvidence,
+    lines: [
+      ...completedEvidence.lines.slice(0, 2),
+      { studentName: "Trial Student", hours: 1, rate: 0, subtotal: 0 },
+    ],
+  }, payrollLedger]), rejected);
+});
+
 test("generic saves cannot add, change, or remove atomic FU and Report file indexes", () => {
   const atomicFile = {
     id: "FU-5e35b8d4-d345-4d44-a2fb-1431e5c07b5f",

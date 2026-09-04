@@ -54,8 +54,12 @@ test("issued password ciphertext is bound to the account, version and secret", (
 
 test("issued password ciphertext rejects tampering", () => {
   const ciphertext = encryptAccountIssuedPasswordWithSecret({ ...binding, password: "ExampleSecure123" });
-  const last = ciphertext.at(-1);
-  const tampered = `${ciphertext.slice(0, -1)}${last === "A" ? "B" : "A"}`;
+  const [version, iv, payload] = ciphertext.split(".");
+  const first = payload.at(0);
+  // Mutate a significant payload sextet. Changing the final unpadded
+  // Base64URL character can alter only unused pad bits and occasionally
+  // decode to the exact same authenticated bytes.
+  const tampered = `${version}.${iv}.${first === "A" ? "B" : "A"}${payload.slice(1)}`;
   assert.throws(() => decryptAccountIssuedPasswordWithSecret({
     ciphertext: tampered,
     accountId: binding.accountId,

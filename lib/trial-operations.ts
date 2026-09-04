@@ -176,26 +176,84 @@ function structuredTrialStudentNameFromCourseTitle(courseName: unknown) {
   return STRUCTURED_TRIAL_STUDENT_NAME.test(candidate) ? candidate : undefined;
 }
 
+/**
+ * Narrow parser shared by read-only JWB source projections. It deliberately
+ * returns nothing for a title that is not an established trial-title shape;
+ * shared A/B/C accounts must never become durable student identities.
+ */
+export function jiaowubaoTrialStudentNameFromCourseTitle(courseName: unknown) {
+  return structuredTrialStudentNameFromCourseTitle(courseName);
+}
+
 function studentNameUnitKind(unit: string) {
   if (/[\p{Script=Latin}\p{M}\p{N}]/u.test(unit)) return "latin";
   if (/\p{Script=Han}/u.test(unit)) return "han";
   return "other";
 }
 
-function wholeStudentNameMatchAt(source: readonly string[], expected: readonly string[], start: number) {
+type StudentNameSearchUnits = Readonly<{
+  units: readonly string[];
+  /** True when whitespace or punctuation immediately precedes this unit. */
+  separatedBefore: readonly boolean[];
+}>;
+
+function studentNameSearchUnits(value: unknown): StudentNameSearchUnits {
+  const units: string[] = [];
+  const separatedBefore: boolean[] = [];
+  let boundary = false;
+  for (const unit of Array.from(text(value).normalize("NFKC").toLocaleLowerCase("en-AU"))) {
+    if (/[\s\p{P}\p{S}_]/u.test(unit)) {
+      boundary = units.length > 0;
+      continue;
+    }
+    units.push(unit);
+    separatedBefore.push(boundary);
+    boundary = false;
+  }
+  return Object.freeze({ units: Object.freeze(units), separatedBefore: Object.freeze(separatedBefore) });
+}
+
+function wholeStudentNameMatchAt(
+  source: readonly string[],
+  expected: readonly string[],
+  start: number,
+  separatedBefore: readonly boolean[] = [],
+) {
   if (!expected.length || !expected.every((unit, index) => source[start + index] === unit)) return false;
   const before = source[start - 1];
   const after = source[start + expected.length];
-  return (!before || studentNameUnitKind(before) !== studentNameUnitKind(expected[0]!))
-    && (!after || studentNameUnitKind(after) !== studentNameUnitKind(expected[expected.length - 1]!));
+  return (!before || separatedBefore[start] === true || studentNameUnitKind(before) !== studentNameUnitKind(expected[0]!))
+    && (!after || separatedBefore[start + expected.length] === true || studentNameUnitKind(after) !== studentNameUnitKind(expected[expected.length - 1]!));
 }
 
 function courseTitleMatchesStudentName(courseName: unknown, expectedName: unknown) {
   const expected = Array.from(normalize(expectedName));
   if (!expected.length) return false;
   const structuredName = structuredTrialStudentNameFromCourseTitle(courseName);
-  const source = Array.from(normalize(structuredName ?? courseName));
-  return source.some((_, start) => wholeStudentNameMatchAt(source, expected, start));
+  // A structured suffix can be only the subject after a delimiter (for
+  // example, `Phyllis嘟嘟 - AES 试听`). Check it first but never let it hide
+  // the complete title when matching a known internal student name.
+  return [structuredName, courseName]
+    .filter((source): source is string => typeof source === "string")
+    .some((source) => {
+      const searchable = studentNameSearchUnits(source);
+      return searchable.units.some((_, start) => wholeStudentNameMatchAt(
+        searchable.units,
+        expected,
+        start,
+        searchable.separatedBefore,
+      ));
+    });
+}
+
+/**
+ * Tests one already-known internal student against a shared A/B/C course
+ * title.  This is intentionally a match predicate, rather than a title
+ * parser: a title may include the student name plus a subject or parent-facing
+ * suffix, and must still resolve only when exactly one internal name matches.
+ */
+export function jiaowubaoTrialCourseTitleMatchesStudentName(courseName: unknown, expectedName: unknown) {
+  return courseTitleMatchesStudentName(courseName, expectedName);
 }
 
 function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, directStudentMatch: boolean) {
@@ -209,20 +267,27 @@ function studentNameFromCourseTitle(courseName: unknown, expectedName: unknown, 
   }
 
   const searchable: string[] = [];
+  const separatedBefore: boolean[] = [];
   const spans: Array<Readonly<{ start: number; end: number }>> = [];
+  let boundary = false;
   for (let offset = 0; offset < source.length;) {
     const start = offset;
     const codePoint = String.fromCodePoint(source.codePointAt(offset)!);
     offset += codePoint.length;
     for (const unit of codePoint.toLocaleLowerCase("en-AU")) {
-      if (/[\s\p{P}\p{S}_]/u.test(unit)) continue;
+      if (/[\s\p{P}\p{S}_]/u.test(unit)) {
+        boundary = searchable.length > 0;
+        continue;
+      }
       searchable.push(unit);
+      separatedBefore.push(boundary);
       spans.push({ start, end: offset });
+      boundary = false;
     }
   }
 
   const matchAt = expected.length
-    ? searchable.findIndex((_, start) => wholeStudentNameMatchAt(searchable, expected, start))
+    ? searchable.findIndex((_, start) => wholeStudentNameMatchAt(searchable, expected, start, separatedBefore))
     : -1;
   if (matchAt < 0) {
     const compactSource = compactTrialStudentName(source);
@@ -242,7 +307,11 @@ function planner(value: unknown): TrialPlanner | null {
 
 // Keep the generic-account prefix exact, while allowing only the known
 // descriptive suffixes used by 教务宝 labels (for example, 校长号1️⃣ 2026).
-const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:试听(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
+const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:(?:试听|视听)(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|账号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
+
+export function isJiaowubaoSharedTrialAccountLabel(value: unknown) {
+  return Boolean(normalize(value).match(GENERIC_TRIAL_ACCOUNT_LABEL));
+}
 
 /** Converts the extended browser form into the separately persisted manual intake. */
 export function trialIntakeFromFields(fields: LpFieldValues): TrialIntake {
