@@ -160,13 +160,18 @@ function sourceTeamTitle(value: unknown) {
   if (value === 0) return null;
   if (value === undefined || value === null) return null;
   if (typeof value === "string") {
-    const parsed = value.trim().normalize("NFKC");
+    const parsed = value
+      .normalize("NFKC")
+      .replace(/[\u0009-\u000d]+/gu, " ")
+      .trim()
+      .replace(/ {2,}/gu, " ");
     // Optional team titles in older one-to-one rows can be whitespace-only.
-    // Treat that exactly like the already-supported empty-string sentinel.
+    // Treat that like the empty-string sentinel, and collapse embedded control
+    // whitespace to a visible separator without discarding any title text.
     if (!parsed) return null;
     if (parsed.length > 240) fail("教务宝已结课排课的 team_title 无效（string-overlong）。");
     if (/[\u0000-\u001f\u007f]/u.test(parsed)) {
-      fail("教务宝已结课排课的 team_title 无效（string-control）。");
+      fail("教务宝已结课排课的 team_title 无效（string-control-other）。");
     }
     return parsed;
   }

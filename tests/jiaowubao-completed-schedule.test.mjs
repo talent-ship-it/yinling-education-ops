@@ -149,12 +149,18 @@ test("completed schedule normalizes only blank raw team titles and keeps persist
 
   const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: " Team A " }), period);
   assert.equal(record.teamTitle, "Team A");
+  const wrapped = projectJiaowubaoCompletedScheduleRecord(
+    sourceRecord({ team_title: " Team\t\r\n A " }),
+    period,
+  );
+  assert.equal(wrapped.teamTitle, "Team A");
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(wrapped), wrapped);
   assert.equal(
     thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
       sourceRecord({ team_title: "Team\u0000A" }),
       period,
     )),
-    "教务宝已结课排课的 team_title 无效（string-control）。",
+    "教务宝已结课排课的 team_title 无效（string-control-other）。",
   );
   assert.equal(
     thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
