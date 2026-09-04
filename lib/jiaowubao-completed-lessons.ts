@@ -290,6 +290,26 @@ function text(value: unknown, field: string, maximum = 240) {
   return trimmed;
 }
 
+function sourceMemberName(value: unknown) {
+  // `mem_id`, not this presentation-only title, is the durable participant
+  // identity. Legacy rows can carry an empty or malformed display value. Keep
+  // the lesson evidence under its validated ID and make the missing title
+  // explicit as null so reconciliation can hold the affected payroll row for
+  // review instead of dropping the whole participant page.
+  if (typeof value !== "string") return null;
+  for (const point of value) {
+    const codePoint = point.codePointAt(0)!;
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) return null;
+  }
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[\u0009-\u000d]+/gu, " ")
+    .trim()
+    .replace(/ {2,}/gu, " ");
+  if (!normalized || normalized.length > 240 || /[\u0000-\u001f\u007f]/u.test(normalized)) return null;
+  return normalized;
+}
+
 function optionalInteger(value: unknown, field: string, minimum: number, maximum: number) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = typeof value === "number"
@@ -470,7 +490,7 @@ export function projectJiaowubaoCompletedLessonRecord(
     branchId,
     calendarId,
     memberId,
-    memberName: text(value.mem_title, "mem_title"),
+    memberName: sourceMemberName(value.mem_title),
     lessonDate,
     timeTitle: timeTitle(value),
     hours,
