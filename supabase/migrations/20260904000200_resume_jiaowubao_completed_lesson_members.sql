@@ -872,7 +872,7 @@ begin
   perform internal.assert_jiaowubao_completed_lesson_worker_lease(run_state.period_month, p_run_key);
   if run_state.state in ('aborted', 'blocked') then
     if run_state.abort_reason is not distinct from p_reason
-       and run_state.state = case when p_reason = 'caller_failure' then 'blocked' else 'aborted' end then
+       and run_state.state = (case when p_reason = 'caller_failure' then 'blocked' else 'aborted' end) then
       return internal.jiaowubao_completed_lesson_member_status(p_run_id);
     end if;
     raise exception using errcode = '55000', message = 'jiaowubao_completed_lesson_member_abort_conflict';
