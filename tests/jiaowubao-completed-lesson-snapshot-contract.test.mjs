@@ -25,6 +25,10 @@ const route = fs.readFileSync(
   path.join(root, "app/api/jiaowubao-open-api/completed-lessons/route.ts"),
   "utf8",
 );
+const cronRoute = fs.readFileSync(
+  path.join(root, "app/api/cron/jiaowubao-completed-lessons/route.ts"),
+  "utf8",
+);
 const sync = fs.readFileSync(
   path.join(root, "lib/jiaowubao-completed-lesson-sync.ts"),
   "utf8",
@@ -128,4 +132,8 @@ test("only `over=1` completed evidence reaches the browser route and scheduled j
   assert.match(cronMigration, /Bearer ' \|\|/);
   assert.match(cronMigration, /having count\(\*\) = 1/);
   assert.doesNotMatch(cronMigration, /jiaowubao_completed_lesson_sync_vault_token_missing/);
+  assert.match(cronRoute, /error instanceof JiaowubaoOpenApiError/);
+  assert.match(cronRoute, /kind: "source_validation"/);
+  assert.match(cronRoute, /failure: safeSyncFailure\(error\)/);
+  assert.doesNotMatch(cronRoute, /failure:\s*error\b|console\.error\([^\n]*,\s*error\b/);
 });
