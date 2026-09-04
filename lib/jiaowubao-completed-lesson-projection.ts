@@ -197,11 +197,22 @@ function resolveEntity(input: Readonly<{
   });
 }
 
+function usesCourseTitleStudentIdentity(recordValue: JiaowubaoCompletedLessonRecord) {
+  // A/B/C are shared supplier accounts regardless of the row's lesson type;
+  // their member ID can never identify the real learner. When a trial row has
+  // no usable supplier title, apply the same fail-closed rule because it may be
+  // a malformed shared-account row.
+  return isJiaowubaoSharedTrialAccountLabel(recordValue.memberName)
+    || (recordValue.isTrial && recordValue.memberName === null);
+}
+
 function resolveStudent(recordValue: JiaowubaoCompletedLessonRecord, lookup: EntityLookup) {
-  if (isJiaowubaoSharedTrialAccountLabel(recordValue.memberName)) {
+  if (usesCourseTitleStudentIdentity(recordValue)) {
     // Shared trial accounts A/B/C never provide a durable student identity.
-    // Match the known internal names against the course title instead: the
-    // title can include a course/subject suffix after the actual name.
+    // A missing supplier title cannot prove that an otherwise shared account
+    // is a normal learner either, so never fall back to its member ID. Match
+    // known internal names against the course title instead; the title can
+    // include a course/subject suffix after the actual name.
     const candidates = [...lookup.namesById.entries()]
       .filter(([, name]) => jiaowubaoTrialCourseTitleMatchesStudentName(recordValue.courseTitle, name))
       .map(([entityId]) => entityId);
@@ -227,12 +238,12 @@ export function projectJiaowubaoCompletedLessonRecords(input: Readonly<{
   const teacherLookup = buildLookup(entityRows(input.stateRows, "teachers"));
   const items = input.records.map((recordValue) => {
     const student = resolveStudent(recordValue, studentLookup);
-    const sharedTrialAccount = isJiaowubaoSharedTrialAccountLabel(recordValue.memberName);
+    const courseTitleTrialIdentity = usesCourseTitleStudentIdentity(recordValue);
     // Historical exports must still show the actual source-backed learner
     // after an internal record is archived or when a one-off trial never
     // became a student record. The display name is not an identity link.
     const displayStudentName = student.name
-      ?? (sharedTrialAccount
+      ?? (courseTitleTrialIdentity
         ? jiaowubaoTrialStudentNameFromCourseTitle(recordValue.courseTitle) ?? null
         : recordValue.memberName);
     const teachers = Object.freeze(recordValue.teachers.map((sourceTeacher) => {

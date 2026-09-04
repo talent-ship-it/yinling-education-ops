@@ -11,6 +11,7 @@ const {
   collectJiaowubaoCompletedLessonMemberPage,
   collectJiaowubaoCompletedLessonSnapshot,
   projectJiaowubaoCompletedLessonRecord,
+  readJiaowubaoCompletedLessonSnapshotRecord,
   validateJiaowubaoClosedCompletedLessonMonth,
   validateJiaowubaoCompletedLessonMonth,
 } = await import("../lib/jiaowubao-completed-lessons.ts");
@@ -186,6 +187,39 @@ test("invalid source components expose only a fixed structural category", () => 
     assert.equal(message, `教务宝已消课记录的 branch_id 无效（${kind}）。`);
     assert.equal(message.includes(privateMarker), false);
   }
+});
+
+test("legacy unusable member titles keep ID-backed evidence as review-only null names", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  const unusable = [
+    undefined,
+    null,
+    "",
+    " \t\r\n ",
+    0,
+    false,
+    [],
+    {},
+    "A".repeat(241),
+    "Student\u0000Name",
+    "Student\ud800Name",
+  ];
+  for (const memTitle of unusable) {
+    const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_title: memTitle }), window);
+    assert.equal(record.memberName, null);
+    assert.equal(record.memberId, "201");
+    assert.doesNotThrow(() => readJiaowubaoCompletedLessonSnapshotRecord(record));
+  }
+
+  const normalized = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ mem_title: "  Student\t\r\n Name  " }),
+    window,
+  );
+  assert.equal(normalized.memberName, "Student Name");
+  assert.throws(
+    () => readJiaowubaoCompletedLessonSnapshotRecord({ ...normalized, memberName: " \t " }),
+    /memberName 无效/,
+  );
 });
 
 test("an unassigned JWB secondary-teacher sentinel never becomes a phantom teacher", () => {

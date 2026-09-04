@@ -71,6 +71,20 @@ test("shared A/B/C account resolves only from a narrow course-title name, never 
   assert.equal(projection.items[0].teachers[0]?.teacherMatch, "unique_name");
 });
 
+test("shared A/B/C label never becomes member-ID identity even when the supplier type is not trial", () => {
+  for (const lessonType of [undefined, 1]) {
+    const record = projectJiaowubaoCompletedLessonRecord(
+      sourceRecord({ type: lessonType }),
+      { start: "2026-08-01", end: "2026-08-31" },
+    );
+    const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: stateRows() });
+    assert.equal(record.isTrial, false);
+    assert.equal(projection.items[0].studentId, "stu-fiona");
+    assert.equal(projection.items[0].studentMatch, "trial_course_title");
+    assert.notEqual(projection.items[0].studentId, "stu-wrong");
+  }
+});
+
 test("shared A/B/C account can match a uniquely known name before a course suffix", () => {
   const trial = projectJiaowubaoCompletedLessonRecord(
     sourceRecord({ course_title: "Phyllis嘟嘟 - AES 试听" }),
@@ -112,6 +126,50 @@ test("shared A/B/C source title retains a parsed display name without inventing 
   assert.equal(projection.items[0].studentId, null);
   assert.equal(projection.items[0].studentMatch, "unmatched");
   assert.equal(projection.items[0].displayStudentName, "New Trial Student");
+});
+
+test("a missing trial account title never turns its shared member ID into student identity", () => {
+  const trial = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ mem_title: null }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [trial], stateRows: stateRows() });
+  assert.equal(projection.items[0].studentId, "stu-fiona");
+  assert.equal(projection.items[0].studentMatch, "trial_course_title");
+  assert.notEqual(projection.items[0].studentId, "stu-wrong");
+
+  const unmatched = projectJiaowubaoCompletedLessonRecords({
+    records: [projectJiaowubaoCompletedLessonRecord(
+      sourceRecord({ mem_title: null, course_title: null }),
+      { start: "2026-08-01", end: "2026-08-31" },
+    )],
+    scheduleRecords: [projectJiaowubaoCompletedScheduleRecord(
+      scheduleSourceRecord({ course_title: null }),
+      { start: "2026-08-01", end: "2026-08-31" },
+    )],
+    stateRows: stateRows(),
+  });
+  assert.equal(unmatched.items[0].studentId, null);
+  assert.equal(unmatched.items[0].studentMatch, "unmatched");
+  assert.equal(unmatched.items[0].displayStudentName, null);
+  const summary = unmatched.teachers[0];
+  assert.equal(summary?.sourceHours, 1, "the reconciled source hours remain visible for review");
+  assert.equal(summary?.trialSourceHours, 1);
+  assert.equal(summary?.unresolvedLessonCount, 0);
+  assert.equal(summary?.unresolvedTrialLessonCount, 0);
+  assert.equal(summary?.missingStudentDisplayNameCount, 1);
+  assert.equal(
+    unmatched.teachers.some((teacher) => (
+      teacher.teacherId
+      && teacher.sourceHours !== null
+      && teacher.trialSourceHours !== null
+      && teacher.unresolvedLessonCount === 0
+      && teacher.unresolvedTrialLessonCount === 0
+      && teacher.missingStudentDisplayNameCount === 0
+    )),
+    false,
+    "a missing learner name alone keeps the otherwise reconciled teacher review-only",
+  );
 });
 
 test("archived students remain available to a historical completed-month identity lookup", () => {
