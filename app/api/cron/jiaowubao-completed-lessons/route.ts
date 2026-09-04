@@ -2,8 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-sync";
+import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-resumable-sync";
 import { JiaowubaoOpenApiError } from "@/lib/jiaowubao-open-api-node";
+import { getJiaowubaoCompletedLessonPendingMonth } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -70,10 +71,15 @@ function safeSyncFailure(error: unknown) {
 
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
-  const month = previousMelbourneMonth();
+  let month = previousMelbourneMonth();
   try {
+    const pending = await getJiaowubaoCompletedLessonPendingMonth({ actor: "Ops Admin" });
+    if (!pending || (pending.month !== null && (typeof pending.month !== "string" || !/^\d{4}-\d{2}$/u.test(pending.month)))) {
+      throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
+    }
+    month = pending.month ?? month;
     const sync = await syncJiaowubaoCompletedLessonMonth({ month });
-    const status = sync.outcome === "already_running" ? 202 : 200;
+    const status = sync.outcome === "already_running" || sync.outcome === "in_progress" ? 202 : 200;
     return noStore(sync, status);
   } catch (error) {
     // Keep source details, credentials, upstream response text, and database

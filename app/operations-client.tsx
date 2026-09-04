@@ -4382,17 +4382,29 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const response = await fetch("/api/jiaowubao-open-api/completed-lessons", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month }),
+        // An administrator click is an explicit request to rebuild even when
+        // the month already has a published or previously blocked snapshot.
+        body: JSON.stringify({ month, force: true }),
       });
       const body = await response.json().catch(() => null) as {
         outcome?: unknown;
         retryAfterSeconds?: unknown;
+        memberCount?: unknown;
+        completedMemberCount?: unknown;
+        rowCount?: unknown;
       } | null;
       if (response.status === 202 && body?.outcome === "already_running") {
         const retry = typeof body.retryAfterSeconds === "number" && body.retryAfterSeconds > 0
           ? `约 ${Math.ceil(body.retryAfterSeconds / 60)} 分钟后`
           : "稍后";
         notify(`该月份正在同步，请${retry}刷新查看。`);
+        return;
+      }
+      if (response.status === 202 && body?.outcome === "in_progress") {
+        const memberCount = typeof body.memberCount === "number" ? body.memberCount : 0;
+        const completedMemberCount = typeof body.completedMemberCount === "number" ? body.completedMemberCount : 0;
+        const rowCount = typeof body.rowCount === "number" ? body.rowCount : 0;
+        notify(`已采集 ${completedMemberCount}/${memberCount} 个教务宝学员（${rowCount} 条已消课明细）；后台会自动续跑并在完整后发布。`);
         return;
       }
       if (!response.ok || !body) throw new Error("教务宝已消课同步未完成。");

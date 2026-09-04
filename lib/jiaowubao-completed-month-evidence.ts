@@ -72,6 +72,16 @@ export async function collectJiaowubaoCompletedMonthEvidence(
     collectJiaowubaoCompletedLessonSnapshot(window),
     collectJiaowubaoCompletedScheduleSnapshot(window),
   ]);
+  return buildJiaowubaoCompletedMonthEvidenceSnapshot(lessons, schedules);
+}
+
+/** Binds two already-complete source snapshots into one publishable revision. */
+export function buildJiaowubaoCompletedMonthEvidenceSnapshot(
+  lessons: JiaowubaoCompletedLessonSnapshot,
+  schedules: JiaowubaoCompletedScheduleSnapshot,
+): JiaowubaoCompletedMonthEvidenceSnapshot {
+  assertJiaowubaoCompletedLessonSnapshotIntegrity(lessons);
+  assertJiaowubaoCompletedScheduleSnapshotIntegrity(schedules);
   const lessonManifest = lessons.manifest;
   const scheduleManifest = schedules.manifest;
   if (lessonManifest.query.start !== scheduleManifest.query.start || lessonManifest.query.end !== scheduleManifest.query.end) {
@@ -151,6 +161,9 @@ export function buildJiaowubaoCompletedMonthEvidenceEnvelope(
 ) {
   if (expectedCurrentRevision !== null) validRevision(expectedCurrentRevision);
   assertJiaowubaoCompletedMonthEvidenceSnapshotIntegrity(snapshot);
+  if (snapshot.lessons.manifest.collection === null) {
+    fail("教务宝完成月度发布缺少逐学员完整性证明。");
+  }
   return Object.freeze({
     apiSourceKey: JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_SOURCE_KEY,
     month: snapshot.manifest.period.start.slice(0, 7),

@@ -148,7 +148,15 @@ type EntityLookup = Readonly<{
 
 function sourceIds(item: JsonRecord) {
   const nested = record(item.jiaowubaoOpenApi);
-  return [...new Set([id(item.jwbSourceRow), id(nested?.sourceId)].filter((value): value is string => Boolean(value)))];
+  const historical = record(item.historicalJwbSnapshot);
+  const currentAggregate = record(historical?.currentAggregate);
+  const retained = record(historical?.retained);
+  return [...new Set([
+    id(item.jwbSourceRow),
+    id(nested?.sourceId),
+    id(currentAggregate?.jwbSourceRow),
+    id(retained?.jwbSourceRow),
+  ].filter((value): value is string => Boolean(value)))];
 }
 
 function buildLookup(rows: readonly JsonRecord[]): EntityLookup {

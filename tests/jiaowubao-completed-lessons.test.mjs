@@ -3,13 +3,22 @@ import test from "node:test";
 
 const {
   JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_FORMAT,
+  JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT,
   allJiaowubaoCompletedLessonRecords,
   assertJiaowubaoCompletedLessonSnapshotIntegrity,
+  buildJiaowubaoCompletedLessonSnapshot,
+  buildJiaowubaoCompletedLessonSnapshotEnvelope,
+  collectJiaowubaoCompletedLessonMemberPage,
   collectJiaowubaoCompletedLessonSnapshot,
   projectJiaowubaoCompletedLessonRecord,
   validateJiaowubaoClosedCompletedLessonMonth,
   validateJiaowubaoCompletedLessonMonth,
 } = await import("../lib/jiaowubao-completed-lessons.ts");
+const {
+  buildJiaowubaoCompletedMonthEvidenceEnvelope,
+  buildJiaowubaoCompletedMonthEvidenceSnapshot,
+} = await import("../lib/jiaowubao-completed-month-evidence.ts");
+const { collectJiaowubaoCompletedScheduleSnapshot } = await import("../lib/jiaowubao-completed-schedule.ts");
 
 function sourceRecord(overrides = {}) {
   return {
@@ -36,6 +45,19 @@ function sourceRecord(overrides = {}) {
     logo: "https://example.invalid/avatar.png",
     note: "never snapshot this",
     ...overrides,
+  };
+}
+
+function collectionProof() {
+  return {
+    format: JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT,
+    memberSetSha256: `sha256:${"1".repeat(64)}`,
+    memberCount: 2,
+    catalogRevisionSha256: `sha256:${"2".repeat(64)}`,
+    catalogMemberCount: 2,
+    scheduleRevision: `sha256:${"3".repeat(64)}`,
+    scheduleMemberSetSha256: `sha256:${"4".repeat(64)}`,
+    scheduleMemberCount: 2,
   };
 }
 
@@ -173,6 +195,112 @@ test("collector rejects a nonempty page 61 probe", async () => {
     ),
     /超过最大页数/,
   );
+});
+
+test("member-page collector pins mem_id and supplier total without probing an empty page", async () => {
+  const requests = [];
+  const pageOne = await collectJiaowubaoCompletedLessonMemberPage(
+    { start: "2026-08-01", end: "2026-08-31" },
+    201,
+    1,
+    null,
+    async (query) => {
+      requests.push(query);
+      return {
+        total: 101,
+        list: Array.from({ length: 100 }, (_, index) => sourceRecord({ cal_id: 8_000 + index, mem_id: 201 })),
+      };
+    },
+  );
+  const pageTwo = await collectJiaowubaoCompletedLessonMemberPage(
+    { start: "2026-08-01", end: "2026-08-31" },
+    201,
+    2,
+    pageOne.total,
+    async (query) => {
+      requests.push(query);
+      return { total: 101, list: [sourceRecord({ cal_id: 8_100, mem_id: 201 })] };
+    },
+  );
+  assert.equal(pageOne.complete, false);
+  assert.equal(pageTwo.complete, true);
+  assert.deepEqual(requests.map(({ mem_id, page, limit, sign }) => [mem_id, page, limit, sign]), [
+    [201, 1, 100, -1],
+    [201, 2, 100, -1],
+  ]);
+});
+
+test("member-page collector fails closed when total changes or another member appears", async () => {
+  await assert.rejects(
+    collectJiaowubaoCompletedLessonMemberPage(
+      { start: "2026-08-01", end: "2026-08-31" },
+      201,
+      1,
+      2,
+      async () => ({ total: 1, list: [sourceRecord()] }),
+    ),
+    /总数在分页期间发生变化/,
+  );
+  await assert.rejects(
+    collectJiaowubaoCompletedLessonMemberPage(
+      { start: "2026-08-01", end: "2026-08-31" },
+      201,
+      1,
+      null,
+      async () => ({ total: 1, list: [sourceRecord({ mem_id: 202 })] }),
+    ),
+    /其他学员资料/,
+  );
+});
+
+test("completed lesson builder is deterministic across member crawl order", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  const first = projectJiaowubaoCompletedLessonRecord(sourceRecord({ cal_id: 7001, mem_id: 201 }), window);
+  const second = projectJiaowubaoCompletedLessonRecord(sourceRecord({ cal_id: 7002, mem_id: 202 }), window);
+  const left = buildJiaowubaoCompletedLessonSnapshot(window, [second, first], collectionProof());
+  const right = buildJiaowubaoCompletedLessonSnapshot(window, [first, second], collectionProof());
+  assert.equal(left.manifest.revision, right.manifest.revision);
+  assert.deepEqual(allJiaowubaoCompletedLessonRecords(left), [first, second]);
+});
+
+test("legacy unscoped fixtures cannot cross either production publication boundary", async () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  const legacyLessons = await collectJiaowubaoCompletedLessonSnapshot(
+    window,
+    async ({ page }) => ({ list: page === 1 ? [sourceRecord()] : [] }),
+  );
+  const schedules = await collectJiaowubaoCompletedScheduleSnapshot(
+    window,
+    async ({ page }) => ({
+      lists: page === 1
+        ? [{
+            cal_id: 7001,
+            dated: "2026-08-05",
+            time_start: 1900,
+            time_end: 2000,
+            course_id: 11,
+            course_title: "Synthetic English",
+            team_id: 22,
+            team_title: "Synthetic class",
+            teacher_id: 90,
+            teacher_title: "Synthetic Teacher",
+            teacher_hour: 1,
+            teacher_s: 0,
+            teacher_s_title: "",
+            teacher_s_hour: 0,
+            teacher_t: 0,
+            teacher_t_title: "",
+            teacher_t_hour: 0,
+            over: 1,
+            over_time: "2026-08-05 20:01:00",
+            stu_list: [{ mem_id: 201 }],
+          }]
+        : [],
+    }),
+  );
+  const composite = buildJiaowubaoCompletedMonthEvidenceSnapshot(legacyLessons, schedules);
+  assert.throws(() => buildJiaowubaoCompletedLessonSnapshotEnvelope(legacyLessons, null), /逐学员完整性证明/);
+  assert.throws(() => buildJiaowubaoCompletedMonthEvidenceEnvelope(composite, null), /逐学员完整性证明/);
 });
 
 test("monthly input always resolves to exactly that calendar month", () => {

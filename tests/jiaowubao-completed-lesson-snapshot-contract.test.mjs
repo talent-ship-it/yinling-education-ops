@@ -30,7 +30,7 @@ const cronRoute = fs.readFileSync(
   "utf8",
 );
 const sync = fs.readFileSync(
-  path.join(root, "lib/jiaowubao-completed-lesson-sync.ts"),
+  path.join(root, "lib/jiaowubao-completed-lesson-resumable-sync.ts"),
   "utf8",
 );
 

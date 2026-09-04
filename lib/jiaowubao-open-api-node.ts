@@ -58,6 +58,8 @@ export type JiaowubaoCompletedLessonListQuery = Readonly<{
 
 export type JiaowubaoCompletedLessonListResponse = Readonly<{
   list: readonly JsonRecord[];
+  /** Supplier-reported total for this exact scoped query. */
+  total: number;
   [key: string]: unknown;
 }>;
 
@@ -109,7 +111,8 @@ export class JiaowubaoOpenApiError extends Error {
 // finish inside the route budget without making either upstream tool exceed
 // its own 20/minute allowance.
 const requestStartStates = new Map<JiaowubaoOpenApiTool, { nextRequestStartAt: number; queue: Promise<void> }>();
-const inFlightListRequests = new Map<string, Promise<readonly JsonRecord[]>>();
+type GatewayListPage = Readonly<{ records: readonly JsonRecord[]; total: number | null }>;
+const inFlightListRequests = new Map<string, Promise<GatewayListPage>>();
 
 // Keep this module Node-only even when it is invoked from a local CLI. The
 // Next.js-facing wrapper additionally imports `server-only` to reject client
@@ -235,6 +238,12 @@ function normalizeCompletedLessonQuery(input: JiaowubaoCompletedLessonListQuery)
   const memberId = input.mem_id === undefined ? undefined : positiveId(input.mem_id, "mem_id");
   const courseId = input.course_id === undefined ? undefined : positiveId(input.course_id, "course_id");
   const teamId = input.team_id === undefined ? undefined : positiveId(input.team_id, "team_id");
+  // The live gateway rejects a whole-month query without an additional
+  // selector. Keep this invariant at the client boundary so payroll code can
+  // never silently regress to the rejected, incomplete request shape.
+  if (memberId === undefined && courseId === undefined && teamId === undefined) {
+    throw new JiaowubaoOpenApiError("invalid_request", "已消课查询必须限定学员、课程或班级。");
+  }
   return Object.freeze({
     start,
     end,
@@ -405,12 +414,26 @@ function readList(data: JsonRecord, field: GatewayListField, label: string): rea
   return Object.freeze([...candidate] as JsonRecord[]);
 }
 
+function readRequiredTotal(data: JsonRecord, label: string) {
+  const candidate = data.total;
+  const parsed = typeof candidate === "number"
+    ? candidate
+    : typeof candidate === "string" && /^(0|[1-9]\d*)$/u.test(candidate.trim())
+      ? Number(candidate)
+      : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 1_000_000) {
+    throw new JiaowubaoOpenApiError("invalid_response", `教务宝返回无法识别的${label}总数。`);
+  }
+  return parsed;
+}
+
 async function requestGatewayList(
   tool: JiaowubaoOpenApiTool,
   params: Record<string, unknown>,
   field: GatewayListField,
   label: string,
-): Promise<readonly JsonRecord[]> {
+  requireTotal = false,
+): Promise<GatewayListPage> {
   const secret = apiSecret();
   await reserveRequestStart(tool);
   const controller = new AbortController();
@@ -480,7 +503,10 @@ async function requestGatewayList(
     if (!isRecord(envelope.data)) {
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
     }
-    return readList(envelope.data, field, label);
+    return Object.freeze({
+      records: readList(envelope.data, field, label),
+      total: requireTotal ? readRequiredTotal(envelope.data, label) : null,
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -495,11 +521,11 @@ export async function queryJiaowubaoScheduleList(input: JiaowubaoScheduleListQue
   const params = normalizeScheduleQuery(input);
   const key = `query_schedule_list:${JSON.stringify(params)}`;
   const existing = inFlightListRequests.get(key);
-  if (existing) return Object.freeze({ lists: await existing });
+  if (existing) return Object.freeze({ lists: (await existing).records });
   const request = requestGatewayList("query_schedule_list", params, "lists", "排课");
   inFlightListRequests.set(key, request);
   try {
-    return Object.freeze({ lists: await request });
+    return Object.freeze({ lists: (await request).records });
   } finally {
     if (inFlightListRequests.get(key) === request) {
       inFlightListRequests.delete(key);
@@ -512,11 +538,17 @@ export async function queryJiaowubaoCompletedLessonList(input: JiaowubaoComplete
   const params = normalizeCompletedLessonQuery(input);
   const key = `query_lesson_list:${JSON.stringify(params)}`;
   const existing = inFlightListRequests.get(key);
-  if (existing) return Object.freeze({ list: await existing });
-  const request = requestGatewayList("query_lesson_list", params, "list_or_lists", "已消课");
+  if (existing) {
+    const page = await existing;
+    if (page.total === null) throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的已消课总数。");
+    return Object.freeze({ list: page.records, total: page.total });
+  }
+  const request = requestGatewayList("query_lesson_list", params, "list_or_lists", "已消课", true);
   inFlightListRequests.set(key, request);
   try {
-    return Object.freeze({ list: await request });
+    const page = await request;
+    if (page.total === null) throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的已消课总数。");
+    return Object.freeze({ list: page.records, total: page.total });
   } finally {
     if (inFlightListRequests.get(key) === request) {
       inFlightListRequests.delete(key);
@@ -529,11 +561,11 @@ export async function queryJiaowubaoMemberSimpleList(input: JiaowubaoMemberSimpl
   const params = normalizeMemberSimpleQuery(input);
   const key = `query_member_simple_list:${JSON.stringify(params)}`;
   const existing = inFlightListRequests.get(key);
-  if (existing) return Object.freeze({ list: await existing });
+  if (existing) return Object.freeze({ list: (await existing).records });
   const request = requestGatewayList("query_member_simple_list", params, "list", "学员目录");
   inFlightListRequests.set(key, request);
   try {
-    return Object.freeze({ list: await request });
+    return Object.freeze({ list: (await request).records });
   } finally {
     if (inFlightListRequests.get(key) === request) {
       inFlightListRequests.delete(key);

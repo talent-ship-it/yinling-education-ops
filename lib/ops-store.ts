@@ -941,6 +941,16 @@ export const JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_READER_RPC = "get_jiaowubao_com
 export const JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_STAGE_RPC = "stage_jiaowubao_completed_lesson_snapshot_schedule_page";
 export const JIAOWUBAO_COMPLETED_LESSON_LEASE_CLAIM_RPC = "claim_jiaowubao_completed_lesson_sync_lease";
 export const JIAOWUBAO_COMPLETED_LESSON_LEASE_RELEASE_RPC = "release_jiaowubao_completed_lesson_sync_lease";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_GET_RPC = "get_jiaowubao_completed_lesson_member_collection";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PENDING_RPC = "get_jiaowubao_completed_lesson_pending_month";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_BEGIN_RPC = "begin_jiaowubao_completed_lesson_member_collection";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_RESERVE_RPC = "reserve_jiaowubao_completed_lesson_api_request";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_RESERVE_RPC = "reserve_jiaowubao_open_api_schedule_request";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_STAGE_RPC = "stage_jiaowubao_completed_lesson_member_page";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_ITEMS_RPC = "get_jiaowubao_completed_lesson_member_items_page";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PREPARE_RPC = "prepare_jiaowubao_completed_lesson_member_publication";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PUBLISH_RPC = "complete_jiaowubao_completed_lesson_member_publication";
+export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_ABORT_RPC = "abort_jiaowubao_completed_lesson_member_collection";
 export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
 export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
 export const WECOM_ARCHIVE_INGEST_RPC = "ingest_wecom_archive_batch";
@@ -1164,6 +1174,42 @@ export type JiaowubaoCompletedLessonSyncLease = Readonly<{
   acquired: boolean;
   runKey: string;
   retryAfterSeconds: number;
+}>;
+
+export type JiaowubaoCompletedLessonMemberCollection = Readonly<{
+  state: "absent" | "collecting" | "ready" | "published" | "aborted" | "blocked";
+  month: string;
+  runId?: string;
+  scheduleRevision?: string;
+  scheduleMemberSetSha256?: string;
+  scheduleMemberCount?: number;
+  catalogRevisionSha256?: string;
+  catalogMemberCount?: number;
+  memberSetSha256?: string;
+  memberCount?: number;
+  completedMemberCount?: number;
+  rowCount?: number;
+  expectedCurrentRevision?: string | null;
+  finalRevision?: string | null;
+  abortReason?: "schedule_changed" | "source_conflict" | "caller_failure" | "catalog_changed" | null;
+  nextMemberId?: number | null;
+  nextPage?: number | null;
+  expectedTotal?: number | null;
+  targetVersion?: number | null;
+}>;
+
+export type JiaowubaoCompletedLessonMemberItemsPage = Readonly<{
+  state: "ready" | "published";
+  runId: string;
+  month: string;
+  rowCount: number;
+  pageIndex: number;
+  pageCount: number;
+  items: readonly Readonly<{ sourceKey: string; record: Readonly<Record<string, unknown>> }>[];
+}>;
+
+export type JiaowubaoCompletedLessonPendingMonth = Readonly<{
+  month: string | null;
 }>;
 
 export type JiaowubaoTrialSyncCommitResult = Readonly<{
@@ -1999,6 +2045,151 @@ export function releaseJiaowubaoCompletedLessonSyncLease(input: {
     p_month: input.month,
     p_run_key: input.runKey,
     p_actor: input.actor,
+  });
+}
+
+/** Private resumable cursor; member IDs never leave the server sync path. */
+export function getJiaowubaoCompletedLessonMemberCollection(input: {
+  month: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_GET_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_run_key: input.runKey,
+    p_actor: input.actor,
+  });
+}
+
+/** Lets the scheduler resume an older manually-started month before starting a new one. */
+export function getJiaowubaoCompletedLessonPendingMonth(input: { actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonPendingMonth>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_PENDING_RPC, {
+    p_secret: secret,
+    p_actor: input.actor,
+  });
+}
+
+export function beginJiaowubaoCompletedLessonMemberCollection(input: {
+  month: string;
+  runKey: string;
+  scheduleRevision: string;
+  scheduleMemberIds: readonly number[];
+  scheduleMemberSetSha256: string;
+  expectedCurrentRevision: string | null;
+  force: boolean;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_BEGIN_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_run_key: input.runKey,
+    p_schedule_revision: input.scheduleRevision,
+    p_schedule_member_ids: input.scheduleMemberIds,
+    p_schedule_member_set_sha256: input.scheduleMemberSetSha256,
+    p_expected_current_revision: input.expectedCurrentRevision,
+    p_force: input.force,
+    p_actor: input.actor,
+  }, { timeoutMs: 30_000 });
+}
+
+export function reserveJiaowubaoCompletedLessonApiRequest(input: {
+  month: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ tool: "query_lesson_list"; notBefore: string }>>(
+    JIAOWUBAO_COMPLETED_LESSON_MEMBER_RESERVE_RPC,
+    { p_secret: secret, p_month: input.month, p_run_key: input.runKey, p_tool: "query_lesson_list", p_actor: input.actor },
+  );
+}
+
+/** Cross-instance supplier start gate shared by both scheduled schedule readers. */
+export function reserveJiaowubaoOpenApiScheduleRequest(input: { actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ tool: "query_schedule_list"; notBefore: string }>>(
+    JIAOWUBAO_OPEN_API_SCHEDULE_RESERVE_RPC,
+    { p_secret: secret, p_tool: "query_schedule_list", p_actor: input.actor },
+  );
+}
+
+export function stageJiaowubaoCompletedLessonMemberPage(input: {
+  runId: string;
+  runKey: string;
+  memberId: number;
+  page: number;
+  targetVersion: number;
+  sourceTotal: number;
+  rows: readonly Readonly<Record<string, unknown>>[];
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_STAGE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_run_key: input.runKey,
+    p_member_id: input.memberId,
+    p_page: input.page,
+    p_expected_target_version: input.targetVersion,
+    p_source_total: input.sourceTotal,
+    p_rows: input.rows,
+    p_actor: input.actor,
+  }, { timeoutMs: 30_000 });
+}
+
+export function getJiaowubaoCompletedLessonMemberItemsPage(input: {
+  runId: string;
+  runKey: string;
+  pageIndex: number;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberItemsPage>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_ITEMS_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_run_key: input.runKey,
+    p_page_index: input.pageIndex,
+    p_actor: input.actor,
+  }, { timeoutMs: 30_000 });
+}
+
+export function prepareJiaowubaoCompletedLessonMemberPublication(input: {
+  runId: string;
+  runKey: string;
+  revision: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_PREPARE_RPC, {
+    p_secret: secret, p_run_id: input.runId, p_run_key: input.runKey, p_revision: input.revision, p_actor: input.actor,
+  });
+}
+
+export function completeJiaowubaoCompletedLessonMemberPublication(input: {
+  runId: string;
+  runKey: string;
+  revision: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_PUBLISH_RPC, {
+    p_secret: secret, p_run_id: input.runId, p_run_key: input.runKey, p_revision: input.revision, p_actor: input.actor,
+  });
+}
+
+export function abortJiaowubaoCompletedLessonMemberCollection(input: {
+  runId: string;
+  runKey: string;
+  reason: "schedule_changed" | "source_conflict" | "caller_failure" | "catalog_changed";
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_ABORT_RPC, {
+    p_secret: secret, p_run_id: input.runId, p_run_key: input.runKey, p_reason: input.reason, p_actor: input.actor,
   });
 }
 

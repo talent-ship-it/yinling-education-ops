@@ -13,7 +13,8 @@ import {
  * pay rates, payroll approval, or ops_state.  It only turns the documented
  * completed-lesson source (`over=1`) into a bounded, deterministic snapshot.
  */
-export const JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_FORMAT = "jiaowubao-completed-lesson-participant-export/v3";
+export const JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_FORMAT = "jiaowubao-completed-lesson-participant-export/v4";
+export const JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT = "jiaowubao-completed-lesson-member-collection/v1";
 export const JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_SOURCE_KEY = "jwb-open-api-completed-lessons";
 export const JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE = 100;
 export const JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_PAGES = 60;
@@ -80,12 +81,25 @@ export type JiaowubaoCompletedLessonSnapshotManifest = Readonly<{
   source: "jiaowubao-open-api";
   tool: "query_lesson_list";
   query: Readonly<{ start: string; end: string; sign: -1; over: 1; limit: number }>;
+  collection: JiaowubaoCompletedLessonCollectionProof | null;
   pageCount: number;
   recordCount: number;
   recordsSha256: string;
   manifestSha256: string;
   revision: string;
   pages: readonly Readonly<{ page: number; recordCount: number; sha256: string; file: string }>[];
+}>;
+
+/** Non-PII proof of the exact frozen member universe used for this snapshot. */
+export type JiaowubaoCompletedLessonCollectionProof = Readonly<{
+  format: typeof JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT;
+  memberSetSha256: string;
+  memberCount: number;
+  catalogRevisionSha256: string;
+  catalogMemberCount: number;
+  scheduleRevision: string;
+  scheduleMemberSetSha256: string;
+  scheduleMemberCount: number;
 }>;
 
 export type JiaowubaoCompletedLessonSnapshot = Readonly<{
@@ -96,6 +110,14 @@ export type JiaowubaoCompletedLessonSnapshot = Readonly<{
 export type JiaowubaoCompletedLessonSnapshotRow = Readonly<{
   sourceKey: string;
   record: JiaowubaoCompletedLessonRecord;
+}>;
+
+export type JiaowubaoCompletedLessonMemberPage = Readonly<{
+  memberId: number;
+  page: number;
+  total: number;
+  complete: boolean;
+  records: readonly JiaowubaoCompletedLessonRecord[];
 }>;
 
 type PageFetcher = (query: JiaowubaoCompletedLessonListQuery) => Promise<JiaowubaoCompletedLessonListResponse>;
@@ -331,6 +353,30 @@ function sha256Tag(value: string | Uint8Array) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function readCollectionProof(value: JiaowubaoCompletedLessonCollectionProof) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || value.format !== JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT
+    || !/^sha256:[a-f0-9]{64}$/u.test(value.memberSetSha256)
+    || !/^sha256:[a-f0-9]{64}$/u.test(value.catalogRevisionSha256)
+    || !/^sha256:[a-f0-9]{64}$/u.test(value.scheduleRevision)
+    || !/^sha256:[a-f0-9]{64}$/u.test(value.scheduleMemberSetSha256)
+    || !Number.isSafeInteger(value.memberCount) || value.memberCount < 1 || value.memberCount > 6_000
+    || !Number.isSafeInteger(value.catalogMemberCount) || value.catalogMemberCount < 1 || value.catalogMemberCount > value.memberCount
+    || !Number.isSafeInteger(value.scheduleMemberCount) || value.scheduleMemberCount < 0 || value.scheduleMemberCount > value.memberCount) {
+    fail("教务宝已消课学员清单证明无效。");
+  }
+  return Object.freeze({
+    format: value.format,
+    memberSetSha256: value.memberSetSha256,
+    memberCount: value.memberCount,
+    catalogRevisionSha256: value.catalogRevisionSha256,
+    catalogMemberCount: value.catalogMemberCount,
+    scheduleRevision: value.scheduleRevision,
+    scheduleMemberSetSha256: value.scheduleMemberSetSha256,
+    scheduleMemberCount: value.scheduleMemberCount,
+  });
+}
+
 function canonicalJson(value: unknown) {
   return JSON.stringify(value);
 }
@@ -443,6 +489,68 @@ function pageRecords(response: JiaowubaoCompletedLessonListResponse) {
   return response.list as readonly JsonRecord[];
 }
 
+/**
+ * Reads one durable-crawl page for one exact JWB member ID. The supplier's
+ * scoped `total` is pinned on page one and must remain identical on every
+ * later page; a short page can therefore never be mistaken for completion.
+ */
+export async function collectJiaowubaoCompletedLessonMemberPage(
+  rawWindow: Readonly<{ start: string; end: string }>,
+  memberId: number,
+  page: number,
+  expectedTotal: number | null,
+  fetchPage: PageFetcher = queryJiaowubaoCompletedLessonList,
+): Promise<JiaowubaoCompletedLessonMemberPage> {
+  const window = parseWindow(rawWindow);
+  if (!Number.isSafeInteger(memberId) || memberId < 1) fail("教务宝已消课学员 ID 无效。");
+  if (!Number.isSafeInteger(page) || page < 1 || page > JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_PAGES) {
+    fail("教务宝已消课学员分页无效。");
+  }
+  if (expectedTotal !== null && (!Number.isSafeInteger(expectedTotal) || expectedTotal < 0
+    || expectedTotal > JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_RECORDS)) {
+    fail("教务宝已消课学员总数无效。");
+  }
+  const response = await fetchPage({
+    start: window.start,
+    end: window.end,
+    mem_id: memberId,
+    page,
+    limit: JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE,
+    sign: -1,
+  });
+  if (!Number.isSafeInteger(response.total) || response.total < 0
+    || response.total > JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_RECORDS) {
+    fail("教务宝已消课学员总数无效。");
+  }
+  if (expectedTotal !== null && response.total !== expectedTotal) {
+    fail("教务宝已消课学员总数在分页期间发生变化。");
+  }
+  const totalPages = Math.max(1, Math.ceil(response.total / JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE));
+  if (page > totalPages) fail("教务宝已消课学员分页超过来源总数。");
+  const rawRecords = pageRecords(response);
+  const expectedRows = response.total === 0
+    ? 0
+    : Math.min(
+      JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE,
+      response.total - (page - 1) * JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE,
+    );
+  if (rawRecords.length !== expectedRows) fail("教务宝已消课学员分页行数与来源总数不一致。");
+  const records = rawRecords.map((record) => projectJiaowubaoCompletedLessonRecord(record, window));
+  const sourceKeys = new Set<string>();
+  for (const record of records) {
+    if (record.memberId !== String(memberId)) fail("教务宝已消课学员分页返回了其他学员资料。");
+    if (sourceKeys.has(record.sourceKey)) fail("教务宝已消课学员分页包含重复来源键。");
+    sourceKeys.add(record.sourceKey);
+  }
+  return Object.freeze({
+    memberId,
+    page,
+    total: response.total,
+    complete: page === totalPages,
+    records: Object.freeze(records),
+  });
+}
+
 export async function collectJiaowubaoCompletedLessonSnapshot(
   rawWindow: Readonly<{ start: string; end: string }>,
   fetchPage: PageFetcher = queryJiaowubaoCompletedLessonList,
@@ -514,8 +622,72 @@ export async function collectJiaowubaoCompletedLessonSnapshot(
       over: 1 as const,
       limit: JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE,
     },
+    // This legacy injected-fetch collector is retained for fixture validation
+    // only. Production publication requires a non-null frozen-member proof.
+    collection: null,
     pageCount: pageManifests.length,
     recordCount,
+    recordsSha256,
+    pages: pageManifests,
+  };
+  const manifestSha256 = sha256Tag(canonicalJson(manifestPayload));
+  return Object.freeze({
+    manifest: Object.freeze({ ...manifestPayload, manifestSha256, revision: manifestSha256 }),
+    pages: Object.freeze(pages),
+  });
+}
+
+/** Builds the standard immutable snapshot after every frozen member is done. */
+export function buildJiaowubaoCompletedLessonSnapshot(
+  rawWindow: Readonly<{ start: string; end: string }>,
+  sourceRecords: readonly JiaowubaoCompletedLessonRecord[],
+  collectionProof: JiaowubaoCompletedLessonCollectionProof,
+): JiaowubaoCompletedLessonSnapshot {
+  const window = parseWindow(rawWindow);
+  const collection = readCollectionProof(collectionProof);
+  if (!Array.isArray(sourceRecords) || sourceRecords.length > JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_RECORDS) {
+    fail("教务宝已消课导出记录超过安全上限。");
+  }
+  const sourceKeys = new Set<string>();
+  const records = sourceRecords.map((record) => {
+    const checked = readJiaowubaoCompletedLessonSnapshotRecord(record);
+    if (checked.lessonDate < window.start || checked.lessonDate > window.end) {
+      fail("教务宝已消课记录不在请求的日期范围内。");
+    }
+    if (sourceKeys.has(checked.sourceKey)) fail("教务宝已消课导出包含重复课节学员记录，已停止导出。");
+    sourceKeys.add(checked.sourceKey);
+    return checked;
+  }).sort((left, right) => left.sourceKey.localeCompare(right.sourceKey, "en"));
+
+  const pages: JiaowubaoCompletedLessonSnapshotPage[] = [];
+  const pageManifests: Array<{ page: number; recordCount: number; sha256: string; file: string }> = [];
+  for (let offset = 0; offset < records.length; offset += JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE) {
+    const page = pages.length + 1;
+    const pageRecordsValue = Object.freeze(records.slice(offset, offset + JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE));
+    const sha256 = sha256Tag(canonicalJson(pageRecordsValue));
+    const file = `page-${String(page).padStart(4, "0")}.json`;
+    pageManifests.push({ page, recordCount: pageRecordsValue.length, sha256, file });
+    pages.push(Object.freeze({ page, records: pageRecordsValue, sha256, file }));
+  }
+  const recordsSha256 = sha256Tag(canonicalJson(pageManifests.map(({ page, recordCount, sha256 }) => ({
+    page,
+    recordCount,
+    sha256,
+  }))));
+  const manifestPayload = {
+    format: JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_FORMAT as typeof JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_FORMAT,
+    source: "jiaowubao-open-api" as const,
+    tool: "query_lesson_list" as const,
+    query: {
+      start: window.start,
+      end: window.end,
+      sign: -1 as const,
+      over: 1 as const,
+      limit: JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE,
+    },
+    collection,
+    pageCount: pageManifests.length,
+    recordCount: records.length,
     recordsSha256,
     pages: pageManifests,
   };
@@ -550,6 +722,7 @@ export function assertJiaowubaoCompletedLessonSnapshotIntegrity(snapshot: Jiaowu
     || manifest.pageCount !== snapshot.pages.length) {
     fail("教务宝已消课快照清单无效。");
   }
+  if (manifest.collection !== null) readCollectionProof(manifest.collection);
   const sourceKeys = new Set<string>();
   const pages = snapshot.pages.map((page, index) => {
     if (page.page !== index + 1 || page.records.length < 1 || page.records.length > JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE) {
@@ -579,6 +752,7 @@ export function assertJiaowubaoCompletedLessonSnapshotIntegrity(snapshot: Jiaowu
     source: manifest.source,
     tool: manifest.tool,
     query: manifest.query,
+    collection: manifest.collection,
     pageCount: manifest.pageCount,
     recordCount: manifest.recordCount,
     recordsSha256: manifest.recordsSha256,
@@ -596,6 +770,10 @@ export function buildJiaowubaoCompletedLessonSnapshotEnvelope(
 ) {
   if (expectedCurrentRevision !== null && !/^sha256:[a-f0-9]{64}$/u.test(expectedCurrentRevision)) {
     fail("当前已消课快照 revision 无效。");
+  }
+  assertJiaowubaoCompletedLessonSnapshotIntegrity(snapshot);
+  if (snapshot.manifest.collection === null) {
+    fail("教务宝已消课发布缺少逐学员完整性证明。");
   }
   const month = snapshot.manifest.query.start.slice(0, 7);
   return Object.freeze({

@@ -9,6 +9,7 @@ import {
   collectJiaowubaoScheduleSnapshot,
   jiaowubaoScheduleSnapshotRows,
 } from "@/lib/jiaowubao-open-api-schedule-snapshot";
+import { queryJiaowubaoScheduleList } from "@/lib/jiaowubao-open-api-node";
 import {
   jiaowubaoTrialProjectionWindow,
   runJiaowubaoTrialAutoSync,
@@ -22,6 +23,7 @@ import {
   OpsStoreError,
   projectJiaowubaoOpenApiAuthority,
   releaseJiaowubaoOpenApiScheduleSyncLease,
+  reserveJiaowubaoOpenApiScheduleRequest,
   stageJiaowubaoOpenApiScheduleSnapshotPage,
 } from "@/lib/ops-store";
 
@@ -38,6 +40,22 @@ const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
+}
+
+function sleep(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function queryScheduleWithGlobalRateGate(query: Parameters<typeof queryJiaowubaoScheduleList>[0]) {
+  const reservation = await reserveJiaowubaoOpenApiScheduleRequest({ actor: ACTOR });
+  const notBefore = typeof reservation?.notBefore === "string" ? Date.parse(reservation.notBefore) : Number.NaN;
+  if (reservation?.tool !== "query_schedule_list" || !Number.isFinite(notBefore)) {
+    throw new Error("schedule_rate_reservation_invalid");
+  }
+  const wait = Math.max(0, notBefore - Date.now());
+  if (wait > 30_000) throw new Error("schedule_rate_reservation_oversize");
+  if (wait > 0) await sleep(wait);
+  return queryJiaowubaoScheduleList(query);
 }
 
 function hasCronSecret(request: Request) {
@@ -156,7 +174,7 @@ export async function GET(request: Request) {
 
     phase = "collect_source";
     const window = fixedWindow();
-    const snapshot = await collectJiaowubaoScheduleSnapshot(window);
+    const snapshot = await collectJiaowubaoScheduleSnapshot(window, queryScheduleWithGlobalRateGate);
     phase = "read_preflight";
     const preflight = await getJiaowubaoOpenApiScheduleSnapshotPreflight({
       apiSourceKey: JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,

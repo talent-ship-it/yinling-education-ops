@@ -5,6 +5,7 @@ const {
   allJiaowubaoCompletedScheduleRecords,
   assertJiaowubaoCompletedScheduleSnapshotIntegrity,
   collectJiaowubaoCompletedScheduleSnapshot,
+  collectJiaowubaoCompletedScheduleSnapshotWithMemberIds,
   projectJiaowubaoCompletedScheduleRecord,
 } = await import("../lib/jiaowubao-completed-schedule.ts");
 
@@ -29,6 +30,7 @@ function sourceRecord(overrides = {}) {
     teacher_t_hour: "",
     over: 1,
     over_time: "2026-08-05 20:01:00",
+    stu_list: [{ mem_id: 201 }, { mem_id: "202" }],
     ignored_supplier_field: "not retained",
     ...overrides,
   };
@@ -150,4 +152,39 @@ test("schedule source manifest verification rejects modified role-hour evidence"
     }],
   };
   assert.throws(() => assertJiaowubaoCompletedScheduleSnapshotIntegrity(tampered), /散列不一致/);
+});
+
+test("completed schedule freezes a sorted, deduplicated member-ID set outside the published snapshot", async () => {
+  const captured = await collectJiaowubaoCompletedScheduleSnapshotWithMemberIds(
+    { start: "2026-08-01", end: "2026-08-31" },
+    async ({ page }) => ({
+      lists: page === 1
+        ? [
+            sourceRecord({ cal_id: 7001, stu_list: [{ mem_id: 203 }, { mem_id: "201" }] }),
+            sourceRecord({ cal_id: 7002, stu_list: [{ mem_id: 202 }, { mem_id: 203 }] }),
+          ]
+        : [],
+    }),
+  );
+  assert.deepEqual(captured.memberIds, [201, 202, 203]);
+  assert.match(captured.memberSetSha256, /^sha256:[a-f0-9]{64}$/u);
+  assert.equal("memberIds" in captured.snapshot, false);
+  assert.equal(JSON.stringify(captured.snapshot).includes("stu_list"), false);
+});
+
+test("completed schedule member capture rejects a missing or invalid stu_list", async () => {
+  await assert.rejects(
+    collectJiaowubaoCompletedScheduleSnapshotWithMemberIds(
+      { start: "2026-08-01", end: "2026-08-31" },
+      async ({ page }) => ({ lists: page === 1 ? [sourceRecord({ stu_list: undefined })] : [] }),
+    ),
+    /stu_list 无效/,
+  );
+  await assert.rejects(
+    collectJiaowubaoCompletedScheduleSnapshotWithMemberIds(
+      { start: "2026-08-01", end: "2026-08-31" },
+      async ({ page }) => ({ lists: page === 1 ? [sourceRecord({ stu_list: [{ mem_id: 0 }] })] : [] }),
+    ),
+    /mem_id 无效/,
+  );
 });

@@ -252,7 +252,10 @@ test("builds a deterministic real XLSX with approved A:H layout and six evidence
   assert.equal(cell(lessons!, "H2"), "Zachary 张泽睿");
   assert.equal(schedules!.rows.length, 4, "one schedule event expands to all three teacher roles");
   assert.equal(cell(schedules!, "G4"), "third");
-  assert.equal(cell(source!, "B16"), "query_lesson_list；over=1；按完整自然月起止日期分页读取");
+  assert.equal(
+    cell(source!, "B16"),
+    "query_lesson_list；over=1；按完整自然月、逐个教务宝学员 ID 分页读取；ID 清单合并当前名册、已确认/历史身份与当月已结课排课参与者",
+  );
 
   const parts = storedParts(bytes);
   assert.equal(parts.size, 13);

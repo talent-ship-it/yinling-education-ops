@@ -76,6 +76,13 @@ export type JiaowubaoCompletedScheduleSnapshot = Readonly<{
   pages: readonly JiaowubaoCompletedScheduleSnapshotPage[];
 }>;
 
+/** Server-only capture metadata used to freeze the lesson-query roster. */
+export type JiaowubaoCompletedScheduleSnapshotWithMemberIds = Readonly<{
+  snapshot: JiaowubaoCompletedScheduleSnapshot;
+  memberIds: readonly number[];
+  memberSetSha256: string;
+}>;
+
 type PageFetcher = (query: JiaowubaoScheduleListQuery) => Promise<JiaowubaoScheduleListResponse>;
 
 function fail(message: string): never {
@@ -322,14 +329,30 @@ function pageRecords(response: JiaowubaoScheduleListResponse) {
   return response.lists as readonly JsonRecord[];
 }
 
-export async function collectJiaowubaoCompletedScheduleSnapshot(
+function completedScheduleMemberIds(value: JsonRecord) {
+  if (!Array.isArray(value.stu_list)) fail("教务宝已结课排课的 stu_list 无效。");
+  return value.stu_list.map((candidate) => {
+    if (!isRecord(candidate)) fail("教务宝已结课排课的 stu_list 无效。");
+    const raw = typeof candidate.mem_id === "number"
+      ? candidate.mem_id
+      : typeof candidate.mem_id === "string" && /^[1-9]\d*$/u.test(candidate.mem_id.trim())
+        ? Number(candidate.mem_id)
+        : Number.NaN;
+    if (!Number.isSafeInteger(raw) || raw < 1) fail("教务宝已结课排课的 mem_id 无效。");
+    return raw;
+  });
+}
+
+async function collectJiaowubaoCompletedScheduleSnapshotInternal(
   rawWindow: Readonly<{ start: string; end: string }>,
-  fetchPage: PageFetcher = queryJiaowubaoScheduleList,
-): Promise<JiaowubaoCompletedScheduleSnapshot> {
+  fetchPage: PageFetcher,
+  captureMemberIds: boolean,
+): Promise<JiaowubaoCompletedScheduleSnapshotWithMemberIds> {
   const window = parseWindow(rawWindow);
   const pages: JiaowubaoCompletedScheduleSnapshotPage[] = [];
   const manifests: Array<{ page: number; recordCount: number; sha256: string; file: string }> = [];
   const sourceKeys = new Set<string>();
+  const sourceMemberIds = new Set<number>();
   let previousPageHash: string | undefined;
   let recordCount = 0;
 
@@ -343,6 +366,11 @@ export async function collectJiaowubaoCompletedScheduleSnapshot(
     if (rawRecords.length > JIAOWUBAO_COMPLETED_SCHEDULE_SNAPSHOT_PAGE_SIZE) fail("教务宝已结课排课单页数据超过安全上限。");
     if (rawRecords.length === 0) break;
     if (page > JIAOWUBAO_COMPLETED_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("教务宝已结课排课导出超过最大页数，已停止导出。");
+    if (captureMemberIds) {
+      for (const rawRecord of rawRecords) {
+        for (const memberId of completedScheduleMemberIds(rawRecord)) sourceMemberIds.add(memberId);
+      }
+    }
     const records = rawRecords.map((record) => projectJiaowubaoCompletedScheduleRecord(record, window));
     for (const record of records) {
       if (sourceKeys.has(record.sourceKey)) fail("教务宝已结课排课导出包含重复课节，已停止导出。");
@@ -372,10 +400,38 @@ export async function collectJiaowubaoCompletedScheduleSnapshot(
     pages: manifests,
   };
   const manifestSha256 = sha256Tag(canonicalJson(payload));
-  return Object.freeze({
+  const snapshot = Object.freeze({
     manifest: Object.freeze({ ...payload, manifestSha256, revision: manifestSha256 }),
     pages: Object.freeze(pages),
   });
+  const memberIds = Object.freeze([...sourceMemberIds].sort((left, right) => left - right));
+  return Object.freeze({
+    snapshot,
+    memberIds,
+    // SQL independently recomputes this ID-only digest before freezing the
+    // crawl. A newline-delimited decimal encoding is unambiguous and shared
+    // byte-for-byte by Node and PostgreSQL.
+    memberSetSha256: sha256Tag(memberIds.join("\n")),
+  });
+}
+
+export async function collectJiaowubaoCompletedScheduleSnapshot(
+  rawWindow: Readonly<{ start: string; end: string }>,
+  fetchPage: PageFetcher = queryJiaowubaoScheduleList,
+): Promise<JiaowubaoCompletedScheduleSnapshot> {
+  return (await collectJiaowubaoCompletedScheduleSnapshotInternal(rawWindow, fetchPage, false)).snapshot;
+}
+
+/**
+ * Captures the raw schedule participant IDs only long enough to freeze the
+ * private, per-member lesson crawl. Names and the supplier `stu_list` never
+ * enter the published schedule snapshot or a browser response.
+ */
+export async function collectJiaowubaoCompletedScheduleSnapshotWithMemberIds(
+  rawWindow: Readonly<{ start: string; end: string }>,
+  fetchPage: PageFetcher = queryJiaowubaoScheduleList,
+): Promise<JiaowubaoCompletedScheduleSnapshotWithMemberIds> {
+  return collectJiaowubaoCompletedScheduleSnapshotInternal(rawWindow, fetchPage, true);
 }
 
 export function allJiaowubaoCompletedScheduleRecords(snapshot: JiaowubaoCompletedScheduleSnapshot) {
