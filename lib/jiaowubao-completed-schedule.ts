@@ -258,7 +258,10 @@ export function projectJiaowubaoCompletedScheduleRecord(
     courseId: sourceId(value.course_id, "course_id"),
     courseTitle: text(value.course_title, "course_title"),
     teamId: sourceId(value.team_id, "team_id"),
-    teamTitle: text(value.team_title, "team_title"),
+    // Older one-to-one rows use numeric 0 as the supplier's no-team-title
+    // sentinel. Normalize only that raw boundary value; persisted DTOs remain
+    // strictly string|null and every other non-string still fails closed.
+    teamTitle: value.team_title === 0 ? null : text(value.team_title, "team_title"),
     teachers: scheduleTeachers(value),
     completedAt: text(value.over_time, "over_time", 80),
   });
