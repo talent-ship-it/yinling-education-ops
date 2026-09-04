@@ -139,6 +139,36 @@ test("invalid raw team-title diagnostics expose only a fixed structural category
   }
 });
 
+test("completed schedule normalizes only blank raw team titles and keeps persisted DTOs strict", () => {
+  const period = { start: "2026-08-01", end: "2026-08-31" };
+  for (const teamTitle of ["", " ", "\t", "　"]) {
+    const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: teamTitle }), period);
+    assert.equal(record.teamTitle, null);
+    assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(record), record);
+  }
+
+  const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: " Team A " }), period);
+  assert.equal(record.teamTitle, "Team A");
+  assert.equal(
+    thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
+      sourceRecord({ team_title: "Team\u0000A" }),
+      period,
+    )),
+    "教务宝已结课排课的 team_title 无效（string-control）。",
+  );
+  assert.equal(
+    thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
+      sourceRecord({ team_title: "A".repeat(241) }),
+      period,
+    )),
+    "教务宝已结课排课的 team_title 无效（string-overlong）。",
+  );
+  assert.throws(
+    () => readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, teamTitle: " " }),
+    /teamTitle 无效/,
+  );
+});
+
 test("completed schedule collector pins over=1 and only stops after an explicit empty page", async () => {
   const requests = [];
   const snapshot = await collectJiaowubaoCompletedScheduleSnapshot(

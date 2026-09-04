@@ -158,10 +158,19 @@ function sourceTeamTitle(value: unknown) {
   // confirmed, fail closed while exposing only a fixed structural category in
   // the private scheduler log—never the source value, object keys, or row.
   if (value === 0) return null;
-  if (value !== undefined && value !== null && value !== "" && typeof value !== "string") {
-    fail(`教务宝已结课排课的 team_title 无效（${sourceTeamTitleKind(value)}）。`);
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const parsed = value.trim().normalize("NFKC");
+    // Optional team titles in older one-to-one rows can be whitespace-only.
+    // Treat that exactly like the already-supported empty-string sentinel.
+    if (!parsed) return null;
+    if (parsed.length > 240) fail("教务宝已结课排课的 team_title 无效（string-overlong）。");
+    if (/[\u0000-\u001f\u007f]/u.test(parsed)) {
+      fail("教务宝已结课排课的 team_title 无效（string-control）。");
+    }
+    return parsed;
   }
-  return text(value, "team_title");
+  fail(`教务宝已结课排课的 team_title 无效（${sourceTeamTitleKind(value)}）。`);
 }
 
 function optionalDecimal(value: unknown, field: string, minimum: number, maximum: number) {
@@ -277,9 +286,10 @@ export function projectJiaowubaoCompletedScheduleRecord(
     courseId: sourceId(value.course_id, "course_id"),
     courseTitle: text(value.course_title, "course_title"),
     teamId: sourceId(value.team_id, "team_id"),
-    // Older one-to-one rows use numeric 0 as the supplier's no-team-title
-    // sentinel. Normalize only that raw boundary value; persisted DTOs remain
-    // strictly string|null and every other non-string still fails closed.
+    // Older one-to-one rows use numeric 0 or a blank string as the supplier's
+    // no-team-title sentinel. Normalize only those raw boundary sentinels;
+    // persisted DTOs remain strictly validated and every nonblank invalid
+    // source shape still fails closed.
     teamTitle: sourceTeamTitle(value.team_title),
     teachers: scheduleTeachers(value),
     completedAt: text(value.over_time, "over_time", 80),
