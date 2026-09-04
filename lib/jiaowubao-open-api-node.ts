@@ -86,25 +86,29 @@ export type JiaowubaoOpenApiErrorCode =
   | "response_oversize"
   | "upstream_rejected";
 
+export type JiaowubaoOpenApiTool =
+  | "query_schedule_list"
+  | "query_lesson_list"
+  | "query_member_simple_list";
+
 /** This error intentionally never contains the endpoint, response body, or sk. */
 export class JiaowubaoOpenApiError extends Error {
   constructor(
     readonly code: JiaowubaoOpenApiErrorCode,
     message: string,
     readonly retryAfterSeconds?: number,
+    readonly tool?: JiaowubaoOpenApiTool,
   ) {
     super(message);
     this.name = "JiaowubaoOpenApiError";
   }
 }
 
-type GatewayTool = "query_schedule_list" | "query_lesson_list" | "query_member_simple_list";
-
 // The published gateway ceiling is per organisation *and interface*. Keep a
 // separate courtesy queue per tool so a fixed monthly schedule+lesson pull can
 // finish inside the route budget without making either upstream tool exceed
 // its own 20/minute allowance.
-const requestStartStates = new Map<GatewayTool, { nextRequestStartAt: number; queue: Promise<void> }>();
+const requestStartStates = new Map<JiaowubaoOpenApiTool, { nextRequestStartAt: number; queue: Promise<void> }>();
 const inFlightListRequests = new Map<string, Promise<readonly JsonRecord[]>>();
 
 // Keep this module Node-only even when it is invoked from a local CLI. The
@@ -291,7 +295,7 @@ function sleep(milliseconds: number) {
  * layer; the upstream 429 is still handled explicitly because Vercel can run
  * more than one instance. A future high-volume sync must use a durable queue.
  */
-async function reserveRequestStart(tool: GatewayTool) {
+async function reserveRequestStart(tool: JiaowubaoOpenApiTool) {
   const state = requestStartStates.get(tool) ?? { nextRequestStartAt: 0, queue: Promise.resolve() };
   requestStartStates.set(tool, state);
   let release: (() => void) | undefined;
@@ -402,7 +406,7 @@ function readList(data: JsonRecord, field: GatewayListField, label: string): rea
 }
 
 async function requestGatewayList(
-  tool: GatewayTool,
+  tool: JiaowubaoOpenApiTool,
   params: Record<string, unknown>,
   field: GatewayListField,
   label: string,
@@ -466,7 +470,12 @@ async function requestGatewayList(
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
     }
     if (envelope.ret !== "1" && envelope.ret !== 1) {
-      throw new JiaowubaoOpenApiError("upstream_rejected", `教务宝未接受${label}读取请求。`);
+      throw new JiaowubaoOpenApiError(
+        "upstream_rejected",
+        `教务宝未接受${label}读取请求。`,
+        undefined,
+        tool,
+      );
     }
     if (!isRecord(envelope.data)) {
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");

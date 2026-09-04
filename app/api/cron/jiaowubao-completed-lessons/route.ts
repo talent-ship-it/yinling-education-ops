@@ -48,7 +48,14 @@ function previousMelbourneMonth(now = new Date()) {
 
 function safeSyncFailure(error: unknown) {
   if (error instanceof JiaowubaoOpenApiError) {
-    return Object.freeze({ kind: "open_api", code: error.code });
+    const source = error.tool === "query_lesson_list"
+      ? "lessons"
+      : error.tool === "query_schedule_list" ? "schedules" : undefined;
+    return Object.freeze({
+      kind: "open_api",
+      code: error.code,
+      ...(source ? { source } : {}),
+    });
   }
   if (error instanceof Error
     && error.message.length <= 240

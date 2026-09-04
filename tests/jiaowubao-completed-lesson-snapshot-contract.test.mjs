@@ -133,6 +133,10 @@ test("only `over=1` completed evidence reaches the browser route and scheduled j
   assert.match(cronMigration, /having count\(\*\) = 1/);
   assert.doesNotMatch(cronMigration, /jiaowubao_completed_lesson_sync_vault_token_missing/);
   assert.match(cronRoute, /error instanceof JiaowubaoOpenApiError/);
+  assert.match(cronRoute, /error\.tool === "query_lesson_list"/);
+  assert.match(cronRoute, /error\.tool === "query_schedule_list"/);
+  assert.match(cronRoute, /\? "lessons"/);
+  assert.match(cronRoute, /\? "schedules"/);
   assert.match(cronRoute, /kind: "source_validation"/);
   assert.match(cronRoute, /failure: safeSyncFailure\(error\)/);
   assert.doesNotMatch(cronRoute, /failure:\s*error\b|console\.error\([^\n]*,\s*error\b/);
