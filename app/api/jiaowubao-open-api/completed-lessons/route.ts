@@ -14,6 +14,7 @@ import {
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_PAGE_SIZE,
 } from "@/lib/jiaowubao-completed-lesson-pagination";
 import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-resumable-sync";
+import { JiaowubaoOpenApiError } from "@/lib/jiaowubao-open-api-node";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
@@ -41,6 +42,26 @@ function noStore(payload: unknown, status = 200) {
     status,
     headers: { "Cache-Control": "private, no-store" },
   });
+}
+
+function safeSyncFailure(error: unknown) {
+  if (error instanceof JiaowubaoOpenApiError) {
+    const source = error.tool === "query_lesson_list"
+      ? "lessons"
+      : error.tool === "query_schedule_list" ? "schedules" : undefined;
+    return Object.freeze({
+      kind: "open_api",
+      code: error.code,
+      ...(source ? { source } : {}),
+    });
+  }
+  if (error instanceof Error
+    && error.message.length <= 240
+    && /^教务宝(?:已消课|已结课排课|排课|完成月度)/u.test(error.message)
+    && !/[\u0000-\u001f\u007f<>]/u.test(error.message)) {
+    return Object.freeze({ kind: "source_validation", message: error.message });
+  }
+  return Object.freeze({ kind: "internal" });
 }
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -334,10 +355,10 @@ export async function POST(request: Request) {
       }, 202);
     }
     return noStore({ sync });
-  } catch {
+  } catch (error) {
     // Do not reflect JWB response bodies, credentials, database details, or
     // source rows. The previous immutable month pointer remains in place.
-    console.error("jiaowubao_completed_lesson_sync_failed", { month, actor: access.actor });
+    console.error("jiaowubao_completed_lesson_sync_failed", { month, failure: safeSyncFailure(error) });
     return noStore({ error: "教务宝已消课同步未完成；当前已发布快照未被覆盖。", code: "jiaowubao_completed_lesson_sync_failed" }, 503);
   }
 }

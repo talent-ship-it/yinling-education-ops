@@ -125,6 +125,8 @@ test("only `over=1` completed evidence reaches the browser route and scheduled j
   assert.match(route, /expectedProjectionRevision/);
   assert.match(route, /projection\.state === "reset" \? 409 : 200/);
   assert.match(route, /console\.error\("jiaowubao_completed_lesson_sync_failed"/);
+  assert.match(route, /failure: safeSyncFailure\(error\)/);
+  assert.doesNotMatch(route, /jiaowubao_completed_lesson_sync_failed"[\s\S]{0,120}actor:/);
   assert.doesNotMatch(route, /JIAOWUBAO_OPEN_API_SK|process\.env\.JIAOWUBAO/);
   assert.match(cronMigration, /jiaowubao_completed_lesson_sync_token/);
   assert.match(cronMigration, /'17 18 \* \* \*'/);
