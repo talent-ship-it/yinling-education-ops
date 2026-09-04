@@ -48,6 +48,16 @@ function sourceRecord(overrides = {}) {
   };
 }
 
+function thrownMessage(action) {
+  try {
+    action();
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    return error.message;
+  }
+  assert.fail("expected action to throw");
+}
+
 function collectionProof() {
   return {
     format: JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT,
@@ -124,6 +134,33 @@ test("completed source must be over=1, in the requested range, and uniquely iden
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ cal_id: null }), window), /cal_id/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: null }), window), /mem_id/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: "branch:one" }), window), /branch_id/);
+});
+
+test("invalid source components expose only a fixed structural category", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  const privateMarker = "must-not-reach-the-log";
+  const cases = [
+    [undefined, "missing"],
+    [null, "null"],
+    [" ", "string-blank"],
+    ["branch:one", "string-delimiter"],
+    ["A".repeat(161), "string-overlong"],
+    ["branch\u0000one", "string-control"],
+    [1.5, "number-noninteger"],
+    [-1, "number-negative"],
+    [false, "boolean-false"],
+    [[], "array-empty"],
+    [[privateMarker], "array-nonempty"],
+    [{}, "object-empty"],
+    [{ [privateMarker]: privateMarker }, "object-nonempty"],
+  ];
+  for (const [branchId, kind] of cases) {
+    const message = thrownMessage(
+      () => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: branchId }), window),
+    );
+    assert.equal(message, `教务宝已消课记录的 branch_id 无效（${kind}）。`);
+    assert.equal(message.includes(privateMarker), false);
+  }
 });
 
 test("an unassigned JWB secondary-teacher sentinel never becomes a phantom teacher", () => {

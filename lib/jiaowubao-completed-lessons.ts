@@ -209,10 +209,38 @@ function sourceTeacherId(value: unknown, field: string) {
   return sourceId(value, field);
 }
 
+function sourceComponentKind(value: unknown) {
+  if (value === undefined) return "missing";
+  if (value === null) return "null";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "number-nonfinite";
+    if (!Number.isSafeInteger(value)) return "number-noninteger";
+    return value < 0 ? "number-negative" : "number-format";
+  }
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return "string-blank";
+    if (raw.length > 160) return "string-overlong";
+    if (/[\u0000-\u001f\u007f]/u.test(raw)) return "string-control";
+    if (raw.includes(":")) return "string-delimiter";
+    return "string-format";
+  }
+  if (typeof value === "boolean") return value ? "boolean-true" : "boolean-false";
+  if (Array.isArray(value)) return value.length === 0 ? "array-empty" : "array-nonempty";
+  if (isRecord(value)) return Object.keys(value).length === 0 ? "object-empty" : "object-nonempty";
+  return typeof value;
+}
+
 function completedLessonSourceComponent(value: unknown, field: string) {
-  const component = sourceId(value, field, true)!;
+  const component = typeof value === "number" && Number.isSafeInteger(value)
+    ? String(value)
+    : typeof value === "string"
+      ? value.trim()
+      : "";
   if (!COMPLETED_LESSON_SOURCE_COMPONENT.test(component)) {
-    fail(`教务宝已消课记录的 ${field} 无效。`);
+    // Only this fixed structural category reaches the private scheduler log.
+    // Never include the source value, object keys, member ID, or response row.
+    fail(`教务宝已消课记录的 ${field} 无效（${sourceComponentKind(value)}）。`);
   }
   return component;
 }
