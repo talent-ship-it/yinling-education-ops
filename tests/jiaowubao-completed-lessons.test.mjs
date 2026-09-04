@@ -14,6 +14,7 @@ const {
   validateJiaowubaoClosedCompletedLessonMonth,
   validateJiaowubaoCompletedLessonMonth,
 } = await import("../lib/jiaowubao-completed-lessons.ts");
+const { JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID } = await import("../lib/jiaowubao-completed-lesson-branch.ts");
 const {
   buildJiaowubaoCompletedMonthEvidenceEnvelope,
   buildJiaowubaoCompletedMonthEvidenceSnapshot,
@@ -130,19 +131,43 @@ test("completed source must be over=1, in the requested range, and uniquely iden
   const window = { start: "2026-08-01", end: "2026-08-31" };
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ over: 0 }), window), /over=1/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ dated: "2026-09-01" }), window), /日期范围/);
-  assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: null }), window), /branch_id/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ cal_id: null }), window), /cal_id/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: null }), window), /mem_id/);
   assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: "branch:one" }), window), /branch_id/);
+});
+
+test("historical missing branch shapes use one reserved marker without weakening calendar or member IDs", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  for (const branchId of [undefined, null, "", " \t ", 0, "0", "000"]) {
+    const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: branchId }), window);
+    assert.equal(record.branchId, JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID);
+    assert.equal(
+      record.sourceKey,
+      `jwb-open-api:lesson:${JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID}:7001:201`,
+    );
+    assert.doesNotThrow(() => assertJiaowubaoCompletedLessonSnapshotIntegrity(buildJiaowubaoCompletedLessonSnapshot(
+      window,
+      [record],
+      collectionProof(),
+    )));
+  }
+  assert.throws(
+    () => projectJiaowubaoCompletedLessonRecord(
+      sourceRecord({ branch_id: JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID }),
+      window,
+    ),
+    /string-reserved/,
+  );
+  assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ cal_id: 0 }), window), /cal_id/);
+  assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: 0 }), window), /mem_id/);
+  assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: "0".repeat(161) }), window), /branch_id/);
+  assert.throws(() => projectJiaowubaoCompletedLessonRecord(sourceRecord({ branch_id: " ".repeat(161) }), window), /branch_id/);
 });
 
 test("invalid source components expose only a fixed structural category", () => {
   const window = { start: "2026-08-01", end: "2026-08-31" };
   const privateMarker = "must-not-reach-the-log";
   const cases = [
-    [undefined, "missing"],
-    [null, "null"],
-    [" ", "string-blank"],
     ["branch:one", "string-delimiter"],
     ["A".repeat(161), "string-overlong"],
     ["branch\u0000one", "string-control"],
@@ -178,6 +203,19 @@ test("collector fails closed on a duplicate lesson participant rather than doubl
       async ({ page }) => ({ list: page === 1 ? [sourceRecord(), sourceRecord()] : [] }),
     ),
     /重复课节学员记录/,
+  );
+  await assert.rejects(
+    collectJiaowubaoCompletedLessonMemberPage(
+      { start: "2026-08-01", end: "2026-08-31" },
+      201,
+      1,
+      null,
+      async () => ({
+        total: 2,
+        list: [sourceRecord({ branch_id: undefined }), sourceRecord({ branch_id: undefined })],
+      }),
+    ),
+    /重复来源键/,
   );
 });
 

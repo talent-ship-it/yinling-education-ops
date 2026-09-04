@@ -186,6 +186,59 @@ test("missing or ambiguous schedule evidence is review-only rather than a guesse
   assert.ok((projection.teachers[0]?.unresolvedLessonCount ?? 0) > 0);
 });
 
+test("a historical lesson with no branch stays review-only even when its schedule otherwise matches", () => {
+  const record = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ branch_id: undefined, mem_id: 702, mem_title: "Rita Wu", type: 1, course_title: "Y9 ICAS" }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const schedule = projectJiaowubaoCompletedScheduleRecord(
+    scheduleSourceRecord({ course_title: "Y9 ICAS", teacher_hour: 1 }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], scheduleRecords: [schedule], stateRows: stateRows() });
+  const teacher = projection.teachers.find((candidate) => candidate.sourceTeacherId === "80");
+  assert.equal(teacher?.sourceHours, null);
+  assert.equal(teacher?.trialSourceHours, null);
+  assert.ok((teacher?.unresolvedLessonCount ?? 0) > 0);
+  assert.ok((teacher?.unresolvedTrialLessonCount ?? 0) > 0);
+  assert.equal(teacher?.studentLineCount, 1, "the learner evidence remains visible for review");
+});
+
+test("an unknown-branch learner with no teacher identity cannot make a separate schedule source fact payable", () => {
+  const record = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({
+      branch_id: undefined,
+      mem_id: 702,
+      mem_title: "Rita Wu",
+      type: 1,
+      course_title: "Y9 ICAS",
+      teacher_id: 0,
+      teacher_title: null,
+    }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const schedule = projectJiaowubaoCompletedScheduleRecord(
+    scheduleSourceRecord({ course_title: "Y9 ICAS", teacher_hour: 1 }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], scheduleRecords: [schedule], stateRows: stateRows() });
+  const scheduleTeacher = projection.teachers.find((candidate) => candidate.sourceTeacherId === "80");
+  assert.equal(scheduleTeacher?.sourceHours, 1, "the schedule role-hour remains visible only as a source fact");
+  assert.ok((scheduleTeacher?.unresolvedLessonCount ?? 0) > 0);
+  assert.equal(
+    projection.teachers.some((teacher) => (
+      teacher.teacherId
+      && teacher.sourceHours !== null
+      && teacher.trialSourceHours !== null
+      && teacher.unresolvedLessonCount === 0
+      && teacher.unresolvedTrialLessonCount === 0
+      && teacher.missingStudentDisplayNameCount === 0
+    )),
+    false,
+    "no teacher summary satisfies the payroll-release gate",
+  );
+});
+
 test("an extra schedule role is a source conflict, never an unearned teacher credit", () => {
   const record = projectJiaowubaoCompletedLessonRecord(
     sourceRecord({ mem_id: 702, mem_title: "Rita Wu", type: 1, course_title: "Y9 ICAS" }),

@@ -1,4 +1,5 @@
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
+import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -447,7 +448,7 @@ function lessonEvidenceSheet(input: PayrollWorkbookExport) {
   ].map((value) => stringCell(value, 3))];
   for (const item of input.evidence?.lessons ?? []) {
     rows.push([
-      stringCell(item.sourceKey), stringCell(item.branchId), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle),
+      stringCell(item.sourceKey), stringCell(jiaowubaoCompletedLessonBranchDisplay(item.branchId)), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle),
       stringCell(item.memberId), stringCell(item.memberName), stringCell(item.displayStudentName), stringCell(item.studentId), stringCell(item.studentName),
       stringCell(item.studentMatch), numberCell(item.hours), stringCell(item.isTrial ? "是" : "否"), numberCell(item.attendanceCode),
       stringCell(item.attendanceTitle), stringCell(item.courseTitle), stringCell(item.teamTitle), stringCell(teacherDescription(item.teachers)),

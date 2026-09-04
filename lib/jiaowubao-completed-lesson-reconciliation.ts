@@ -6,6 +6,8 @@
  * derives a teacher credit from participant `hours`.
  */
 
+import { isJiaowubaoCompletedLessonUnknownBranchId } from "@/lib/jiaowubao-completed-lesson-branch";
+
 export type JiaowubaoCompletedLessonMatch =
   | "source_id"
   | "unique_name"
@@ -225,7 +227,12 @@ function plannedEvents(
     const sample = members[0]!;
     const sourceSchedules = schedulesByCalendar.get(sample.calendarId) ?? [];
     const branchCount = branchesByCalendar.get(sample.calendarId)?.size ?? 0;
-    if (sourceSchedules.length === 0) {
+    if (isJiaowubaoCompletedLessonUnknownBranchId(sample.branchId)) {
+      // Some historical query_lesson_list rows omit branch_id entirely. Keep
+      // their learner evidence, but never let a synthetic branch marker prove
+      // a join to the branch-less schedule feed or create payable hours.
+      plans.push(lessonOnlyPlan("branch_ambiguous", members));
+    } else if (sourceSchedules.length === 0) {
       plans.push(lessonOnlyPlan("schedule_missing", members));
     } else if (sourceSchedules.length !== 1 || branchCount !== 1) {
       plans.push(lessonOnlyPlan("branch_ambiguous", members));
@@ -239,6 +246,7 @@ function plannedEvents(
   for (const schedule of schedules) {
     const groups = [...lessonGroups.values()].filter((members) => members[0]?.calendarId === schedule.calendarId);
     const matched = groups.length === 1
+      && !isJiaowubaoCompletedLessonUnknownBranchId(groups[0]![0]!.branchId)
       && (branchesByCalendar.get(schedule.calendarId)?.size ?? 0) === 1
       && scheduleMatchesGroup(schedule, groups[0]!);
     if (!matched) plans.push(scheduleEventPlan({ status: "schedule_only", members: [], schedule }));

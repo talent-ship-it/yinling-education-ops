@@ -145,8 +145,8 @@ function sampleWorkbook(): PayrollWorkbookExport {
         teamTitle: "试听",
         teachers: [primary],
       }, {
-        sourceKey: "jwb-open-api:lesson:branch-1:cal-1:member-2",
-        branchId: "branch-1",
+        sourceKey: "jwb-open-api:lesson:~:cal-1:member-2",
+        branchId: "~",
         calendarId: "cal-1",
         memberId: "member-2",
         memberName: "Rita Wu",
@@ -250,6 +250,7 @@ test("builds a deterministic real XLSX with approved A:H layout and six evidence
   for (const reference of ["I3", "J3", "K3", "L3", "M3", "N3"]) assert.equal(cell(review!, reference), null);
   assert.equal(cell(lessons!, "G2"), "试听学员B");
   assert.equal(cell(lessons!, "H2"), "Zachary 张泽睿");
+  assert.equal(cell(lessons!, "B3"), "未知（历史来源未提供）");
   assert.equal(schedules!.rows.length, 4, "one schedule event expands to all three teacher roles");
   assert.equal(cell(schedules!, "G4"), "third");
   assert.equal(
