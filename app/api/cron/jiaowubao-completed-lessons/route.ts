@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-sync";
+import { JiaowubaoOpenApiError } from "@/lib/jiaowubao-open-api-node";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,6 +46,21 @@ function previousMelbourneMonth(now = new Date()) {
   return date.toISOString().slice(0, 7);
 }
 
+function safeSyncFailure(error: unknown) {
+  if (error instanceof JiaowubaoOpenApiError) {
+    return Object.freeze({ kind: "open_api", code: error.code });
+  }
+  if (error instanceof Error
+    && error.message.length <= 240
+    && /^教务宝(?:已消课|已结课排课|排课|完成月度)/u.test(error.message)
+    && !/[\u0000-\u001f\u007f<>]/u.test(error.message)) {
+    // These messages are fixed validation strings created by our own source
+    // projectors. They contain a field name, never a source row or response.
+    return Object.freeze({ kind: "source_validation", message: error.message });
+  }
+  return Object.freeze({ kind: "internal" });
+}
+
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
   const month = previousMelbourneMonth();
@@ -52,10 +68,10 @@ export async function GET(request: Request) {
     const sync = await syncJiaowubaoCompletedLessonMonth({ month });
     const status = sync.outcome === "already_running" ? 202 : 200;
     return noStore(sync, status);
-  } catch {
+  } catch (error) {
     // Keep source details, credentials, upstream response text, and database
     // errors out of this bearer-protected scheduler response and logs.
-    console.error("jiaowubao_completed_lesson_cron_failed", { month });
+    console.error("jiaowubao_completed_lesson_cron_failed", { month, failure: safeSyncFailure(error) });
     return noStore({ error: "教务宝已消课同步未完成；系统会在下一次计划任务重试。" }, 503);
   }
 }
