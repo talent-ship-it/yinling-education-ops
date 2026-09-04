@@ -930,6 +930,17 @@ export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
 export const JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC = "project_jiaowubao_open_api_authority";
+export const JIAOWUBAO_COMPLETED_LESSON_PREFLIGHT_RPC = "get_jiaowubao_completed_lesson_snapshot_preflight";
+export const JIAOWUBAO_COMPLETED_LESSON_BEGIN_RPC = "begin_jiaowubao_completed_lesson_snapshot_ingest";
+export const JIAOWUBAO_COMPLETED_LESSON_STAGE_RPC = "stage_jiaowubao_completed_lesson_snapshot_page";
+export const JIAOWUBAO_COMPLETED_LESSON_COMPLETE_RPC = "complete_jiaowubao_completed_lesson_snapshot_ingest";
+export const JIAOWUBAO_COMPLETED_LESSON_ABORT_RPC = "abort_jiaowubao_completed_lesson_snapshot_ingest";
+export const JIAOWUBAO_COMPLETED_LESSON_CONFIRM_RPC = "confirm_jiaowubao_completed_lesson_snapshot_current";
+export const JIAOWUBAO_COMPLETED_LESSON_READER_RPC = "get_jiaowubao_completed_lesson_snapshot_page";
+export const JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_READER_RPC = "get_jiaowubao_completed_lesson_snapshot_schedule_page";
+export const JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_STAGE_RPC = "stage_jiaowubao_completed_lesson_snapshot_schedule_page";
+export const JIAOWUBAO_COMPLETED_LESSON_LEASE_CLAIM_RPC = "claim_jiaowubao_completed_lesson_sync_lease";
+export const JIAOWUBAO_COMPLETED_LESSON_LEASE_RELEASE_RPC = "release_jiaowubao_completed_lesson_sync_lease";
 export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
 export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
 export const WECOM_ARCHIVE_INGEST_RPC = "ingest_wecom_archive_batch";
@@ -1083,6 +1094,7 @@ export type JiaowubaoOpenApiScheduleSnapshotReceipt = Readonly<{
   revision?: string;
   pageIndex?: number;
   rowCount?: number;
+  scheduleRowCount?: number;
   pageCount?: number;
   rowsSha256?: string;
   payloadSha256?: string;
@@ -1113,6 +1125,42 @@ export type JiaowubaoOpenApiAuthorityProjectionReceipt = Readonly<{
 }>;
 
 export type JiaowubaoOpenApiScheduleSyncLease = Readonly<{
+  acquired: boolean;
+  runKey: string;
+  retryAfterSeconds: number;
+}>;
+
+/** Private, month-scoped source evidence; the browser only sees a route DTO. */
+export type JiaowubaoCompletedLessonSnapshotReceipt = Readonly<{
+  runId: string;
+  state: "staging" | "complete" | "aborted";
+  abortReason?: "caller_failure" | "current_pointer_conflict" | "staging_envelope_conflict" | "superseded_current_pointer";
+  rowCount?: number;
+  scheduleRowCount?: number;
+  rowsSha256?: string;
+  payloadSha256?: string;
+  replayed?: boolean;
+  republished?: boolean;
+}>;
+
+export type JiaowubaoCompletedLessonSnapshotPreflight = Readonly<{
+  apiSourceKey: "jwb-open-api-completed-lessons";
+  month: string;
+  current: Readonly<{ revision: string; rowCount: number; scheduleRowCount?: number; publishedAt: string }> | null;
+}>;
+
+export type JiaowubaoCompletedLessonSnapshotPage = Readonly<{
+  state: "absent" | "complete" | "reset";
+  month: string;
+  revision: string | null;
+  rowCount: number;
+  pageIndex: number;
+  pageCount: number;
+  publishedAt: string | null;
+  items: readonly Readonly<{ sourceKey: string; record: Readonly<Record<string, unknown>> }>[];
+}>;
+
+export type JiaowubaoCompletedLessonSyncLease = Readonly<{
   acquired: boolean;
   runKey: string;
   retryAfterSeconds: number;
@@ -1799,6 +1847,157 @@ export function completeJiaowubaoOpenApiScheduleSnapshot(input: { runId: string;
   return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC, {
     p_secret: secret,
     p_run_id: input.runId,
+    p_actor: input.actor,
+  });
+}
+
+/** Server-only completed-lesson evidence writer; it never changes ops_state. */
+export function getJiaowubaoCompletedLessonSnapshotPreflight(input: { month: string; actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotPreflight>(JIAOWUBAO_COMPLETED_LESSON_PREFLIGHT_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_actor: input.actor,
+  });
+}
+
+export function beginJiaowubaoCompletedLessonSnapshot(input: {
+  envelope: Readonly<Record<string, unknown>>;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotReceipt>(JIAOWUBAO_COMPLETED_LESSON_BEGIN_RPC, {
+    p_secret: secret,
+    p_envelope: input.envelope,
+    p_actor: input.actor,
+  });
+}
+
+export function stageJiaowubaoCompletedLessonSnapshotPage(input: {
+  runId: string;
+  pageIndex: number;
+  rows: readonly Readonly<Record<string, unknown>>[];
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotReceipt>(JIAOWUBAO_COMPLETED_LESSON_STAGE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_page_index: input.pageIndex,
+    p_rows: input.rows,
+    p_actor: input.actor,
+  });
+}
+
+/** Stages the private query_schedule_list(over=1) sidecar for the same run. */
+export function stageJiaowubaoCompletedScheduleSnapshotPage(input: {
+  runId: string;
+  pageIndex: number;
+  rows: readonly Readonly<Record<string, unknown>>[];
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotReceipt>(JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_STAGE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_page_index: input.pageIndex,
+    p_rows: input.rows,
+    p_actor: input.actor,
+  });
+}
+
+export function completeJiaowubaoCompletedLessonSnapshot(input: { runId: string; actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotReceipt>(JIAOWUBAO_COMPLETED_LESSON_COMPLETE_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_actor: input.actor,
+  });
+}
+
+/** Best-effort cleanup for a failed staging run; completed evidence is immutable. */
+export function abortJiaowubaoCompletedLessonSnapshot(input: { runId: string; actor: "Ops Admin" }) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotReceipt>(JIAOWUBAO_COMPLETED_LESSON_ABORT_RPC, {
+    p_secret: secret,
+    p_run_id: input.runId,
+    p_actor: input.actor,
+  });
+}
+
+export function confirmJiaowubaoCompletedLessonSnapshotCurrent(input: {
+  month: string;
+  revision: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ confirmed: boolean; revision: string; rowCount: number; scheduleRowCount?: number; publishedAt: string }>>(
+    JIAOWUBAO_COMPLETED_LESSON_CONFIRM_RPC,
+    { p_secret: secret, p_month: input.month, p_revision: input.revision, p_actor: input.actor },
+  );
+}
+
+/**
+ * Reads one bounded browser page from the immutable completed-lesson source.
+ * A supplied revision pins continuation pages to the same published month.
+ */
+export function getJiaowubaoCompletedLessonSnapshotPage(input: {
+  month: string;
+  pageIndex: number;
+  revision: string | null;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotPage>(JIAOWUBAO_COMPLETED_LESSON_READER_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_page_index: input.pageIndex,
+    p_expected_revision: input.revision,
+    p_actor: input.actor,
+  }, { timeoutMs: 30_000 });
+}
+
+/** Reads one revision-pinned private page of completed schedule role evidence. */
+export function getJiaowubaoCompletedScheduleSnapshotPage(input: {
+  month: string;
+  pageIndex: number;
+  revision: string | null;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSnapshotPage>(JIAOWUBAO_COMPLETED_LESSON_SCHEDULE_READER_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_page_index: input.pageIndex,
+    p_expected_revision: input.revision,
+    p_actor: input.actor,
+  }, { timeoutMs: 30_000 });
+}
+
+export function claimJiaowubaoCompletedLessonSyncLease(input: {
+  month: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoCompletedLessonSyncLease>(JIAOWUBAO_COMPLETED_LESSON_LEASE_CLAIM_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_run_key: input.runKey,
+    p_actor: input.actor,
+  });
+}
+
+export function releaseJiaowubaoCompletedLessonSyncLease(input: {
+  month: string;
+  runKey: string;
+  actor: "Ops Admin";
+}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ released: boolean }>>(JIAOWUBAO_COMPLETED_LESSON_LEASE_RELEASE_RPC, {
+    p_secret: secret,
+    p_month: input.month,
+    p_run_key: input.runKey,
     p_actor: input.actor,
   });
 }

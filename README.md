@@ -2,13 +2,13 @@
 
 Internal operations MVP for Insider Leads / 吟领教育教务.
 
-The app is a Next.js site backed by Supabase shared state. It is currently an internal demo with password-selected work views so the team can review the operating logic before full account management is added.
+The app is a Next.js internal operations site backed by Supabase shared state. Each managed user signs in with an account/name and password; the server binds the resulting session to that account's role and data scope.
 
 ## Current Shape
 
 - Student CRM with owner-scoped views, status updates, file index, LP needs, exam and renewal fields.
 - Teacher resource library with subject filters, AVA display, manual structured AVA entry, and availability-based scheduling checks.
-- Scheduling, LP workflows, exception handling, renewals, and a month-based payroll workspace with Excel export, teacher onboarding, rate maintenance, review locks, and audit history.
+- Scheduling, LP workflows, exception handling, renewals, and a month-based payroll workspace with a six-sheet Open XML `.xlsx` export, teacher onboarding, rate maintenance, review locks, and audit history. The completed-month workbook keeps student consumption and role-specific teacher hours as distinct JiaoWuBao evidence sources.
 - Per-account display preferences support Chinese or English interface labels, locale-aware date/time formats, timezone selection, and text sizing. English mode translates system-controlled UI while preserving names and source records as entered.
 - Supabase is the write target for in-app changes.
 - Tencent roster and handbook sources remain read-only. The dedicated 13-column trial-review SmartSheet is a one-way, private projection written every 15 minutes by the production system through Tencent's MCP API; staff corrections are made in the app and then mirrored to Tencent. Codex is not part of the scheduled run path.
@@ -16,15 +16,12 @@ The app is a Next.js site backed by Supabase shared state. It is currently an in
 
 ## Access Model
 
-The login password determines the demo work view:
-
-- The Admin password opens the global management workspace and can switch into every staff view.
-- The limited Admin password opens a global operations workspace except all payroll data and payroll pages.
-- In local development, a staff member can enter their own name as the demo password and see only their own work view.
-- Staff and teacher access temporarily uses the account name itself as the password in the internal review environment.
-- Logging in as staff clears any prior Admin session in that browser, including payroll access.
-
-This is intentional for the current internal MVP. It is not the final production authentication model.
+- Managed accounts use an account/name plus an independent password; passwords are verified server-side and are never stored in source control.
+- Admin, limited-admin, staff, and teacher roles are bound to the authenticated account and determine the available pages and data scope. Limited administrators cannot access payroll.
+- A full administrator can manage account status, issue/reset passwords, revoke sessions, and configure permissions. Password and access changes are audited.
+- Users can change their own password, review active sessions, and configure MFA when their account has an independent password.
+- A narrow legacy bootstrap remains only for accounts that have not yet adopted an independent password. Once migrated, the account/name field is required and the legacy password-only path is rejected.
+- Signing out or changing a password invalidates the relevant server session; one browser session cannot inherit a prior administrator's payroll access.
 
 ## Development
 
@@ -55,5 +52,7 @@ The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
 - `WECOM_ARCHIVE_BRIDGE_TOKEN` — independent high-entropy bearer token used only by the authorised conversation-archive worker
 - `WECOM_ARCHIVE_STARTED_AT` — exact ISO timestamp; records before this post-join cutoff are rejected
 - `WECOM_CALLBACK_TOKEN`, `WECOM_CALLBACK_ENCODING_AES_KEY`, `WECOM_CORP_ID` — optional standard app-callback verification values; these are separate from the conversation-archive data-zone keys
+- `JIAOWUBAO_OPEN_API_SK` — server-only key for the documented 教务宝 gateway; never expose it with a `NEXT_PUBLIC_` prefix
+- `JIAOWUBAO_COMPLETED_LESSON_SYNC_TOKEN` — independent high-entropy bearer used only by the monthly completed-lesson cron; the same value must exist exactly once in Supabase Vault as `jiaowubao_completed_lesson_sync_token`
 
 Do not commit real data snapshots or secrets to GitHub.
