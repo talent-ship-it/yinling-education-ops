@@ -192,6 +192,29 @@ test("rejects source-key components that could collide with its delimiters", () 
   assert.throws(() => parseJiaowubaoCompletedMonthEvidencePage(feed), /sourceKey|branchId/);
 });
 
+test("accepts only the reserved unknown-branch marker and keeps it review-only", () => {
+  const feed = lessonFeed();
+  const item = feed.items[0]!;
+  item.branchId = "~";
+  item.sourceKey = `jwb-open-api:lesson:~:${item.calendarId}:${item.memberId}`;
+  const schedule = scheduleFeed();
+
+  const completed = completeJiaowubaoCompletedMonthEvidencePages({
+    lessonPages: [parseJiaowubaoCompletedMonthEvidencePage(feed)],
+    schedulePages: [parseJiaowubaoCompletedMonthEvidencePage(schedule)],
+  });
+  assert.equal(completed.items[0]?.branchId, "~");
+  assert.equal(completed.teachers[0]?.sourceHours, null);
+  assert.ok((completed.teachers[0]?.unresolvedLessonCount ?? 0) > 0);
+
+  for (const invalid of ["~~", "unknown~branch", "0", "000"]) {
+    const malformed = lessonFeed();
+    malformed.items[0]!.branchId = invalid;
+    malformed.items[0]!.sourceKey = `jwb-open-api:lesson:${invalid}:cal-1:member-1`;
+    assert.throws(() => parseJiaowubaoCompletedMonthEvidencePage(malformed), /sourceKey|branchId/);
+  }
+});
+
 test("only releases teacher credits after both complete source feeds are present", () => {
   const first = lessonFeed();
   first.rowCount = 2;

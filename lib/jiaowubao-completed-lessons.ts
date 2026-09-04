@@ -5,6 +5,10 @@ import {
   type JiaowubaoCompletedLessonListQuery,
   type JiaowubaoCompletedLessonListResponse,
 } from "@/lib/jiaowubao-open-api-node";
+import {
+  isJiaowubaoCompletedLessonUnknownBranchId,
+  JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID,
+} from "@/lib/jiaowubao-completed-lesson-branch";
 
 /**
  * Immutable, curated evidence feed for the monthly payroll worksheet.
@@ -27,7 +31,7 @@ type JsonRecord = Record<string, unknown>;
 // Delimiters are deliberately excluded so two upstream IDs can never encode
 // to the same key (for example `a:b,c,d` versus `a,b:c,d`).
 const COMPLETED_LESSON_SOURCE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
-const COMPLETED_LESSON_SOURCE_KEY = /^jwb-open-api:lesson:[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
+const COMPLETED_LESSON_SOURCE_KEY = /^jwb-open-api:lesson:(?:~|[A-Za-z0-9][A-Za-z0-9._-]{0,159}):[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
 
 export type JiaowubaoCompletedLessonTeacherRole = "primary" | "assistant" | "third";
 
@@ -237,12 +241,36 @@ function completedLessonSourceComponent(value: unknown, field: string) {
     : typeof value === "string"
       ? value.trim()
       : "";
-  if (!COMPLETED_LESSON_SOURCE_COMPONENT.test(component)) {
+  if (!COMPLETED_LESSON_SOURCE_COMPONENT.test(component) || /^0+$/u.test(component)) {
     // Only this fixed structural category reaches the private scheduler log.
     // Never include the source value, object keys, member ID, or response row.
     fail(`教务宝已消课记录的 ${field} 无效（${sourceComponentKind(value)}）。`);
   }
   return component;
+}
+
+function missingCompletedLessonSourceBranch(value: unknown) {
+  if (value === undefined || value === null || value === 0) return true;
+  if (typeof value !== "string") return false;
+  if (value.length > 160) return false;
+  const trimmed = value.trim();
+  return !trimmed || /^0+$/u.test(trimmed);
+}
+
+function completedLessonSourceBranchId(value: unknown) {
+  if (missingCompletedLessonSourceBranch(value)) {
+    return JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID;
+  }
+  if (value === JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID) {
+    fail("教务宝已消课记录的 branch_id 无效（string-reserved）。");
+  }
+  const branchId = completedLessonSourceComponent(value, "branch_id");
+  return branchId;
+}
+
+function completedLessonSnapshotBranchId(value: unknown) {
+  if (typeof value === "string" && isJiaowubaoCompletedLessonUnknownBranchId(value)) return value;
+  return completedLessonSourceComponent(value, "branchId");
 }
 
 function completedLessonSourceKey(value: unknown, expected: string) {
@@ -427,7 +455,7 @@ export function projectJiaowubaoCompletedLessonRecord(
 ): JiaowubaoCompletedLessonRecord {
   if (!isRecord(value)) fail("教务宝已消课记录无效。");
   completed(value.over);
-  const branchId = completedLessonSourceComponent(value.branch_id, "branch_id");
+  const branchId = completedLessonSourceBranchId(value.branch_id);
   const calendarId = completedLessonSourceComponent(value.cal_id, "cal_id");
   const memberId = completedLessonSourceComponent(value.mem_id, "mem_id");
   const lessonDate = sourceDate(value.dated, window);
@@ -478,7 +506,7 @@ export function readJiaowubaoCompletedLessonSnapshotRecord(value: unknown): Jiao
     fail("已消课快照记录字段无效。");
   }
   if (value.kind !== "lesson" || value.completed !== true || typeof value.isTrial !== "boolean") fail("已消课快照记录状态无效。");
-  const branchId = completedLessonSourceComponent(value.branchId, "branchId");
+  const branchId = completedLessonSnapshotBranchId(value.branchId);
   const calendarId = completedLessonSourceComponent(value.calendarId, "calendarId");
   const memberId = completedLessonSourceComponent(value.memberId, "memberId");
   const lessonDate = exactDate(value.lessonDate, "lessonDate");

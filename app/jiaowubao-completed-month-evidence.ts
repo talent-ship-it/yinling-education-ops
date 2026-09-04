@@ -13,6 +13,7 @@ import {
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_MAX_PAGES,
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_PAGE_SIZE,
 } from "@/lib/jiaowubao-completed-lesson-pagination";
+import { JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID } from "@/lib/jiaowubao-completed-lesson-branch";
 
 export type JiaowubaoCompletedLessonFeedItem = JiaowubaoCompletedLessonStudentEvidence;
 export type JiaowubaoCompletedScheduleFeedEvent = JiaowubaoCompletedScheduleEventEvidence;
@@ -100,7 +101,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u;
 const SOURCE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
-const LESSON_KEY = /^jwb-open-api:lesson:[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
+const LESSON_KEY = /^jwb-open-api:lesson:(?:~|[A-Za-z0-9][A-Za-z0-9._-]{0,159}):[A-Za-z0-9][A-Za-z0-9._-]{0,159}:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
 const SCHEDULE_KEY = /^jwb-open-api:schedule:[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u;
 const MATCHES = new Set<JiaowubaoCompletedLessonMatch>([
   "source_id", "unique_name", "trial_course_title", "unmatched", "ambiguous",
@@ -140,8 +141,13 @@ function id(value: unknown, label: string, required = false) {
 
 function sourceComponent(value: unknown, label: string) {
   const parsed = id(value, label, true)!;
-  if (!SOURCE_COMPONENT.test(parsed)) throw new Error(`${label} 格式无效。`);
+  if (!SOURCE_COMPONENT.test(parsed) || /^0+$/u.test(parsed)) throw new Error(`${label} 格式无效。`);
   return parsed;
+}
+
+function sourceBranchComponent(value: unknown) {
+  if (value === JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID) return value;
+  return sourceComponent(value, "branchId");
 }
 
 function text(value: unknown, label: string, maximum = 240) {
@@ -227,7 +233,7 @@ function lessonItem(value: unknown): JiaowubaoCompletedLessonFeedItem {
   const sourceKey = typeof item.sourceKey === "string" && LESSON_KEY.test(item.sourceKey) ? item.sourceKey : null;
   const parsed = {
     sourceKey,
-    branchId: sourceComponent(item.branchId, "branchId"),
+    branchId: sourceBranchComponent(item.branchId),
     calendarId: sourceComponent(item.calendarId, "calendarId"),
     memberId: sourceComponent(item.memberId, "memberId"),
     memberName: text(item.memberName, "memberName"),
