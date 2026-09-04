@@ -40,6 +40,41 @@ export type JiaowubaoScheduleListResponse = Readonly<{
   [key: string]: unknown;
 }>;
 
+/**
+ * The completed-lesson reader deliberately exposes no `over` parameter: the
+ * integration is an evidence feed for completed lessons only, so every
+ * upstream request is forced to `over: 1` by the server.
+ */
+export type JiaowubaoCompletedLessonListQuery = Readonly<{
+  start: string;
+  end: string;
+  page?: number;
+  limit?: number;
+  sign?: -1 | 0 | 1 | 2 | 3 | 4 | 5;
+  mem_id?: number;
+  course_id?: number;
+  team_id?: number;
+}>;
+
+export type JiaowubaoCompletedLessonListResponse = Readonly<{
+  list: readonly JsonRecord[];
+  [key: string]: unknown;
+}>;
+
+/** A bounded, server-only member-directory search for reviewed name linking. */
+export type JiaowubaoMemberSimpleListQuery = Readonly<{
+  page?: number;
+  limit?: number;
+  keyword?: string;
+  teacher_id?: number;
+  team_id?: number;
+}>;
+
+export type JiaowubaoMemberSimpleListResponse = Readonly<{
+  list: readonly JsonRecord[];
+  [key: string]: unknown;
+}>;
+
 export type JiaowubaoOpenApiErrorCode =
   | "not_configured"
   | "invalid_request"
@@ -63,9 +98,14 @@ export class JiaowubaoOpenApiError extends Error {
   }
 }
 
-let nextRequestStartAt = 0;
-let startQueue: Promise<void> = Promise.resolve();
-const inFlightScheduleRequests = new Map<string, Promise<JiaowubaoScheduleListResponse>>();
+type GatewayTool = "query_schedule_list" | "query_lesson_list" | "query_member_simple_list";
+
+// The published gateway ceiling is per organisation *and interface*. Keep a
+// separate courtesy queue per tool so a fixed monthly schedule+lesson pull can
+// finish inside the route budget without making either upstream tool exceed
+// its own 20/minute allowance.
+const requestStartStates = new Map<GatewayTool, { nextRequestStartAt: number; queue: Promise<void> }>();
+const inFlightListRequests = new Map<string, Promise<readonly JsonRecord[]>>();
 
 // Keep this module Node-only even when it is invoked from a local CLI. The
 // Next.js-facing wrapper additionally imports `server-only` to reject client
@@ -106,7 +146,7 @@ function optionalValue<T>(value: T | undefined, normalize: (candidate: T) => T) 
   return value === undefined ? undefined : normalize(value);
 }
 
-function normalizeQuery(input: JiaowubaoScheduleListQuery) {
+function normalizeScheduleQuery(input: JiaowubaoScheduleListQuery) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new JiaowubaoOpenApiError("invalid_request", "教务宝排课查询无效。");
   }
@@ -164,6 +204,76 @@ function normalizeQuery(input: JiaowubaoScheduleListQuery) {
   });
 }
 
+function positiveId(value: unknown, field: string) {
+  return boundedInteger(value, field, 1, Number.MAX_SAFE_INTEGER);
+}
+
+function normalizeCompletedLessonQuery(input: JiaowubaoCompletedLessonListQuery) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new JiaowubaoOpenApiError("invalid_request", "教务宝已消课查询无效。");
+  }
+  const start = exactDate(input.start, "start");
+  const end = exactDate(input.end, "end");
+  if (end < start) {
+    throw new JiaowubaoOpenApiError("invalid_request", "end 必须不早于 start。");
+  }
+  const startMs = Date.parse(`${start}T00:00:00.000Z`);
+  const endMs = Date.parse(`${end}T00:00:00.000Z`);
+  if (endMs - startMs > (MAX_QUERY_WINDOW_DAYS - 1) * 24 * 60 * 60 * 1_000) {
+    throw new JiaowubaoOpenApiError("invalid_request", `教务宝已消课读取最多跨 ${MAX_QUERY_WINDOW_DAYS} 天。`);
+  }
+  const page = input.page === undefined ? 1 : boundedInteger(input.page, "page", 1, MAX_PAGE);
+  const limit = input.limit === undefined ? MAX_PAGE_SIZE : boundedInteger(input.limit, "limit", 1, MAX_PAGE_SIZE);
+  const sign = input.sign === undefined ? -1 : input.sign;
+  if (!Number.isSafeInteger(sign) || sign < -1 || sign > 5) {
+    throw new JiaowubaoOpenApiError("invalid_request", "sign 无效。");
+  }
+  const memberId = input.mem_id === undefined ? undefined : positiveId(input.mem_id, "mem_id");
+  const courseId = input.course_id === undefined ? undefined : positiveId(input.course_id, "course_id");
+  const teamId = input.team_id === undefined ? undefined : positiveId(input.team_id, "team_id");
+  return Object.freeze({
+    start,
+    end,
+    sign,
+    // Never accept a caller-controlled lesson completion state. This feed is
+    // the source of evidence behind the monthly report and must remain
+    // complete-only even if a future UI accidentally forwards an `over` field.
+    over: 1 as const,
+    page,
+    limit,
+    ...(memberId === undefined ? {} : { mem_id: memberId }),
+    ...(courseId === undefined ? {} : { course_id: courseId }),
+    ...(teamId === undefined ? {} : { team_id: teamId }),
+  });
+}
+
+function normalizeMemberSimpleQuery(input: JiaowubaoMemberSimpleListQuery) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new JiaowubaoOpenApiError("invalid_request", "教务宝学员查询无效。");
+  }
+  const page = input.page === undefined ? 1 : boundedInteger(input.page, "page", 1, MAX_PAGE);
+  const limit = input.limit === undefined ? MAX_PAGE_SIZE : boundedInteger(input.limit, "limit", 1, MAX_PAGE_SIZE);
+  const keyword = input.keyword === undefined ? undefined : input.keyword.trim();
+  if (keyword !== undefined && (!keyword || keyword.length > 100 || /[\u0000-\u001f\u007f]/u.test(keyword))) {
+    throw new JiaowubaoOpenApiError("invalid_request", "keyword 无效。");
+  }
+  const teacherId = input.teacher_id === undefined ? undefined : positiveId(input.teacher_id, "teacher_id");
+  const teamId = input.team_id === undefined ? undefined : positiveId(input.team_id, "team_id");
+  // Directory reads are intentionally not a browser-accessible roster dump.
+  // A reviewed exact-name lookup supplies a keyword; staff may instead scope
+  // the query to an already-known teacher or class ID.
+  if (!keyword && teacherId === undefined && teamId === undefined) {
+    throw new JiaowubaoOpenApiError("invalid_request", "学员查询必须限定姓名、老师或班级。");
+  }
+  return Object.freeze({
+    page,
+    limit,
+    ...(keyword ? { keyword } : {}),
+    ...(teacherId === undefined ? {} : { teacher_id: teacherId }),
+    ...(teamId === undefined ? {} : { team_id: teamId }),
+  });
+}
+
 function apiSecret() {
   const secret = process.env[JIAOWUBAO_OPEN_API_SECRET_ENV]?.trim();
   if (!secret || secret.length > 1_024 || /[\u0000-\u001f\u007f]/u.test(secret)) {
@@ -181,15 +291,17 @@ function sleep(milliseconds: number) {
  * layer; the upstream 429 is still handled explicitly because Vercel can run
  * more than one instance. A future high-volume sync must use a durable queue.
  */
-async function reserveRequestStart() {
+async function reserveRequestStart(tool: GatewayTool) {
+  const state = requestStartStates.get(tool) ?? { nextRequestStartAt: 0, queue: Promise.resolve() };
+  requestStartStates.set(tool, state);
   let release: (() => void) | undefined;
-  const preceding = startQueue;
-  startQueue = new Promise<void>((resolve) => { release = resolve; });
+  const preceding = state.queue;
+  state.queue = new Promise<void>((resolve) => { release = resolve; });
   await preceding;
   try {
-    const wait = Math.max(0, nextRequestStartAt - Date.now());
+    const wait = Math.max(0, state.nextRequestStartAt - Date.now());
     if (wait > 0) await sleep(wait);
-    nextRequestStartAt = Date.now() + MIN_REQUEST_INTERVAL_MS;
+    state.nextRequestStartAt = Date.now() + MIN_REQUEST_INTERVAL_MS;
   } finally {
     release?.();
   }
@@ -262,9 +374,41 @@ async function readTextWithinLimit(response: Response) {
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
 
-async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): Promise<JiaowubaoScheduleListResponse> {
+type GatewayListField = "list" | "lists" | "list_or_lists";
+
+function readList(data: JsonRecord, field: GatewayListField, label: string): readonly JsonRecord[] {
+  let candidate: unknown;
+  if (field === "list") {
+    candidate = data.list;
+  } else if (field === "lists") {
+    candidate = data.lists;
+  } else {
+    const hasList = Array.isArray(data.list);
+    const hasLists = Array.isArray(data.lists);
+    // The vendor documentation names this field `list`, while the earlier
+    // schedule endpoint returns `lists`.  Accept either representation, but
+    // never silently choose one if an upstream response contains both: that
+    // ambiguity could turn a non-empty monthly payroll export into an empty
+    // one without an observable error.
+    if (hasList && hasLists) {
+      throw new JiaowubaoOpenApiError("invalid_response", `教务宝返回了冲突的${label}列表。`);
+    }
+    candidate = hasList ? data.list : data.lists;
+  }
+  if (!Array.isArray(candidate) || candidate.length > MAX_PAGE_SIZE || candidate.some((item) => !isRecord(item))) {
+    throw new JiaowubaoOpenApiError("invalid_response", `教务宝返回无法识别的${label}。`);
+  }
+  return Object.freeze([...candidate] as JsonRecord[]);
+}
+
+async function requestGatewayList(
+  tool: GatewayTool,
+  params: Record<string, unknown>,
+  field: GatewayListField,
+  label: string,
+): Promise<readonly JsonRecord[]> {
   const secret = apiSecret();
-  await reserveRequestStart();
+  await reserveRequestStart(tool);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
@@ -282,22 +426,22 @@ async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): P
         cache: "no-store",
         body: JSON.stringify({
           sk: secret,
-          tool: "query_schedule_list",
+          tool,
           params,
         }),
         signal: controller.signal,
       });
     } catch {
       if (controller.signal.aborted) {
-        throw new JiaowubaoOpenApiError("request_timeout", "教务宝排课请求超时。");
+        throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
       }
-      throw new JiaowubaoOpenApiError("upstream_unavailable", "教务宝排课服务暂时不可用。");
+      throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
     }
 
     if (response.status === 429) {
       const retryAfter = retryAfterSeconds(response);
       await discard(response);
-      throw new JiaowubaoOpenApiError("rate_limited", "教务宝排课读取正被限流，请稍后再试。", retryAfter);
+      throw new JiaowubaoOpenApiError("rate_limited", `教务宝${label}读取正被限流，请稍后再试。`, retryAfter);
     }
     if (response.status === 401 || response.status === 403) {
       await discard(response);
@@ -305,7 +449,7 @@ async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): P
     }
     if (!response.ok) {
       await discard(response);
-      throw new JiaowubaoOpenApiError("upstream_unavailable", "教务宝排课服务暂时不可用。");
+      throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
     }
 
     let envelope: unknown;
@@ -313,7 +457,7 @@ async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): P
       envelope = JSON.parse(await readTextWithinLimit(response));
     } catch (error) {
       if (controller.signal.aborted) {
-        throw new JiaowubaoOpenApiError("request_timeout", "教务宝排课请求超时。");
+        throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
       }
       if (error instanceof JiaowubaoOpenApiError) throw error;
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
@@ -322,17 +466,12 @@ async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): P
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
     }
     if (envelope.ret !== "1" && envelope.ret !== 1) {
-      throw new JiaowubaoOpenApiError("upstream_rejected", "教务宝未接受排课读取请求。");
+      throw new JiaowubaoOpenApiError("upstream_rejected", `教务宝未接受${label}读取请求。`);
     }
-    if (!isRecord(envelope.data) || !Array.isArray(envelope.data.lists)
-      || envelope.data.lists.length > MAX_PAGE_SIZE
-      || envelope.data.lists.some((item) => !isRecord(item))) {
+    if (!isRecord(envelope.data)) {
       throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
     }
-    return Object.freeze({
-      ...envelope.data,
-      lists: Object.freeze([...envelope.data.lists] as JsonRecord[]),
-    });
+    return readList(envelope.data, field, label);
   } finally {
     clearTimeout(timeout);
   }
@@ -344,17 +483,51 @@ async function requestScheduleList(params: ReturnType<typeof normalizeQuery>): P
  * pipeline is required before live data can affect operations.
  */
 export async function queryJiaowubaoScheduleList(input: JiaowubaoScheduleListQuery) {
-  const params = normalizeQuery(input);
-  const key = JSON.stringify(params);
-  const existing = inFlightScheduleRequests.get(key);
-  if (existing) return existing;
-  const request = requestScheduleList(params);
-  inFlightScheduleRequests.set(key, request);
+  const params = normalizeScheduleQuery(input);
+  const key = `query_schedule_list:${JSON.stringify(params)}`;
+  const existing = inFlightListRequests.get(key);
+  if (existing) return Object.freeze({ lists: await existing });
+  const request = requestGatewayList("query_schedule_list", params, "lists", "排课");
+  inFlightListRequests.set(key, request);
   try {
-    return await request;
+    return Object.freeze({ lists: await request });
   } finally {
-    if (inFlightScheduleRequests.get(key) === request) {
-      inFlightScheduleRequests.delete(key);
+    if (inFlightListRequests.get(key) === request) {
+      inFlightListRequests.delete(key);
+    }
+  }
+}
+
+/** Reads exactly one page of completed (`over=1`) lesson evidence. */
+export async function queryJiaowubaoCompletedLessonList(input: JiaowubaoCompletedLessonListQuery) {
+  const params = normalizeCompletedLessonQuery(input);
+  const key = `query_lesson_list:${JSON.stringify(params)}`;
+  const existing = inFlightListRequests.get(key);
+  if (existing) return Object.freeze({ list: await existing });
+  const request = requestGatewayList("query_lesson_list", params, "list_or_lists", "已消课");
+  inFlightListRequests.set(key, request);
+  try {
+    return Object.freeze({ list: await request });
+  } finally {
+    if (inFlightListRequests.get(key) === request) {
+      inFlightListRequests.delete(key);
+    }
+  }
+}
+
+/** Reads one bounded, scope-limited page from the member directory. */
+export async function queryJiaowubaoMemberSimpleList(input: JiaowubaoMemberSimpleListQuery) {
+  const params = normalizeMemberSimpleQuery(input);
+  const key = `query_member_simple_list:${JSON.stringify(params)}`;
+  const existing = inFlightListRequests.get(key);
+  if (existing) return Object.freeze({ list: await existing });
+  const request = requestGatewayList("query_member_simple_list", params, "list", "学员目录");
+  inFlightListRequests.set(key, request);
+  try {
+    return Object.freeze({ list: await request });
+  } finally {
+    if (inFlightListRequests.get(key) === request) {
+      inFlightListRequests.delete(key);
     }
   }
 }

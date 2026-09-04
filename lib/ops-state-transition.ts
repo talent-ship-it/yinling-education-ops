@@ -42,6 +42,7 @@ type RecordValue = Record<string, unknown>;
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const BOOKING_PARENT_STATUSES = new Set(["待确认", "已确认"]);
 const EDITABLE_OCCURRENCE_FIELDS = new Set([
   "occurrenceId",
@@ -1235,6 +1236,15 @@ function assertPayrollSummary(summary: RecordValue) {
       invalid("薪资来源核对数值格式不正确。");
     }
   }
+  for (const field of ["sourceRevision", "sourceProjectionRevision"] as const) {
+    if (summary[field] !== undefined
+      && (typeof summary[field] !== "string" || !SHA256_PATTERN.test(summary[field] as string))) {
+      invalid("薪资来源版本格式不正确。");
+    }
+  }
+  if ((summary.sourceRevision === undefined) !== (summary.sourceProjectionRevision === undefined)) {
+    invalid("薪资来源版本必须成对保存。");
+  }
   if (summary.teacherTotalAmount !== undefined
     && Math.round((summary.teacherTotalAmount as number) * 100) !== Math.round((summary.amount as number) * 100)) {
     invalid("老师薪资总额必须与建议金额一致。");
@@ -1256,8 +1266,41 @@ function assertPayrollSummary(summary: RecordValue) {
     invalid("薪资明细数量格式不正确。");
   }
 
+  const lines = summary.lines as RecordValue[];
+  const evidenceOnlyLines = lines.filter((line) => line.evidenceOnly === true);
+  if (lines.some((line) => line.evidenceOnly !== undefined && typeof line.evidenceOnly !== "boolean")) {
+    invalid("薪资学生明细来源证据标记格式不正确。");
+  }
+  const hasEvidenceOnlyLines = evidenceOnlyLines.length > 0;
+  if (hasEvidenceOnlyLines) {
+    if (summary.source !== "jiaowubao-completed-lessons" || evidenceOnlyLines.length !== lines.length) {
+      invalid("教务宝来源证据明细必须保持完整且不能与薪资分摊明细混用。");
+    }
+    if (summary.lineAmount !== undefined) {
+      invalid("教务宝来源证据明细不能作为薪资分摊金额。");
+    }
+    if (typeof summary.teacherTotalHours !== "number" || !Number.isFinite(summary.teacherTotalHours)
+      || summary.teacherTotalHours < 0
+      || Math.round((summary.teacherTotalHours as number) * 10_000) !== Math.round(((summary.lessons as number) + (summary.trialLessons as number)) * 10_000)) {
+      invalid("教务宝来源老师总课时格式不正确。");
+    }
+    if (typeof summary.sourceHours !== "number" || !Number.isFinite(summary.sourceHours)
+      || Math.round((summary.sourceHours as number) * 10_000) !== Math.round((summary.teacherTotalHours as number) * 10_000)) {
+      invalid("教务宝来源课时必须与老师总课时一致。");
+    }
+    if (summary.rateRange.length > 1) {
+      invalid("教务宝来源薪资只能使用一个默认课时费。");
+    }
+    const teacherRate = (summary.rateRange[0] as number | undefined) ?? 0;
+    if (Math.round((summary.amount as number) * 100) !== Math.round((summary.teacherTotalHours as number) * teacherRate * 100)) {
+      invalid("教务宝来源薪资必须按老师总课时与默认课时费计算。");
+    }
+  } else if (lines.some((line) => line.evidenceOnly !== undefined)) {
+    invalid("普通薪资明细不能包含来源证据标记。");
+  }
+
   let lineTotal = 0;
-  for (const line of summary.lines as RecordValue[]) {
+  for (const line of lines) {
     requiredText(line.studentName, "payroll.line.studentName");
     if (typeof line.hours !== "number" || !Number.isFinite(line.hours)
       || typeof line.rate !== "number" || !Number.isFinite(line.rate) || line.rate < 0
@@ -1267,9 +1310,12 @@ function assertPayrollSummary(summary: RecordValue) {
     if (Math.round(line.hours * line.rate * 100) !== Math.round(line.subtotal * 100)) {
       invalid("薪资学生明细小计与课时费计算不一致。");
     }
+    if (line.evidenceOnly === true && (line.rate !== 0 || line.subtotal !== 0)) {
+      invalid("教务宝来源证据明细不能写入学生薪资分摊。");
+    }
     lineTotal += line.subtotal;
   }
-  if (summary.lines.length
+  if (!hasEvidenceOnlyLines && summary.lines.length
     && Math.round(lineTotal * 100) !== Math.round((summary.amount as number) * 100)) {
     invalid("薪资学生明细合计必须与建议金额一致。");
   }

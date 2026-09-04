@@ -22,8 +22,12 @@ test("JWB Open API client has a server-only Next wrapper and a Node-only core", 
   assert.doesNotMatch(client, /NEXT_PUBLIC_JIAOWUBAO/);
 });
 
-test("JWB Open API client restricts calls to the documented schedule tool and parameter set", () => {
-  assert.match(client, /tool: "query_schedule_list"/);
+test("JWB Open API client restricts calls to three documented, fixed tool contracts", () => {
+  assert.match(client, /requestGatewayList\("query_schedule_list"/);
+  assert.match(client, /requestGatewayList\("query_lesson_list"/);
+  assert.match(client, /requestGatewayList\("query_member_simple_list"/);
+  assert.match(client, /queryJiaowubaoCompletedLessonList/);
+  assert.match(client, /queryJiaowubaoMemberSimpleList/);
   assert.match(client, /MAX_PAGE_SIZE = 100/);
   assert.match(client, /MAX_PAGE = 500/);
   assert.match(client, /MAX_QUERY_WINDOW_DAYS = 31/);
@@ -35,6 +39,8 @@ test("JWB Open API client restricts calls to the documented schedule tool and pa
   assert.match(client, /week/);
   assert.match(client, /over/);
   assert.match(client, /order/);
+  assert.match(client, /over: 1 as const/);
+  assert.match(client, /input\.sign === undefined \? -1/);
 });
 
 test("JWB Open API client bounds transport and avoids unsafe response parsing", () => {
@@ -51,7 +57,7 @@ test("JWB Open API client bounds transport and avoids unsafe response parsing", 
 
 test("JWB Open API client coalesces requests and handles the supplier limit without leaking response data", () => {
   assert.match(client, /MIN_REQUEST_INTERVAL_MS = 3_200/);
-  assert.match(client, /inFlightScheduleRequests/);
+  assert.match(client, /inFlightListRequests/);
   assert.match(client, /response\.status === 429/);
   assert.match(client, /"rate_limited"/);
   assert.doesNotMatch(client, /err_msg/);
