@@ -135,13 +135,74 @@ function sourceTeacherId(value: unknown, field: string) {
   return sourceId(value, field);
 }
 
+function canonicalText(value: string) {
+  // Normalize before trimming: a compatibility character can expand to a
+  // leading space plus a combining mark. This order is idempotent, so every
+  // value emitted by the source projector is accepted byte-for-byte later.
+  return value.normalize("NFKC").trim();
+}
+
+function canonicalCollapsedText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u0009-\u000d]+/gu, " ")
+    .trim()
+    .replace(/ {2,}/gu, " ");
+}
+
+const LEGACY_NFKC_SPACING_MARK = /^[\u0301\u0303-\u0308\u030a-\u030b\u0313-\u0314\u0327-\u0328\u0333\u0342\u0345\u064b-\u0652\u3099-\u309a]/u;
+
+function isLegacySpacingMarkText(value: string, canonical: string) {
+  // The former trim→NFKC order could emit one leading ASCII space when a
+  // spacing compatibility mark (for example U+00A8) decomposed to
+  // SPACE + combining mark. Accept only that exact, already-NFKC legacy
+  // shape; ordinary padded values remain invalid.
+  return value === value.normalize("NFKC")
+    && value.startsWith(" ")
+    && LEGACY_NFKC_SPACING_MARK.test(value.slice(1))
+    && canonical === value.slice(1);
+}
+
 function text(value: unknown, field: string, maximum = 240) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string") fail(`教务宝已结课排课的 ${field} 无效。`);
-  const parsed = value.trim().normalize("NFKC");
+  const parsed = canonicalText(value);
   if (!parsed || parsed.length > maximum || /[\u0000-\u001f\u007f]/u.test(parsed)) {
     fail(`教务宝已结课排课的 ${field} 无效。`);
   }
+  return parsed;
+}
+
+function snapshotText(value: unknown, field: string, maximum = 240) {
+  if (value === null) return null;
+  if (typeof value !== "string") fail(`已结课排课快照 ${field} 无效。`);
+  const parsed = canonicalText(value);
+  // Generic source text historically preserved consecutive visible spaces.
+  // Accept that exact legacy spelling while still rejecting every transform
+  // the producer actually performs (trim, NFKC and control characters).
+  if (!parsed || value.length > maximum
+    || (parsed !== value && !isLegacySpacingMarkText(value, parsed))
+    || /[\u0000-\u001f\u007f]/u.test(value)) {
+    fail(`已结课排课快照 ${field} 无效。`);
+  }
+  return value;
+}
+
+function snapshotSourceId(value: unknown, field: string) {
+  const parsed = snapshotText(value, field, 160);
+  if (parsed !== null && !SOURCE_ID.test(parsed)) fail(`已结课排课快照 ${field} 无效。`);
+  return parsed;
+}
+
+function snapshotSourceComponent(value: unknown, field: string) {
+  const parsed = snapshotText(value, field, 160);
+  if (parsed === null || !SOURCE_COMPONENT.test(parsed)) fail(`已结课排课快照 ${field} 无效。`);
+  return parsed;
+}
+
+function snapshotTeacherId(value: unknown, field: string) {
+  const parsed = snapshotSourceId(value, field);
+  if (parsed !== null && /^0+$/u.test(parsed)) fail(`已结课排课快照 ${field} 无效。`);
   return parsed;
 }
 
@@ -160,14 +221,10 @@ function sourceTeamTitle(value: unknown) {
   if (value === 0) return null;
   if (value === undefined || value === null) return null;
   if (typeof value === "string") {
-    const parsed = value
-      .normalize("NFKC")
-      .replace(/[\u0009-\u000d]+/gu, " ")
-      .trim()
-      .replace(/ {2,}/gu, " ");
+    const parsed = canonicalCollapsedText(value);
     // Optional team titles in older one-to-one rows can be whitespace-only.
-    // Treat that like the empty-string sentinel, and collapse embedded control
-    // whitespace to a visible separator without discarding any title text.
+    // Treat that like the empty-string sentinel. Historical TAB/CR/LF-style
+    // whitespace is normalized to a visible separator; other controls fail.
     if (!parsed) return null;
     if (parsed.length > 240) fail("教务宝已结课排课的 team_title 无效（string-overlong）。");
     if (/[\u0000-\u001f\u007f]/u.test(parsed)) {
@@ -324,8 +381,8 @@ function readScheduleTeachers(value: unknown) {
     previousOrder = order;
     const teacher = Object.freeze({
       role,
-      id: sourceTeacherId(candidate.id, `teachers.${role}.id`),
-      name: text(candidate.name, `teachers.${role}.name`),
+      id: snapshotTeacherId(candidate.id, `teachers.${role}.id`),
+      name: snapshotText(candidate.name, `teachers.${role}.name`),
       hours: optionalDecimal(candidate.hours, `teachers.${role}.hours`, 0, 24),
     });
     if (!teacher.id && !teacher.name && teacher.hours === null) fail("已结课排课快照老师资料无效。");
@@ -340,7 +397,7 @@ export function readJiaowubaoCompletedScheduleSnapshotRecord(value: unknown): Ji
     fail("已结课排课快照记录字段无效。");
   }
   if (value.kind !== "schedule" || value.completed !== true) fail("已结课排课快照记录状态无效。");
-  const calendarId = sourceComponent(value.calendarId, "calendarId");
+  const calendarId = snapshotSourceComponent(value.calendarId, "calendarId");
   const sourceKey = typeof value.sourceKey === "string" ? value.sourceKey : "";
   if (sourceKey !== `jwb-open-api:schedule:${calendarId}` || !SOURCE_KEY.test(sourceKey)) {
     fail("已结课排课快照 sourceKey 无效。");
@@ -351,13 +408,13 @@ export function readJiaowubaoCompletedScheduleSnapshotRecord(value: unknown): Ji
     completed: true,
     calendarId,
     lessonDate: exactDate(value.lessonDate, "lessonDate"),
-    timeTitle: text(value.timeTitle, "timeTitle", 80),
-    courseId: sourceId(value.courseId, "courseId"),
-    courseTitle: text(value.courseTitle, "courseTitle"),
-    teamId: sourceId(value.teamId, "teamId"),
-    teamTitle: text(value.teamTitle, "teamTitle"),
+    timeTitle: snapshotText(value.timeTitle, "timeTitle", 80),
+    courseId: snapshotSourceId(value.courseId, "courseId"),
+    courseTitle: snapshotText(value.courseTitle, "courseTitle"),
+    teamId: snapshotSourceId(value.teamId, "teamId"),
+    teamTitle: snapshotText(value.teamTitle, "teamTitle"),
     teachers: readScheduleTeachers(value.teachers),
-    completedAt: text(value.completedAt, "completedAt", 80),
+    completedAt: snapshotText(value.completedAt, "completedAt", 80),
   });
 }
 
