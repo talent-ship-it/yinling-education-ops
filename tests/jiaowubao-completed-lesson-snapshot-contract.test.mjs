@@ -29,6 +29,14 @@ const cronRoute = fs.readFileSync(
   path.join(root, "app/api/cron/jiaowubao-completed-lessons/route.ts"),
   "utf8",
 );
+const safeFailure = fs.readFileSync(
+  path.join(root, "lib/jiaowubao-completed-lesson-safe-failure.ts"),
+  "utf8",
+);
+const safeDatabaseFailure = fs.readFileSync(
+  path.join(root, "lib/jiaowubao-completed-lesson-database-failure.ts"),
+  "utf8",
+);
 const sync = fs.readFileSync(
   path.join(root, "lib/jiaowubao-completed-lesson-resumable-sync.ts"),
   "utf8",
@@ -134,13 +142,17 @@ test("only `over=1` completed evidence reaches the browser route and scheduled j
   assert.match(cronMigration, /Bearer ' \|\|/);
   assert.match(cronMigration, /having count\(\*\) = 1/);
   assert.doesNotMatch(cronMigration, /jiaowubao_completed_lesson_sync_vault_token_missing/);
-  assert.match(cronRoute, /error instanceof JiaowubaoOpenApiError/);
-  assert.match(cronRoute, /error\.tool === "query_lesson_list"/);
-  assert.match(cronRoute, /error\.tool === "query_schedule_list"/);
-  assert.match(cronRoute, /\? "lessons"/);
-  assert.match(cronRoute, /\? "schedules"/);
-  assert.match(cronRoute, /kind: "source_validation"/);
-  assert.match(cronRoute, /failure: safeSyncFailure\(error\)/);
+  assert.match(safeFailure, /error instanceof JiaowubaoOpenApiError/);
+  assert.match(safeFailure, /error\.tool === "query_lesson_list"/);
+  assert.match(safeFailure, /error\.tool === "query_schedule_list"/);
+  assert.match(safeFailure, /\? "lessons"/);
+  assert.match(safeFailure, /\? "schedules"/);
+  assert.match(safeFailure, /kind: "source_validation"/);
+  assert.match(safeFailure, /error instanceof OpsStoreError/);
+  assert.match(safeFailure, /safeJiaowubaoCompletedLessonDatabaseFailure\(error\)/);
+  assert.match(safeDatabaseFailure, /fixedCode \?\? boundedCode/);
+  assert.match(cronRoute, /safeJiaowubaoCompletedLessonSyncFailure/);
+  assert.match(cronRoute, /failure: safeJiaowubaoCompletedLessonSyncFailure\(error\)/);
   assert.match(cronRoute, /if \(!hasCronSecret\(request\)\)[\s\S]*parseJiaowubaoCompletedLessonCronOperation\(request\.url\)/);
   assert.match(cronRoute, /if \(!operation\.force\)[\s\S]*getJiaowubaoCompletedLessonPendingMonth/);
   assert.match(cronRoute, /syncJiaowubaoCompletedLessonMonth\(\{[\s\S]*force: operation\.force,[\s\S]*forceIfBlockedOnly: operation\.force/);
