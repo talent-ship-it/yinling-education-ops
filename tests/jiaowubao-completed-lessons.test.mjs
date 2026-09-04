@@ -222,6 +222,143 @@ test("legacy unusable member titles keep ID-backed evidence as review-only null 
   );
 });
 
+test("completed lessons normalize raw no-team sentinels while keeping snapshot DTOs strict", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  for (const teamTitle of [0, undefined, null, "", " ", "\t\r\n", "　"]) {
+    const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ team_title: teamTitle }), window);
+    assert.equal(record.teamTitle, null);
+    assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(record), record);
+  }
+
+  const normalized = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ team_title: "  Team   A  " }),
+    window,
+  );
+  assert.equal(normalized.teamTitle, "Team A");
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(normalized), normalized);
+  const wrapped = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ team_title: " Team\t\r\n A " }),
+    window,
+  );
+  assert.equal(wrapped.teamTitle, "Team A");
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(wrapped), wrapped);
+  for (const legacyWhitespace of ["\t", "\n", "\v", "\f", "\r"]) {
+    assert.equal(
+      projectJiaowubaoCompletedLessonRecord(
+        sourceRecord({ team_title: `Ｔｅａｍ${legacyWhitespace}Ａ` }),
+        window,
+      ).teamTitle,
+      "Team A",
+    );
+  }
+  const stringZero = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ team_title: "0" }),
+    window,
+  );
+  assert.equal(stringZero.teamTitle, "0");
+  assert.throws(
+    () => readJiaowubaoCompletedLessonSnapshotRecord({ ...normalized, teamTitle: 0 }),
+    /teamTitle 无效/,
+  );
+  assert.throws(
+    () => readJiaowubaoCompletedLessonSnapshotRecord({ ...normalized, teamTitle: " " }),
+    /teamTitle 无效/,
+  );
+});
+
+test("invalid raw completed-lesson team-title diagnostics expose only a fixed structural category", () => {
+  const window = { start: "2026-08-01", end: "2026-08-31" };
+  const privateMarker = "must-not-reach-the-log";
+  const cases = [
+    [false, "boolean-false"],
+    [true, "boolean-true"],
+    [1, "number-nonzero"],
+    [[], "array-empty"],
+    [[privateMarker], "array-nonempty"],
+    [{}, "object-empty"],
+    [{ [privateMarker]: privateMarker }, "object-nonempty"],
+  ];
+  for (const [teamTitle, kind] of cases) {
+    const message = thrownMessage(
+      () => projectJiaowubaoCompletedLessonRecord(sourceRecord({ team_title: teamTitle }), window),
+    );
+    assert.equal(message, `教务宝已消课记录的 team_title 无效（${kind}）。`);
+    assert.equal(message.includes(privateMarker), false);
+  }
+  for (const control of ["\u0000", "\u0008", "\u000e", "\u007f"]) {
+    assert.equal(
+      thrownMessage(() => projectJiaowubaoCompletedLessonRecord(
+        sourceRecord({ team_title: `Team${control}A` }),
+        window,
+      )),
+      "教务宝已消课记录的 team_title 无效（string-control-other）。",
+    );
+  }
+  assert.equal(
+    thrownMessage(() => projectJiaowubaoCompletedLessonRecord(
+      sourceRecord({ team_title: "A".repeat(241) }),
+      window,
+    )),
+    "教务宝已消课记录的 team_title 无效（string-overlong）。",
+  );
+});
+
+test("completed lesson snapshot text remains compatible with historical consecutive spaces", () => {
+  const record = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord(),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const invalid = [undefined, "", " ", " padded", "padded ", "ｅ", "tab\tvalue", "line\nvalue"];
+  for (const value of invalid) {
+    assert.throws(
+      () => readJiaowubaoCompletedLessonSnapshotRecord({ ...record, teamTitle: value }),
+      /teamTitle 无效/,
+    );
+  }
+  const historical = { ...record, teamTitle: "Legacy  Team" };
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(historical), historical);
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord({ ...record, teamTitle: null }), {
+    ...record,
+    teamTitle: null,
+  });
+});
+
+test("completed lesson generic text preserves consecutive spaces and round-trips", () => {
+  const record = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({
+      time_title: "Evening  Session",
+      sign_title: "Arrived  Late",
+      course_title: "English  Trial",
+      teacher_title: "Crystal  Wong",
+      over_time: "2026-08-05  20:01:00",
+    }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  assert.equal(record.timeTitle, "Evening  Session");
+  assert.equal(record.attendanceTitle, "Arrived  Late");
+  assert.equal(record.courseTitle, "English  Trial");
+  assert.equal(record.teachers[0]?.name, "Crystal  Wong");
+  assert.equal(record.completedAt, "2026-08-05  20:01:00");
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(record), record);
+  const compatibilityFold = projectJiaowubaoCompletedLessonRecord(
+    sourceRecord({ course_title: "\u00a8Course" }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  assert.equal(compatibilityFold.courseTitle, "\u0308Course");
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(compatibilityFold), compatibilityFold);
+  const historical = {
+    ...record,
+    memberName: "Legacy  Student",
+    teamTitle: "Legacy  Team",
+    courseTitle: " \u0308Course",
+  };
+  assert.deepEqual(readJiaowubaoCompletedLessonSnapshotRecord(historical), historical);
+  assert.throws(
+    () => readJiaowubaoCompletedLessonSnapshotRecord({ ...record, courseTitle: " \u20ddCourse" }),
+    /courseTitle 无效/,
+  );
+});
+
 test("an unassigned JWB secondary-teacher sentinel never becomes a phantom teacher", () => {
   const record = projectJiaowubaoCompletedLessonRecord(
     sourceRecord({ teacher_s: 0, teacher_s_title: "", teacher_t: "0", teacher_t_title: "" }),

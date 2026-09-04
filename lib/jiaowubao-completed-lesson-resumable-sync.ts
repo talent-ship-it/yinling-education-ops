@@ -270,6 +270,30 @@ async function readReadyLessonRecords(collection: ActiveMemberCollection, runKey
   return Object.freeze(records);
 }
 
+async function confirmPublishedSnapshot(input: Readonly<{
+  month: string;
+  revision: string;
+  rowCount: number;
+  scheduleRowCount: number;
+}>) {
+  const confirmation = await confirmJiaowubaoCompletedLessonSnapshotCurrent({
+    month: input.month,
+    revision: input.revision,
+    actor: ACTOR,
+  });
+  const publishedAt = typeof confirmation.publishedAt === "string"
+    ? confirmation.publishedAt
+    : "";
+  if (confirmation.confirmed !== true || confirmation.revision !== input.revision
+    || confirmation.rowCount !== input.rowCount
+    || confirmation.scheduleRowCount !== input.scheduleRowCount
+    || publishedAt.length === 0 || publishedAt.length > 64
+    || !Number.isFinite(Date.parse(publishedAt))) {
+    throw new Error("jiaowubao_completed_lesson_confirmation_invalid");
+  }
+  return confirmation;
+}
+
 async function publishSnapshot(
   snapshot: JiaowubaoCompletedMonthEvidenceSnapshot,
   currentRevision: string | null,
@@ -278,12 +302,12 @@ async function publishSnapshot(
   const lessonRecords = snapshot.lessons.manifest.recordCount;
   const scheduleRecords = allJiaowubaoCompletedScheduleRecords(snapshot.schedules);
   if (currentRevision === snapshot.manifest.revision) {
-    const confirmation = await confirmJiaowubaoCompletedLessonSnapshotCurrent({ month, revision: snapshot.manifest.revision, actor: ACTOR });
-    if (confirmation.confirmed !== true || confirmation.revision !== snapshot.manifest.revision
-      || confirmation.rowCount !== lessonRecords || confirmation.scheduleRowCount !== scheduleRecords.length
-      || typeof confirmation.publishedAt !== "string") {
-      throw new Error("jiaowubao_completed_lesson_confirmation_invalid");
-    }
+    await confirmPublishedSnapshot({
+      month,
+      revision: snapshot.manifest.revision,
+      rowCount: lessonRecords,
+      scheduleRowCount: scheduleRecords.length,
+    });
     return Object.freeze({
       outcome: "no_change", month, revision: snapshot.manifest.revision,
       rowCount: lessonRecords, pageCount: snapshot.lessons.manifest.pageCount,
@@ -298,12 +322,12 @@ async function publishSnapshot(
     const runId = exactRunId(begin?.runId);
     if (!runId) throw new Error("jiaowubao_completed_lesson_begin_invalid");
     if (begin.state === "complete") {
-      const confirmation = await confirmJiaowubaoCompletedLessonSnapshotCurrent({ month, revision: snapshot.manifest.revision, actor: ACTOR });
-      if (confirmation.confirmed !== true || confirmation.revision !== snapshot.manifest.revision
-        || confirmation.rowCount !== lessonRecords || confirmation.scheduleRowCount !== scheduleRecords.length
-        || typeof confirmation.publishedAt !== "string") {
-        throw new Error("jiaowubao_completed_lesson_confirmation_invalid");
-      }
+      await confirmPublishedSnapshot({
+        month,
+        revision: snapshot.manifest.revision,
+        rowCount: lessonRecords,
+        scheduleRowCount: scheduleRecords.length,
+      });
       return Object.freeze({
         outcome: begin.republished === true ? "applied" : "no_change", month, revision: snapshot.manifest.revision,
         rowCount: lessonRecords, pageCount: snapshot.lessons.manifest.pageCount,
@@ -342,6 +366,15 @@ async function publishSnapshot(
       throw new Error("jiaowubao_completed_lesson_completion_invalid");
     }
     stagingRunId = null;
+    // The completion RPC has an idempotent terminal replay path. Confirm the
+    // actual monthly pointer after every completion receipt so a stale replay
+    // can never be treated as publication success.
+    await confirmPublishedSnapshot({
+      month,
+      revision: snapshot.manifest.revision,
+      rowCount: lessonRecords,
+      scheduleRowCount: scheduleRecords.length,
+    });
     return Object.freeze({
       outcome: completed.replayed ? "no_change" : "applied", month, revision: snapshot.manifest.revision,
       rowCount: lessonRecords, pageCount: snapshot.lessons.manifest.pageCount,
@@ -392,7 +425,11 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
     if (forceIfBlockedOnly && collection?.state !== "blocked") {
       throw new Error("jiaowubao_completed_lesson_blocked_force_unavailable");
     }
-    if (collection?.state === "blocked" && !force) return blockedResult(collection);
+    // A browser or bearer-triggered force is never authority to clear a
+    // caller-failure block. Recovery is a separate management-only command;
+    // until that command succeeds every application path returns this exact
+    // blocked run and cannot create a successor.
+    if (collection?.state === "blocked") return blockedResult(collection);
 
     const preflight = await getJiaowubaoCompletedLessonSnapshotPreflight({ month: period.month, actor: ACTOR });
     const currentRevision = preflight?.current === null ? null : exactRevision(preflight?.current?.revision);
@@ -405,10 +442,6 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       || (preflight.current !== null
         && (currentRevision === null || currentRowCount === null || currentScheduleRowCount === null))) {
       throw new Error("jiaowubao_completed_lesson_preflight_invalid");
-    }
-
-    if (collection?.state === "blocked") {
-      collection = null;
     }
 
     if (!collection) {
@@ -543,6 +576,12 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       if (!completedCollection || completedCollection.state !== "published") {
         throw new Error("jiaowubao_completed_lesson_member_publish_invalid");
       }
+      await confirmPublishedSnapshot({
+        month: period.month,
+        revision: collection.finalRevision,
+        rowCount: collection.rowCount,
+        scheduleRowCount: currentScheduleRowCount!,
+      });
       return Object.freeze({
         outcome: "no_change", month: period.month, revision: currentRevision,
         rowCount: currentRowCount!, scheduleRowCount: currentScheduleRowCount!,
@@ -600,6 +639,15 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
     if (!completedCollection || completedCollection.state !== "published") {
       throw new Error("jiaowubao_completed_lesson_member_publish_invalid");
     }
+    // Reconfirm after the member-publication transition as well. Its terminal
+    // replay response alone is not authority that the revision is still the
+    // current pointer.
+    await confirmPublishedSnapshot({
+      month: period.month,
+      revision: snapshot.manifest.revision,
+      rowCount: snapshot.lessons.manifest.recordCount,
+      scheduleRowCount: snapshot.schedules.manifest.recordCount,
+    });
     return Object.freeze({
       ...published,
       memberCount: completedCollection.memberCount,

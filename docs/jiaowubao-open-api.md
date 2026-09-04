@@ -58,6 +58,7 @@ unset JIAOWUBAO_OPEN_API_SK
 - `query_schedule_list(start, end, order=asc, over=1)` 是**老师角色课时**来源。只有其中的 `teacher_hour`、`teacher_s_hour`、`teacher_t_hour` 分别对应主讲、助教和第三老师的老师课时。
 - 两份来源只按 `cal_id` 尝试关联；学生来源含 `branch_id` 而排课来源不含。若同一 `cal_id` 跨 branch、老师角色/名称/日期/课程不一致、缺一份来源，或试听与常规学生混在同一课节，系统保留为“待核对”，不会猜测老师总课时。
 - 少量历史 `query_lesson_list` 记录可能完全不返回 `branch_id`，或用空值/全零表示未知分校。系统会用保留标记保存该学生消课行并在 Excel 显示“未知（历史来源未提供）”；该标记绝不参与双源课节关联或老师计薪。若未知分校行形成重复来源键，整次发布失败关闭，不能静默合并跨分校记录。`cal_id` 与 `mem_id` 仍必须是有效非零来源 ID。
+- 少量历史一对一记录会把原始 `team_title` 返回为 numeric `0`、缺失值或空白。系统只在供应商原始边界把这些哨兵规范成 `null`；正常字符串先做 NFKC，把历史 `U+0009–U+000D` 换行空白转换为可见空格，再 trim 并折叠连续 ASCII 空格；其他类型、过长值及其余控制字符均失败关闭，日志只记录固定结构类别。已落库的快照 DTO 仍严格要求 `string | null`，同时兼容旧快照中通用文本字段曾保留的连续可见空格。
 - 学员 ID 清单在每次月度采集开始时冻结，为当前教务宝导入名册、主表已确认 ID、身份链接、系统保留的当前/历史 ID 与该月已结课排课 `stu_list[].mem_id` 的去重并集；因此试听共享账号、已停课或没有出现在当前排课页的历史学员不会只因单一来源缺失而被跳过。清单只保存在私有数据库，不返回浏览器。
 - `query_lesson_list` 每次固定 `limit=100`，并以该学员响应中的 `data.total` 计算精确页数；第一页锁定 total，后续任一页 total 改变、行数不符、混入其他学员或出现重复来源键都会失败关闭。每个学员、每页与游标版本均单独落库，可在下一次任务安全续跑，不用靠“短页”或额外空页猜测结束。
 - 完整月来源最多 31 天、每个查询最多 60 页、合计最多 6,000 条，单页最多 100 条。重复来源键、跨月记录、非完成态、超大/未知字段或不完整分页都会失败关闭。
@@ -83,7 +84,23 @@ unset JIAOWUBAO_OPEN_API_SK
 
 这一同步只处理 `query_schedule_list` 当前可以给出的课表数据。完整来源数据和规范化实体会长期入库，但不会静默创建或覆盖原生学生、老师、课程、Booking、课包或任务；任何原生业务写入仍需独立、可审计的业务合同。
 
-已消课另有一个独立、最小权限的续跑任务：Supabase `pg_cron` 每小时在 `:07、:12、:17、:22、:37、:42、:47、:52` 经 `pg_net` 调用 `/api/cron/jiaowubao-completed-lessons`。它优先续跑任何已由管理员启动、但尚未完成的历史自然月；没有待续任务时才处理**上一个完整墨尔本自然月**。任务每次最多发起 50 个已消课来源页请求且最多工作 220 秒；数据库对 `query_lesson_list` 设置跨实例 3.2 秒全局起始间隔，游标和已确认页会在下次调用续接。最后一个学员采集完成后会主动交棒，让排课复核与原子发布在下一次请求获得完整的 300 秒窗口。`:00` 与 `:30` 前后各保留至少七分钟，避免月度任务的 `query_schedule_list` 复核与当前课表同步重叠。月度快照发布后，普通定时调用只做快速数据库 no-change 检查，不再读取供应商；超级管理员点击同步按钮则会传入显式 `force`，可重抓上游后补录或修正。若供应商确定性拒绝某个冻结学员查询，任务进入不含学员 ID 的可审计 `blocked` 状态，停止自动死循环；管理员修复名册或供应商问题后可通过同一按钮强制建立新 run。受控运维还可让持有该专用 bearer 的请求同时使用唯一参数组合 `force=1&month=YYYY-MM`；同步器取得同月份数据库租约后，只允许它重建最新状态确为 `blocked` 的任务。普通定时 URL 不带参数，缺少月份、非阻断月份或任何其他参数组合统一拒绝。它使用独立 bearer：Vercel Production 的敏感变量 `JIAOWUBAO_COMPLETED_LESSON_SYNC_TOKEN` 与 Supabase Vault 的 `jiaowubao_completed_lesson_sync_token` 必须是同一个新生成值，且不能复用课表或月度薪资的 token。定时任务只在 Vault 中恰好有一个非空 token 时发出请求；缺失或重复配置会安全地不发请求，待配置修正后下次运行自动恢复。
+已消课另有一个独立、最小权限的续跑任务：Supabase `pg_cron` 每小时在 `:07、:12、:17、:22、:37、:42、:47、:52` 经 `pg_net` 调用 `/api/cron/jiaowubao-completed-lessons`。它优先续跑任何已由管理员启动、但尚未完成的历史自然月；没有待续任务时才处理**上一个完整墨尔本自然月**。任务每次最多发起 50 个已消课来源页请求且最多工作 220 秒；数据库对 `query_lesson_list` 设置跨实例 3.2 秒全局起始间隔，游标和已确认页会在下次调用续接。最后一个学员采集完成后会主动交棒，让排课复核与原子发布在下一次请求获得完整的 300 秒窗口。`:00` 与 `:30` 前后各保留至少七分钟，避免月度任务的 `query_schedule_list` 复核与当前课表同步重叠。月度快照发布后，普通定时调用只做快速数据库 no-change 检查，不再读取供应商；超级管理员点击同步按钮传入的显式 `force` 只用于正常的已发布月份刷新。若供应商确定性拒绝某个冻结学员查询，任务进入不含学员 ID 的可审计 `blocked` 状态，停止自动死循环；浏览器、定时 bearer 和 `force` 都不能恢复该状态或新建同月 successor run。
+
+本次历史阻断只允许走一次性的 postgres owner 管理退役，不提供网页、公开 RPC、service-role 或 cron 恢复入口。发布本仓库迁移后，运维人员必须通过项目规定的 Insider Leads Keychain 凭据包装器运行命令，并使用 owner-only 状态目录先生成聚合预检：
+
+```bash
+CODEX_COMPANY_PROFILE=insiderlead \
+  /Users/nixon/Documents/Codex/bin/codex-project-credential exec supabase -- \
+  node --import tsx scripts/jiaowubao-completed-lesson-retirement-management.ts \
+  --state /absolute/path/to/owner-only-directory/2026-08-retirement.json \
+  --month 2026-08 --actor Nixon
+```
+
+预检只输出月份、opaque confirmation key 与总人数/已完成人数/总行数，不输出 run、audit、学员或来源 ID。人工核对聚合后，复用完全相同的 `--state` 参数并增加 `--commit`；状态文件内的 caller-stable command UUID 使丢失响应后的重试仍只返回同一份不可变回执。数据库会按固定锁序重新证明“当前最新 run 仍是同一个 `blocked/caller_failure` 代次”、开始与阻断审计、聚合计数以及完整当前指针；任一变化或活跃 worker 都拒绝提交。
+
+提交成功只把该代次原子退役为 `aborted/schedule_changed`，并保留原有 target/page/item、游标和计数作为不可变历史证据；它**不会**把旧 run 恢复为 `collecting`，也不会信任或发布那 1009 个已完成成员。随后现有普通、非 force 的 production cron 会选择这个可重建月份，重新抓取排课、重新冻结最新名册并从第一个成员开始完整采集。发布前仍会再次核对排课 revision/参与者集合/数量以及最新学员目录 revision/数量，任何漂移都会中止，当前已发布指针保持不变。
+
+定时任务使用独立 bearer：Vercel Production 的敏感变量 `JIAOWUBAO_COMPLETED_LESSON_SYNC_TOKEN` 与 Supabase Vault 的 `jiaowubao_completed_lesson_sync_token` 必须是同一个新生成值，且不能复用课表或月度薪资的 token。定时任务只在 Vault 中恰好有一个非空 token 时发出请求；缺失或重复配置会安全地不发请求，待配置修正后下次运行自动恢复。
 
 ## 一次性课表快照：导出后再分块写入
 

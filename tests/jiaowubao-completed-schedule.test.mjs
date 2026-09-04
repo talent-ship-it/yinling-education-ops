@@ -141,7 +141,7 @@ test("invalid raw team-title diagnostics expose only a fixed structural category
 
 test("completed schedule normalizes only blank raw team titles and keeps persisted DTOs strict", () => {
   const period = { start: "2026-08-01", end: "2026-08-31" };
-  for (const teamTitle of ["", " ", "\t", "　"]) {
+  for (const teamTitle of [undefined, null, "", " ", "\t", "　"]) {
     const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: teamTitle }), period);
     assert.equal(record.teamTitle, null);
     assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(record), record);
@@ -149,19 +149,40 @@ test("completed schedule normalizes only blank raw team titles and keeps persist
 
   const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: " Team A " }), period);
   assert.equal(record.teamTitle, "Team A");
+  const collapsed = projectJiaowubaoCompletedScheduleRecord(
+    sourceRecord({ team_title: " Team   A " }),
+    period,
+  );
+  assert.equal(collapsed.teamTitle, "Team A");
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(collapsed), collapsed);
   const wrapped = projectJiaowubaoCompletedScheduleRecord(
     sourceRecord({ team_title: " Team\t\r\n A " }),
     period,
   );
   assert.equal(wrapped.teamTitle, "Team A");
   assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(wrapped), wrapped);
+  for (const legacyWhitespace of ["\t", "\n", "\v", "\f", "\r"]) {
+    assert.equal(
+      projectJiaowubaoCompletedScheduleRecord(
+        sourceRecord({ team_title: `Ｔｅａｍ${legacyWhitespace}Ａ` }),
+        period,
+      ).teamTitle,
+      "Team A",
+    );
+  }
   assert.equal(
-    thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
-      sourceRecord({ team_title: "Team\u0000A" }),
-      period,
-    )),
-    "教务宝已结课排课的 team_title 无效（string-control-other）。",
+    projectJiaowubaoCompletedScheduleRecord(sourceRecord({ team_title: "0" }), period).teamTitle,
+    "0",
   );
+  for (const control of ["\u0000", "\u0008", "\u000e", "\u007f"]) {
+    assert.equal(
+      thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
+        sourceRecord({ team_title: `Team${control}A` }),
+        period,
+      )),
+      "教务宝已结课排课的 team_title 无效（string-control-other）。",
+    );
+  }
   assert.equal(
     thrownMessage(() => projectJiaowubaoCompletedScheduleRecord(
       sourceRecord({ team_title: "A".repeat(241) }),
@@ -172,6 +193,57 @@ test("completed schedule normalizes only blank raw team titles and keeps persist
   assert.throws(
     () => readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, teamTitle: " " }),
     /teamTitle 无效/,
+  );
+});
+
+test("completed schedule snapshot text rejects producer transforms but accepts historical consecutive spaces", () => {
+  const record = projectJiaowubaoCompletedScheduleRecord(
+    sourceRecord(),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  const invalid = [undefined, "", " ", " padded", "padded ", "ｅ", "tab\tvalue", "line\nvalue"];
+  for (const value of invalid) {
+    assert.throws(
+      () => readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, teamTitle: value }),
+      /teamTitle 无效/,
+    );
+  }
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, teamTitle: null }), {
+    ...record,
+    teamTitle: null,
+  });
+  const historical = { ...record, teamTitle: "Legacy  Team" };
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(historical), historical);
+});
+
+test("completed schedule generic text preserves consecutive spaces and round-trips", () => {
+  const record = projectJiaowubaoCompletedScheduleRecord(
+    sourceRecord({
+      time_title: "Evening  Session",
+      course_title: "Y9  ICAS English",
+      teacher_title: "Crystal  Wong",
+      teacher_s_title: "Assistant  Teacher",
+      over_time: "2026-08-05  20:01:00",
+    }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  assert.equal(record.timeTitle, "Evening  Session");
+  assert.equal(record.courseTitle, "Y9  ICAS English");
+  assert.equal(record.teachers[0]?.name, "Crystal  Wong");
+  assert.equal(record.teachers[1]?.name, "Assistant  Teacher");
+  assert.equal(record.completedAt, "2026-08-05  20:01:00");
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(record), record);
+  const compatibilityFold = projectJiaowubaoCompletedScheduleRecord(
+    sourceRecord({ course_title: "\u00a8Course" }),
+    { start: "2026-08-01", end: "2026-08-31" },
+  );
+  assert.equal(compatibilityFold.courseTitle, "\u0308Course");
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(compatibilityFold), compatibilityFold);
+  const historical = { ...record, courseTitle: " \u0308Course" };
+  assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(historical), historical);
+  assert.throws(
+    () => readJiaowubaoCompletedScheduleSnapshotRecord({ ...record, courseTitle: " \u20ddCourse" }),
+    /courseTitle 无效/,
   );
 });
 
