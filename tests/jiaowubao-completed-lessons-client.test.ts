@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   completeJiaowubaoCompletedMonthEvidencePages,
+  jiaowubaoCompletedMonthEvidenceMatchesExportVersion,
   jiaowubaoCompletedMonthEvidenceReadyForPayrollLock,
   parseJiaowubaoCompletedMonthEvidencePage,
 } from "../app/jiaowubao-completed-month-evidence";
@@ -132,6 +133,43 @@ test("payroll locking fails closed while a dual-source month is loading, stale, 
   ]) {
     assert.equal(jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(input), false);
   }
+});
+
+test("export freshness pins month, source revision, mapping revision and both source row counts", () => {
+  const current = completeEvidence();
+  assert.equal(jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+    current,
+    fresh: { ...current, publishedAt: "2026-08-31T14:05:00.000Z" },
+    month: "2026-08",
+  }), true, "publication time is informational rather than snapshot identity");
+
+  for (const fresh of [
+    null,
+    { ...current, state: "absent" as const },
+    { ...current, month: "2026-07" },
+    { ...current, revision: null },
+    { ...current, projectionRevision: null },
+    { ...current, revision: `sha256:${"c".repeat(64)}` },
+    { ...current, projectionRevision: `sha256:${"d".repeat(64)}` },
+    { ...current, rowCount: current.rowCount + 1 },
+    { ...current, scheduleRowCount: current.scheduleRowCount + 1 },
+  ]) {
+    assert.equal(jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+      current,
+      fresh,
+      month: "2026-08",
+    }), false);
+  }
+  assert.equal(jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+    current,
+    fresh: current,
+    month: "2026-07",
+  }), false);
+  assert.equal(jiaowubaoCompletedMonthEvidenceMatchesExportVersion({
+    current: { ...current, revision: null, projectionRevision: null },
+    fresh: { ...current, revision: null, projectionRevision: null },
+    month: "2026-08",
+  }), false);
 });
 
 test("rejects raw supplier fields, mismatched keys, and incomplete page sizes", () => {

@@ -86,6 +86,11 @@ export type PayrollExportEvidence = Readonly<{
   publishedAt: string | null;
   lessonRowCount: number;
   scheduleRowCount: number;
+  /** Exact learner-evidence source keys expected on each exported teacher row. */
+  teacherLessonSourceKeys: readonly Readonly<{
+    teacherKey: string;
+    sourceKeys: readonly string[];
+  }>[];
   matchCounts: Readonly<{
     matchedStudents: number;
     unmatchedStudents: number;
@@ -306,11 +311,59 @@ function assertWorkbook(input: PayrollWorkbookExport) {
   const generatedAt = new Date(input.generatedAt);
   if (Number.isNaN(generatedAt.valueOf()) || generatedAt.toISOString() !== input.generatedAt) fail("导出时间格式无效。");
   if (!Array.isArray(input.rows) || input.rows.length > MAX_EXPORT_ROWS) fail("薪资导出行数无效。");
+  const evidenceBySourceKey = new Map<string, PayrollExportLessonEvidence>();
+  const expectedSourceKeysByTeacher = new Map<string, ReadonlySet<string>>();
+  if (input.evidence) {
+    integer(input.evidence.lessonRowCount, "消课来源行数", MAX_EVIDENCE_ROWS);
+    integer(input.evidence.scheduleRowCount, "排课来源行数", MAX_EVIDENCE_ROWS);
+    if (input.evidence.lessonRowCount !== input.evidence.lessons.length
+      || input.evidence.scheduleRowCount !== input.evidence.schedules.length) {
+      fail("教务宝证据行数与来源统计不一致。");
+    }
+    for (const [label, value] of Object.entries(input.evidence.matchCounts)) {
+      integer(value, label, MAX_EVIDENCE_ROWS * 3);
+    }
+    for (const lesson of input.evidence.lessons) {
+      if (!lesson.sourceKey?.trim()) fail("教务宝消课证据缺少来源键。");
+      safeText(lesson.sourceKey, "教务宝消课证据来源键");
+      if (evidenceBySourceKey.has(lesson.sourceKey)) fail("教务宝消课证据包含重复来源键。");
+      evidenceBySourceKey.set(lesson.sourceKey, lesson);
+    }
+    if (!Array.isArray(input.evidence.teacherLessonSourceKeys)
+      || input.evidence.teacherLessonSourceKeys.length > MAX_EXPORT_ROWS) {
+      fail("老师课次映射行数无效。");
+    }
+    const mappedSourceKeys = new Set<string>();
+    for (const mapping of input.evidence.teacherLessonSourceKeys) {
+      if (!mapping.teacherKey?.trim()) fail("老师课次映射缺少老师身份。");
+      safeText(mapping.teacherKey, "老师课次映射身份");
+      if (expectedSourceKeysByTeacher.has(mapping.teacherKey)) fail("老师课次映射包含重复老师身份。");
+      if (!Array.isArray(mapping.sourceKeys) || mapping.sourceKeys.length > MAX_EVIDENCE_ROWS) {
+        fail("老师课次映射来源键数无效。");
+      }
+      const sourceKeys = new Set<string>();
+      for (const sourceKey of mapping.sourceKeys) {
+        if (!sourceKey?.trim()) fail("老师课次映射缺少来源键。");
+        safeText(sourceKey, "老师课次映射来源键");
+        if (sourceKeys.has(sourceKey)) fail("同一老师课次映射包含重复来源键。");
+        sourceKeys.add(sourceKey);
+        mappedSourceKeys.add(sourceKey);
+      }
+      expectedSourceKeysByTeacher.set(mapping.teacherKey, sourceKeys);
+    }
+    if (mappedSourceKeys.size !== evidenceBySourceKey.size
+      || [...mappedSourceKeys].some((sourceKey) => !evidenceBySourceKey.has(sourceKey))) {
+      fail("老师课次映射与当前教务宝消课证据不完整或不一致。");
+    }
+  }
   let payrollDetailRows = 0;
+  const teacherKeys = new Set<string>();
   for (const row of input.rows) {
     if (!row.teacherKey?.trim() || !row.teacherName?.trim()) fail("老师身份或姓名不能为空。");
     safeText(row.teacherKey, "老师身份");
     safeText(row.teacherName, "老师姓名");
+    if (teacherKeys.has(row.teacherKey)) fail("同一月份包含重复老师身份，不能导出。");
+    teacherKeys.add(row.teacherKey);
     if (row.month !== input.month || !MONTH.test(row.month)) fail("薪资行月份与导出月份不一致。");
     if (row.currency !== "CNY" && row.currency !== "AUD") fail("薪资币种无效。");
     if (row.paymentMode !== "payable" && row.paymentMode !== "review_only") fail("付款模式无效。");
@@ -331,16 +384,40 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     payrollDetailRows += row.lines.length;
     if (payrollDetailRows > MAX_PAYROLL_DETAIL_ROWS) fail("学生明细总行数无效。");
     aggregateStudents(row.lines);
+    if (input.evidence) {
+      const expectedSourceKeys = expectedSourceKeysByTeacher.get(row.teacherKey);
+      if (!expectedSourceKeys) fail("薪资行缺少当前教务宝老师课次映射。");
+      const rowSourceKeys = new Set<string>();
+      for (const line of row.lines) {
+        if (!line.sourceKey?.trim()) fail("学生明细缺少当前教务宝来源键。");
+        safeText(line.sourceKey, "学生明细来源键");
+        if (rowSourceKeys.has(line.sourceKey)) fail("同一老师的学生明细包含重复教务宝来源键。");
+        rowSourceKeys.add(line.sourceKey);
+        const lesson = evidenceBySourceKey.get(line.sourceKey);
+        if (!lesson) fail("学生明细来源键不属于当前教务宝消课证据。");
+        const expectedStudentName = lesson.displayStudentName
+          ?? `${lesson.memberName ?? lesson.memberId}（待核对姓名）`;
+        if (line.studentName !== expectedStudentName
+          || line.hours !== lesson.hours
+          || line.isTrial !== lesson.isTrial
+          || line.sourceMemberId !== lesson.memberId
+          || line.studentId !== lesson.studentId
+          || line.studentMatch !== lesson.studentMatch
+          || line.evidenceOnly !== true
+          || line.rate !== 0
+          || line.subtotal !== 0) {
+          fail("学生明细与当前教务宝消课事实不一致。");
+        }
+      }
+      if (rowSourceKeys.size !== expectedSourceKeys.size
+        || [...rowSourceKeys].some((sourceKey) => !expectedSourceKeys.has(sourceKey))) {
+        fail("该老师的学生明细与当前教务宝课次映射不完整或不一致。");
+      }
+    }
   }
   if (input.evidence) {
-    integer(input.evidence.lessonRowCount, "消课来源行数", MAX_EVIDENCE_ROWS);
-    integer(input.evidence.scheduleRowCount, "排课来源行数", MAX_EVIDENCE_ROWS);
-    if (input.evidence.lessonRowCount !== input.evidence.lessons.length
-      || input.evidence.scheduleRowCount !== input.evidence.schedules.length) {
-      fail("教务宝证据行数与来源统计不一致。");
-    }
-    for (const [label, value] of Object.entries(input.evidence.matchCounts)) {
-      integer(value, label, MAX_EVIDENCE_ROWS * 3);
+    for (const teacherKey of expectedSourceKeysByTeacher.keys()) {
+      if (!teacherKeys.has(teacherKey)) fail("老师课次映射缺少对应薪资行。");
     }
   }
   return { year: Number(match[1]), month: Number(match[2]) };
@@ -361,7 +438,7 @@ function mainSheet(input: PayrollWorkbookExport, year: number, month: number) {
     const lastRow = firstRow + visible.length - 1;
     const pastel = pastelStyles[index % pastelStyles.length]!;
     visible.forEach((student, studentIndex) => {
-      const hasPayableLines = Boolean(student && !student.evidenceOnly);
+      const hasPayableLines = payroll.paymentMode === "payable" && Boolean(student && !student.evidenceOnly);
       const rates = student ? [...student.rates] : [];
       const rate: CellValue = !hasPayableLines ? null : rates.length === 1 ? rates[0]! : "多个费率";
       const moneyStyle = payroll.currency === "CNY" ? 12 : 13;
@@ -423,8 +500,8 @@ function payrollReviewSheet(input: PayrollWorkbookExport) {
     const variance = sourceHours === null ? null : payroll.payrollHours - sourceHours;
     const moneyStyle = payroll.currency === "CNY" ? 12 : 13;
     rows.push([
-      stringCell(input.month), stringCell(payroll.teacherName), stringCell(payroll.section), stringCell(payroll.currency), stringCell(payroll.status),
-      numberCell(payroll.payrollHours), numberCell(sourceHours), numberCell(variance),
+      stringCell(input.month), stringCell(payroll.teacherName), stringCell(payroll.section), stringCell(payroll.currency), stringCell(reviewOnly ? "需核对" : payroll.status),
+      numberCell(reviewOnly ? 0 : payroll.payrollHours), numberCell(sourceHours), numberCell(reviewOnly ? null : variance),
       reviewOnly ? stringCell(null, moneyStyle) : numberCell(payroll.amount, moneyStyle),
       stringCell(reviewOnly ? null : payroll.bankName), stringCell(reviewOnly ? null : payroll.bankAccount),
       stringCell(reviewOnly ? null : payroll.paymentNote), stringCell(reviewOnly ? null : payroll.lockedBy), stringCell(reviewOnly ? null : payroll.lockedAt),
@@ -492,11 +569,11 @@ function sourceSheet(input: PayrollWorkbookExport) {
     ["未匹配老师", evidence?.matchCounts.unmatchedTeachers ?? 0],
     ["冲突老师", evidence?.matchCounts.ambiguousTeachers ?? 0],
     ["学生与出勤来源", "query_lesson_list；over=1；按完整自然月、逐个教务宝学员 ID 分页读取；ID 清单合并当前名册、已确认/历史身份与当月已结课排课参与者"],
-    ["完整性规则", "每页核对来源 total 并可跨任务续跑；冻结清单全部完成、排课修订复核一致后才原子发布，半成品不会进入薪资表"],
+    ["完整性规则", "每页核对来源 total 并可跨任务续跑；冻结清单全部完成、排课修订复核一致后才原子发布；导出前重新完整读取并核对月份、来源修订、映射修订及双源行数，变化或异常时本次不下载；每位老师的学生明细来源键必须与当前快照双向一致，并逐行核对姓名、课时、试听分类和身份字段"],
     ["老师总课时来源", "query_schedule_list；over=1；只使用 teacher_hour / teacher_s_hour / teacher_t_hour 对应角色字段"],
     ["共享试听账号规则", "试听学员 A/B/C 保留原账号；展示姓名从已消课课程标题或唯一系统姓名安全解析"],
     ["核算边界", "学生消课课时用于学生明细；老师总课时来自排课角色字段。小组课不得按学生人数重复计算老师薪资。"],
-    ["付款安全", "待匹配、冲突、来源缺失或课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
+    ["付款安全", "待匹配、冲突、来源缺失、来源或映射修订变化、课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
   ];
   const rows: SheetRow[] = [[stringCell("项目", 3), stringCell("内容", 3)]];
   for (const [label, value] of sourceRows) {

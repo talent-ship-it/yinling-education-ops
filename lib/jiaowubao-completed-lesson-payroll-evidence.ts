@@ -13,6 +13,82 @@ export type JiaowubaoPayrollEvidenceSource<Line> = Readonly<{
   lines: readonly Line[];
 }>;
 
+export type JiaowubaoPayrollExportSource<Line> = Readonly<{
+  summary: Readonly<{
+    sourceHours: number | null;
+    sourceLessonCount: number | null;
+  }>;
+  lines: readonly Line[];
+}>;
+
+export const JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON = "教务宝来源或姓名映射版本已更新，需重新核对费率与金额";
+
+/** A saved payment decision is valid only for the exact source + mapping pair it reviewed. */
+export function jiaowubaoPayrollSourceVersionIsCurrent(input: Readonly<{
+  persistedSourceRevision: string | null | undefined;
+  persistedProjectionRevision: string | null | undefined;
+  currentSourceRevision: string | null | undefined;
+  currentProjectionRevision: string | null | undefined;
+}>) {
+  return Boolean(
+    input.persistedSourceRevision
+    && input.persistedProjectionRevision
+    && input.currentSourceRevision
+    && input.currentProjectionRevision
+    && input.persistedSourceRevision === input.currentSourceRevision
+    && input.persistedProjectionRevision === input.currentProjectionRevision,
+  );
+}
+
+type PayrollLockSnapshot = Readonly<{
+  id: string;
+  month?: string;
+  status: string;
+  sourceRevision?: string;
+  sourceProjectionRevision?: string;
+  amount: number;
+}>;
+
+/** Confirmation may mutate only the exact raw payroll row the operator reviewed. */
+export function payrollLockSnapshotIsCurrent<Row extends PayrollLockSnapshot>(
+  current: Row | null | undefined,
+  expected: Row,
+) {
+  return Boolean(
+    current
+    && current.id === expected.id
+    && current.month === expected.month
+    && current.status === expected.status
+    && current.sourceRevision === expected.sourceRevision
+    && current.sourceProjectionRevision === expected.sourceProjectionRevision
+    && current.amount === expected.amount
+    && JSON.stringify(current) === JSON.stringify(expected),
+  );
+}
+
+/**
+ * Returns only evidence from the currently loaded immutable JWB snapshot.
+ * A saved payroll row is intentionally not accepted as a fallback: without a
+ * current source, old student names and source totals must not enter a new
+ * monthly evidence workbook.
+ */
+export function currentJiaowubaoPayrollExportEvidence<Line extends object>(
+  source: JiaowubaoPayrollExportSource<Line> | null | undefined,
+) {
+  if (!source) {
+    return Object.freeze({
+      sourceHours: null,
+      sourceLessonCount: null,
+      lines: Object.freeze([] as Line[]),
+    });
+  }
+  return Object.freeze({
+    sourceHours: source.summary.sourceHours,
+    sourceLessonCount: source.summary.sourceLessonCount,
+    lines: Object.freeze(source.lines.map((line) => ({ ...line }))),
+  });
+}
+
 /**
  * Monthly student grouping key for completed-lesson evidence.
  *

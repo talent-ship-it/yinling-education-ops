@@ -82,6 +82,31 @@ export function jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(input: Readon
     && input.feed.month === input.month;
 }
 
+/**
+ * Export may proceed only when the freshly re-read dual-source snapshot is
+ * exactly the version already reviewed in the UI. Publication time is
+ * informational; source and projection revisions pin the actual evidence.
+ */
+export function jiaowubaoCompletedMonthEvidenceMatchesExportVersion(input: Readonly<{
+  current: JiaowubaoCompletedLessonFeed | null;
+  fresh: JiaowubaoCompletedLessonFeed | null;
+  month: string;
+}>) {
+  const { current, fresh, month } = input;
+  return current?.state === "complete"
+    && fresh?.state === "complete"
+    && current.revision !== null
+    && fresh.revision !== null
+    && current.projectionRevision !== null
+    && fresh.projectionRevision !== null
+    && current.month === month
+    && fresh.month === month
+    && current.revision === fresh.revision
+    && current.projectionRevision === fresh.projectionRevision
+    && current.rowCount === fresh.rowCount
+    && current.scheduleRowCount === fresh.scheduleRowCount;
+}
+
 const PAGE_FIELDS = new Set([
   "state", "source", "month", "revision", "rowCount", "pageIndex", "pageCount", "publishedAt", "projectionRevision", "items",
 ]);

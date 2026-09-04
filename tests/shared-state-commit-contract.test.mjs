@@ -24,6 +24,8 @@ test("shared state exposes an authoritative awaited commit and unload guard", ()
   assert.match(hook, /pagehide/);
   assert.match(hook, /Do not send a fake\s*\/\/\s*beacon/);
   assert.match(hook, /if \(payloadSerialized === committedRef\.current\)/);
+  assert.match(hook, /const getCurrentValue = useCallback\(\(\) => valueRef\.current, \[\]\)/);
+  assert.match(hook, /getCurrentVersion, getCurrentValue, mutateAndCommit/);
   assert.match(hook, /mutateAndCommit \}/);
 });
 
