@@ -4,6 +4,7 @@ import test from "node:test";
 const { projectJiaowubaoCompletedLessonRecord } = await import("../lib/jiaowubao-completed-lessons.ts");
 const { projectJiaowubaoCompletedLessonRecords } = await import("../lib/jiaowubao-completed-lesson-projection.ts");
 const { projectJiaowubaoCompletedScheduleRecord } = await import("../lib/jiaowubao-completed-schedule.ts");
+const { parseJiaowubaoCompletedMonthEvidencePage } = await import("../app/jiaowubao-completed-month-evidence.ts");
 
 function sourceRecord(overrides = {}) {
   return {
@@ -69,6 +70,41 @@ test("shared A/B/C account resolves only from a narrow course-title name, never 
   assert.equal(projection.items[0].studentMatch, "trial_course_title");
   assert.equal(projection.items[0].teachers[0]?.teacherId, "teacher-crystal");
   assert.equal(projection.items[0].teachers[0]?.teacherMatch, "unique_name");
+});
+
+test("server projections satisfy the browser contract for lesson and schedule teacher fields", () => {
+  const lesson = projectJiaowubaoCompletedLessonRecord(sourceRecord(), { start: "2026-08-01", end: "2026-08-31" });
+  const schedule = projectJiaowubaoCompletedScheduleRecord(scheduleSourceRecord(), { start: "2026-08-01", end: "2026-08-31" });
+  const projection = projectJiaowubaoCompletedLessonRecords({
+    records: [lesson],
+    scheduleRecords: [schedule],
+    stateRows: stateRows(),
+  });
+  const metadata = {
+    state: "complete",
+    month: "2026-08",
+    revision: `sha256:${"a".repeat(64)}`,
+    rowCount: 1,
+    pageIndex: 0,
+    pageCount: 1,
+    publishedAt: "2026-08-31T14:00:00.000Z",
+    projectionRevision: `sha256:${"b".repeat(64)}`,
+  };
+
+  const lessonPage = parseJiaowubaoCompletedMonthEvidencePage({
+    ...metadata,
+    source: "lessons",
+    items: projection.items,
+  });
+  const schedulePage = parseJiaowubaoCompletedMonthEvidencePage({
+    ...metadata,
+    source: "schedules",
+    items: projection.scheduleEvents,
+  });
+
+  assert.equal(Object.hasOwn(lessonPage.items[0]?.teachers[0] ?? {}, "sourceTeacherHours"), false);
+  assert.equal(Object.hasOwn(schedulePage.items[0]?.teachers[0] ?? {}, "sourceTeacherHours"), true);
+  assert.equal(schedulePage.items[0]?.teachers[0]?.sourceTeacherHours, 1);
 });
 
 test("shared A/B/C label never becomes member-ID identity even when the supplier type is not trial", () => {
