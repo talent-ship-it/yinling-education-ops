@@ -9,8 +9,8 @@ const migration = read("supabase/migrations/20260819101700_lp_parent_progress_sc
 const vercel = JSON.parse(read("vercel.json"));
 
 test("LP scheduler is a secret-gated fixed-frequency server route", () => {
-  assert.match(route, /CRON_SECRET/);
-  assert.match(route, /timingSafeEqual/);
+  assert.match(route, /import \{ hasReminderCronSecret \} from "@\/lib\/reminder-cron-auth"/);
+  assert.match(route, /if \(!hasReminderCronSecret\(request\)\) return noStore\(\{ error: "Not found" \}, 404\)/);
   assert.match(route, /getOpsState\(\[\.\.\.ENTITIES\]\)/);
   assert.match(route, /reconcileAllLpParentProgressTasks/);
   assert.match(route, /eligibleLpParentProgressRecords\(lpItems\)/);

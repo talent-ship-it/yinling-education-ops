@@ -10,8 +10,8 @@ test("urgent reminders have a secret-gated fixed-frequency server reconciler", a
     read("vercel.json"),
   ]);
   const vercel = JSON.parse(vercelText);
-  assert.match(route, /CRON_SECRET/);
-  assert.match(route, /timingSafeEqual/);
+  assert.match(route, /import \{ hasReminderCronSecret \} from "@\/lib\/reminder-cron-auth"/);
+  assert.match(route, /if \(!hasReminderCronSecret\(request\)\) return noStore\(\{ error: "Not found" \}, 404\)/);
   assert.match(route, /getOpsState\(\[\.\.\.ENTITIES\]\)/);
   assert.match(route, /reconcileTrialPaymentTasksAuthoritative\(/);
   assert.match(route, /MAX_OCC_RETRIES = 3/);

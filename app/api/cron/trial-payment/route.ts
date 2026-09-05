@@ -1,6 +1,7 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { NextResponse } from "next/server";
+import { hasReminderCronSecret } from "@/lib/reminder-cron-auth";
 
 import {
   getOpsState,
@@ -19,15 +20,6 @@ function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
-function hasCronSecret(request: Request) {
-  const expected = process.env.CRON_SECRET;
-  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!expected || !supplied) return false;
-  const expectedBytes = Buffer.from(expected);
-  const suppliedBytes = Buffer.from(supplied);
-  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
-}
-
 function rowFor(rows: readonly OpsStateRow[], entity: (typeof ENTITIES)[number]) {
   const matches = rows.filter((row) => row.entity === entity);
   if (matches.length !== 1 || !Array.isArray(matches[0].payload)
@@ -42,9 +34,9 @@ function retryable(error: unknown) {
     && (error.code === "40001" || error.code === "version_conflict" || error.message === "version_conflict");
 }
 
-/** Production-only Vercel Cron entrypoint; PostgreSQL owns the clock and projection. */
+/** Production scheduler entrypoint; PostgreSQL owns the clock and projection. */
 export async function GET(request: Request) {
-  if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
+  if (!hasReminderCronSecret(request)) return noStore({ error: "Not found" }, 404);
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_OCC_RETRIES; attempt += 1) {
     try {
