@@ -29,8 +29,6 @@ export type JiaowubaoCompletedLessonProjectionTeacher = Readonly<{
   role: JiaowubaoCompletedLessonTeacherRole;
   sourceTeacherId: string | null;
   sourceTeacherName: string | null;
-  /** Lesson records do not supply a teacher credit; schedule evidence does. */
-  sourceTeacherHours: number | null;
   teacherId: string | null;
   teacherName: string | null;
   teacherMatch: MatchStrategy;
@@ -252,7 +250,6 @@ export function projectJiaowubaoCompletedLessonRecords(input: Readonly<{
         role: sourceTeacher.role,
         sourceTeacherId: sourceTeacher.id,
         sourceTeacherName: sourceTeacher.name,
-        sourceTeacherHours: null,
         teacherId: teacher.id,
         teacherName: teacher.name,
         teacherMatch: teacher.match,
