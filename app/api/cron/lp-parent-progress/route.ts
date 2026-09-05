@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
@@ -16,6 +16,7 @@ import {
   reconcileAllLpParentProgressTasks,
 } from "@/lib/lp-parent-progress-service";
 import type { OpsTask } from "@/lib/ops-tasks";
+import { hasReminderCronSecret } from "@/lib/reminder-cron-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -28,15 +29,6 @@ function noStore(payload: unknown, status = 200) {
     status,
     headers: { "Cache-Control": "private, no-store" },
   });
-}
-
-function hasCronSecret(request: Request) {
-  const expected = process.env.CRON_SECRET;
-  const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!expected || !supplied) return false;
-  const expectedBytes = Buffer.from(expected);
-  const suppliedBytes = Buffer.from(supplied);
-  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
 function rowFor(rows: readonly OpsStateRow[], entity: string) {
@@ -66,13 +58,13 @@ function retryableOcc(error: unknown) {
 }
 
 /**
- * Vercel Cron invokes this route on a fixed schedule. It is deliberately not
- * callable without CRON_SECRET and never accepts a client-provided clock or
+ * An authenticated scheduler invokes this route on a fixed schedule. It is
+ * secret-gated and never accepts a client-provided clock or
  * source payload. The route re-reads all authoritative inputs on every OCC
  * attempt, so a timeout/unknown response is safe to retry on the next tick.
  */
 export async function GET(request: Request) {
-  if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
+  if (!hasReminderCronSecret(request)) return noStore({ error: "Not found" }, 404);
   try {
     await recoverStaleLpParentProgressSchedulerRuns();
   } catch {
