@@ -4208,9 +4208,9 @@ export function submitTeacherLeaveRequest(input: { id: string; teacherId: string
 }
 
 /** Private, published mirror evidence. Never promotes OCR to a completed business record. */
-export function readWecomMirrorReview(input: { kind: string; query: string; page: number }) {
+export function readWecomMirrorReview(input: { kind: string; query: string; page: number; batch: string }) {
   const { secret } = configuration();
-  return rpc<import("./wecom-mirror-review").MirrorReview>("read_wecom_mirror_review", {
-    p_secret: secret, p_kind: input.kind, p_query: input.query, p_page: input.page,
+  return rpc<import("./wecom-mirror-review").MirrorReview>("read_wecom_mirror_review_v2", {
+    p_secret: secret, p_kind: input.kind, p_query: input.query, p_page: input.page, p_batch_id: input.batch,
   });
 }
