@@ -1,3 +1,4 @@
+import { isLessonDuration } from "./lesson-duration";
 import { meetingIdForOccurrenceValue } from "./bbb-analytics";
 import {
   BookingCapacityServiceError,
@@ -524,7 +525,7 @@ function assertOccurrenceEdit(input: {
 
   const scheduleChanged = changed.some((field) => OCCURRENCE_SCHEDULE_FIELDS.has(field));
   if (!scheduleChanged || nextOccurrence.status === "cancelled") return;
-  if (![60, 90, 120].includes(nextOccurrence.scheduledDurationMinutes)) invalid("单节课程时长只能是 60、90 或 120 分钟。");
+  if (!isLessonDuration(nextOccurrence.scheduledDurationMinutes)) invalid("单节课程时长须为 15–360 的整数分钟。");
   const teacherId = nextTeacherId;
   requiredText(nextOccurrence.studentId, "occurrence.studentId");
   const teacher = input.teachers.find((candidate) => candidate.id === teacherId);

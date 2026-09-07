@@ -1,5 +1,11 @@
 "use client";
 
+import { isLessonDuration } from "../lib/lesson-duration";
+import { LessonDurationInput } from "./lesson-duration-input";
+import { useWorkspaceLocation } from "./use-workspace-location";
+import { TeacherLeavePanel } from "./teacher-leave-panel";
+import { RecordPicker } from "./record-picker";
+
 import {
   ArrowUpDown,
   ArrowRight,
@@ -1999,6 +2005,8 @@ function bookingOccurrencesWithinRange(booking: Booking, rangeStart: string, ran
         && override?.status === undefined
         ? "completed"
         : occurrence.status;
+      // Downstream calendar filters consume this effective identity, including
+      // substitute-teacher overrides, rather than the parent series identity.
       return {
         ...booking,
         studentId: occurrence.studentId ?? booking.studentId,
@@ -2825,7 +2833,7 @@ export default function OperationsApp() {
 
 function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
-  const [active, setActive] = useState<Section>("dashboard");
+  const [active, setActive] = useWorkspaceLocation<Section>("section", "dashboard");
   const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
   const isAdminSession = initialNixonUnlocked && initialRole === "admin" && sessionOperator === "Nixon";
   const [currentOperator, setCurrentOperator] = useState(sessionOperator);
@@ -2978,8 +2986,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [rulesDraft, setRulesDraft] = useState<Rules>(defaults.defaultRules);
   const [rulesDraftTouched, setRulesDraftTouched] = useState(false);
   const [rulesDraftBaseVersion, setRulesDraftBaseVersion] = useState(versionFor("rules"));
-  const [selectedStudentId, setSelectedStudentId] = useState(defaults.defaultSelectedStudentId);
-  const [selectedTeacherId, setSelectedTeacherId] = useState(defaults.defaultSelectedTeacherId);
+  const [selectedStudentId, setSelectedStudentId] = useWorkspaceLocation("student", defaults.defaultSelectedStudentId);
+  const [selectedTeacherId, setSelectedTeacherId] = useWorkspaceLocation("teacher", defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
   const [taskFilter, setTaskFilter] = useState<ToDoFilter>("all");
   const [skipLinkFocused, setSkipLinkFocused] = useState(false);
@@ -3063,7 +3071,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [studentNameSort, setStudentNameSort] = useState<StudentNameSortDirection>("asc");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [teacherQuery, setTeacherQuery] = useState("");
-  const [teacherView, setTeacherView] = useState("available");
+  const [teacherView, setTeacherView] = useState("all");
+  const [teacherMatching, setTeacherMatching] = useState(false);
   const [teacherSubject, setTeacherSubject] = useState("all");
   const [teacherDay, setTeacherDay] = useState("all");
   const [teacherPage, setTeacherPage] = useState(1);
@@ -6264,7 +6273,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     bookingId: string;
     booking?: Booking;
     occurrenceId?: string;
-    occurrence?: Readonly<{ date: string; start: string; duration: 60 | 90 | 120; status: "confirmed" }>;
+    occurrence?: Readonly<{ date: string; start: string; duration: number; status: "confirmed" }>;
     classroom?: Readonly<{ meetingId: string; status: "ready" | "running" | "ended" }>;
   }) => {
     if (bookingProjectionBusyRef.current) throw new Error("上一条排课命令仍在确认，请稍后重试");
@@ -6440,7 +6449,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       notify("请使用结算、异常或请假流程更新本节状态");
       return;
     }
-    if (!date || !start || !teacherById(teacherId) || ![60, 90, 120].includes(duration)) {
+    if (!date || !start || !teacherById(teacherId) || !isLessonDuration(duration)) {
       notify("请填写有效的日期、时间、时长和老师");
       return;
     }
@@ -6492,7 +6501,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         action: "update_occurrence",
         bookingId: bookingOccurrenceDraft.id,
         occurrenceId: bookingOccurrenceDraft.occurrenceKey,
-        occurrence: { date, start, duration: duration as 60 | 90 | 120, status: "confirmed" },
+        occurrence: { date, start, duration, status: "confirmed" },
       });
       addAudit("修改单节课程", `${studentById(bookingOccurrenceDraft.studentId)?.name ?? bookingOccurrenceDraft.studentId} · ${bookingOccurrenceDraft.occurrenceKey} · ${date} ${start} · confirmed`, "blue");
       setBookingOccurrenceDraft(null);
@@ -7614,8 +7623,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     try {
       const result = await classroomRequest({ action: "student-link", bookingId: booking.id, occurrenceId: booking.occurrenceKey, sourceDate: booking.sourceDate });
       if (!result.url) throw new Error("无法生成学生进入链接");
-      const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
-      if (meetingId) await persistClassroom(booking, meetingId, "ready");
+      // Issuing a time-gated link does not provision a room or change its status.
       setTemporaryClassroomLink({ occurrenceId: booking.occurrenceKey, url: String(result.url) });
       addAudit("复制学生教室链接", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "blue");
       try {
@@ -7924,6 +7932,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           occurrenceId: lessonSettlementDraft.occurrenceKey,
           expectedVersion: bookingsShared.version,
           overrideReason,
+          manualAdjustment: { actualMinutes: Number(data.get("actualMinutes")), studentMinutes: Number(data.get("studentMinutes")), teacherMinutes: Number(data.get("teacherMinutes")) },
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -7999,6 +8008,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const todayLabel = new Intl.DateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title={english ? "My teaching workspace" : "我的教学工作台"} actions={<><button className="secondary-button" type="button" onClick={() => { teacherAvailabilitySubmissionKey.current = crypto.randomUUID(); setModal("teacherAvailabilitySubmit"); }}><Clock3 size={17} /> {english ? "Submit availability" : "提交月度 AVA"}</button><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
+      <TeacherLeavePanel teacherId={currentTeacher?.id} />
       <section className="metric-grid teacher-metric-grid" aria-label={english ? "My teaching overview" : "我的教学概览"}>
         <Metric tone="green" icon={<Users size={21} />} value={scopedStudents.length.toString()} label={english ? "My students" : "我的学生"} detail={english ? "Students linked to this teacher only" : "仅显示当前老师关联学生"} onClick={() => setActive("students")} />
         <Metric tone="blue" icon={<CalendarDays size={21} />} value={teacherOccurrences.length.toString()} label={english ? "Lesson records" : "课程记录"} detail={english ? "Occurrences assigned to this teacher" : "当前老师实际授课的课次"} onClick={() => setActive("schedule")} />
@@ -8159,8 +8169,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ? jiaowubaoCompletedLessonsByTeacherId.get(visibleSelectedTeacher.id)
       : undefined;
     return <>
-      <ViewHeading eyebrow="老师资源库" title="老师资源库" actions={<button className="primary-button" type="button" disabled={!visibleSelectedTeacher || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
-      <section className="matching-context"><div><strong>{selectedStudent.name}</strong><small>{selectedStudent.course} · {timezoneLabel(selectedStudent.timezone, displayPreferences.language)} · 匹配科目：{teacherSubject === "all" ? "尚未选择" : teacherSubject}</small></div><button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button></section>
+      <ViewHeading eyebrow="老师资源库" title="老师资源库" actions={<button className="primary-button" type="button" disabled={!teacherMatching || !visibleSelectedTeacher || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => openNewBooking(undefined, visibleSelectedTeacher?.id)}><CalendarPlus size={17} /> 用当前候选排课</button>} />
+      <section className="matching-context"><div><strong>{teacherMatching ? selectedStudent.name : "浏览全部老师"}</strong><small>{teacherMatching ? `${selectedStudent.course} · ${timezoneLabel(selectedStudent.timezone, displayPreferences.language)}` : "按姓名、科目、星期和接新状态筛选"}</small></div><button type="button" onClick={() => setTeacherMatching((value) => !value)}>{teacherMatching ? "退出学生匹配" : `为 ${selectedStudent.name} 匹配`}</button>{teacherMatching && <button type="button" onClick={() => setActive("students")}>更换学生 <ChevronRight size={15} /></button>}</section>
       {visibleSelectedTeacher ? <>
         {isAdminView ? <div className="heading-actions"><button className="secondary-button" type="button" onClick={() => setModal("ava")}><Plus size={16} /> 录入月度 AVA</button></div> : null}
         <TeacherAvailabilityPanel
@@ -8168,6 +8178,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           teacherId={visibleSelectedTeacher.id}
           teacherName={visibleSelectedTeacher.name}
           windows={visibleSelectedTeacher.availabilityWindows ?? []}
+          occupations={scopedBookings.filter((booking) => bookingHasEffectiveTeacher(booking, new Set([visibleSelectedTeacher.id]))).flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate((visibleSelectedTeacher.availabilityWindows ?? []).reduce((date, window) => window.validFrom < date ? window.validFrom : date, isoDateInTimezone(new Date(), scheduleTimezone)), -1), shiftIsoDate((visibleSelectedTeacher.availabilityWindows ?? []).reduce((date, window) => window.validTo > date ? window.validTo : date, isoDateInTimezone(new Date(), scheduleTimezone)), 1))).filter((booking) => booking.teacherId === visibleSelectedTeacher.id).map((booking) => ({ id: booking.occurrenceId, teacherId: booking.teacherId, startsAt: bookingInstant(booking).toISOString(), endsAt: new Date(bookingInstant(booking).getTime() + booking.duration * 60000).toISOString(), label: `${studentById(booking.studentId)?.name ?? "已占用"} · ${booking.course}` }))}
           legacySlots={visibleSelectedTeacher.availabilitySlots ?? []}
           submissions={teacherAvailabilitySubmissions}
           reviewingSubmissionId={teacherAvailabilityReviewBusy}
@@ -8204,7 +8215,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
             <Pagination page={safeTeacherPage} total={filteredTeachers.length} pageSize={teacherPageSize} onPage={(page) => { setTeacherPage(page); setMobilePreview(null); }} />
           </article>
-          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>科目匹配</span><strong>{teacherSubject === "all" ? "请先选择科目" : teacherSubjectMatch(visibleSelectedTeacher) ? `符合：${teacherSubject}` : `不符合：${teacherSubject}`}</strong></div>{visibleSelectedTeacherCompletedLessons && jiaowubaoCompletedLessonFeed?.state === "complete" ? <div className="detail-section"><span>{jiaowubaoCompletedLessonFeed.month} 教务宝已消课（只读核对）</span><strong>{visibleSelectedTeacherCompletedLessons.sourceHours === null ? "课时待核对" : formatHours(visibleSelectedTeacherCompletedLessons.sourceHours)} · {visibleSelectedTeacherCompletedLessons.sourceLessonCount} 节课</strong><p>{visibleSelectedTeacherCompletedLessons.studentLineCount} 条学生明细；老师课时仅来自已消课排课角色字段，不按小组学生数重复计薪。{visibleSelectedTeacherCompletedLessons.unresolvedLessonCount > 0 || visibleSelectedTeacherCompletedLessons.unresolvedTrialLessonCount > 0 ? " 该老师仍有来源待核对，不能锁定薪资。" : ""}</p></div> : null}<div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div>{visibleSelectedTeacher.subjectDetail ? <p>{visibleSelectedTeacher.subjectDetail}</p> : null}</div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>已排 / 可接总数</span><strong className={visibleSelectedTeacher.newStudentCapacity === 0 ? "low-hours" : ""}>{teacherCapacitySummary(visibleSelectedTeacher).value}</strong><p>{teacherCapacitySummary(visibleSelectedTeacher).detail}</p></div></div>{visibleSelectedTeacherReadiness && !visibleSelectedTeacherReadiness.readyForNewStudentMatching ? <div className="form-notice"><CircleAlert size={16} /> 当前不能进入新生匹配：{visibleSelectedTeacherReadiness.reviewReasons.map((reason) => ({ availability_missing: "缺少结构化 AVA", availability_expired: "AVA 已过期", availability_invalid: "AVA 数据无效", capacity_missing: "容量未配置", capacity_invalid: "AVA 数据无效", accepting_status_missing: "接新状态待确认" })[reason]).join("、") || "当前暂停接新或容量为 0"}</div> : null}<button className="primary-button full" type="button" disabled={!visibleSelectedTeacherReadiness?.readyForNewStudentMatching || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button>{isAdminView && <><button className="secondary-button full" type="button" onClick={() => { setTeacherCapacityDraft(visibleSelectedTeacher); setModal("teacherCapacity"); }}>调整可接新生数量</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></>}</aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
+          {visibleSelectedTeacher ? <aside className={`record-preview teacher-preview ${mobilePreview === "teacher" ? "mobile-detail-open" : ""}`}><button className="mobile-preview-close" type="button" aria-label="关闭老师详情" onClick={() => setMobilePreview(null)}><ChevronLeft size={20} /> 返回老师列表</button><div className="detail-top"><Avatar initials={visibleSelectedTeacher.initials} tone={visibleSelectedTeacher.acceptsStudents ? "green" : "neutral"} /><div><h2>{visibleSelectedTeacher.name}</h2><StatusPill tone={visibleSelectedTeacher.acceptsStudents ? "green" : visibleSelectedTeacher.availabilityStatus === "待确认" ? "amber" : "neutral"}>{visibleSelectedTeacher.availabilityStatus ?? (visibleSelectedTeacher.acceptsStudents ? "可接新生" : "暂停接新")}</StatusPill></div></div><div className="match-hero"><span>科目匹配</span><strong>{teacherSubject === "all" ? "请先选择科目" : teacherSubjectMatch(visibleSelectedTeacher) ? `符合：${teacherSubject}` : `不符合：${teacherSubject}`}</strong></div>{visibleSelectedTeacherCompletedLessons && jiaowubaoCompletedLessonFeed?.state === "complete" ? <div className="detail-section"><span>{jiaowubaoCompletedLessonFeed.month} 教务宝已消课（只读核对）</span><strong>{visibleSelectedTeacherCompletedLessons.sourceHours === null ? "课时待核对" : formatHours(visibleSelectedTeacherCompletedLessons.sourceHours)} · {visibleSelectedTeacherCompletedLessons.sourceLessonCount} 节课</strong><p>{visibleSelectedTeacherCompletedLessons.studentLineCount} 条学生明细；老师课时仅来自已消课排课角色字段，不按小组学生数重复计薪。{visibleSelectedTeacherCompletedLessons.unresolvedLessonCount > 0 || visibleSelectedTeacherCompletedLessons.unresolvedTrialLessonCount > 0 ? " 该老师仍有来源待核对，不能锁定薪资。" : ""}</p></div> : null}<div className="detail-section"><span>可教科目</span><div className="teacher-tags">{visibleSelectedTeacher.subjects.map((subject) => <span key={subject}>{subject}</span>)}</div>{visibleSelectedTeacher.subjectDetail ? <p>{visibleSelectedTeacher.subjectDetail}</p> : null}</div><div className="detail-section split"><div><span>地区 / 时区</span><strong>{visibleSelectedTeacher.location ?? "待确认"} · {timezoneLabel(visibleSelectedTeacher.timezone, displayPreferences.language)}</strong></div><div><span>已排 / 可接总数</span><strong className={visibleSelectedTeacher.newStudentCapacity === 0 ? "low-hours" : ""}>{teacherCapacitySummary(visibleSelectedTeacher).value}</strong><p>{teacherCapacitySummary(visibleSelectedTeacher).detail}</p></div></div>{visibleSelectedTeacherReadiness && !visibleSelectedTeacherReadiness.readyForNewStudentMatching ? <div className="form-notice"><CircleAlert size={16} /> 当前不能进入新生匹配：{visibleSelectedTeacherReadiness.reviewReasons.map((reason) => ({ availability_missing: "缺少结构化 AVA", availability_expired: "AVA 已过期", availability_invalid: "AVA 数据无效", capacity_missing: "容量未配置", capacity_invalid: "AVA 数据无效", accepting_status_missing: "接新状态待确认" })[reason]).join("、") || "当前暂停接新或容量为 0"}</div> : null}<button className="primary-button full" type="button" disabled={!teacherMatching || !visibleSelectedTeacherReadiness?.readyForNewStudentMatching || !teacherSubjectMatch(visibleSelectedTeacher)} onClick={() => assignTeacher(visibleSelectedTeacher)}><Check size={16} /> 选择为候选老师</button>{isAdminView && <><button className="secondary-button full" type="button" onClick={() => { setTeacherCapacityDraft(visibleSelectedTeacher); setModal("teacherCapacity"); }}>调整可接新生数量</button><button className="secondary-button full" type="button" onClick={() => toggleTeacherAvailability(visibleSelectedTeacher)}>{visibleSelectedTeacher.acceptsStudents ? "暂停接新" : "开放接新"}</button></>}</aside> : <aside className="record-preview"><EmptyState title="没有可显示的老师" detail="调整筛选条件后再选择老师。" /></aside>}
         </div>
       </section>
     </>;
@@ -8992,7 +9003,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!selectedOperation) {
       return (
         <>
-          <ViewHeading
+          <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
+        <ViewHeading
             eyebrow="异常管理"
             title="调课与代课"
             actions={
@@ -9059,6 +9071,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       .filter((teacher): teacher is Teacher => Boolean(teacher));
     return (
       <>
+        <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
         <ViewHeading
           eyebrow="异常管理"
           title="调课与代课"
@@ -12376,7 +12389,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     } finally {
       studentCreationBusyRef.current = false;
     }
-  }, [applyStudentsRemote, applyTasksRemote, notify, removeStudentCreationPending]);
+  }, [setActive, setSelectedStudentId, applyStudentsRemote, applyTasksRemote, notify, removeStudentCreationPending]);
 
   const submitStudent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -13875,7 +13888,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     } finally {
       legacyOperationTaskBusyRef.current = false;
     }
-  }, [applyOperationsRemote, applyTasksRemote, clearTeacherAbsencePreview, notify, removeLegacyOperationTaskPending, scopedActiveStudentIds]);
+  }, [setActive, setSelectedStudentId, applyOperationsRemote, applyTasksRemote, clearTeacherAbsencePreview, notify, removeLegacyOperationTaskPending, scopedActiveStudentIds]);
 
   const submitOperation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -14758,8 +14771,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "booking" && <Dialog title={bookingDraft ? "编辑排课" : "新建排课"} onClose={() => { setBookingDraft(null); setBookingPrefillTeacherId(null); setModal(null); }}>
         <form className="form-grid" onSubmit={submitBooking}>
-          <label>学生<input name="studentId" list="booking-student-options" value={bookingFormStudentId} onChange={(event) => { const studentId = event.target.value; const student = studentById(studentId); setBookingFormStudentId(studentId); setBookingFormSubjectId(student?.course ?? ""); }} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择学生" required />{bookingDraft && !isAdminView ? <input name="studentId" type="hidden" value={bookingDraft.studentId} /> : null}<datalist id="booking-student-options">{scopedActiveStudents.map((student) => <option value={student.id} key={student.id}>{student.name} · {student.course}</option>)}</datalist></label>
-          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<input name="teacherId" list="booking-teacher-options" defaultValue={bookingDraft?.teacherId ?? bookingPrefillTeacherId ?? ""} disabled={Boolean(bookingDraft && !isAdminView)} placeholder="必须从清单选择老师" required />{bookingDraft && !isAdminView ? <input name="teacherId" type="hidden" value={bookingDraft.teacherId} /> : null}<datalist id="booking-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name} · {teacher.subjects.join("/")} · {teacher.availabilityStatus ?? "待确认"}</option>)}</datalist></label>}
+          <label>学生<RecordPicker name="studentId" options={scopedActiveStudents.map((student) => ({ id: student.id, name: student.name, detail: student.course }))} value={bookingFormStudentId} onChange={(studentId) => { const student = studentById(studentId); setBookingFormStudentId(studentId); setBookingFormSubjectId(student?.course ?? ""); }} disabled={Boolean(bookingDraft && !isAdminView)} /></label>
+          <label>老师<RecordPicker name="teacherId" options={recordTeachers.map((teacher) => ({ id: teacher.id, name: teacher.name, detail: teacher.subjects.join(" / ") }))} initialValue={isTeacherView ? currentTeacher?.id ?? "" : bookingDraft?.teacherId ?? bookingPrefillTeacherId ?? ""} disabled={isTeacherView || Boolean(bookingDraft && !isAdminView)} /></label>
           <label>教学科目<select name="teacherSubjectId" defaultValue={bookingDraft?.teacherSubjectId ?? ""} required><option value="">必须人工选择</option>{teacherSubjectOptions.map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select><small>必须与所选老师可教科目一致</small></label>
           <label>日期<input name="date" type="date" min={bookingDraft ? undefined : isoDateInTimezone(new Date(), scheduleTimezone)} defaultValue={bookingDraft?.date ?? isoDateInTimezone(new Date(), scheduleTimezone)} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue={bookingDraft?.start ?? "16:00"} required /></label>
@@ -14767,7 +14780,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>课程类型<select name="kind" value={bookingFormKind} onChange={(event) => setBookingFormKind(event.target.value as Booking["kind"])}><option>常规课</option><option>试听</option><option>代课</option></select></label>
           <label>课程科目<select name="subjectId" value={bookingFormSubjectId} onChange={(event) => setBookingFormSubjectId(event.target.value)} required><option value="">请选择科目</option>{Array.from(new Set([studentById(bookingFormStudentId)?.course, ...(studentById(bookingFormStudentId)?.lessonPackages ?? []).flatMap((lessonPackage) => lessonPackage.subjectIds)].filter((subject): subject is string => Boolean(subject)))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课包<select key={`${bookingFormStudentId}:${bookingFormSubjectId}:${bookingFormKind}`} name="packageId" defaultValue={(studentById(bookingFormStudentId)?.lessonPackages ?? []).some((lessonPackage) => lessonPackage.id === bookingDraft?.packageId && (!bookingFormSubjectId || lessonPackage.subjectIds.includes(bookingFormSubjectId)) && (bookingFormKind === "试听" || getLessonPackageBalance(lessonPackage).remainingHours > 0)) ? bookingDraft?.packageId : ""} required={bookingFormKind !== "试听"}><option value="">{bookingFormKind === "试听" ? "试听可不选课包" : "请选择有余额的课包"}</option>{(studentById(bookingFormStudentId)?.lessonPackages ?? []).filter((lessonPackage) => !bookingFormSubjectId || lessonPackage.subjectIds.includes(bookingFormSubjectId)).map((lessonPackage) => { const balance = getLessonPackageBalance(lessonPackage).remainingHours; return <option value={lessonPackage.id} key={lessonPackage.id} disabled={bookingFormKind !== "试听" && balance <= 0}>{lessonPackage.name} · 剩余 {balance} 小时{bookingFormKind !== "试听" && balance <= 0 ? " · 不可排课" : ""}</option>; })}</select></label>
-          <label>课程时长<select name="duration" defaultValue={String(bookingDraft?.duration ?? 60)}><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
+          <label>课程时长<LessonDurationInput initialValue={bookingDraft?.duration ?? 60} /></label>
           <label>排课频率<select name="frequency" value={bookingFrequency} onChange={(event) => setBookingFrequency(event.target.value as BookingRecurrenceFrequency)}>
             <option value="single">单次</option>
             <option value="daily">每天</option>
@@ -14790,7 +14803,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>日期<input name="date" type="date" defaultValue={bookingOccurrenceDraft.date} required /></label>
           <label>开始时间<input name="start" type="time" defaultValue={bookingOccurrenceDraft.start} required /></label>
           <label>老师<input value={teacherById(bookingOccurrenceDraft.teacherId)?.name ?? bookingOccurrenceDraft.teacherId} readOnly /><small>改老师请使用代课或永久换老师流程</small></label>
-          <label>时长<select name="duration" defaultValue={String(bookingOccurrenceDraft.duration)}><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
+          <label>时长<LessonDurationInput initialValue={bookingOccurrenceDraft.duration} /></label>
           <label className="span-2">本节状态<select name="status" defaultValue={bookingOccurrenceDraft.occurrenceStatus}><option value="confirmed">已确认</option><option value="cancelled">取消本节</option></select></label>
           <footer><button className="secondary-button" type="button" onClick={() => { setBookingOccurrenceDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存本节</button></footer>
         </form>
@@ -14827,9 +14840,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>课程时间<input value={`${lessonSettlementDraft.date} ${lessonSettlementDraft.start} · ${lessonSettlementDraft.duration} 分钟`} readOnly /></label>
           <label>学生<input value={studentById(lessonSettlementDraft.studentId)?.name ?? lessonSettlementDraft.studentId} readOnly /></label>
           <label>老师<input value={teacherById(lessonSettlementDraft.teacherId)?.name ?? lessonSettlementDraft.teacherId} readOnly /></label>
-          <label className="span-2">覆盖原因<textarea name="overrideReason" minLength={8} maxLength={500} rows={4} placeholder="至少 8 个字符；此原因会进入操作审计" required /></label>
+          <label>实际授课（分钟）<input name="actualMinutes" type="number" min="1" max="360" step="1" defaultValue={lessonSettlementDraft.duration} required /></label>
+          <label>学生扣课（分钟）<input name="studentMinutes" type="number" min="1" max="360" step="1" defaultValue={lessonSettlementDraft.duration} required /></label>
+          <label>教师计薪（分钟）<input name="teacherMinutes" type="number" min="1" max="360" step="1" defaultValue={lessonSettlementDraft.duration} required /></label>
+          <label className="span-2">覆盖原因<textarea name="overrideReason" minLength={8} maxLength={350} rows={4} placeholder="至少 8 个字符；此原因会进入操作审计" required /></label>
           {lessonSettlementError && <div className="form-error span-2" role="alert">{lessonSettlementError}</div>}
-          <div className="form-notice span-2"><CircleAlert size={16} /> 结算后扣课并计入薪资。</div>
+          <div className="form-notice span-2"><CircleAlert size={16} /> 按上述分钟数扣课及计薪，原排课时长保留。金额差异须写明依据；已结算课次不能重复调整。</div>
           <footer><button className="secondary-button" type="button" disabled={lessonSettlementBusy} onClick={() => { setLessonSettlementDraft(null); setLessonSettlementError(""); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={lessonSettlementBusy}><CheckCircle2 size={16} /> {lessonSettlementBusy ? "正在结算…" : "确认人工结算"}</button></footer>
         </form>
       </Dialog>}

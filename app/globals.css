@@ -5267,3 +5267,15 @@ body { background:var(--canvas); font-size:14px; line-height:1.45; }
   .task-inline-editor { grid-column:1 / -1; grid-template-columns:1fr; }
   .task-inline-editor > div { justify-content:flex-end; }
 }
+
+/* Scheduling controls share the existing surface and text palette. */
+.duration-field, .record-picker { display: grid; gap: 8px; min-width: 0; }
+.record-picker-options { max-height: 240px; overflow-y: auto; border: 1px solid #b7d4d0; border-radius: 8px; background: white; }
+.record-picker-option { display: grid; gap: 4px; width: 100%; text-align: left; padding: 12px; background: white; color: #203b37; border: 0; border-bottom: 1px solid #e3eeec; min-height: 44px; }
+.record-picker-option:hover, .record-picker-option:focus-visible { background: #e2f4ef; }
+.availability-timeline { padding: 20px; display: grid; gap: 16px; }
+.availability-day { min-width: 0; }
+.availability-track { display: flex; height: 28px; border-radius: 6px; overflow: hidden; margin-top: 8px; border: 1px solid #a2bdb5; }
+.availability-free { background: #b5e6ce; }
+.availability-busy { background: #7b858b; }
+.availability-legend { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 0; margin: 8px 0 0; font-size: 14px; }

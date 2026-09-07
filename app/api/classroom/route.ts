@@ -1,3 +1,4 @@
+import { signClassroomEntry, classroomEntryOpen } from "@/lib/classroom-entry";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -120,6 +121,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
     start: expanded.start,
     duration: expanded.scheduledDurationMinutes,
     course: booking.course,
+    timezone: cleanTimezone(booking.timezone),
     classroom: record(override?.classroom),
     occurrenceId,
     occurrenceStatus: expanded.status,
@@ -255,6 +257,7 @@ export async function POST(request: NextRequest) {
       if (unavailable) return noStore({ error: "当前课次状态不能重新进入在线教室。" }, 409);
       if (historical) return noStore({ error: "历史课程不能重新开课，请创建新的排课。" }, 409);
       if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
+      if (!classroomEntryOpen(bookingStartsAt(context.booking)?.getTime() ?? NaN, Number(context.booking.duration))) return noStore({ error: "教室在课前 15 分钟开放。" }, 409);
       await provision();
       return noStore({
         meetingId,
@@ -267,12 +270,9 @@ export async function POST(request: NextRequest) {
       if (unavailable) return noStore({ error: "当前课次状态不能生成学生进入链接。" }, 409);
       if (historical) return noStore({ error: "历史课程不能生成新的学生进入链接。" }, 409);
       if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
-      await provision();
-      return noStore({
-        meetingId,
-        role: "VIEWER",
-        url: createJoinUrl({ meetingId, fullName: studentName, role: "VIEWER", userId: studentId }),
-      });
+      const url = new URL("/api/classroom/student-entry", request.nextUrl.origin);
+      url.searchParams.set("token", signClassroomEntry({ occurrenceId, studentId, teacherId, date: String(context.booking.date), start: String(context.booking.start), duration: Number(context.booking.duration), timezone: cleanTimezone(context.booking.timezone) }));
+      return noStore({ meetingId, role: "VIEWER", url: url.toString() });
     }
 
     if (body.action === "end") {

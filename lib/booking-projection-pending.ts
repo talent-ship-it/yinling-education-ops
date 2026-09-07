@@ -1,3 +1,4 @@
+import { isLessonDuration } from "./lesson-duration";
 /** Strict actor-scoped envelope for an uncertain atomic booking response. */
 export const BOOKING_PROJECTION_PENDING_NAMESPACE = "insider-leads:booking-projection" as const;
 export const BOOKING_PROJECTION_PENDING_SCHEMA = 1 as const;
@@ -105,7 +106,7 @@ function parseEntry(value: unknown): BookingProjectionPendingCommand | null {
       if (!record(command.occurrence) || !exact(command.occurrence, ["date", "start", "duration", "status"])
         || typeof command.occurrence.date !== "string" || !DATE.test(command.occurrence.date)
         || typeof command.occurrence.start !== "string" || !TIME.test(command.occurrence.start)
-        || ![60, 90, 120].includes(Number(command.occurrence.duration))
+        || !isLessonDuration(command.occurrence.duration)
         || command.occurrence.status !== "confirmed") return null;
     }
   } catch {

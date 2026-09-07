@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
+
+// Fixtures describe August/September 2026; freeze the implicit clock for repeatable validation.
+beforeEach((context) => context.mock.timers.enable({ apis: ["Date"], now: new Date("2026-08-24T00:00:00Z") }));
 
 import {
   BookingCapacityServiceError,

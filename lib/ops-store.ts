@@ -4198,3 +4198,11 @@ export function getStudentFuAttachment(id: string) {
     p_id: id,
   });
 }
+
+export type TeacherLeaveRequest = Readonly<{ id: string; teacher_id: string; actor: string; start_date: string; end_date: string; reason: string; created_at: string }>;
+export function readTeacherLeaveRequests(teacherIds: string[]) {
+  return rpc<TeacherLeaveRequest[]>("read_teacher_leave_requests", { p_secret: configuration().secret, p_teacher_ids: teacherIds });
+}
+export function submitTeacherLeaveRequest(input: { id: string; teacherId: string; actor: string; start: string; end: string; reason: string }) {
+  return rpc<string>("submit_teacher_leave_request", { p_secret: configuration().secret, p_id: input.id, p_teacher_id: input.teacherId, p_actor: input.actor, p_start: input.start, p_end: input.end, p_reason: input.reason });
+}

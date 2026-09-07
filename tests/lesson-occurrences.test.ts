@@ -356,3 +356,13 @@ test("insufficient package balance throws atomically without changing any input"
   assert.equal(initial.studentHoursLedger.length, 0);
   assert.equal(initial.teacherPayrollLedger.length, 0);
 });
+
+test("a manual adjustment is idempotent and cannot be replayed with a different debit", () => {
+ const state = { occurrence: occurrence(), packages: packages(), studentHoursLedger: [], teacherPayrollLedger: [] };
+ const command = { completedAt, attendance: { student: { userId: "STUDENT-A", accumulatedSeconds: 3600 }, teacher: { userId: "TEACHER-A", accumulatedSeconds: 3600 } }, manualAdjustment: { actualMinutes: 40, studentMinutes: 40, teacherMinutes: 50 } };
+ const first = completeLessonOccurrence(state, command);
+ assert.equal(completeLessonOccurrence(first, command).applied, false);
+ assert.throws(() => completeLessonOccurrence(first, { ...command, manualAdjustment: { ...command.manualAdjustment, studentMinutes: 60 } }), /different student deduction/);
+ const reversed = reverseLessonOccurrenceCompletion(first, { reversedAt: "2026-09-07T12:00:00.000Z", reason: "Synthetic correction" });
+ assert.equal(reversed.packages[0].consumedHours, 0);
+});
