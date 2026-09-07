@@ -8,6 +8,7 @@ import {
   expandLessonOccurrences,
   type LegacyLessonSeries,
   type LessonAttendanceEvidence,
+  type ManualLessonAdjustment,
   type LessonOccurrence,
   type LessonOccurrenceOverride,
   type LessonOccurrenceSettlementResult,
@@ -23,9 +24,10 @@ type RecordValue = Record<string, unknown>;
 
 const OCCURRENCE_ID_PATTERN = /^(.+):(\d{4}-\d{2}-\d{2})$/;
 const ATTENDANCE_REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,239}$/;
-const COMPLETE_REQUEST_FIELDS = new Set(["occurrenceId", "expectedVersion", "attendanceEvidenceReference", "overrideReason"]);
+const COMPLETE_REQUEST_FIELDS = new Set(["occurrenceId", "expectedVersion", "attendanceEvidenceReference", "overrideReason", "manualAdjustment"]);
 
 export type CompleteLessonOccurrenceRequest = Readonly<{
+  manualAdjustment?: ManualLessonAdjustment;
   occurrenceId: string;
   expectedVersion: number;
   attendanceEvidenceReference?: string;
@@ -212,7 +214,10 @@ export function parseCompleteLessonOccurrenceRequest(value: unknown): CompleteLe
   if (Boolean(attendanceEvidenceReference) === Boolean(overrideReason)) {
     throw new LessonOccurrenceServiceError("invalid_request", "Provide exactly one attendance reference or override reason.");
   }
+  const adjustment = value.manualAdjustment;
+  if (adjustment !== undefined && (!overrideReason || !isRecord(adjustment) || Object.keys(adjustment).sort().join(",") !== "actualMinutes,studentMinutes,teacherMinutes" || !Object.values(adjustment).every((minutes) => typeof minutes === "number" && Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= 360) || overrideReason.length > 350)) throw new LessonOccurrenceServiceError("invalid_request", "Manual adjustments require an admin reason (8–350 characters) and 1–360 whole minutes for each amount.");
   return {
+    ...(adjustment ? { manualAdjustment: adjustment as ManualLessonAdjustment } : {}),
     occurrenceId,
     expectedVersion: value.expectedVersion as number,
     ...(attendanceEvidenceReference ? { attendanceEvidenceReference } : {}),
@@ -345,6 +350,7 @@ export function prepareLessonOccurrenceSettlement(input: {
   if (!packages.some((lessonPackage) => lessonPackage.id === occurrence.packageId)) {
     throw new LessonOccurrenceServiceError("package_not_found", "Occurrence lesson package was not found on the student.");
   }
+  if (input.request.manualAdjustment && (!input.request.overrideReason || input.trustedProvider)) throw new LessonOccurrenceServiceError("override_admin_required", "Only an authorized manual settlement may adjust hours.");
   const effectiveAttendance: LessonAttendanceEvidence = input.request.overrideReason
     ? {
         student: { userId: requiredText(occurrence.studentId, "occurrence student"), accumulatedSeconds: occurrence.scheduledDurationMinutes * 60 },
@@ -368,6 +374,7 @@ export function prepareLessonOccurrenceSettlement(input: {
     }, {
       completedAt: settlementCompletedAt,
       attendance: effectiveAttendance,
+      ...(input.request.manualAdjustment ? { manualAdjustment: input.request.manualAdjustment } : {}),
     });
   } catch (error) {
     if (error instanceof RangeError && /insufficient hours/.test(error.message)) {
@@ -386,7 +393,7 @@ export function prepareLessonOccurrenceSettlement(input: {
     settlement,
     idempotencyKey: idempotencyKey(occurrence.occurrenceId),
     ...(input.request.attendanceEvidenceReference ? { attendanceReference: input.request.attendanceEvidenceReference } : {}),
-    ...(input.request.overrideReason ? { overrideReason: input.request.overrideReason } : {}),
+    ...(input.request.overrideReason ? { overrideReason: input.request.manualAdjustment ? `${input.request.overrideReason} [实际 ${input.request.manualAdjustment.actualMinutes} 分钟；学生扣课 ${input.request.manualAdjustment.studentMinutes} 分钟；教师计薪 ${input.request.manualAdjustment.teacherMinutes} 分钟]` : input.request.overrideReason } : {}),
     studentVersion: studentsRow!.version,
     stateVersions: settlementStateVersions(input.rows),
   };

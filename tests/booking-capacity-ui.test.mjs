@@ -62,7 +62,7 @@ test("teacher matching uses an explicit Tencent subject category and never inven
   const source = await readFile(sourceUrl, "utf8");
   assert.match(source, /const teacherSubjectMatch = \(teacher: Teacher\) =>[\s\S]*teacherSubject !== "all"[\s\S]*teacher\.subjects\.includes\(teacherSubject\)/);
   assert.match(source, /先选科目（匹配必选）/);
-  assert.match(source, /disabled=\{!visibleSelectedTeacherReadiness\?\.readyForNewStudentMatching \|\| !teacherSubjectMatch\(visibleSelectedTeacher\)\}/);
+  assert.match(source, /disabled=\{!teacherMatching \|\| !visibleSelectedTeacherReadiness\?\.readyForNewStudentMatching \|\| !teacherSubjectMatch\(visibleSelectedTeacher\)\}/);
   assert.match(source, /系统不会从课程名称猜测/);
   assert.doesNotMatch(source, /const teacherMatch =/);
   assert.doesNotMatch(source, /teacherMatch\([^)]*\)\s*>?=\s*85/);

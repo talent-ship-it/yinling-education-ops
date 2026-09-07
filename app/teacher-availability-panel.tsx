@@ -1,5 +1,7 @@
 "use client";
 
+import { splitAvailability, type CalendarOccupation } from "../lib/availability-occupancy";
+
 import { useMemo, useState, type FormEvent } from "react";
 
 import {
@@ -37,6 +39,7 @@ export type TeacherAvailabilityPanelProps = Readonly<{
   teacherId: string;
   teacherName: string;
   windows: readonly TeacherAvailabilityWindow[];
+  occupations?: readonly CalendarOccupation[];
   legacySlots?: readonly AvailabilitySlotInput[];
   submissions?: readonly TeacherAvailabilitySubmissionReview[];
   reviewingSubmissionId?: string | null;
@@ -107,11 +110,12 @@ function occurrenceSourceLabel(occurrence: TeacherAvailabilityOccurrence): strin
 }
 
 function viewRange(
-  view: "week" | "month",
+  view: "day" | "week" | "month",
   selectedMonth: string,
   referenceDate: string,
 ): { from: string; to: string } {
   if (view === "month") return monthRange(selectedMonth);
+  if (view === "day") return { from: referenceDate, to: referenceDate };
   const reference = monthOf(referenceDate) === selectedMonth
     ? referenceDate
     : `${selectedMonth}-01`;
@@ -223,6 +227,7 @@ export function TeacherAvailabilityPanel({
   teacherId,
   teacherName,
   windows,
+  occupations = [],
   legacySlots = [],
   submissions = [],
   reviewingSubmissionId = null,
@@ -242,10 +247,11 @@ export function TeacherAvailabilityPanel({
   const currentMonth = monthOf(referenceDate);
   const nextMonth = shiftMonth(currentMonth, 1);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [view, setView] = useState<"week" | "month">("month");
+  const [view, setView] = useState<"day" | "week" | "month">("month");
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const range = viewRange(view, selectedMonth, referenceDate);
+  const [anchor, setAnchor] = useState(referenceDate);
+  const range = viewRange(view, selectedMonth, anchor);
   const teacherWindows = windows.filter((window) => window.teacherId === teacherId);
   const hasMonthlyRecord = teacherWindows.some((window) =>
     occurrenceMatchesMonth(window, selectedMonth),
@@ -276,16 +282,18 @@ export function TeacherAvailabilityPanel({
             className={selectedMonth === currentMonth ? "active" : ""}
             type="button"
             aria-pressed={selectedMonth === currentMonth}
-            onClick={() => setSelectedMonth(currentMonth)}
+            onClick={() => { setSelectedMonth(currentMonth); setAnchor(referenceDate); }}
           >本月</button>
           <button
             className={selectedMonth === nextMonth ? "active" : ""}
             type="button"
             aria-pressed={selectedMonth === nextMonth}
-            onClick={() => setSelectedMonth(nextMonth)}
+            onClick={() => { setSelectedMonth(nextMonth); setAnchor(`${nextMonth}-01`); }}
           >下月</button>
         </div>
+        <input type="date" aria-label="查看日期" value={anchor} onChange={(event) => { if (event.target.value) { setAnchor(event.target.value); setSelectedMonth(monthOf(event.target.value)); } }} />
         <div className="segmented" aria-label="显示范围">
+          <button type="button" aria-pressed={view === "day"} className={view === "day" ? "active" : ""} onClick={() => setView("day")}>日</button>
           <button className={view === "week" ? "active" : ""} type="button" aria-pressed={view === "week"} onClick={() => setView("week")}>周</button>
           <button className={view === "month" ? "active" : ""} type="button" aria-pressed={view === "month"} onClick={() => setView("month")}>月</button>
         </div>
@@ -302,6 +310,15 @@ export function TeacherAvailabilityPanel({
       </div>
     </header>
 
+    {hasMonthlyRecord && occurrences.length > 0 && <div className="availability-timeline" aria-label="AVA 空闲与课程占用">
+      <p>绿色：AVA 时段 · 灰色：当前可见课程占用；排课仍需冲突校验（显示 {displayTimezone}）</p>
+      {occurrences.map((occurrence) => {
+        const total = Date.parse(occurrence.endsAt) - Date.parse(occurrence.startsAt);
+        const formatTime = (instant: string) => new Intl.DateTimeFormat("zh-CN", { timeZone: displayTimezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(instant));
+        const segments = splitAvailability(occurrence, occupations);
+        return <div className="availability-day" key={occurrence.id}><strong>{occurrenceDateLabel(occurrence)} · {occurrenceTimeLabel(occurrence)}</strong><div className="availability-track">{segments.map((segment) => <div key={segment.startsAt} className={segment.occupied ? "availability-busy" : "availability-free"} style={{ width: `${(Date.parse(segment.endsAt) - Date.parse(segment.startsAt)) / total * 100}%` }} title={`${formatTime(segment.startsAt)}–${formatTime(segment.endsAt)} ${segment.occupied ? segment.labels.join("、") : "可约"}`} />)}</div><ul className="availability-legend">{segments.map((segment) => <li key={segment.startsAt}>{formatTime(segment.startsAt)}–{formatTime(segment.endsAt)} · {segment.occupied ? segment.labels.join("、") : "可约"}</li>)}</ul></div>;
+      })}
+    </div>}
     {!hasMonthlyRecord ? <div className="collection-empty" role="status">
       <strong>{selectedMonth} 未收集</strong>
       {legacySlots.length && onPromoteLegacy ? <button

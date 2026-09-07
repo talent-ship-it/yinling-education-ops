@@ -1,3 +1,4 @@
+import { isLessonDuration } from "./lesson-duration";
 import { createHash } from "node:crypto";
 
 import { meetingIdForOccurrenceValue } from "@/lib/bbb-analytics";
@@ -53,7 +54,7 @@ export type BookingCapacityCommand = Readonly<{
   occurrence?: Readonly<{
     date: string;
     start: string;
-    duration: 60 | 90 | 120;
+    duration: number;
     status: "confirmed";
   }>;
   classroom?: Readonly<{
@@ -257,13 +258,13 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
     const duration = value.occurrence.duration;
     assertCalendarDate(date, "occurrence.date");
     if (!TIME_PATTERN.test(start)) fail("invalid_request", "occurrence.start must use HH:MM.");
-    if (![60, 90, 120].includes(duration as number)) fail("invalid_request", "occurrence.duration must be 60, 90 or 120 minutes.");
+    if (!isLessonDuration(duration)) fail("invalid_request", "occurrence.duration must be a whole number of minutes from 15 to 360.");
     if (value.occurrence.status !== "confirmed") fail("invalid_request", "Occurrence updates may only confirm an active lesson.");
     return {
       action,
       bookingId,
       occurrenceId,
-      occurrence: { date, start, duration: duration as 60 | 90 | 120, status: "confirmed" },
+      occurrence: { date, start, duration: duration as number, status: "confirmed" },
       expectedVersions,
     };
   }
@@ -324,7 +325,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
   if (!TIME_PATTERN.test(start)) fail("invalid_request", "booking.start must use HH:MM.");
   assertTimezone(timezone);
   const duration = value.booking.duration;
-  if (![60, 90, 120].includes(duration as number)) fail("invalid_request", "booking.duration must be 60, 90 or 120 minutes.");
+  if (!isLessonDuration(duration)) fail("invalid_request", "booking.duration must be a whole number of minutes from 15 to 360.");
   const kind = value.booking.kind;
   if (kind !== "试听" && kind !== "常规课" && kind !== "代课") fail("invalid_request", "booking.kind is invalid.");
   if (typeof value.booking.recurring !== "boolean") fail("invalid_request", "booking.recurring must be boolean.");

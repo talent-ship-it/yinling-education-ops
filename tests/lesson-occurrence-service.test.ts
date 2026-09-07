@@ -374,3 +374,16 @@ test("a duplicate request reuses the original completion time and makes no secon
   assert.equal(duplicate.settlement.teacherPayrollLedger.length, 1);
   assert.equal(duplicate.idempotencyKey, first.idempotencyKey);
 });
+
+test("manual settlement uses distinct debit and payroll minutes without rewriting the schedule", () => {
+ const request = parseCompleteLessonOccurrenceRequest({ occurrenceId, expectedVersion: 4, overrideReason: "确认技术中断，依照人工核实的课时结算", manualAdjustment: { actualMinutes: 40, studentMinutes: 40, teacherMinutes: 50 } });
+ const result = prepareLessonOccurrenceSettlement({ request, rows: sharedRows(), actor: "Nixon", fullAdmin: true, role: "admin", completedAt });
+ assert.equal(result.occurrence.scheduledDurationMinutes, 60);
+ assert.equal(result.settlement.packages[0].consumedHours, 0.666667);
+ assert.equal(result.settlement.teacherPayrollLedger[0].kind, "teacher_hours");
+ assert.equal(result.settlement.teacherPayrollLedger[0].payableHours, 0.833333);
+ assert.match(result.overrideReason!, /实际 40 分钟；学生扣课 40 分钟；教师计薪 50 分钟/);
+ assert.throws(() => prepareLessonOccurrenceSettlement({ request, rows: sharedRows(), actor: "Abby", fullAdmin: false, role: "staff", completedAt }), serviceError("override_admin_required"));
+ assert.throws(() => parseCompleteLessonOccurrenceRequest({ occurrenceId, expectedVersion: 4, attendanceEvidenceReference: "evidence-1", manualAdjustment: request.manualAdjustment }), serviceError("invalid_request"));
+ for (const minutes of [0, -1, 361, 40.5, "40"]) assert.throws(() => parseCompleteLessonOccurrenceRequest({ ...request, manualAdjustment: { ...request.manualAdjustment, studentMinutes: minutes } }), serviceError("invalid_request"));
+});

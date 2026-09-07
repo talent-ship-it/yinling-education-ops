@@ -164,13 +164,17 @@ export type LessonOccurrenceSettlementState = Readonly<{
   teacherPayrollLedger: readonly TeacherPayrollLedgerEntry[];
 }>;
 
+export type ManualLessonAdjustment = Readonly<{ actualMinutes: number; studentMinutes: number; teacherMinutes: number }>;
+
 export type CompleteLessonOccurrenceCommand = Readonly<{
+  manualAdjustment?: ManualLessonAdjustment;
   completedAt: string;
   attendance: LessonAttendanceEvidence;
   toleranceSeconds?: number;
 }>;
 
 export type LessonOccurrenceSettlementResult = Readonly<{
+  manualAdjustment?: ManualLessonAdjustment;
   occurrence: LessonOccurrence;
   packages: readonly StudentLessonPackage[];
   studentHoursLedger: readonly LessonHourLedgerEntry[];
@@ -509,6 +513,10 @@ export function completeLessonOccurrence(
   command: CompleteLessonOccurrenceCommand,
 ): LessonOccurrenceSettlementResult {
   const fields = completionFields(state.occurrence);
+  const adjustment = command.manualAdjustment;
+  if (adjustment && !Object.values(adjustment).every((minutes) => Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= 360)) throw new RangeError("Manual settlement minutes must be whole numbers from 1 to 360");
+  const studentHours = adjustment ? roundedHours(adjustment.studentMinutes) : fields.payableHours;
+  const teacherHours = adjustment ? roundedHours(adjustment.teacherMinutes) : fields.payableHours;
   requireTimestamp(command.completedAt, "completedAt");
   assertUniqueTeacherLedgerIds(state.teacherPayrollLedger);
 
@@ -532,7 +540,7 @@ export function completeLessonOccurrence(
   if (Boolean(existingDeduction) !== Boolean(existingCredit)) {
     throw new Error(`occurrence ${state.occurrence.occurrenceId} has an incomplete settlement`);
   }
-  if (existingDeduction && !sameDeduction(existingDeduction, state.occurrence, command.completedAt, fields)) {
+  if (existingDeduction && !sameDeduction(existingDeduction, state.occurrence, command.completedAt, { ...fields, payableHours: studentHours })) {
     throw new Error(`occurrence ${state.occurrence.occurrenceId} already has a different student deduction`);
   }
 
@@ -544,7 +552,7 @@ export function completeLessonOccurrence(
     studentId: fields.studentId,
     packageId: fields.packageId,
     subjectId: fields.subjectId,
-    payableHours: fields.payableHours,
+    payableHours: teacherHours,
     occurredAt: command.completedAt,
   };
   if (existingCredit && !sameCredit(existingCredit, credit)) {
@@ -561,7 +569,7 @@ export function completeLessonOccurrence(
     lessonId: state.occurrence.occurrenceId,
     packageId: fields.packageId,
     subjectId: fields.subjectId,
-    hours: fields.payableHours,
+    hours: studentHours,
     completedAt: command.completedAt,
   });
   const teacherPayrollLedger = existingCredit
@@ -569,6 +577,7 @@ export function completeLessonOccurrence(
     : [...state.teacherPayrollLedger, credit];
 
   return {
+    ...(adjustment ? { manualAdjustment: adjustment } : {}),
     occurrence: { ...state.occurrence, status: "completed" },
     packages: deduction.packages,
     studentHoursLedger: deduction.ledger,

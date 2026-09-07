@@ -39,10 +39,11 @@ test("operations-page teacher absence, cover and departure are student-free batc
 
 test("all student-targeting forms and handlers fail closed to scoped active students", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  for (const optionId of ["task-student-options", "booking-student-options", "file-student-options", "message-student-options"]) {
+  for (const optionId of ["task-student-options", "file-student-options", "message-student-options"]) {
     const option = source.slice(source.indexOf(`id="${optionId}"`), source.indexOf(`id="${optionId}"`) + 500);
     assert.match(option, /scopedActiveStudents\.map/);
   }
+  assert.match(source, /<RecordPicker name="studentId" options=\{scopedActiveStudents\.map/);
   const classroomForm = source.slice(source.indexOf('name="studentId" value={temporaryClassroomStudentId}'), source.indexOf('{modal === "lessonSettlement"'));
   assert.match(classroomForm, /scopedActiveStudents\.map/);
   for (const functionName of ["submitTask", "submitBooking", "submitTemporaryClassroom", "submitFile", "submitTemplate"]) {
