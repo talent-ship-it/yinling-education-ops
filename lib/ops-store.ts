@@ -4206,3 +4206,11 @@ export function readTeacherLeaveRequests(teacherIds: string[]) {
 export function submitTeacherLeaveRequest(input: { id: string; teacherId: string; actor: string; start: string; end: string; reason: string }) {
   return rpc<string>("submit_teacher_leave_request", { p_secret: configuration().secret, p_id: input.id, p_teacher_id: input.teacherId, p_actor: input.actor, p_start: input.start, p_end: input.end, p_reason: input.reason });
 }
+
+/** Private, published mirror evidence. Never promotes OCR to a completed business record. */
+export function readWecomMirrorReview(input: { kind: string; query: string; page: number }) {
+  const { secret } = configuration();
+  return rpc<import("./wecom-mirror-review").MirrorReview>("read_wecom_mirror_review", {
+    p_secret: secret, p_kind: input.kind, p_query: input.query, p_page: input.page,
+  });
+}
