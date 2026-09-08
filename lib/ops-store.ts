@@ -109,6 +109,12 @@ export type WecomArchiveIngestResult = Readonly<{
   projectedFiles: number;
 }>;
 
+export type WecomBotIngestResult = Readonly<{
+  inserted: number;
+  duplicates: number;
+  pending: number;
+}>;
+
 export type WecomArchiveInboxRow = Readonly<{
   message_id: string;
   chat_id: string;
@@ -958,6 +964,7 @@ export const WECOM_ARCHIVE_INBOX_RPC = "read_wecom_archive_inbox";
 export const WECOM_ARCHIVE_LINK_RPC = "link_wecom_archive_message";
 export const WECOM_ARCHIVE_MEDIA_RPC = "get_wecom_archive_media";
 export const WECOM_ARCHIVE_STATUS_RPC = "get_wecom_archive_status";
+export const WECOM_BOT_INGEST_RPC = "ingest_wecom_bot_batch";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -1759,6 +1766,20 @@ export function ingestWecomArchiveBatch(input: {
     p_records: input.records,
     p_started_at: input.startedAt,
     p_actor: input.actor ?? "WeCom Archive Worker",
+  });
+}
+
+/** Stores receive-only bot callbacks as pending records without projecting business state. */
+export function ingestWecomBotBatch(input: {
+  records: readonly Readonly<Record<string, unknown>>[];
+  startedAt: string;
+}) {
+  const { secret } = configuration();
+  return rpc<WecomBotIngestResult>(WECOM_BOT_INGEST_RPC, {
+    p_secret: secret,
+    p_records: input.records,
+    p_started_at: input.startedAt,
+    p_actor: "WeCom Bot Receiver",
   });
 }
 
