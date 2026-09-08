@@ -951,7 +951,7 @@ export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_ITEMS_RPC = "get_jiaowubao_comple
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PREPARE_RPC = "prepare_jiaowubao_completed_lesson_member_publication";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PUBLISH_RPC = "complete_jiaowubao_completed_lesson_member_publication";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_ABORT_RPC = "abort_jiaowubao_completed_lesson_member_collection";
-export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic";
+export const JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC = "sync_jiaowubao_trial_matches_atomic_v2";
 export const JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC = "get_jiaowubao_trial_sync_command_result";
 export const WECOM_ARCHIVE_INGEST_RPC = "ingest_wecom_archive_batch";
 export const WECOM_ARCHIVE_INBOX_RPC = "read_wecom_archive_inbox";
@@ -2255,6 +2255,7 @@ export function syncJiaowubaoTrialMatchesAtomic(input: {
   commandIntent: Readonly<Record<string, unknown>>;
   snapshotRevision: string;
   matches: readonly Readonly<{ lpItemId: string; eventId: string; startsAt: string }>[];
+  revocations?: readonly Readonly<{ lpItemId: string; eventId: string; startsAt: string }>[];
   expectedVersions: Readonly<{ lpItems: number; tasks: number }>;
   nextLpItems: readonly unknown[];
   nextTasks: readonly unknown[];
@@ -2267,6 +2268,7 @@ export function syncJiaowubaoTrialMatchesAtomic(input: {
     p_command_intent: input.commandIntent,
     p_snapshot_revision: input.snapshotRevision,
     p_matches: input.matches,
+    p_revocations: input.revocations ?? [],
     p_expected_versions: input.expectedVersions,
     p_next_lp_items: input.nextLpItems,
     p_next_tasks: input.nextTasks,

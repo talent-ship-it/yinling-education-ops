@@ -115,6 +115,7 @@ export type JiaowubaoTrialAutoSyncDependencies = Readonly<{
     commandIntent: Readonly<Record<string, unknown>>;
     snapshotRevision: string;
     matches: readonly JiaowubaoTrialSyncMatchRef[];
+    revocations?: readonly JiaowubaoTrialSyncMatchRef[];
     expectedVersions: Readonly<{ lpItems: number; tasks: number }>;
     nextLpItems: readonly unknown[];
     nextTasks: readonly unknown[];
@@ -147,14 +148,19 @@ export async function runJiaowubaoTrialAutoSyncCore(
     rows: discoveryRows,
     rawEvents,
     snapshotRevision: input.snapshotRevision,
+    window: input.window,
     matchedAt: dependencies.now(),
   });
   const references = discovered.references;
-  if (!references.length) return { outcome: "no_match", matchedCount: 0, appliedCount: 0, batchCount: 0 };
+  const changes = [...references.map((reference) => ({ reference, revoke: false })),
+    ...discovered.revocations.map((reference) => ({ reference, revoke: true }))];
+  if (!changes.length) return { outcome: "no_match", matchedCount: 0, appliedCount: 0, batchCount: 0 };
 
   let appliedCount = 0;
   let batchCount = 0;
-  for (const matches of chunks<JiaowubaoTrialSyncMatchRef>(references, JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES)) {
+  for (const batch of chunks(changes, JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES)) {
+    const matches = batch.filter((change) => !change.revoke).map((change) => change.reference);
+    const revocations = batch.filter((change) => change.revoke).map((change) => change.reference);
     let batchFinished = false;
     for (let attempt = 0; attempt < 3 && !batchFinished; attempt += 1) {
       const rows = await dependencies.getRows([...AUTHORITY_ENTITIES]);
@@ -163,6 +169,8 @@ export async function runJiaowubaoTrialAutoSyncCore(
       const projection = prepareJiaowubaoTrialSyncProjection({
         rows,
         references: matches,
+        revocations,
+        window: input.window,
         rawEvents,
         snapshotRevision: input.snapshotRevision,
         matchedAt: dependencies.now(),
@@ -178,6 +186,7 @@ export async function runJiaowubaoTrialAutoSyncCore(
         snapshotRevision: input.snapshotRevision,
         window: input.window,
         matches,
+        ...(revocations.length ? { revocations } : {}),
         expectedVersions: { lpItems: lpRow.version, tasks: tasksRow.version },
       };
       try {
@@ -186,6 +195,7 @@ export async function runJiaowubaoTrialAutoSyncCore(
           commandIntent: jiaowubaoTrialSyncIntent(command),
           snapshotRevision: command.snapshotRevision,
           matches: command.matches,
+          revocations: command.revocations,
           expectedVersions: command.expectedVersions,
           nextLpItems: projection.nextLpItems,
           nextTasks: projection.nextTasks,
@@ -195,7 +205,7 @@ export async function runJiaowubaoTrialAutoSyncCore(
           throw new JiaowubaoTrialAutoSyncError("trial auto-sync receipt incomplete", "invalid_commit_result");
         }
         batchCount += 1;
-        if (saved[0].applied) appliedCount += projection.references.length;
+        if (saved[0].applied) appliedCount += projection.references.length + projection.revocations.length;
         batchFinished = true;
       } catch (error) {
         if (attempt < 2 && retryableConflict(error)) continue;
