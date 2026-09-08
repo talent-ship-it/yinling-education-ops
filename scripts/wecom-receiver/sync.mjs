@@ -44,13 +44,16 @@ function canonicalRecord(record) {
   // non-text callbacks as pending `other` records until a reviewed media path
   // exists; never forward image AES keys or temporary URLs.
   const messageType = message.msgtype === "text" ? "text" : "other";
+  const text = textContent(message);
   return {
     messageId: messageId(message),
     chatId,
     senderId,
     sentAt: iso(record.received_at),
     messageType,
-    text: textContent(message),
+    // The database contract treats JSON null as an invalid text value. Omit
+    // the optional field when a callback has no textual content.
+    ...(text ? { text } : {}),
   };
 }
 
