@@ -12,7 +12,7 @@ export type NormalizedWecomBotRecord = Readonly<{
   senderId: string;
   sentAt: string;
   messageType: "text" | "image" | "file" | "mixed" | "other";
-  text: string | null;
+  text?: string;
 }>;
 
 export class WecomBotRecordError extends Error {
@@ -83,7 +83,9 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecor
     senderId,
     sentAt: canonicalInstant(value.sentAt),
     messageType: messageType as NormalizedWecomBotRecord["messageType"],
-    text: text || null,
+    // The database contract treats JSON null as invalid. Keep the optional
+    // field absent when a callback has no textual content.
+    ...(text ? { text } : {}),
   });
 }
 
