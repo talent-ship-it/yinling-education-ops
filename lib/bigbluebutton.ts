@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, createHmac } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
+import { classroomMeetingDurationMinutes } from "./classroom-duration";
 
 import {
   bbbCallbackNonce,
@@ -182,6 +183,7 @@ export async function createMeeting(input: {
   meetingId: string;
   name: string;
   durationMinutes: number;
+  scheduledStartsAt: number;
   logoutUrl: string;
   occurrenceId: string;
   bookingId: string;
@@ -197,7 +199,9 @@ export async function createMeeting(input: {
     record: true,
     autoStartRecording: true,
     allowStartStopRecording: true,
-    duration: Math.max(15, Math.min(360, Math.ceil(input.durationMinutes))),
+    // Duplicate creates keep the original provider timer. The first create
+    // must already cover the full scheduled end, including pre-class time.
+    duration: classroomMeetingDurationMinutes(input.scheduledStartsAt, input.durationMinutes),
     logoutURL: input.logoutUrl,
     meetingExpireIfNoUserJoinedInMinutes: 45,
     meetingExpireWhenLastUserLeftInMinutes: 10,

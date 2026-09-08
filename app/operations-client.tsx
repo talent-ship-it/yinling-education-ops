@@ -258,6 +258,7 @@ import {
   clearBookingProjectionPendingCommands,
   persistBookingProjectionPendingCommands,
   readBookingProjectionPendingCommands,
+  prepareBookingProjectionPendingCommand,
   removeBookingProjectionPendingCommand,
   upsertBookingProjectionPendingCommand,
   type BookingProjectionPendingCommand,
@@ -6310,14 +6311,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       tasks: bookingProjectionTasksVersion,
       teachers: bookingProjectionTeachersVersion,
     };
-    const commandValue = previous
-      ? JSON.parse(previous.command) as Record<string, unknown>
-      : { ...intentValue, expectedVersions };
-    const pending = {
-      intent,
-      command: JSON.stringify(commandValue),
+    const pending = prepareBookingProjectionPendingCommand({
+      intentValue,
       expectedVersions,
-    } satisfies BookingProjectionPendingCommand;
+      previous,
+    });
     bookingProjectionCommandKeysRef.current = upsertBookingProjectionPendingCommand(
       bookingProjectionCommandKeysRef.current.values(),
       pending,
@@ -7498,6 +7496,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const persistClassroom = useCallback(async (occurrence: BookingOccurrence, meetingId: string, status: "ready" | "running" | "ended") => {
+    const statusRank = { ready: 1, running: 2, ended: 3 };
+    if (occurrence.classroom?.meetingId === meetingId
+      && statusRank[occurrence.classroom.status] >= statusRank[status]) return;
     // Classroom state is a narrow booking projection command. The server
     // derives occurrenceId/createdAt and applies monotonic status semantics;
     // this function resolves only after the authoritative five-table receipt

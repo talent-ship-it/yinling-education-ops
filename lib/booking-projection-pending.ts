@@ -8,6 +8,7 @@ const BOOKING_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MEETING_ID = /^yinling-occ-[0-9a-f]{48}$/;
+const REQUEST_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type BookingProjectionExpectedVersions = Readonly<{
   bookings: number;
@@ -20,7 +21,7 @@ export type BookingProjectionExpectedVersions = Readonly<{
 export type BookingProjectionPendingCommand = Readonly<{
   /** Stable semantic command without OCC versions. */
   intent: string;
-  /** Exact narrow browser command, including the original OCC versions. */
+  /** Exact browser command, including the action request key and original OCC versions. */
   command: string;
   expectedVersions: BookingProjectionExpectedVersions;
 }>;
@@ -72,7 +73,8 @@ function parseEntry(value: unknown): BookingProjectionPendingCommand | null {
           : ["action", "bookingId", "booking"];
     if (!record(intent) || !record(command)
       || !exact(intent, intentFields)
-      || !exact(command, [...intentFields, "expectedVersions"])
+      || !exact(command, [...intentFields, "expectedVersions", ...(command.requestKey !== undefined ? ["requestKey"] : [])])
+      || (command.requestKey !== undefined && (typeof command.requestKey !== "string" || !REQUEST_KEY.test(command.requestKey)))
       || command.action !== intent.action
       || typeof command.bookingId !== "string" || !BOOKING_ID.test(command.bookingId)
       || command.bookingId !== intent.bookingId
@@ -80,6 +82,7 @@ function parseEntry(value: unknown): BookingProjectionPendingCommand | null {
       || JSON.stringify(command.expectedVersions) !== JSON.stringify(value.expectedVersions)) return null;
     const semantic = { ...command };
     delete semantic.expectedVersions;
+    delete semantic.requestKey;
     if (JSON.stringify(semantic) !== value.intent) return null;
     if ((action === "upsert" || action === "upsert_bind_classroom") && (!record(command.booking) || JSON.stringify(command.booking) !== JSON.stringify(intent.booking))) return null;
     if (action === "delete" && (command.booking !== undefined || command.occurrenceId !== undefined || command.occurrence !== undefined)) return null;
@@ -113,6 +116,28 @@ function parseEntry(value: unknown): BookingProjectionPendingCommand | null {
     return null;
   }
   return value as BookingProjectionPendingCommand;
+}
+
+/** Mint once for a new action; restore the exact command for an uncertain retry. */
+export function prepareBookingProjectionPendingCommand(input: {
+  intentValue: Readonly<Record<string, unknown>>;
+  expectedVersions: BookingProjectionExpectedVersions;
+  previous?: BookingProjectionPendingCommand;
+  requestKeyFactory?: () => string;
+}): BookingProjectionPendingCommand {
+  const intent = JSON.stringify(input.intentValue);
+  if (input.previous) {
+    if (input.previous.intent !== intent || !parseEntry(input.previous)) throw new TypeError("Invalid pending booking retry.");
+    return input.previous;
+  }
+  const requestKey = (input.requestKeyFactory ?? (() => crypto.randomUUID()))();
+  const pending = {
+    intent,
+    command: JSON.stringify({ ...input.intentValue, requestKey, expectedVersions: input.expectedVersions }),
+    expectedVersions: input.expectedVersions,
+  };
+  if (!parseEntry(pending)) throw new TypeError("Invalid booking command.");
+  return pending;
 }
 
 function storageKey(actor: string) {

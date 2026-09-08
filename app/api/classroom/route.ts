@@ -236,6 +236,7 @@ export async function POST(request: NextRequest) {
       meetingId,
       name: `${studentName} · ${course}`,
       durationMinutes: Number(context.booking.duration) || 60,
+      scheduledStartsAt: bookingStartsAt(context.booking)?.getTime() ?? NaN,
       logoutUrl: new URL("/", request.nextUrl.origin).toString(),
       occurrenceId,
       bookingId,

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import {
   bookingCapacityCommandIntent,
   bookingCapacityCommandKey,
+  bookingCapacityCommandRequiresRefresh,
   bookingCapacityTeacherReplayAllowed,
   BookingCapacityServiceError,
   parseBookingCapacityCommand,
@@ -79,6 +80,11 @@ export async function POST(request: Request) {
     // A lost delete response cannot rediscover the removed booking, whereas the
     // actor-bound ledger retains both student identities and all committed rows.
     const replay = await getBookingCapacityCommandResult({ commandKey, commandIntent, actor });
+    // Preserve uncertain pre-upgrade retries, but require an updated page for
+    // a new action whose semantic identity could match an older receipt.
+    if (bookingCapacityCommandRequiresRefresh(command, replay[0]?.booking_version)) {
+      return noStore({ error: "排课页面已更新，请刷新后重新提交。", code: "booking_request_key_required" }, 409);
+    }
     if (replay[0]) {
       const replayRows = [
         replay[0].bookings_row,
