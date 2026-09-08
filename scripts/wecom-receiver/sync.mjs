@@ -31,7 +31,12 @@ function textContent(message) {
 
 function canonicalRecord(record) {
   const message = record?.message;
-  const chatId = typeof message?.chatid === "string" ? message.chatid.trim() : "";
+  // Some WeCom image callbacks omit chatid even though they include the
+  // sender. Keep those callbacks in the review queue with an explicit
+  // placeholder rather than dropping the source evidence.
+  const chatId = typeof message?.chatid === "string" && message.chatid.trim()
+    ? message.chatid.trim()
+    : message?.msgtype === "text" ? "" : "bot:unknown-chat";
   const senderId = typeof message?.from?.userid === "string" ? message.from.userid.trim() : "";
   if (!chatId || !senderId) throw new Error("missing_chat_or_sender");
 

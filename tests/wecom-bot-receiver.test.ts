@@ -55,7 +55,6 @@ test("syncs callback files once and treats non-text callbacks as pending other r
       aibotid: "bot",
       msgid: "image-1",
       msgtype: "image",
-      chatid: "room-1",
       from: { userid: "sender-1" },
       image: { url: "temporary", aeskey: "must-not-forward" },
     },
@@ -83,6 +82,8 @@ test("syncs callback files once and treats non-text callbacks as pending other r
   assert.equal(calls.length, 1);
   const records = (calls[0] as { records: Array<Record<string, unknown>> }).records;
   assert.equal(records.length, 2);
-  assert.equal(records.find((item) => item.messageType === "other")?.text, null);
+  const imageRecord = records.find((item) => item.messageType === "other");
+  assert.equal(imageRecord?.text, null);
+  assert.equal(imageRecord?.chatId, "bot:unknown-chat");
   assert.doesNotMatch(JSON.stringify(calls), /must-not-forward/);
 });
