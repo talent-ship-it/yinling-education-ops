@@ -14,7 +14,7 @@ import {
 import { sortTasksByDueAt, type OpsTask } from "./ops-tasks";
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "./student-import";
 import type { JiaowubaoOpenApiScheduleSnapshotWindow, OpsStateRow } from "./ops-store";
-import type { JiaowubaoTrialSyncMatchRef } from "./jiaowubao-trial-sync";
+import { jiaowubaoTrialMissingScheduleRefs, type JiaowubaoTrialSyncMatchRef, type JiaowubaoTrialSyncWindow } from "./jiaowubao-trial-sync";
 
 type RecordValue = Record<string, unknown>;
 type RawScheduleEvent = JiaowubaoOpenApiScheduleSnapshotWindow["events"][number];
@@ -121,6 +121,7 @@ export type JiaowubaoTrialSyncProjection = Readonly<{
   nextTasks: readonly OpsTask[];
   studentIds: readonly string[];
   references: readonly JiaowubaoTrialSyncMatchRef[];
+  revocations: readonly JiaowubaoTrialSyncMatchRef[];
   evidence: readonly Readonly<{
     lpItemId: string;
     eventId: string;
@@ -137,6 +138,9 @@ export type JiaowubaoTrialSyncProjection = Readonly<{
 export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   rows: readonly OpsStateRow[];
   references?: readonly JiaowubaoTrialSyncMatchRef[];
+  revocations?: readonly JiaowubaoTrialSyncMatchRef[];
+  /** Present only after the entire immutable source window was read. */
+  window?: JiaowubaoTrialSyncWindow;
   rawEvents: readonly RawScheduleEvent[];
   snapshotRevision: string;
   matchedAt: Date | string;
@@ -157,15 +161,10 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     throw new JiaowubaoTrialSyncProjectionError("source_mismatch", "教务宝试听匹配证据不完整。");
   }
 
-  const requestedLpItems = input.references
-    ? input.references.map((reference) => {
-        const matches = lpItems.filter((item) => text(item.id) === reference.lpItemId);
-        if (matches.length !== 1) throw new JiaowubaoTrialSyncProjectionError("lp_not_found", "试听 LP 已不存在。");
-        return matches[0]!;
-      })
-    : lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
+  // References select writes, never the competitors used to prove uniqueness.
+  const activeLpItems = lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
       && text(item.stage) !== "完成");
-  const allowedStudentIds = new Set(requestedLpItems.map((item) => text(item.studentId)).filter(Boolean));
+  const allowedStudentIds = new Set(activeLpItems.map((item) => text(item.studentId)).filter(Boolean));
   const studentLookup = buildStudentLookup(students, allowedStudentIds);
   const matchedAt = new Date(input.matchedAt);
   if (!Number.isFinite(matchedAt.valueOf())) {
@@ -189,8 +188,8 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       trialPlannerHint: trialPlannerHintFromParticipants(raw.sourceParticipants),
     }];
   });
-  const preparedMatches = matchTrialScheduleEvents({
-    lpItems: requestedLpItems.map((item) => ({
+  const allMatches = matchTrialScheduleEvents({
+    lpItems: activeLpItems.map((item) => ({
       id: text(item.id),
       studentId: text(item.studentId),
       workflowType: text(item.workflowType),
@@ -210,7 +209,11 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     events: sourceEvents,
     matchedAt,
     sourceRevision: input.snapshotRevision,
-  });
+  }).filter((match) => !lpItems.some((item) => text(item.id) !== match.lpItemId
+    && record(item.trialSchedule) && text(item.trialSchedule.eventId) === match.link.eventId));
+  const preparedMatches = input.references
+    ? allMatches.filter((match) => input.references!.some((reference) => reference.lpItemId === match.lpItemId))
+    : allMatches;
   if (input.references) {
     const referenceByLpId = new Map(input.references.map((reference) => [reference.lpItemId, reference]));
     if (preparedMatches.length !== input.references.length
@@ -222,8 +225,27 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     }
   }
 
+  const missing = input.window ? jiaowubaoTrialMissingScheduleRefs({
+    lpItems: activeLpItems.map((item) => ({ id: text(item.id), workflowType: text(item.workflowType),
+      stage: text(item.stage), trialSchedule: item.trialSchedule })),
+    eventIds: new Set(eventById.keys()), window: input.window, now: matchedAt,
+  }).filter((reference) => !allMatches.some((match) => match.lpItemId === reference.lpItemId)) : [];
+  const revocations = input.revocations
+    ? missing.filter((reference) => input.revocations!.some((requested) => requested.lpItemId === reference.lpItemId
+      && requested.eventId === reference.eventId && requested.startsAt === reference.startsAt))
+    : input.references ? [] : missing;
+  if (input.revocations && (revocations.length !== input.revocations.length
+    || revocations.some((reference) => preparedMatches.some((match) => match.lpItemId === reference.lpItemId)))) {
+    throw new JiaowubaoTrialSyncProjectionError("source_mismatch", "撤销排课需要完整新快照证明未开始的原排课已不存在。");
+  }
+
   const matchByLpId = new Map(preparedMatches.map((match) => [match.lpItemId, match]));
   const nextLpItems = lpItems.map((item) => {
+    if (revocations.some((reference) => reference.lpItemId === text(item.id))) {
+      const next = { ...item };
+      delete next.trialSchedule;
+      return next;
+    }
     const match = matchByLpId.get(text(item.id));
     if (!match) return item;
     const existing = item.trialSchedule;
@@ -233,10 +255,14 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     return { ...item, trialSchedule: link };
   });
 
-  let nextTasks: OpsTask[] = [...tasks];
+  let nextTasks: OpsTask[] = tasks.filter((task) => task.status === "done"
+    || task.ruleKey?.startsWith(TRIAL_JWB_RULE_PREFIX) !== true
+    || !revocations.some((reference) => task.anchorBookingId === `JWB:${reference.eventId}`
+      && task.studentId === text(lpItems.find((item) => text(item.id) === reference.lpItemId)?.studentId)
+      && (!task.requestAnchorBookingId || task.requestAnchorBookingId === reference.lpItemId)));
   const evidence: JiaowubaoTrialSyncProjection["evidence"][number][] = [];
   for (const match of preparedMatches) {
-    const sourceLp = requestedLpItems.find((item) => text(item.id) === match.lpItemId)!;
+    const sourceLp = activeLpItems.find((item) => text(item.id) === match.lpItemId)!;
     const previousEventId = record(sourceLp.trialSchedule) ? text(sourceLp.trialSchedule.eventId) : "";
     const currentAnchor = `JWB:${match.link.eventId}`;
     const previousAnchor = previousEventId ? `JWB:${previousEventId}` : "";
@@ -278,7 +304,9 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   return {
     nextLpItems,
     nextTasks: sortTasksByDueAt(nextTasks),
-    studentIds: [...new Set(preparedMatches.map((match) => match.studentId))].sort(),
+    studentIds: [...new Set([...preparedMatches.map((match) => match.studentId),
+      ...revocations.map((reference) => text(lpItems.find((item) => text(item.id) === reference.lpItemId)?.studentId))])].sort(),
+    revocations,
     references: preparedMatches.map((match) => ({
       lpItemId: match.lpItemId,
       eventId: match.link.eventId,

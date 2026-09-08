@@ -12,6 +12,7 @@ import {
 import { DEMO_COOKIE_NAME, DEMO_LIMITED_ADMIN_USER, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { displayTimezoneOptions } from "@/lib/display-preferences";
+import { localTimeToInstant } from "@/lib/teacher-availability";
 import {
   bookingCapacityCommandIntent,
   BookingCapacityServiceError,
@@ -339,6 +340,7 @@ export async function POST(request: NextRequest) {
       meetingId,
       name: `${text(record(student).name) || details.studentId} · ${details.subjectId}`,
       durationMinutes: duration,
+      scheduledStartsAt: localTimeToInstant(date, start, timezone, "earlier").getTime(),
       logoutUrl: new URL("/", request.nextUrl.origin).toString(),
       occurrenceId,
       bookingId,

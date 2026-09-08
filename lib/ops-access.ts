@@ -48,7 +48,10 @@ export type OpsAccessContext = {
   trialLpStudentById: Map<string, string>;
   trialLpPlannerById: Map<string, string>;
   trialLpEventById: Map<string, string>;
+  /** Teacher identities that can authorize teacher-owned operations. */
   teacherIds: Set<string>;
+  /** Related roster records for display; never grants teacher authority. */
+  visibleTeacherIds: Set<string>;
 };
 
 const ACCESS_SCOPE_ENTITIES = ["bookings", "students", "teachers"] as const;
@@ -336,7 +339,10 @@ export function buildOpsAccessContext(
     .filter((item) => explicitlyScopedTeacherIds.has(rowId(item)))
     .map((item) => normalise(item.name))
     .filter((name) => name && teacherNameCounts.get(name) === 1));
-  const teacherIds = teacherScopeKeys.size > 0 ? explicitlyScopedTeacherIds : actorTeacherIds;
+  // A configured teacher scope narrows student relationships. It cannot turn
+  // the signed teacher into a different roster identity.
+  const teacherIds = teacher || teacherScopeKeys.size === 0 ? actorTeacherIds : explicitlyScopedTeacherIds;
+  const visibleTeacherIds = new Set(teacherIds);
   const bookings = payloadRecords(rows, "bookings");
   const trialBookingStudentById = new Map(
     bookings
@@ -374,7 +380,7 @@ export function buildOpsAccessContext(
       if (!directlyScopedStudentIds.has(studentId) && !teacherScopedStudentIds.has(studentId)) studentIds.delete(studentId);
     }
     for (const booking of bookings) {
-      if (studentIds.has(rowStudentId(booking)) && rowTeacherId(booking)) teacherIds.add(rowTeacherId(booking));
+      if (studentIds.has(rowStudentId(booking)) && rowTeacherId(booking)) visibleTeacherIds.add(rowTeacherId(booking));
     }
   }
   const activeStudentIds = new Set(
@@ -456,6 +462,7 @@ export function buildOpsAccessContext(
     trialLpPlannerById,
     trialLpEventById,
     teacherIds,
+    visibleTeacherIds,
   };
 }
 
@@ -556,7 +563,7 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   }
   if (entity === "courses") return true;
   if (entity === "teachers") {
-    if (context.restrictedStudentScope) return context.teacherIds.has(rowId(value));
+    if (context.restrictedStudentScope) return context.visibleTeacherIds.has(rowId(value));
     return context.staff || ((context.teacher || context.limitedAdmin) && context.teacherIds.has(rowId(value)));
   }
   if (entity === "students") return canAccessStudent(context, rowId(value));
@@ -579,7 +586,7 @@ function canReadRecord(context: OpsAccessContext, entity: string, value: RecordV
   if (entity === "bookings") {
     if (context.limitedAdmin) return canAccessStudent(context, rowStudentId(value));
     return context.teacher
-      ? bookingHasEffectiveTeacher(value, context.teacherIds)
+      ? canAccessStudent(context, rowStudentId(value)) && bookingHasEffectiveTeacher(value, context.teacherIds)
       : canAccessStudent(context, rowStudentId(value));
   }
   if (["operations", "messages", "files"].includes(entity)) return canAccessStudent(context, rowStudentId(value));
@@ -600,7 +607,8 @@ export function filterOpsStateRows(rows: OpsStateRow[], context: OpsAccessContex
  * this side channel because their regular students payload is already global.
  */
 export function managedExamStudentProjections(rows: OpsStateRow[], context: OpsAccessContext): ManagedExamStudentProjection[] {
-  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope) return [];
+  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope
+    || !canReadOpsEntity(context, "students") || !canReadOpsEntity(context, "tasks")) return [];
   const students = payloadRecords(rows, "students");
   const tasks = payloadRecords(rows, "tasks");
   const examIdsByStudent = new Map<string, Set<string>>();
@@ -663,7 +671,8 @@ export function managedTrialPaymentStudentProjections(
   rows: OpsStateRow[],
   context: OpsAccessContext,
 ): ManagedTrialPaymentStudentProjection[] {
-  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope) return [];
+  if (!context.staff || context.fullAdmin || context.limitedAdmin || context.restrictedStudentScope
+    || !canReadOpsEntity(context, "students") || !canReadOpsEntity(context, "tasks")) return [];
   const studentIds = new Set(payloadRecords(rows, "tasks").flatMap((task) => {
     const studentId = rowStudentId(task);
     if (context.studentIds.has(studentId)

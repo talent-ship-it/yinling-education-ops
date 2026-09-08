@@ -31,6 +31,8 @@ export type JiaowubaoTrialSyncCommand = Readonly<{
   snapshotRevision: string;
   window: JiaowubaoTrialSyncWindow;
   matches: readonly JiaowubaoTrialSyncMatchRef[];
+  /** Missing future source events, re-proved by the server and database. */
+  revocations?: readonly JiaowubaoTrialSyncMatchRef[];
   expectedVersions: JiaowubaoTrialSyncExpectedVersions;
 }>;
 
@@ -91,8 +93,8 @@ function parseWindow(value: unknown): JiaowubaoTrialSyncWindow {
   return { startsAt, endsAt };
 }
 
-function parseMatches(value: unknown): JiaowubaoTrialSyncMatchRef[] {
-  if (!Array.isArray(value) || !value.length || value.length > JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES) {
+function parseMatches(value: unknown, allowEmpty = false, uniqueEvents = true): JiaowubaoTrialSyncMatchRef[] {
+  if (!Array.isArray(value) || (!allowEmpty && !value.length) || value.length > JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES) {
     throw new JiaowubaoTrialSyncError("invalid_command", "试听同步匹配数量无效。");
   }
   const matches = value.map((candidate) => {
@@ -107,7 +109,7 @@ function parseMatches(value: unknown): JiaowubaoTrialSyncMatchRef[] {
     return { lpItemId, eventId, startsAt };
   }).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId) || left.eventId.localeCompare(right.eventId));
   if (new Set(matches.map((match) => match.lpItemId)).size !== matches.length
-    || new Set(matches.map((match) => match.eventId)).size !== matches.length) {
+    || uniqueEvents && new Set(matches.map((match) => match.eventId)).size !== matches.length) {
     throw new JiaowubaoTrialSyncError("invalid_command", "同一 LP 或教务宝排课不能重复匹配。");
   }
   return matches;
@@ -115,14 +117,20 @@ function parseMatches(value: unknown): JiaowubaoTrialSyncMatchRef[] {
 
 export function parseJiaowubaoTrialSyncCommand(value: unknown): JiaowubaoTrialSyncCommand {
   if (!record(value)) throw new JiaowubaoTrialSyncError("invalid_command", "试听同步命令必须是对象。");
-  exactKeys(value, ["commandKey", "snapshotRevision", "window", "matches", "expectedVersions"], "command");
+  exactKeys(value, ["commandKey", "snapshotRevision", "window", "matches", "expectedVersions", ...("revocations" in value ? ["revocations"] : [])], "command");
   const commandKey = typeof value.commandKey === "string" ? value.commandKey.trim().toLowerCase() : "";
   const snapshotRevision = typeof value.snapshotRevision === "string" ? value.snapshotRevision.trim() : "";
   if (!UUID_V4.test(commandKey)) throw new JiaowubaoTrialSyncError("invalid_command", "commandKey 必须是 UUID v4。");
   if (!SNAPSHOT_REVISION.test(snapshotRevision)) throw new JiaowubaoTrialSyncError("invalid_command", "教务宝快照版本无效。");
   const window = parseWindow(value.window);
-  const matches = parseMatches(value.matches);
-  if (matches.some((match) => match.startsAt < window.startsAt || match.startsAt >= window.endsAt)) {
+  const revocations = "revocations" in value ? parseMatches(value.revocations, true, false) : undefined;
+  const matches = parseMatches(value.matches, Boolean(revocations?.length));
+  const references = [...matches, ...(revocations ?? [])];
+  if (references.length > JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES
+    || new Set(references.map((reference) => reference.lpItemId)).size !== references.length) {
+    throw new JiaowubaoTrialSyncError("invalid_command", "同一 LP 不能同时匹配和撤销，且批次不能超过上限。");
+  }
+  if (references.some((match) => match.startsAt < window.startsAt || match.startsAt >= window.endsAt)) {
     throw new JiaowubaoTrialSyncError("invalid_command", "试听匹配不在固定课表窗口内。");
   }
   return {
@@ -130,6 +138,7 @@ export function parseJiaowubaoTrialSyncCommand(value: unknown): JiaowubaoTrialSy
     snapshotRevision,
     window,
     matches,
+    ...(revocations ? { revocations } : {}),
     expectedVersions: parseVersions(value.expectedVersions),
   };
 }
@@ -139,12 +148,36 @@ export function jiaowubaoTrialSyncIntent(command: JiaowubaoTrialSyncCommand) {
     snapshotRevision: command.snapshotRevision,
     window: command.window,
     matches: command.matches,
+    ...(command.revocations ? { revocations: command.revocations } : {}),
     expectedVersions: command.expectedVersions,
   } as const;
 }
 
-export function jiaowubaoTrialSyncScope(input: Pick<JiaowubaoTrialSyncCommand, "snapshotRevision" | "window" | "matches">) {
-  return JSON.stringify({ snapshotRevision: input.snapshotRevision, window: input.window, matches: input.matches });
+export function jiaowubaoTrialSyncScope(input: Pick<JiaowubaoTrialSyncCommand, "snapshotRevision" | "window" | "matches" | "revocations">) {
+  return JSON.stringify({ snapshotRevision: input.snapshotRevision, window: input.window, matches: input.matches,
+    ...(input.revocations ? { revocations: input.revocations } : {}) });
+}
+
+/** Call only with a freshly read COMPLETE source window; absence is not proof outside it. */
+export function jiaowubaoTrialMissingScheduleRefs(input: Readonly<{
+  lpItems: readonly Readonly<{ id: string; workflowType?: string; stage?: string; trialSchedule?: unknown }>[];
+  eventIds: ReadonlySet<string>;
+  window: JiaowubaoTrialSyncWindow;
+  now: Date;
+}>) {
+  const now = input.now.toISOString();
+  return input.lpItems.flatMap((item): JiaowubaoTrialSyncMatchRef[] => {
+    const schedule = item.trialSchedule;
+    if (!["试听 LP", "换老师试听"].includes(item.workflowType ?? "") || item.stage === "完成"
+      || !record(schedule) || schedule.source !== "jiaowubao-open-api"
+      || typeof schedule.sourceRevision !== "string" || !SNAPSHOT_REVISION.test(schedule.sourceRevision)
+      || typeof schedule.eventId !== "string" || !EVENT_ID.test(schedule.eventId)
+      || !LP_ID.test(item.id)) return [];
+    const startsAt = canonicalInstant(schedule.startsAt);
+    if (!startsAt || startsAt <= now || startsAt < input.window.startsAt || startsAt >= input.window.endsAt
+      || input.eventIds.has(schedule.eventId)) return [];
+    return [{ lpItemId: item.id, eventId: schedule.eventId, startsAt }];
+  }).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId));
 }
 
 export function jiaowubaoTrialSyncPendingDisposition(input: Readonly<{
@@ -169,13 +202,14 @@ function byteLength(value: string) {
 function parsePending(value: unknown): JiaowubaoTrialSyncPendingCommand | null {
   if (!record(value)) return null;
   try {
-    exactKeys(value, ["scope", "commandKey", "snapshotRevision", "window", "matches", "expectedVersions"], "pending");
+    exactKeys(value, ["scope", "commandKey", "snapshotRevision", "window", "matches", "expectedVersions", ...("revocations" in value ? ["revocations"] : [])], "pending");
     if (typeof value.scope !== "string" || !value.scope || byteLength(value.scope) > 16 * 1024) return null;
     const command = parseJiaowubaoTrialSyncCommand({
       commandKey: value.commandKey,
       snapshotRevision: value.snapshotRevision,
       window: value.window,
       matches: value.matches,
+      ...("revocations" in value ? { revocations: value.revocations } : {}),
       expectedVersions: value.expectedVersions,
     });
     if (value.scope !== jiaowubaoTrialSyncScope(command)) return null;

@@ -26,7 +26,8 @@ type RecordValue = Record<string, unknown>;
 const BOOKING_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-const REQUEST_FIELDS = new Set(["action", "bookingId", "expectedVersions", "booking", "occurrenceId", "occurrence", "classroom"]);
+const REQUEST_FIELDS = new Set(["action", "bookingId", "requestKey", "expectedVersions", "booking", "occurrenceId", "occurrence", "classroom"]);
+const REQUEST_KEY_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VERSION_FIELDS = new Set(["bookings", "students", "lpItems", "tasks", "teachers"]);
 const OCCURRENCE_FIELDS = new Set(["date", "start", "duration", "status"]);
 const CLASSROOM_FIELDS = new Set(["meetingId", "status"]);
@@ -48,6 +49,8 @@ const BOOKING_FIELDS = new Set([
 ]);
 
 export type BookingCapacityCommand = Readonly<{
+  /** One user action; omitted only by pre-upgrade pending commands. */
+  requestKey?: string;
   action: "upsert" | "upsert_bind_classroom" | "delete" | "cancel_occurrence" | "update_occurrence" | "bind_classroom";
   bookingId: string;
   occurrenceId?: string;
@@ -212,6 +215,10 @@ function assertTimezone(value: string) {
 export function parseBookingCapacityCommand(value: unknown): BookingCapacityCommand {
   if (!isRecord(value)) fail("invalid_request", "Booking command is missing.");
   assertOnlyFields(value, REQUEST_FIELDS);
+  if (value.requestKey !== undefined && (typeof value.requestKey !== "string" || !REQUEST_KEY_PATTERN.test(value.requestKey))) {
+    fail("invalid_request", "requestKey must be a UUID v4.");
+  }
+  const requestIdentity = typeof value.requestKey === "string" ? { requestKey: value.requestKey.toLowerCase() } : {};
   const action = value.action;
   if (action !== "upsert" && action !== "upsert_bind_classroom" && action !== "delete" && action !== "cancel_occurrence" && action !== "update_occurrence" && action !== "bind_classroom") {
     fail("invalid_request", "action must be upsert, upsert_bind_classroom, delete, cancel_occurrence, update_occurrence or bind_classroom.");
@@ -231,7 +238,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
     if (value.booking !== undefined || value.occurrenceId !== undefined || value.occurrence !== undefined || value.classroom !== undefined) {
       fail("client_fields_forbidden", "Delete commands cannot submit booking or occurrence data.");
     }
-    return { action, bookingId, expectedVersions };
+    return { ...requestIdentity, action, bookingId, expectedVersions };
   }
   if (action === "cancel_occurrence") {
     if (value.booking !== undefined || value.occurrence !== undefined || value.classroom !== undefined) fail("client_fields_forbidden", "Occurrence cancellation cannot submit booking data.");
@@ -241,7 +248,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
       fail("invalid_request", "occurrenceId must identify one source date in bookingId.");
     }
     assertCalendarDate(sourceDate, "occurrenceId source date");
-    return { action, bookingId, occurrenceId, expectedVersions };
+    return { ...requestIdentity, action, bookingId, occurrenceId, expectedVersions };
   }
   if (action === "update_occurrence") {
     if (value.booking !== undefined || value.classroom !== undefined) fail("client_fields_forbidden", "Occurrence updates cannot submit booking data.");
@@ -261,6 +268,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
     if (!isLessonDuration(duration)) fail("invalid_request", "occurrence.duration must be a whole number of minutes from 15 to 360.");
     if (value.occurrence.status !== "confirmed") fail("invalid_request", "Occurrence updates may only confirm an active lesson.");
     return {
+      ...requestIdentity,
       action,
       bookingId,
       occurrenceId,
@@ -287,6 +295,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
       fail("invalid_request", "classroom.status is invalid.");
     }
     return {
+      ...requestIdentity,
       action,
       bookingId,
       occurrenceId,
@@ -345,6 +354,7 @@ export function parseBookingCapacityCommand(value: unknown): BookingCapacityComm
     fail("invalid_request", error instanceof Error ? error.message : "booking recurrence is invalid.");
   }
   return {
+    ...requestIdentity,
     action,
     bookingId,
     expectedVersions,
@@ -414,10 +424,24 @@ export function bookingCapacityCommandIntent(command: BookingCapacityCommand): B
 }
 
 export function bookingCapacityCommandKey(command: BookingCapacityCommand) {
+  // Keep the old identity for pending commands saved before request keys were
+  // introduced. New actions get a distinct identity even when their desired
+  // state repeats an earlier edit. The ledger still compares intent and actor
+  // under that identity, so changing a retry's payload remains a conflict.
   const digest = createHash("sha256")
-    .update(stableJson(bookingCapacityCommandIntent(command)))
+    .update(command.requestKey
+      ? `booking-request-v2:${command.requestKey.toLowerCase()}`
+      : stableJson(bookingCapacityCommandIntent(command)))
     .digest("hex");
   return `booking-capacity:${digest}`;
+}
+
+export function bookingCapacityCommandRequiresRefresh(command: BookingCapacityCommand, committedBookingVersion?: number) {
+  if (command.requestKey) return false;
+  // An old pending write predates its own commit. A command based on that
+  // receipt (or a later version) is a new action, even if its intent repeats.
+  return !Number.isSafeInteger(committedBookingVersion)
+    || command.expectedVersions.bookings >= (committedBookingVersion as number);
 }
 
 function addDays(date: string, days: number) {
@@ -536,6 +560,21 @@ function teacherAvailable(
       });
   } catch {
     return false;
+  }
+}
+
+function assertOccurrenceTeacherAvailability(
+  teachers: readonly RecordValue[],
+  booking: RecordValue,
+  occurrences: readonly ReturnType<typeof bookingOccurrences>[number][],
+) {
+  for (const occurrence of occurrences) {
+    if (["cancelled", "leave", "completed"].includes(occurrence.status)) continue;
+    const teacher = teachers.find((candidate) => candidate.id === occurrence.teacherId);
+    if (!teacher) fail("teacher_not_found", "Occurrence teacher was not found.");
+    if (!teacherAvailable(teacher, booking, [occurrence])) {
+      fail("teacher_unavailable", `${stateText(teacher, "name", "teacher")} is unavailable for ${occurrence.occurrenceId}.`);
+    }
   }
 }
 
@@ -880,7 +919,8 @@ function assertNoConflict(input: {
       const existingStart = bookingInstant(occurrence.date, occurrence.start, existingTimezone).getTime();
       const existingEnd = existingStart + occurrence.scheduledDurationMinutes * 60_000;
       const overlap = proposed.find((candidate) =>
-        (occurrence.studentId === candidate.occurrence.studentId || occurrence.teacherId === candidate.occurrence.teacherId)
+        occurrence.occurrenceId !== candidate.occurrence.occurrenceId
+        && (occurrence.studentId === candidate.occurrence.studentId || occurrence.teacherId === candidate.occurrence.teacherId)
         && candidate.startsAt < existingEnd
         && existingStart < candidate.endsAt);
       if (overlap) fail("schedule_conflict", `${overlap.occurrence.date} conflicts with an existing student or teacher booking.`);
@@ -1099,21 +1139,16 @@ export function prepareBookingCapacityMutation(input: {
       const changedEnd = bookingInstant(changed.date, changed.start, stateText(existing!, "timezone", "booking")).getTime()
         + changed.duration * 60_000;
       if (changedEnd < now.getTime()) fail("past_booking", "Past lesson occurrences cannot be edited.");
-      const validationBooking = nextBooking.recurring === true
-        && nextBooking.repeatCount === undefined
-        && nextBooking.recurrenceEndDate === undefined
-        ? { ...nextBooking, repeatCount: 104 }
-        : nextBooking;
-      const proposedOccurrences = projectedBookingOccurrences(validationBooking);
+      const changedOccurrence = bookingOccurrences(nextBooking, sourceDate, sourceDate)
+        .find((candidate) => candidate.occurrenceId === occurrenceId)!;
       assertNoConflict({
         booking: nextBooking,
-        proposedOccurrences,
-        existingBookings: bookingRow.payload,
-        excludeBookingId: input.command.bookingId,
+        proposedOccurrences: [changedOccurrence],
+        // Include this series so its other occurrences still block overlaps.
+        existingBookings: nextBookings,
+        excludeBookingId: "",
       });
-      if (!teacherAvailable(targetTeacher, nextBooking, proposedOccurrences)) {
-        fail("teacher_unavailable", `${stateText(targetTeacher, "name", "teacher")} is unavailable for one or more proposed lessons.`);
-      }
+      assertOccurrenceTeacherAvailability(teacherRow.payload, nextBooking, [changedOccurrence]);
       assertPackageReservation({
         student: targetStudent,
         bookings: nextBookings,
@@ -1265,9 +1300,7 @@ export function prepareBookingCapacityMutation(input: {
       : nextBooking;
     const proposedOccurrences = projectedBookingOccurrences(validationBooking);
     assertNoConflict({ booking: nextBooking, proposedOccurrences, existingBookings: bookingRow.payload, excludeBookingId: input.command.bookingId });
-    if (!teacherAvailable(targetTeacher, nextBooking, proposedOccurrences)) {
-      fail("teacher_unavailable", `${stateText(targetTeacher, "name", "teacher")} is unavailable for one or more proposed lessons.`);
-    }
+    assertOccurrenceTeacherAvailability(teacherRow.payload, nextBooking, proposedOccurrences);
     nextBookings = existing
       ? bookingRow.payload.map((candidate) => candidate.id === input.command.bookingId ? nextBooking : candidate)
       : [...bookingRow.payload, nextBooking];

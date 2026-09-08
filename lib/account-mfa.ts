@@ -60,8 +60,12 @@ export function encryptMfaSecret(secret: string, configuredKey = process.env.MFA
 
 export function decryptMfaSecret(value: unknown, configuredKey = process.env.MFA_ENCRYPTION_KEY) {
   if (typeof value !== "string") throw new Error("MFA secret ciphertext 无效。");
-  const [version, ivText, tagText, ciphertextText] = value.split(":");
-  if (version !== MFA_CIPHERTEXT_VERSION || !ivText || !tagText || !ciphertextText) {
+  const parts = value.split(":");
+  const [kind, version, ivText, tagText, ciphertextText] = parts;
+  if (parts.length !== 5 || `${kind}:${version}` !== MFA_CIPHERTEXT_VERSION
+      || !/^[A-Za-z0-9_-]{16}$/u.test(ivText)
+      || !/^[A-Za-z0-9_-]{22}$/u.test(tagText)
+      || !/^[A-Za-z0-9_-]+$/u.test(ciphertextText)) {
     throw new Error("MFA secret ciphertext 无效。");
   }
   try {

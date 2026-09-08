@@ -7,7 +7,7 @@ import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   getJiaowubaoTrialSyncCommandResult,
   getOpsState,
-  JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC,
+  JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC,
   OpsStoreError,
   syncJiaowubaoTrialMatchesAtomic,
   type OpsStateRow,
@@ -114,7 +114,8 @@ export async function POST(request: Request) {
       return noStore({ error: "LP 或任务刚刚发生变化，请刷新后重试。", code: "version_conflict" }, 409);
     }
     const lpById = new Map(records(lpRow).map((item) => [text(item.id), item]));
-    const studentIds = command.matches.map((match) => text(lpById.get(match.lpItemId)?.studentId));
+    const studentIds = [...command.matches, ...(command.revocations ?? [])]
+      .map((match) => text(lpById.get(match.lpItemId)?.studentId));
     if (studentIds.some((studentId) => !studentId)) {
       return noStore({ error: "试听 LP 已不存在。", code: "lp_not_found" }, 404);
     }
@@ -125,6 +126,8 @@ export async function POST(request: Request) {
     const projection = prepareJiaowubaoTrialSyncProjection({
       rows,
       references: command.matches,
+      revocations: command.revocations,
+      window: command.window,
       rawEvents,
       snapshotRevision: command.snapshotRevision,
       matchedAt: new Date(),
@@ -137,6 +140,7 @@ export async function POST(request: Request) {
       commandIntent,
       snapshotRevision: command.snapshotRevision,
       matches: command.matches,
+      revocations: command.revocations,
       expectedVersions: command.expectedVersions,
       nextLpItems: projection.nextLpItems,
       nextTasks: projection.nextTasks,
@@ -173,7 +177,7 @@ export async function POST(request: Request) {
       return noStore({
         error: "试听原子同步数据库合同尚未部署；当前不会降级为分散写入。",
         code: "jiaowubao_trial_sync_contract_unavailable",
-        requiredRpc: JIAOWUBAO_TRIAL_SYNC_COMMAND_RESULT_RPC,
+        requiredRpc: JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC,
       }, 501);
     }
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message === "version_conflict")) {
@@ -183,7 +187,8 @@ export async function POST(request: Request) {
       return noStore({ error: "同一个试听同步命令已用于不同内容，请刷新后重试。", code: "idempotency_conflict" }, 409);
     }
     if (error instanceof OpsStoreError && (error.message.includes("snapshot_current_pointer_conflict")
-      || error.message.includes("snapshot_revision_conflict"))) {
+      || error.message.includes("snapshot_revision_conflict")
+      || error.message.includes("jiaowubao_trial_revocation_"))) {
       return noStore({ error: "教务宝课表快照已变化，请刷新后重试。", code: "source_changed" }, 409);
     }
     return noStore({ error: "试听排课同步失败。" }, 503);

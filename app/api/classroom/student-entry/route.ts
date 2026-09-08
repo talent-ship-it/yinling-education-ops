@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const startsAt = localTimeToInstant(entry.date, entry.start, entry.timezone, "earlier").getTime();
     if (!classroomEntryOpen(startsAt, entry.duration)) return message("教室在课前 15 分钟开放；课程结束后链接失效。请在开放时间重新打开此链接。", 409);
     const meetingId = meetingIdForOccurrence(entry.occurrenceId);
-    await createMeeting({ meetingId, name: `${student.name} · ${booking.course ?? "在线课堂"}`, durationMinutes: entry.duration, logoutUrl: request.nextUrl.origin, occurrenceId: entry.occurrenceId, bookingId, studentId: entry.studentId, teacherId: entry.teacherId });
+    await createMeeting({ meetingId, name: `${student.name} · ${booking.course ?? "在线课堂"}`, durationMinutes: entry.duration, scheduledStartsAt: startsAt, logoutUrl: request.nextUrl.origin, occurrenceId: entry.occurrenceId, bookingId, studentId: entry.studentId, teacherId: entry.teacherId });
     return new NextResponse(null, { status: 302, headers: { Location: createJoinUrl({ meetingId, fullName: student.name, role: "VIEWER", userId: student.id }), "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" } });
   } catch { return message("暂时无法进入课堂，请稍后重试或联系教务。", 503); }
 }

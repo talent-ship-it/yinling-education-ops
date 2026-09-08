@@ -258,6 +258,7 @@ import {
   clearBookingProjectionPendingCommands,
   persistBookingProjectionPendingCommands,
   readBookingProjectionPendingCommands,
+  prepareBookingProjectionPendingCommand,
   removeBookingProjectionPendingCommand,
   upsertBookingProjectionPendingCommand,
   type BookingProjectionPendingCommand,
@@ -401,6 +402,8 @@ import {
 } from "@/lib/trial-ledger-view";
 import { TENCENT_TRIAL_LEDGER_URL } from "@/lib/tencent-trial-ledger-mirror";
 import {
+  JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES,
+  jiaowubaoTrialMissingScheduleRefs,
   jiaowubaoTrialSyncPendingDisposition,
   jiaowubaoTrialSyncScope,
   persistJiaowubaoTrialSyncPendingCommands,
@@ -4472,6 +4475,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           snapshotRevision: command.snapshotRevision,
           window: command.window,
           matches: command.matches,
+          ...(command.revocations ? { revocations: command.revocations } : {}),
           expectedVersions: command.expectedVersions,
         };
         const response = await fetch("/api/operations/jiaowubao-trial-sync", {
@@ -4512,7 +4516,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify("教务宝课表缺少可验证版本，请刷新后重试");
         return;
       }
-      if (!trialScheduleMatches.length) {
+      const revocations = jiaowubaoTrialMissingScheduleRefs({
+        lpItems: scopedLpItems,
+        eventIds: new Set(currentJiaowubaoImportedSchedule.events.map((event) => event.eventId)),
+        window: trialScheduleWindow,
+        now: new Date(),
+      }).filter((reference) => !trialScheduleMatches.some((match) => match.lpItemId === reference.lpItemId));
+      if (!trialScheduleMatches.length && !revocations.length) {
         notify("当前没有可无歧义匹配的试听排课；请核对学生姓名和 A/B/C 规划老师");
         return;
       }
@@ -4521,27 +4531,34 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         eventId: match.link.eventId,
         startsAt: match.link.startsAt,
       })).sort((left, right) => left.lpItemId.localeCompare(right.lpItemId) || left.eventId.localeCompare(right.eventId));
-      const command: JiaowubaoTrialSyncCommand = {
-        commandKey: crypto.randomUUID(),
-        snapshotRevision: currentJiaowubaoImportedSchedule.revision,
-        window: {
-          startsAt: trialScheduleWindow.startsAt,
-          endsAt: trialScheduleWindow.endsAt,
-        },
-        matches: matchRefs,
-        expectedVersions: {
-          lpItems: lpShared.getCurrentVersion(),
-          tasks: tasksShared.getCurrentVersion(),
-        },
-      };
-      const scope = jiaowubaoTrialSyncScope(command);
-      const existing = pending.get(scope);
-      const pendingCommand: JiaowubaoTrialSyncPendingCommand = existing ?? { scope, ...command };
-      pending = upsertJiaowubaoTrialSyncPendingCommand(pending.values(), pendingCommand);
-      persistJiaowubaoTrialSyncPendingCommands(storage, currentOperator, pending.values());
-      await submit(pendingCommand, scope);
-      addAudit("同步教务宝试听排课", `${trialScheduleMatches.length} 条试听排课与任务已更新`, "green");
-      notify(`已从教务宝真实快照匹配 ${trialScheduleMatches.length} 条试听，并生成 N-2 / N-1 / 当日任务`);
+      const changes = [...matchRefs.map((reference) => ({ reference, revoke: false })),
+        ...revocations.map((reference) => ({ reference, revoke: true }))];
+      for (let offset = 0; offset < changes.length; offset += JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES) {
+        const batch = changes.slice(offset, offset + JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES);
+        const revoked = batch.filter((change) => change.revoke).map((change) => change.reference);
+        const command: JiaowubaoTrialSyncCommand = {
+          commandKey: crypto.randomUUID(),
+          snapshotRevision: currentJiaowubaoImportedSchedule.revision,
+          window: {
+            startsAt: trialScheduleWindow.startsAt,
+            endsAt: trialScheduleWindow.endsAt,
+          },
+          matches: batch.filter((change) => !change.revoke).map((change) => change.reference),
+          ...(revoked.length ? { revocations: revoked } : {}),
+          expectedVersions: {
+            lpItems: lpShared.getCurrentVersion(),
+            tasks: tasksShared.getCurrentVersion(),
+          },
+        };
+        const scope = jiaowubaoTrialSyncScope(command);
+        const existing = pending.get(scope);
+        const pendingCommand: JiaowubaoTrialSyncPendingCommand = existing ?? { scope, ...command };
+        pending = upsertJiaowubaoTrialSyncPendingCommand(pending.values(), pendingCommand);
+        persistJiaowubaoTrialSyncPendingCommands(storage, currentOperator, pending.values());
+        await submit(pendingCommand, scope);
+      }
+      addAudit("同步教务宝试听排课", `${trialScheduleMatches.length} 条试听排课与任务已更新；${revocations.length} 条失效关联已撤销`, "green");
+      notify(`已核对 ${trialScheduleMatches.length} 条试听；撤销 ${revocations.length} 条已取消排课的关联和未完成提醒`);
     } catch (error) {
       notify(error instanceof Error ? `试听排课同步失败：${error.message}` : "试听排课同步失败，可安全重试");
     } finally {
@@ -6310,14 +6327,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       tasks: bookingProjectionTasksVersion,
       teachers: bookingProjectionTeachersVersion,
     };
-    const commandValue = previous
-      ? JSON.parse(previous.command) as Record<string, unknown>
-      : { ...intentValue, expectedVersions };
-    const pending = {
-      intent,
-      command: JSON.stringify(commandValue),
+    const pending = prepareBookingProjectionPendingCommand({
+      intentValue,
       expectedVersions,
-    } satisfies BookingProjectionPendingCommand;
+      previous,
+    });
     bookingProjectionCommandKeysRef.current = upsertBookingProjectionPendingCommand(
       bookingProjectionCommandKeysRef.current.values(),
       pending,
@@ -7498,6 +7512,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const persistClassroom = useCallback(async (occurrence: BookingOccurrence, meetingId: string, status: "ready" | "running" | "ended") => {
+    const statusRank = { ready: 1, running: 2, ended: 3 };
+    if (occurrence.classroom?.meetingId === meetingId
+      && statusRank[occurrence.classroom.status] >= statusRank[status]) return;
     // Classroom state is a narrow booking projection command. The server
     // derives occurrenceId/createdAt and applies monotonic status semantics;
     // this function resolves only after the authoritative five-table receipt

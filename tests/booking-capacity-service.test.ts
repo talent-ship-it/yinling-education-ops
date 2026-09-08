@@ -134,6 +134,55 @@ test("request is a narrow command and rejects client state payloads", () => {
   assert.throws(() => parseBookingCapacityCommand({ ...classroomCommand, action: "update_occurrence", occurrence: { date: "2026-09-07", start: "10:00", duration: 60, status: "confirmed" } }), error("client_fields_forbidden"));
 });
 
+test("a substituted occurrence uses its effective teacher AVA and leaves sibling availability alone", () => {
+  const series = {
+    ...upsert().booking!, id: "B-1", recurring: true, repeatCount: 3, recurrenceIntervalDays: 7,
+    course: "English",
+    occurrenceOverrides: [
+      { occurrenceId: "B-1:2026-09-07", status: "completed" },
+      { occurrenceId: "B-1:2026-09-21", teacherId: "T-2" },
+    ],
+  };
+  const rows = sharedRows([series]).map((state) => state.entity === "teachers"
+    ? row("teachers", [
+        { id: "T-1", name: "Teacher A", subjects: ["Local English"], availabilityWindows: [] },
+        { id: "T-2", name: "Teacher B", subjects: ["Local English"], availabilityWindows: availability2 },
+      ]) : state);
+  const command: BookingCapacityCommand = {
+    action: "update_occurrence", bookingId: "B-1", occurrenceId: "B-1:2026-09-21",
+    occurrence: { date: "2026-09-22", start: "11:00", duration: 60, status: "confirmed" },
+    expectedVersions: upsert().expectedVersions,
+  };
+  const prepared = prepareBookingCapacityMutation({ command, rows, actor: "Nixon", fullAdmin: true, now: new Date("2026-09-15T00:00:00Z") });
+  const overrides = prepared.bookings[0].occurrenceOverrides as Array<Record<string, unknown>>;
+  assert.deepEqual(overrides.find((item) => item.occurrenceId === "B-1:2026-09-07"), series.occurrenceOverrides[0]);
+  assert.equal(overrides.find((item) => item.occurrenceId === command.occurrenceId)?.teacherId, "T-2");
+  assert.equal(overrides.find((item) => item.occurrenceId === command.occurrenceId)?.date, "2026-09-22");
+
+  const unavailableSubstitute = rows.map((state) => state.entity === "teachers"
+    ? row("teachers", [
+        { id: "T-1", name: "Teacher A", subjects: ["Local English"], availabilityWindows: availability },
+        { id: "T-2", name: "Teacher B", subjects: ["Local English"], availabilityWindows: [] },
+      ]) : state);
+  assert.throws(() => prepareBookingCapacityMutation({ command, rows: unavailableSubstitute, actor: "Nixon", fullAdmin: true }), error("teacher_unavailable"));
+});
+
+test("single-occurrence edits still reject both same-series and effective-teacher conflicts", () => {
+  const series = {
+    ...upsert().booking!, id: "B-1", recurring: true, repeatCount: 3, recurrenceIntervalDays: 7,
+    course: "English", occurrenceOverrides: [{ occurrenceId: "B-1:2026-09-21", teacherId: "T-2" }],
+  };
+  const command: BookingCapacityCommand = {
+    action: "update_occurrence", bookingId: "B-1", occurrenceId: "B-1:2026-09-21",
+    occurrence: { date: "2026-09-14", start: "10:00", duration: 60, status: "confirmed" },
+    expectedVersions: upsert().expectedVersions,
+  };
+  assert.throws(() => prepareBookingCapacityMutation({ command, rows: sharedRows([series]), actor: "Nixon", fullAdmin: true }), error("schedule_conflict"));
+  const other = { ...series, id: "B-2", studentId: "S-2", teacherId: "T-2", date: "2026-09-22", start: "11:00", recurring: false, repeatCount: 1, occurrenceOverrides: [] };
+  const moved = { ...command, occurrence: { ...command.occurrence!, date: "2026-09-22", start: "11:00" } };
+  assert.throws(() => prepareBookingCapacityMutation({ command: moved, rows: sharedRows([series, other]), actor: "Nixon", fullAdmin: true }), error("schedule_conflict"));
+});
+
 test("bind_classroom merges an authoritative occurrence classroom without changing schedule fields", () => {
   const current = {
     id: "B-CLASSROOM", studentId: "S-1", teacherId: "T-1", date: "2026-09-07", start: "10:00", duration: 60,

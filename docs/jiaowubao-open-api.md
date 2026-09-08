@@ -182,3 +182,37 @@ node --import tsx scripts/student-import-identity-management.ts \
 `authenticated` 或 `service_role` 执行授权。脚本只调用 `supabase db query`，
 不使用数据库 URL。网络结果不确定时脚本不会盲目重试，需以数据库中的聚合状态和
 immutable ledger 为准。
+
+## 试听关联的取消核对与部署顺序
+
+部署应用前先应用迁移
+`20260908045717_reconcile_jiaowubao_trial_event_lifecycle.sql`。它新增
+`sync_jiaowubao_trial_matches_atomic_v2`，沿用原来的密钥校验、LP/任务版本锁、
+命令回执和审计。旧 RPC 保留并补上跨 LP 的排课关联唯一性检查，允许旧实例和
+已经保存的匹配命令完成重试。新应用在缺少 v2 时返回合同未部署错误，不会拆开写入。
+迁移不批量改写现有 LP；部署后的手动同步与自动同步才会逐批核对来源。
+
+撤销只适用于尚未开始、未完成 LP 上的已验证教务宝关联。服务端读取完整新窗口后，
+数据库还会锁定当前来源指针，要求来源 run 为 `complete`、发布时间在两小时内、
+来源查询日期覆盖整个请求窗口，并在整个不可变 revision 内确认原 event ID 不存在。
+历史排课、窗口外排课、缺少原始来源版本的旧关联及不完整来源都不能据此撤销；
+只移到另一个时间窗口或时间格式异常但 ID 仍存在的来源也会保留。
+
+核对成功时原子移除 LP 的 `trialSchedule` 和它对应的未完成教务宝自动提醒，保留
+已完成任务与人工字段，并将原关联和移除的任务 ID 写入审计。界面与腾讯表格随后
+从权威 LP 状态读取，不再回落到该失效来源关联。手动同步、定时同步和网络结果
+未知后的重试共用同一命令合同；来源推进后仍可查询已提交命令的回执。
+
+本地回归使用合成资料。以下 SQL 只在新建、可丢弃的**本地空数据库**运行；它创建
+最小依赖，加载真实迁移并测试运行时事务，最后回滚全部 fixture：
+
+```bash
+node --import tsx --test tests/jiaowubao-trial-lifecycle.test.ts \
+  tests/jiaowubao-trial-sync.test.ts tests/jiaowubao-trial-auto-sync.test.ts \
+  tests/jiaowubao-trial-sync-contract.test.mjs tests/trial-operations.test.ts
+psql -X -v ON_ERROR_STOP=1 -h /LOCAL/POSTGRES/SOCKET -p LOCAL_PORT \
+  -d EMPTY_LOCAL_DATABASE -f tests/sql/jiaowubao-trial-lifecycle-runtime.sql
+```
+
+发布仍需遵循项目的生产数据库授权和 GitHub → Vercel 发布流程；本修复没有执行
+生产迁移或部署。

@@ -22,10 +22,10 @@ export async function GET(request: Request) {
     const cursor = plan.length > 60 ? (Math.floor(Date.now() / 300000) * 60) % plan.length : 0;
     const batch = [...plan.slice(cursor), ...plan.slice(0, cursor)].slice(0, 60);
     for (let offset = 0; offset < batch.length; offset += 20) {
-      await Promise.all(batch.slice(offset, offset + 20).map(async ({ occurrence, booking }) => {
+      await Promise.all(batch.slice(offset, offset + 20).map(async ({ occurrence, booking, startsAt }) => {
         try {
           const student = studentMap.get(occurrence.studentId)!;
-          const result = await createMeeting({ meetingId: meetingIdForOccurrence(occurrence.occurrenceId), name: `${student.name} · ${booking.course ?? "在线课堂"}`, durationMinutes: occurrence.scheduledDurationMinutes, logoutUrl: new URL(request.url).origin, occurrenceId: occurrence.occurrenceId, bookingId: booking.id, studentId: occurrence.studentId!, teacherId: occurrence.teacherId! });
+          const result = await createMeeting({ meetingId: meetingIdForOccurrence(occurrence.occurrenceId), name: `${student.name} · ${booking.course ?? "在线课堂"}`, durationMinutes: occurrence.scheduledDurationMinutes, scheduledStartsAt: startsAt, logoutUrl: new URL(request.url).origin, occurrenceId: occurrence.occurrenceId, bookingId: booking.id, studentId: occurrence.studentId!, teacherId: occurrence.teacherId! });
           if (result.duplicate) existing += 1; else created += 1;
         } catch { failed += 1; }
       }));
