@@ -40,11 +40,16 @@ WECOM_ARCHIVE_BRIDGE_TOKEN="<same-private-worker-token-used-by-the-server>"
 WECOM_ARCHIVE_STARTED_AT="2026-09-09T00:00:00.000Z"
 ```
 
+For the cron installation, store the same values in
+`/home/codex/.config/wecom-receiver-sync.env` with mode `0600`. `sync.sh` loads
+that file automatically; an exported environment still works when the file is
+absent. The file is local VPS configuration and must not be copied into the
+repository.
+
 Run it after the database migration and application route are live:
 
 ```cron
-* * * * * flock -n /home/codex/.local/share/wecom-receiver/sync.lock \
-  /usr/bin/node /home/codex/.local/wecom-receiver/sync.mjs \
+* * * * * /home/codex/.local/wecom-receiver/sync.sh \
   >>/home/codex/.local/share/wecom-receiver/sync.log 2>&1
 ```
 
