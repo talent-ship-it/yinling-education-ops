@@ -85,6 +85,31 @@ test("fails closed when an immutable mapped Tencent record is missing", () => {
   }), /mapped_record_missing/);
 });
 
+test("recovers an uncertain add from the pinned claim before applying a changed payment state", () => {
+  const original = row("LP-1", { 是否付费: "否" });
+  const newer = row("LP-1", { 是否付费: "是" });
+  // The v2 database claim returns this original snapshot until completion;
+  // tests/sql/tencent-trial-ledger-recovery-runtime.sql executes that contract.
+  const acceptedWithoutReceipt = target("rec_original", original);
+  const retry = planTencentTrialLedgerWrites({
+    rows: [original], mappings: [], records: [acceptedWithoutReceipt],
+  });
+  assert.equal(retry.creates.length, 0);
+  assert.equal(retry.assignments[0]?.source, "adopted");
+  assert.equal(retry.assignments[0]?.recordId, "rec_original");
+
+  const afterCompletion = planTencentTrialLedgerWrites({
+    rows: [newer],
+    mappings: [{ lpItemId: original.lpItemId, recordId: "rec_original", payloadSha256: HASH }],
+    records: [acceptedWithoutReceipt],
+  });
+  assert.equal(afterCompletion.creates.length, 0);
+  assert.equal(afterCompletion.updates.length, 1);
+  assert.equal(afterCompletion.updates[0]?.recordId, "rec_original");
+  assert.deepEqual(afterCompletion.updates[0]?.fieldValues.find((field) => field.field === "是否付费")?.option_value,
+    { items: [{ text: "是" }] });
+});
+
 test("requires an exact readback for every current source row", () => {
   const source = row("LP-1");
   assert.doesNotThrow(() => assertTencentTrialLedgerReadback({

@@ -96,7 +96,9 @@ function target() {
 
 /**
  * Claims a database outbox batch and returns the complete deterministic mirror
- * projection. This endpoint never talks to Tencent itself. The production
+ * projection. The v2 claim pins its original source rows across failed or
+ * expired attempts, so a lost Tencent add receipt can be adopted before newer
+ * operational edits are projected. This endpoint never talks to Tencent itself. The production
  * worker performs MCP writes and must read them back before POSTing the
  * completion mapping.
  */
