@@ -21,6 +21,16 @@ test("normalizes bot records without accepting extra fields", () => {
   });
   assert.equal(records[0]?.messageType, "text");
   assert.equal(records[0]?.text, "test message");
+  const otherRecords = normalizeWecomBotBatch({
+    records: [{
+      messageId: "bot:" + "b".repeat(64),
+      chatId: "room-1",
+      senderId: "sender-1",
+      sentAt: "2026-09-09T00:00:00.000Z",
+      messageType: "other",
+    }],
+  });
+  assert.equal("text" in (otherRecords[0] ?? {}), false);
   assert.throws(() => normalizeWecomBotBatch({
     records: [{
       messageId: "bot:" + "a".repeat(64),
