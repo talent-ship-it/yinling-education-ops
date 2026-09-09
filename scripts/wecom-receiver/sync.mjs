@@ -42,7 +42,8 @@ function canonicalRecord(record) {
 
   // The receiver deliberately does not download expiring media URLs. Store
   // non-text callbacks as pending `other` records until a reviewed media path
-  // exists; never forward image AES keys or temporary URLs.
+  // exists; never forward image AES keys or temporary URLs. Text callbacks
+  // are classified by the server after upload.
   const messageType = message.msgtype === "text" ? "text" : "other";
   const text = textContent(message);
   return {
@@ -120,7 +121,15 @@ export async function syncReceiverMessages({
     .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
     .map((entry) => entry.name)
     .sort();
-  const summary = { scanned: names.length, skipped: 0, cutoffSkipped: 0, inserted: 0, duplicates: 0, failed: 0 };
+  const summary = {
+    scanned: names.length,
+    skipped: 0,
+    cutoffSkipped: 0,
+    inserted: 0,
+    promoted: 0,
+    duplicates: 0,
+    failed: 0,
+  };
 
   for (let offset = 0; offset < names.length; offset += MAX_BATCH) {
     const batch = [];
@@ -162,6 +171,7 @@ export async function syncReceiverMessages({
     try {
       const result = await postBatch({ endpoint: ingestUrl, token: bridgeToken, records: batch, fetchImpl });
       summary.inserted += Number(result.inserted) || 0;
+      summary.promoted += Number(result.promoted) || 0;
       summary.duplicates += Number(result.duplicates) || 0;
       for (const item of metadata) {
         entries[item.name] = { ...item, status: "committed" };

@@ -112,6 +112,7 @@ export type WecomArchiveIngestResult = Readonly<{
 export type WecomBotIngestResult = Readonly<{
   inserted: number;
   duplicates: number;
+  promoted: number;
   pending: number;
 }>;
 
@@ -1769,7 +1770,7 @@ export function ingestWecomArchiveBatch(input: {
   });
 }
 
-/** Stores receive-only bot callbacks as pending records without projecting business state. */
+/** Stores receive-only bot callbacks in the review inbox without projecting business state. */
 export function ingestWecomBotBatch(input: {
   records: readonly Readonly<Record<string, unknown>>[];
   startedAt: string;

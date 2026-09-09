@@ -22,12 +22,13 @@ sent after authentication; a successful subscription alone is not proof of recei
 ## Supabase review-queue sync
 
 `sync.mjs` is a separate, once-per-run uploader. It reads the durable callback files,
-strips temporary image capabilities, and sends text callbacks to the private
+strips temporary image capabilities, and sends callbacks to the private
 `/api/integrations/wecom/bot-inbox` route. That route writes the existing
-`internal.wecom_archive_messages` table through a server-side RPC. Bot callbacks are
-always `pending`/`other`: they never auto-match a student or change ordinary business
-state. Non-text callbacks are recorded as pending type `other` until a reviewed media
-downloader is enabled.
+`internal.wecom_archive_messages` table through a server-side RPC. Text callbacks use
+the same deterministic classifier as the archive worker, so an explicit “信息交接表”
+is stored as `handover` as soon as it arrives. It still remains pending and never
+auto-matches a student or changes ordinary business state. Non-text callbacks are
+recorded as pending type `other` until a reviewed media downloader is enabled.
 
 The uploader is idempotent and records a local sync state file. A failed upload leaves
 the source callback eligible for the next retry. Configure these values only in the

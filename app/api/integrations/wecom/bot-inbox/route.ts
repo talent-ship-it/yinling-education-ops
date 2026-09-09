@@ -5,7 +5,9 @@ import {
   readBoundedWecomArchiveJson,
   wecomArchiveBridgeConfiguration,
 } from "@/lib/wecom-archive-bridge";
+import { WecomArchiveParseError } from "@/lib/wecom-archive";
 import { WecomBotRecordError, normalizeWecomBotBatch } from "@/lib/wecom-bot-receiver";
+import { enrichWecomBotRecords } from "@/lib/wecom-bot-routing";
 import { ingestWecomBotBatch, OpsStoreError } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +18,11 @@ function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
-/** Private receiver boundary. It stores bot callbacks as pending archive records. */
+/**
+ * Private receiver boundary. Text callbacks share the archive classifier so
+ * handovers reach the internal review inbox immediately; media callbacks and
+ * unclassified text remain pending evidence without changing business state.
+ */
 export async function POST(request: Request) {
   const configuration = wecomArchiveBridgeConfiguration();
   if (!hasWecomArchiveBridgeToken(request.headers.get("authorization"), configuration)) {
@@ -30,12 +36,14 @@ export async function POST(request: Request) {
     const payload = await readBoundedWecomArchiveJson(request);
     const records = normalizeWecomBotBatch(payload);
     if (!configuration.startedAt) return noStore({ error: "Not found" }, 404);
-    const result = await ingestWecomBotBatch({ records, startedAt: configuration.startedAt });
+    const enrichedRecords = enrichWecomBotRecords(records);
+    const result = await ingestWecomBotBatch({ records: enrichedRecords, startedAt: configuration.startedAt });
     return noStore({ outcome: "committed", ...result });
   } catch (error) {
     if (error instanceof RangeError) return noStore({ error: "WeCom bot batch is too large.", code: "payload_too_large" }, 413);
     if (error instanceof SyntaxError) return noStore({ error: "WeCom bot request is not valid JSON.", code: "invalid_json" }, 400);
     if (error instanceof WecomBotRecordError) return noStore({ error: error.message, code: error.code }, 422);
+    if (error instanceof WecomArchiveParseError) return noStore({ error: error.message, code: error.code }, 422);
 
     const contractMissing = error instanceof OpsStoreError
       && (error.code === "PGRST202" || error.code === "42883");
