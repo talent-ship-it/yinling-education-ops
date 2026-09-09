@@ -76,6 +76,22 @@ test("uses the archive classifier for bot-delivered handover text", () => {
   assert.equal(withHints?.guardianWechatHint, "SyntheticParent");
 });
 
+test("extracts the filled name variants used by handover templates", () => {
+  const [record] = normalizeWecomBotBatch({
+    records: [{
+      messageId: "bot:" + "e".repeat(64),
+      chatId: "room-1",
+      senderId: "sender-1",
+      sentAt: "2026-09-09T00:00:00.000Z",
+      messageType: "text",
+      text: "信息交接表\n【姓名(如提到)】: Mia Example\n【家长微信名】：SyntheticParent",
+    }],
+  });
+  const [enriched] = enrichWecomBotRecords([record!]);
+  assert.equal(enriched?.studentNameHint, "Mia Example");
+  assert.equal(enriched?.guardianWechatHint, "SyntheticParent");
+});
+
 test("syncs callback files once and treats non-text callbacks as pending other records", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-bot-sync-"));
   const messages = path.join(root, "messages");
@@ -105,7 +121,15 @@ test("syncs callback files once and treats non-text callbacks as pending other r
   const calls: unknown[] = [];
   const fetchImpl = async (_url: string, options: RequestInit) => {
     calls.push(JSON.parse(String(options.body)));
-    return new Response(JSON.stringify({ outcome: "committed", inserted: 2, duplicates: 0 }), { status: 200 });
+    return new Response(JSON.stringify({
+      outcome: "committed",
+      inserted: 2,
+      duplicates: 0,
+      linked: 1,
+      ambiguous: 1,
+      pending: 0,
+      projectedFiles: 0,
+    }), { status: 200 });
   };
 
   const config = {
@@ -121,6 +145,9 @@ test("syncs callback files once and treats non-text callbacks as pending other r
   assert.equal(first.inserted, 2);
   assert.equal(first.promoted, 0);
   assert.equal(first.acknowledged, 2);
+  assert.equal(first.linked, 1);
+  assert.equal(first.ambiguous, 1);
+  assert.equal(first.pending, 0);
   assert.equal(first.acknowledgementFailed, 0);
   assert.equal(first.failed, 0);
   assert.equal(second.skipped, 2);
