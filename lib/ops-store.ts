@@ -113,7 +113,10 @@ export type WecomBotIngestResult = Readonly<{
   inserted: number;
   duplicates: number;
   promoted: number;
+  linked: number;
+  ambiguous: number;
   pending: number;
+  projectedFiles: number;
 }>;
 
 export type WecomArchiveInboxRow = Readonly<{
@@ -1770,7 +1773,7 @@ export function ingestWecomArchiveBatch(input: {
   });
 }
 
-/** Stores receive-only bot callbacks in the review inbox without projecting business state. */
+/** Stores bot callbacks and auto-projects only unique exact active-student matches. */
 export function ingestWecomBotBatch(input: {
   records: readonly Readonly<Record<string, unknown>>[];
   startedAt: string;

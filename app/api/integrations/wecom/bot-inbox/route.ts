@@ -20,7 +20,8 @@ function noStore(payload: unknown, status = 200) {
 
 /**
  * Private receiver boundary. Text callbacks share the archive classifier so
- * handovers reach the internal review inbox immediately; media callbacks and
+ * handovers reach the internal inbox immediately; the database auto-links
+ * only a unique exact active-student identity. Media callbacks and
  * unclassified text remain pending evidence without changing business state.
  */
 export async function POST(request: Request) {

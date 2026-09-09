@@ -223,7 +223,9 @@ function messageType(value: unknown, media: readonly NormalizedWecomArchiveMedia
 
 function labelCandidates(text: string, labels: readonly string[]) {
   const alternatives = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join("|");
-  const pattern = new RegExp(`(?:${alternatives})\\s*[:：]\\s*([^\\n,，;；]{1,80})`, "giu");
+  // Keep the separator on the same line so an empty field cannot consume the
+  // next label. Handover templates commonly wrap labels in `【】` or `[]`.
+  const pattern = new RegExp(`(?:^|[\\n【\\[]|[ \\t])(?:${alternatives})[】\\]]?[ \\t]*[:：][ \\t]*([^\\n,，;；]{1,80})`, "gimu");
   return [...text.matchAll(pattern)].map((match) => match[1]?.trim() ?? "").filter(Boolean);
 }
 
@@ -284,7 +286,10 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomArchiveR
   }
   const studentNameHint = conservativeHint(
     value.studentNameHint,
-    [...labelCandidates(allText, ["学生姓名", "学生名"]), ...leadingRenewalStudent(allText)],
+    [
+      ...labelCandidates(allText, ["学生姓名", "学生名", "姓名(如提到)", "姓名（如提到）", "姓名"]),
+      ...leadingRenewalStudent(allText),
+    ],
     `record ${index}.studentNameHint`,
   );
   const guardianWechatHint = conservativeHint(

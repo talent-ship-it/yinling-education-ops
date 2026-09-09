@@ -44,7 +44,8 @@ function canonicalRecord(record) {
   // The receiver deliberately does not download expiring media URLs. Store
   // non-text callbacks as pending `other` records until a reviewed media path
   // exists; never forward image AES keys or temporary URLs. Text callbacks
-  // are classified by the server after upload.
+  // are classified by the server after upload and can be auto-linked there
+  // only when the student identity is an exact unique match.
   const messageType = message.msgtype === "text" ? "text" : "other";
   const text = textContent(message);
   return {
@@ -139,6 +140,10 @@ export async function syncReceiverMessages({
     inserted: 0,
     promoted: 0,
     duplicates: 0,
+    linked: 0,
+    ambiguous: 0,
+    pending: 0,
+    projectedFiles: 0,
     acknowledged: 0,
     acknowledgementFailed: 0,
     failed: 0,
@@ -186,6 +191,10 @@ export async function syncReceiverMessages({
       summary.inserted += Number(result.inserted) || 0;
       summary.promoted += Number(result.promoted) || 0;
       summary.duplicates += Number(result.duplicates) || 0;
+      summary.linked += Number(result.linked) || 0;
+      summary.ambiguous += Number(result.ambiguous) || 0;
+      summary.pending += Number(result.pending) || 0;
+      summary.projectedFiles += Number(result.projectedFiles) || 0;
       const acknowledgementState = new Map();
       let failedAcknowledgementsThisBatch = 0;
       for (const item of metadata) {

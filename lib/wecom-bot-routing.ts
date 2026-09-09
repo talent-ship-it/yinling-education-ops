@@ -3,10 +3,11 @@ import { normalizeWecomArchiveBatch } from "./wecom-archive";
 
 /**
  * Bot callbacks do not carry the authenticated archive-worker context, so
- * they stay on the receive-only RPC.  Text callbacks can still use the same
- * deterministic classifier and explicit-name hint extraction as the archive
- * worker before they are persisted.  This makes a bot-delivered handover
- * visible in the internal review inbox without projecting business state.
+ * they use a narrower ingress contract. Text callbacks still use the same
+ * deterministic classifier and explicit identity-hint extraction as the
+ * archive worker before persistence. The database may then auto-link only a
+ * unique exact active-student match; everything else remains in the review
+ * inbox without projecting business state.
  */
 export function enrichWecomBotRecords(
   records: readonly NormalizedWecomBotRecord[],
