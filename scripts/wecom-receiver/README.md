@@ -25,8 +25,8 @@ sent after authentication; a successful subscription alone is not proof of recei
 strips temporary image capabilities, and sends callbacks to the private
 `/api/integrations/wecom/bot-inbox` route. That route writes the existing
 `internal.wecom_archive_messages` table through a server-side RPC. Text callbacks use
-the same deterministic classifier as the archive worker, so an explicit “信息交接表”
-is stored as `handover` as soon as it arrives. It still remains pending and never
+the same deterministic classifier as the archive worker, so an explicit “信息交接”
+or “信息交接表” is stored as `handover` as soon as it arrives. It still remains pending and never
 auto-matches a student or changes ordinary business state. Non-text callbacks are
 recorded as pending type `other` until a reviewed media downloader is enabled.
 
