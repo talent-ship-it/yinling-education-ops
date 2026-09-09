@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {readBot,saveMessage,disableSending} from './core.mjs';
+import {readBot,saveMessage,disableSending,restrictSending,botMessageId,acknowledgementFilePath,replyTarget} from './core.mjs';
 test('encrypted CLI credentials are read without changing their files',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));
  try{const key=crypto.randomBytes(32),nonce=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,nonce);
@@ -21,7 +21,31 @@ test('persist once across restarts; hostile msgids cannot escape directory; no r
  const saved=JSON.parse(fs.readFileSync(p));assert.equal(saved.message.response_url,undefined);assert.equal(saved.message.text.content,'synthetic');assert.equal(fs.statSync(p).mode&0o777,0o600);
  }finally{fs.rmSync(dir,{recursive:true});}
 });
-test('sending methods fail closed',()=>{const c={};disableSending(c);assert.throws(()=>c.sendMessage('x',{}),/receive_only/);assert.throws(()=>c.reply({},{}),/receive_only/);});
+test('sending methods fail closed except explicitly allowed acknowledgement methods',()=>{
+ const c={};
+ disableSending(c);
+ assert.throws(()=>c.sendMessage('x',{}),/receive_only/);
+ assert.throws(()=>c.reply({},{}),/receive_only/);
+ assert.throws(()=>c.replyStream({},'stream','text'),/receive_only/);
+ const allowed={replyStream(){},sendMessage(){}};
+ restrictSending(allowed,{allow:['replyStream','sendMessage']});
+ assert.doesNotThrow(()=>allowed.replyStream({},'stream','text'));
+ assert.doesNotThrow(()=>allowed.sendMessage('chat',{}));
+ assert.throws(()=>allowed.reply({},{}),/receive_only/);
+});
+
+test('acknowledgements use bounded message ids and only address the originating chat',()=>{
+ const id=botMessageId({aibotid:'test-bot',msgid:'message-1'});
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-ack-'));
+ try {
+  assert.match(id,/^bot:[a-f0-9]{64}$/);
+  assert.equal(path.basename(acknowledgementFilePath(dir,id)),`${id.slice(4)}.json`);
+  assert.throws(()=>acknowledgementFilePath(dir,'bot:../escape'),/invalid_acknowledgement_id/);
+  assert.equal(replyTarget({chattype:'group',chatid:'room-1',from:{userid:'sender-1'}}),'room-1');
+  assert.equal(replyTarget({chattype:'single',from:{userid:'sender-1'}}),'sender-1');
+  assert.equal(replyTarget({chattype:'group',from:{userid:'sender-1'}}),'');
+ } finally { fs.rmSync(dir,{recursive:true}); }
+});
 
 test('storage limits preserve existing messages and reject oversized callbacks',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));

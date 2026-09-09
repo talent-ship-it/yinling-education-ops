@@ -17,6 +17,19 @@ export function atomicJson(file,value) {
   try { fs.writeFileSync(fd,JSON.stringify(value)+'\n'); fs.fsyncSync(fd); } finally {fs.closeSync(fd);}
   fs.renameSync(tmp,file);
 }
+export function botMessageId(body) {
+  if(typeof body?.aibotid!=='string' || !body.aibotid || typeof body?.msgid!=='string' || !body.msgid) throw new Error('missing_message_identity');
+  return `bot:${crypto.createHash('sha256').update(`${body.aibotid}\0${body.msgid}`).digest('hex')}`;
+}
+export function acknowledgementFilePath(dir,messageId) {
+  if(typeof messageId!=='string' || !/^bot:[a-f0-9]{64}$/.test(messageId)) throw new Error('invalid_acknowledgement_id');
+  return path.join(dir,`${messageId.slice(4)}.json`);
+}
+export function replyTarget(body) {
+  if(body?.chattype==='group' && typeof body.chatid==='string' && body.chatid.trim()) return body.chatid.trim();
+  if(body?.chattype==='single' && typeof body.from?.userid==='string' && body.from.userid.trim()) return body.from.userid.trim();
+  return '';
+}
 const storageUsage=new Map();
 export function saveMessage(dir,body,{maxBytes=512*1024*1024}={}) {
   if(typeof body?.msgid!=='string' || !body.msgid) throw new Error('missing_msgid');
@@ -41,8 +54,10 @@ export function saveMessage(dir,body,{maxBytes=512*1024*1024}={}) {
   storageUsage.set(dir,storageUsage.get(dir)+bytes);
   return true;
 }
-export function disableSending(client) {
-  for(const method of ['reply','replyStream','replyWelcome','replyTemplateCard','replyStreamWithCard','updateTemplateCard','sendMessage','uploadMedia','replyMedia','sendMediaMessage']) {
-    client[method]=()=>{throw new Error('receive_only');};
+export function restrictSending(client,{allow=[]}={}) {
+  const allowed=new Set(allow);
+  for(const method of ['reply','replyStream','replyStreamNonBlocking','replyWelcome','replyTemplateCard','replyStreamWithCard','updateTemplateCard','sendMessage','uploadMedia','replyMedia','sendMediaMessage']) {
+    if(!allowed.has(method)) client[method]=()=>{throw new Error('receive_only');};
   }
 }
+export function disableSending(client) { restrictSending(client); }
