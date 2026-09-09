@@ -243,7 +243,10 @@ function leadingRenewalStudent(text: string) {
 
 function classify(text: string, context: readonly string[], media: readonly NormalizedWecomArchiveMedia[]) {
   const evidence = [text, ...context, ...media.map((item) => item.fileName)].join("\n");
-  if (/信息交接表/u.test(evidence)) return "handover" as const;
+  // The sales templates use both “信息交接” and “信息交接表”.  Treat the
+  // explicit phrase as handover evidence while keeping generic “交接” text
+  // on the conservative structured-field path below.
+  if (/信息交接(?:表|单)?/u.test(evidence)) return "handover" as const;
   const structuredHandoverLabels = ["家长微信", "学生姓名", "科目", "所在地", "偏好时间", "对接对象"]
     .filter((label) => evidence.includes(label)).length;
   if (/试听/u.test(evidence) && structuredHandoverLabels >= 3) return "handover" as const;

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { acknowledgementFilePath } from "./core.mjs";
 
 const DEFAULT_DATA = "/home/codex/.local/share/wecom-receiver";
 const MAX_BATCH = 50;
@@ -68,6 +69,15 @@ async function atomicJson(file, value) {
   await fs.rename(temp, file);
 }
 
+async function writeAcknowledgement(directory, id) {
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await atomicJson(acknowledgementFilePath(directory, id), {
+    version: 1,
+    messageId: id,
+    acknowledgedAt: new Date().toISOString(),
+  });
+}
+
 async function readState(file) {
   try {
     const value = JSON.parse(await fs.readFile(file, "utf8"));
@@ -114,6 +124,7 @@ export async function syncReceiverMessages({
   }
 
   const messagesDirectory = path.join(dataDirectory, "messages");
+  const acknowledgementsDirectory = path.join(dataDirectory, "acknowledgements");
   const stateFile = process.env.WECOM_SYNC_STATE_FILE || path.join(dataDirectory, "sync-state.json");
   const state = await readState(stateFile);
   const entries = state.entries;
@@ -128,6 +139,8 @@ export async function syncReceiverMessages({
     inserted: 0,
     promoted: 0,
     duplicates: 0,
+    acknowledged: 0,
+    acknowledgementFailed: 0,
     failed: 0,
   };
 
@@ -156,7 +169,7 @@ export async function syncReceiverMessages({
           continue;
         }
         batch.push(parsed);
-        metadata.push({ name, digest, size: stat.size, mtimeMs: stat.mtimeMs });
+        metadata.push({ name, digest, size: stat.size, mtimeMs: stat.mtimeMs, messageId: parsed.messageId });
       } catch (error) {
         summary.failed += 1;
         console.error(`${name}: ${error instanceof Error ? error.message : "invalid_message"}`);
@@ -173,9 +186,24 @@ export async function syncReceiverMessages({
       summary.inserted += Number(result.inserted) || 0;
       summary.promoted += Number(result.promoted) || 0;
       summary.duplicates += Number(result.duplicates) || 0;
+      const acknowledgementState = new Map();
+      let failedAcknowledgementsThisBatch = 0;
       for (const item of metadata) {
-        entries[item.name] = { ...item, status: "committed" };
+        try {
+          await writeAcknowledgement(acknowledgementsDirectory, item.messageId);
+          summary.acknowledged += 1;
+          acknowledgementState.set(item.name, "committed");
+        } catch (error) {
+          summary.acknowledgementFailed += 1;
+          failedAcknowledgementsThisBatch += 1;
+          acknowledgementState.set(item.name, "ack_pending");
+          console.error(`${item.name}: ${error instanceof Error ? error.message : "acknowledgement_write_failed"}`);
+        }
       }
+      for (const item of metadata) {
+        entries[item.name] = { ...item, status: acknowledgementState.get(item.name) || "ack_pending" };
+      }
+      summary.failed += failedAcknowledgementsThisBatch;
       await atomicJson(stateFile, { version: 1, entries });
     } catch (error) {
       summary.failed += metadata.length;

@@ -120,9 +120,19 @@ test("syncs callback files once and treats non-text callbacks as pending other r
 
   assert.equal(first.inserted, 2);
   assert.equal(first.promoted, 0);
+  assert.equal(first.acknowledged, 2);
+  assert.equal(first.acknowledgementFailed, 0);
   assert.equal(first.failed, 0);
   assert.equal(second.skipped, 2);
   assert.equal(calls.length, 1);
+  const acknowledgements = await fs.readdir(path.join(root, "acknowledgements"));
+  assert.equal(acknowledgements.length, 2);
+  const acknowledgementBodies = await Promise.all(acknowledgements.map((name) => fs.readFile(
+    path.join(root, "acknowledgements", name),
+    "utf8",
+  )));
+  assert.ok(acknowledgementBodies.every((body) => /"messageId":"bot:[a-f0-9]{64}"/.test(body)));
+  assert.doesNotMatch(acknowledgementBodies.join(""), /temporary|must-not-forward/);
   const records = (calls[0] as { records: Array<Record<string, unknown>> }).records;
   assert.equal(records.length, 2);
   const imageRecord = records.find((item) => item.messageType === "other");

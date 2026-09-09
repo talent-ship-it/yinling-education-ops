@@ -1,8 +1,10 @@
-# Receive-only WeCom long connection
+# WeCom long-connection receiver and commit acknowledgement
 
 Independent VPS worker; does not change the web application. Uses the official SDK
-1.0.7 and reads the existing CLI AES-GCM credential file in memory. It does not
-write plaintext bot credentials or send replies, welcome messages, or notifications.
+1.0.7 and reads the existing CLI AES-GCM credential file in memory. It never
+sends business responses, welcome messages, or notifications. The only outbound
+traffic is a fixed acknowledgement for a callback that the web application has
+already committed to the review queue.
 
 Deploy this directory to `/home/codex/.local/wecom-receiver`, run `npm ci --ignore-scripts`,
 and launch `sh run.sh` as codex. Node 18+ and flock are required. A user cron keepalive
@@ -19,19 +21,31 @@ expire. No historical backfill, unmentioned group-message collection, or automat
 business-state changes are implemented. End-to-end validation requires a new @bot message
 sent after authentication; a successful subscription alone is not proof of receipt.
 
+## Commit acknowledgement
+
+After a callback is saved, the receiver immediately sends the fixed stream placeholder
+`正在收录，请稍候…` so the WeCom reply window is acknowledged. The sync worker creates a
+short-lived acknowledgement file only after the private application route reports a
+committed Supabase write. The receiver then replaces the same stream with
+`已收录到系统审核队列。` and removes the file. If the receiver restarted or the stream
+window has expired, it uses the callback's originating group/user as a controlled
+active-message fallback. Temporary `response_url` values are never written to disk.
+
 ## Supabase review-queue sync
 
 `sync.mjs` is a separate, once-per-run uploader. It reads the durable callback files,
 strips temporary image capabilities, and sends callbacks to the private
 `/api/integrations/wecom/bot-inbox` route. That route writes the existing
 `internal.wecom_archive_messages` table through a server-side RPC. Text callbacks use
-the same deterministic classifier as the archive worker, so an explicit “信息交接表”
-is stored as `handover` as soon as it arrives. It still remains pending and never
+the same deterministic classifier as the archive worker, so an explicit “信息交接”
+or “信息交接表” is stored as `handover` as soon as it arrives. It still remains pending and never
 auto-matches a student or changes ordinary business state. Non-text callbacks are
 recorded as pending type `other` until a reviewed media downloader is enabled.
 
 The uploader is idempotent and records a local sync state file. A failed upload leaves
-the source callback eligible for the next retry. Configure these values only in the
+the source callback eligible for the next retry. A successful upload also writes a
+0600 acknowledgement marker under `acknowledgements/`; the receiver consumes that
+marker and sends the fixed confirmation described above. Configure these values only in the
 VPS secret environment (never in GitHub, Vercel client variables, or chat):
 
 ```bash
