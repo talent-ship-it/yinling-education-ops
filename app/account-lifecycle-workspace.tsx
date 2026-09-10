@@ -196,7 +196,7 @@ export function AccountLifecycleWorkspace({
       });
       const body = await responseBody(response);
       if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "账号状态保存失败。");
-      setDirectoryNotice(change.status === "disabled" ? "账号已停用，活动会话已撤销。" : "账号已恢复；如该账号尚无独立密码，请先设置登录密码再通知本人登录。");
+      setDirectoryNotice(change.status === "disabled" ? "账号已归档，登录和活动会话已关闭；账号和历史记录保留在“已归档”中。" : "账号已恢复；如该账号尚无独立密码，请先设置登录密码再通知本人登录。");
       await loadDirectory(change.accountId);
       await loadSelectedAccount(change.accountId);
     } catch (error) {
@@ -364,7 +364,7 @@ export function AccountLifecycleWorkspace({
       busyAction={directoryBusy ?? (directoryLoading ? "all" : null)}
       error={directoryError}
       notice={directoryNotice}
-      subtitle="角色保持与登录身份绑定；可查看管理员发放密码、调整最小权限和数据范围、停用账号、重置密码、撤销会话与 MFA。邀请投递尚未配置，因此不会显示虚假的“已发送”操作。"
+      subtitle="管理账号、密码、权限与数据范围。合作结束时归档账号，立即关闭访问并保留历史记录；恢复合作时可从“已归档”中恢复。邀请投递尚未配置。"
       onSelectAccount={setSelectedAccountId}
       onUpdateAccess={(change) => void updateAccess(change)}
       onSetStatus={(change) => void updateStatus(change)}
