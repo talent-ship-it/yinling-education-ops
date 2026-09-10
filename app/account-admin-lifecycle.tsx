@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import {
-  Ban,
+  Archive,
   CheckCircle2,
   Clock3,
   Copy,
@@ -135,7 +135,7 @@ const ROLE_LABELS: Record<AccountRole, string> = {
 const STATUS_LABELS: Record<AccountStatus, string> = {
   invited: "待接受邀请",
   active: "正常",
-  disabled: "已禁用",
+  disabled: "已归档",
 };
 
 const DEFAULT_SCOPE_OPTIONS: readonly AccountScopeOption[] = [
@@ -289,7 +289,7 @@ function AccountEditor({
   const isSelf = Boolean(currentAccountId && currentAccountId === account.account_id);
   const authorizationLoaded = accountAuthorizationLoaded(account);
   const independentPasswordMissing = account.credential_version === null;
-  const isReadOnly = account.super_admin || !onUpdateAccess || !authorizationLoaded || independentPasswordMissing;
+  const isReadOnly = account.status === "disabled" || account.super_admin || !onUpdateAccess || !authorizationLoaded || independentPasswordMissing;
   const inviteExpiresAt = account.invite_expires_at ?? account.invite?.expires_at;
   const inviteDeliveryStatus = account.invite_delivery_status ?? account.invite?.delivery_status;
   const login = accountLogin(account);
@@ -381,6 +381,10 @@ function AccountEditor({
       <span><small>最近更新</small><strong>{formatDate(account.updated_at)}</strong></span>
     </div>
 
+    {account.status === "disabled" && <div className="form-notice" role="status">
+      <Archive size={15} aria-hidden="true" />
+      <span>此账号已归档，无法登录，原有会话已撤销。账号和历史记录仍保留，可在恢复合作后由管理员恢复。</span>
+    </div>}
     {account.status === "invited" && <div className="form-notice" role="status">
       <Mail size={15} aria-hidden="true" />
       <span>邀请：{deliveryLabel(inviteDeliveryStatus)}；有效期至 {formatDate(inviteExpiresAt)}。界面不会显示邀请凭据。</span>
@@ -401,7 +405,7 @@ function AccountEditor({
           </button>
         </div>
       </label>
-      <div className="account-credential-field">
+      {account.status === "active" && <div className="account-credential-field">
         <span>当前发放密码</span>
         {account.credential_version === null ? <div className="account-credential-empty"><KeyRound size={15} aria-hidden="true" /><span>尚未建立独立密码</span></div>
           : issuedPassword?.available && issuedPassword.password ? <>
@@ -424,7 +428,7 @@ function AccountEditor({
                 </button>
               </div>}
         <small>只展示管理员发放且仍有效的密码；本人自行修改后不可查看。每次查看都会写入审计。</small>
-      </div>
+      </div>}
       {credentialMessage ? <p className="account-credential-message" role="status" aria-live="polite">{credentialMessage}</p> : null}
     </section>
 
@@ -483,17 +487,18 @@ function AccountEditor({
     <section className="account-actions" aria-label="账号操作">
       <div className="toolbar-actions" style={{ justifyContent: "flex-start" }}>
         {account.status === "active" && onSetStatus && <button className="danger-button" type="button" disabled={account.super_admin || isSelf || isBusy("status")} onClick={() => requestStatus("disabled")}>
-          <Ban size={15} aria-hidden="true" />{pending === "disable" ? "再次确认禁用" : "禁用账号"}
+          <Archive size={15} aria-hidden="true" />{pending === "disable" ? "再次确认归档" : "归档账号"}
         </button>}
         {account.status === "disabled" && onSetStatus && <button className="secondary-button" type="button" disabled={isBusy("status")} onClick={() => requestStatus("active")}>
           <RotateCcw size={15} aria-hidden="true" />{pending === "restore" ? "再次确认恢复" : "恢复账号"}
         </button>}
-        {account.status === "active" && isSelf && <span className="status-pill amber">当前账号不可自禁用</span>}
+        {account.status === "active" && isSelf && <span className="status-pill amber">当前账号不可归档</span>}
       </div>
+      {pending === "disable" && <p className="form-footnote" role="status">归档后立即禁止登录并撤销所有会话，账号和历史记录会保留。</p>}
       {account.status === "invited" && onResendInvite && <button className="secondary-button full" type="button" disabled={isBusy("invite")} onClick={() => confirm("invite", () => onResendInvite(account))}>
         <RefreshCw size={15} aria-hidden="true" />{pending === "invite" ? "再次确认重发邀请" : "重发邀请"}
       </button>}
-      {onIssueRecovery && <button className="secondary-button full" type="button" disabled={isBusy("recovery")} onClick={() => confirm("recovery", () => onIssueRecovery(account))}>
+      {onIssueRecovery && account.status === "active" && <button className="secondary-button full" type="button" disabled={isBusy("recovery")} onClick={() => confirm("recovery", () => onIssueRecovery(account))}>
         <KeyRound size={15} aria-hidden="true" />{pending === "recovery" ? "再次确认重发恢复" : "重发恢复"}
       </button>}
       {onResetPassword && !isSelf && account.status === "active" && <button className="secondary-button full" type="button" disabled={isBusy("password")} onClick={() => onResetPassword(account)}>
@@ -509,7 +514,7 @@ function AccountEditor({
       {onViewAccount && account.status === "active" && <button className="primary-button full" type="button" onClick={() => onViewAccount(account)}>
         <Users size={15} aria-hidden="true" />查看此账号视图
       </button>}
-      <p className="form-footnote" style={{ margin: 0 }}>所有状态变更只通过回调交给上层；组件不会发送网络请求。</p>
+      <p className="form-footnote" style={{ margin: 0 }}>合作结束时可归档账号，保留历史记录。归档和恢复操作都会记录在审计日志中。</p>
     </section>
 
     <div className="detail-section" style={{ marginTop: 0 }}>
@@ -529,8 +534,8 @@ export function AccountAdminLifecycle({
   busyAction,
   error,
   notice,
-  title = "账号生命周期",
-  subtitle = "管理账号状态、最小权限、数据范围与恢复入口。",
+  title = "账号管理",
+  subtitle = "管理在用账号；合作结束后归档，保留账号和历史记录。",
   onSelectAccount,
   onInvite,
   onUpdateAccess,
@@ -544,7 +549,7 @@ export function AccountAdminLifecycle({
   onViewAccount,
 }: AccountAdminLifecycleProps) {
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | AccountStatus>("all");
+  const [statusFilter, setStatusFilter] = useState<"current" | "all" | AccountStatus>("current");
   const [page, setPage] = useState(1);
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(() => selectedAccountId ?? accounts[0]?.account_id ?? null);
   const [inviteName, setInviteName] = useState("");
@@ -555,11 +560,10 @@ export function AccountAdminLifecycle({
   const activeSelectedId = selectedAccountId === undefined
     ? (accounts.some((account) => account.account_id === internalSelectedId) ? internalSelectedId : accounts[0]?.account_id ?? null)
     : selectedAccountId;
-  const selected = accounts.find((account) => account.account_id === activeSelectedId);
   const filteredAccounts = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return accounts.filter((account) => {
-      if (statusFilter !== "all" && account.status !== statusFilter) return false;
+      if (statusFilter === "current" ? account.status === "disabled" : statusFilter !== "all" && account.status !== statusFilter) return false;
       if (!normalized) return true;
       return [account.account_name, roleLabel(account.account_role), statusLabel(account.status), ...accountPermissions(account)]
         .join(" ")
@@ -567,6 +571,17 @@ export function AccountAdminLifecycle({
         .includes(normalized);
     });
   }, [accounts, query, statusFilter]);
+  // Keep the selected record available while searching or after archiving it.
+  const selected = accounts.find((account) => account.account_id === activeSelectedId);
+  const archivedCount = accounts.filter((account) => account.status === "disabled").length;
+  const changeStatusFilter = (next: typeof statusFilter) => {
+    setStatusFilter(next);
+    setPage(1);
+    setQuery("");
+    const first = accounts.find((account) => next === "all" || (next === "current" ? account.status !== "disabled" : account.status === next));
+    setInternalSelectedId(first?.account_id ?? null);
+    if (first) onSelectAccount?.(first.account_id);
+  };
   const pageSize = 12;
   const pageCount = Math.max(1, Math.ceil(filteredAccounts.length / pageSize));
   const safePage = Math.min(page, pageCount);
@@ -602,12 +617,17 @@ export function AccountAdminLifecycle({
 
     <div className="account-admin-layout">
       <article className="account-list" aria-label="账号目录">
+        <div className="table-toolbar" role="group" aria-label="在用与归档账号" style={{ flexWrap: "wrap", gap: 9 }}>
+          <button className={statusFilter === "current" ? "primary-button" : "secondary-button"} type="button" aria-pressed={statusFilter === "current"} onClick={() => changeStatusFilter("current")}><Users size={15} aria-hidden="true" />在用账号（{accounts.length - archivedCount}）</button>
+          <button className={statusFilter === "disabled" ? "primary-button" : "secondary-button"} type="button" aria-pressed={statusFilter === "disabled"} onClick={() => changeStatusFilter("disabled")}><Archive size={15} aria-hidden="true" />已归档（{archivedCount}）</button>
+        </div>
+        {statusFilter === "disabled" && <p className="form-footnote" style={{ margin: "0 16px 12px" }}>已归档人员无法登录。此处保留账号记录，需要恢复合作时可选择账号后恢复。</p>}
         <div className="table-toolbar" style={{ flexWrap: "wrap", gap: 9 }}>
           <label className="search-field" htmlFor={searchId} style={{ flex: "1 1 220px", width: "auto" }}>
             <Search size={15} aria-hidden="true" /><input id={searchId} aria-label="搜索账号" placeholder="搜索账号、角色或权限" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
           </label>
           <div className="toolbar-actions">
-            <label style={{ alignItems: "center", display: "flex", gap: 6 }}><span style={{ color: "var(--muted)", fontSize: 11 }}>状态</span><select className="filter-select" aria-label="账号状态筛选" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as "all" | AccountStatus); setPage(1); }}><option value="all">全部</option><option value="active">正常</option><option value="invited">待接受</option><option value="disabled">已禁用</option></select></label>
+            <label style={{ alignItems: "center", display: "flex", gap: 6 }}><span style={{ color: "var(--muted)", fontSize: 11 }}>状态</span><select className="filter-select" aria-label="账号状态筛选" value={statusFilter} onChange={(event) => changeStatusFilter(event.target.value as typeof statusFilter)}><option value="current">在用账号</option><option value="all">全部账号</option><option value="active">正常</option><option value="invited">待接受</option><option value="disabled">已归档</option></select></label>
             <span aria-live="polite" style={{ color: "var(--muted)", fontSize: 12 }}>{loading ? "正在读取账号…" : `${filteredAccounts.length} 个账号`}</span>
           </div>
         </div>
