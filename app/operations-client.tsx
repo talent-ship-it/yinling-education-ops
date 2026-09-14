@@ -14461,7 +14461,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     : (displayPreferences.language === "en-AU" ? "Collapse sidebar" : "收起侧栏");
 
   return (
-    <div ref={interfaceRootRef} className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`} data-interface-language={displayPreferences.language} data-text-size={displayPreferences.textSize} data-list-density={displayPreferences.density} data-motion-preference={displayPreferences.motion}>
+    <div ref={interfaceRootRef}
+      data-input-method="keyboard"
+      onPointerDownCapture={(event) => { if (event.currentTarget.dataset.inputMethod !== "pointer") event.currentTarget.dataset.inputMethod = "pointer"; }}
+      onKeyDownCapture={(event) => { if (event.currentTarget.dataset.inputMethod !== "keyboard") event.currentTarget.dataset.inputMethod = "keyboard"; }}
+      className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`} data-interface-language={displayPreferences.language} data-text-size={displayPreferences.textSize} data-list-density={displayPreferences.density} data-motion-preference={displayPreferences.motion}>
       <a
         className={`skip-link${skipLinkFocused ? " is-focused" : ""}`}
         href="#main-content"
