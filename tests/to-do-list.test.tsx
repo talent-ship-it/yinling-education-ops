@@ -84,8 +84,8 @@ test("renders the today and category tabs, marks the controlled filter, and expo
   for (const label of ["To Do", "All Done", "Can’t Do"]) assert.match(html, new RegExp(label));
   assert.match(html, /aria-label="任务状态"/);
   assert.match(html, /class="active" type="button" aria-pressed="true">考试</);
-  assert.match(html, /aria-expanded="true" aria-controls="to-do-list-content">/);
-  assert.match(html, />收起</);
+  assert.match(html, /id="to-do-list-content">/);
+  assert.doesNotMatch(html, /to-do-collapse-button|收起/);
 });
 
 test("renders today, overdue, then remaining sections and sorts each section by dueAt", () => {
