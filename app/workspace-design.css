@@ -191,3 +191,135 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
 @media (max-width:680px) { .student-record-entry-grid button { min-height:44px; } }
 .pagination button { width:auto; min-width:72px; flex:0 0 auto; white-space:nowrap; }
 .pagination > span { color:var(--muted); }
+
+/* Complete the shared action palette, including older compact and utility controls. */
+.app-shell :is(.compact-button,.deadline-edit-button,.to-do-collapse-button,.choice-button,.selected-choice,
+  .operator-password,.operator-preferences,.mobile-password-button,.mobile-preferences-button,.toast-action) {
+  align-items:center; background:var(--surface-raised); border:1px solid var(--line);
+  border-radius:9px; color:var(--ink); font-size:13px; font-weight:600;
+  min-height:36px; padding:8px 12px; box-shadow:none;
+}
+.app-shell :is(.compact-button,.selected-choice) {
+  background:var(--brand-soft); border-color:var(--brand-line); color:var(--brand-ink);
+}
+.app-shell :is(.text-button,.teacher-toggle,.inline-link,.ledger-cell-meta button) {
+  color:var(--brand-ink); background:transparent; border:0; border-radius:6px;
+  font-size:13px; font-weight:600; min-height:32px; padding:4px 6px;
+}
+.app-shell :is(.danger-button,.text-button.danger,.operator-logout,.mobile-logout-button) {
+  color:var(--red); border-color:var(--red); background:var(--red-soft); border-radius:9px;
+}
+.app-shell :is(.operator-logout,.mobile-logout-button) { font-size:13px; min-height:36px; padding:8px 12px; }
+.app-shell :is(.complete-button,.task-note-button,.cannot-do-button,.reopen-task-button) {
+  background:var(--surface-raised); border:1px solid var(--line); color:var(--muted);
+  width:36px; height:36px; min-width:36px; border-radius:9px;
+}
+.app-shell .cannot-do-button { color:var(--red); }
+.app-shell :is(.operator-menu-item,.record-picker-option,.teacher-student-list > button,.mobile-nav-grid > button,
+  .global-result,.duration-field button,.file-storage-picker button) {
+  background:var(--surface-raised); color:var(--ink); border-color:var(--line); box-shadow:none;
+}
+.app-shell :is(.operator-menu-item.selected,.mobile-nav-grid > button.active,.duration-field button[aria-pressed="true"],.file-storage-picker button.active) {
+  background:var(--brand-soft); color:var(--brand-ink); border-color:var(--brand-line);
+}
+.app-shell :is(.operator-menu-copy small,.record-picker-option small,.mobile-nav-grid small,.global-result small) { color:var(--muted); }
+.app-shell .schedule-shell .bulk-bar button:not(.bulk-clear),
+.app-shell .global-quick-links button { background:var(--brand-soft); border-color:var(--brand-line); color:var(--brand-ink); border-radius:9px; min-height:36px; font-size:13px; padding:8px 12px; }
+.app-shell :is(.dialog,.dialog-header,.mobile-nav-drawer,.record-picker-options) {
+  background:var(--surface-raised); color:var(--ink); border-color:var(--line);
+}
+.app-shell .dialog { border:1px solid var(--line); border-radius:16px; }
+.app-shell :is(.dialog-header,.operator-menu-header,.operator-menu-footer) { border-color:var(--line); }
+.app-shell :is(.confirm-body > p,.dialog label,.mobile-operator-picker) { color:var(--muted); }
+.app-shell .confirm-impact-list { background:var(--surface-muted); color:var(--muted); border-color:var(--line); border-radius:9px; }
+.app-shell .toast { background:var(--surface-raised); color:var(--ink); border:1px solid var(--brand-line); border-radius:12px; font-size:14px; }
+.app-shell .toast > svg { color:var(--brand-deep); flex-shrink:0; }
+.app-shell :is(.dialog-backdrop,.mobile-nav-backdrop) { background:rgb(10 20 25 / .4); backdrop-filter:none; }
+
+/* Frequent data navigation is immediate; only deliberate controls compress on press.
+   Existing duration/easing tokens are shared with the rest of the workspace. */
+.app-shell,.app-shell .sidebar { transition:none; }
+.app-shell :is(button,a[class]) { filter:none; transition:background-color var(--duration-press) ease,color var(--duration-press) ease,border-color var(--duration-press) ease; }
+.app-shell :is(button,a[class]):is(:hover,:active) { transform:none; filter:none; box-shadow:none; }
+.app-shell :is(.metric-card,.teacher-card,.sync-summary article,.report-card,.collection-row,.table-row,.message-list-row,.schedule-row,.risk-row,.global-result):hover { transform:none; box-shadow:none; }
+.app-shell :is(.primary-button,.secondary-button,.danger-button,.compact-button,.icon-button,.new-button,.deadline-edit-button,.to-do-collapse-button,.toast-action,.student-record-entry-grid button) {
+  transition:transform var(--duration-press) var(--ease-out),background-color var(--duration-press) ease,color var(--duration-press) ease,border-color var(--duration-press) ease;
+}
+.app-shell[data-input-method="pointer"] :is(.primary-button,.secondary-button,.danger-button,.compact-button,.icon-button,.new-button,.deadline-edit-button,.to-do-collapse-button,.toast-action,.student-record-entry-grid button):active:not(:disabled):not([aria-disabled="true"]) { transform:scale(.97); }
+.app-shell :is(button,a[class]):is(:disabled,[aria-disabled="true"]) { opacity:.5; cursor:not-allowed; transform:none; box-shadow:none; }
+@media (hover:hover) and (pointer:fine) {
+  .app-shell :is(.compact-button,.deadline-edit-button,.to-do-collapse-button,.choice-button,.selected-choice,.toast-action,
+    .operator-password,.operator-preferences,.mobile-password-button,.mobile-preferences-button,
+    .operator-menu-item,.record-picker-option,.teacher-student-list > button,.mobile-nav-grid > button,
+    .complete-button,.task-note-button,.reopen-task-button):hover:not(:disabled) {
+    background:var(--brand-soft); border-color:var(--brand-line); color:var(--brand-ink);
+  }
+  .app-shell :is(.danger-button,.text-button.danger,.cannot-do-button,.operator-logout,.mobile-logout-button):hover:not(:disabled) { background:var(--red-soft); border-color:var(--red); color:var(--red); }
+}
+/* Touch hover must not retain an old light-only fill after a tap. */
+@media (hover:none) {
+  .app-shell :is(.secondary-button,.icon-button,.choice-button,.to-do-collapse-button,.deadline-edit-button):hover { background:var(--surface-raised); color:var(--ink); border-color:var(--line); }
+  .app-shell :is(.danger-button,.operator-logout,.mobile-logout-button):hover { background:var(--red-soft); color:var(--red); }
+}
+
+/* Pointer-opened occasional surfaces: interruptible CSS entry, immediate dismissal
+   so focus restoration and rapid reopen never wait for a stale closing surface. */
+.app-shell :is(.dialog-backdrop,.dialog,.toast,.mobile-nav-backdrop,.mobile-nav-drawer,.operator-menu) { animation:none; }
+.app-shell[data-input-method="pointer"] :is(.dialog-backdrop,.mobile-nav-backdrop) {
+  opacity:1; transition:opacity var(--duration-ui) var(--ease-out);
+}
+.app-shell[data-input-method="pointer"] :is(.dialog,.mobile-nav-drawer) {
+  opacity:1; transform:none; transform-origin:center;
+  transition:opacity var(--duration-surface) var(--ease-out),transform var(--duration-surface) var(--ease-out);
+}
+.app-shell[data-input-method="pointer"] .operator-menu {
+  opacity:1; transform:none; transform-origin:top right;
+  transition:opacity var(--duration-ui) var(--ease-out),transform var(--duration-ui) var(--ease-out);
+}
+.app-shell[data-input-method="pointer"] .toast {
+  opacity:1; transform:none; transition:opacity var(--duration-ui) var(--ease-out),transform var(--duration-ui) var(--ease-out);
+}
+@starting-style {
+  .app-shell[data-input-method="pointer"] :is(.dialog-backdrop,.mobile-nav-backdrop) { opacity:0; }
+  .app-shell[data-input-method="pointer"] .dialog { opacity:0; transform:scale(.96); }
+  .app-shell[data-input-method="pointer"] .operator-menu { opacity:0; transform:scale(.97); }
+  .app-shell[data-input-method="pointer"] .mobile-nav-drawer { opacity:0; transform:translateY(5%); }
+  .app-shell[data-input-method="pointer"] .toast { opacity:0; transform:translateY(15%); }
+}
+/* Keyboard navigation and the command palette never wait for decorative motion. */
+.app-shell[data-input-method="keyboard"] *,
+.app-shell :is(.global-search-dialog,.global-search-backdrop,.global-result,.record-picker-options) { animation:none !important; transition:none !important; }
+.app-shell[data-input-method="keyboard"] :is(button,a[class]):active { transform:none; }
+.app-shell[data-motion-preference="reduced"] :is(.dialog,.mobile-nav-drawer,.operator-menu,.toast,button,a[class]) { transform:none !important; }
+@media (prefers-reduced-motion:reduce) {
+  .app-shell :is(.dialog,.mobile-nav-drawer,.operator-menu,.toast,button,a[class]) { transform:none !important; }
+}
+@media (max-width:760px) {
+  .app-shell :is(.compact-button,.deadline-edit-button,.to-do-collapse-button,.text-button,.choice-button,.selected-choice,
+    .operator-password,.operator-preferences,.mobile-password-button,.mobile-preferences-button,.operator-logout,.mobile-logout-button,.toast-action) { min-height:44px; }
+  .app-shell :is(.complete-button,.task-note-button,.cannot-do-button,.reopen-task-button) { width:44px; height:44px; min-width:44px; }
+  .app-shell .dialog { border-radius:20px 20px 0 0; }
+}
+
+.app-shell :where(button,a[href],input,select,textarea,summary):focus-visible { outline:3px solid var(--brand-deep); outline-offset:3px; }
+.app-shell .file-storage-picker button span { color:var(--muted); }
+.app-shell :is(input,select,textarea) { background:var(--surface-raised); color:var(--ink); border-color:var(--line); accent-color:var(--brand-deep); }
+.app-shell .search-field:focus-within { background:var(--surface-raised); border-color:var(--brand-deep); }
+.app-shell .mobile-nav-drawer > header { background:var(--surface-raised); color:var(--ink); border-color:var(--line); }
+/* Restore carries a text label, so it must retain its intrinsic width. */
+.app-shell .reopen-task-button { width:auto; padding:0 10px; }
+.app-shell .operator:hover { background:var(--surface-muted); color:var(--ink); }
+@media (hover:none) {
+  /* Touch activation must settle back to the resting or selected palette. */
+  .app-shell :is(.primary-button,.new-button):hover { background:var(--brand-deep); border-color:var(--brand-deep); color:#fff; }
+  .app-shell :is(.compact-button,.selected-choice):hover { background:var(--brand-soft); border-color:var(--brand-line); color:var(--brand-ink); }
+  .app-shell :is(.toast-action,.operator-password,.operator-preferences,.mobile-password-button,.mobile-preferences-button,
+    .operator-menu-item,.record-picker-option,.teacher-student-list > button,.mobile-nav-grid > button):hover { background:var(--surface-raised); border-color:var(--line); color:var(--ink); }
+  .app-shell :is(.operator-menu-item.selected,.mobile-nav-grid > button.active):hover { background:var(--brand-soft); color:var(--brand-ink); border-color:var(--brand-line); }
+  .app-shell :is(.complete-button,.task-note-button,.reopen-task-button):hover { background:var(--surface-raised); color:var(--muted); border-color:var(--line); }
+  .app-shell .cannot-do-button:hover { background:var(--surface-raised); color:var(--red); border-color:var(--line); }
+  .app-shell .operator:hover { background:transparent; color:var(--ink); }
+}
+@media (hover:none) and (prefers-color-scheme:dark) {
+  .app-shell :is(.primary-button,.new-button):hover { color:#102e29; }
+}
