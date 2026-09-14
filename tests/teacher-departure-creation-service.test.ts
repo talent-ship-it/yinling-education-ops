@@ -481,3 +481,10 @@ test("a staff caller cannot create a global departure outside every affected stu
     (error: unknown) => error instanceof TeacherDepartureCreationError && error.code === "affected_student_scope_forbidden",
   );
 });
+
+test("departure management confirmation routes to teaching control", () => {
+  const prepared = prepareTeacherDepartureCreation({ command: parseTeacherDepartureCreationCommand(command()), rows: rows(), actor: "Nixon", role: "admin", fullAdmin: true, now: new Date("2026-08-20T00:00:00.000Z") });
+  const confirmation = prepared.tasks.find((task) => task.ruleKey?.endsWith(":management-watcher"));
+  assert.equal(confirmation?.owner, "Ops Admin");
+  assert.ok(prepared.tasks.every((task) => task.owner !== "思佳"));
+});

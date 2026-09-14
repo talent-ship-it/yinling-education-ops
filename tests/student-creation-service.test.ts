@@ -33,3 +33,9 @@ test("student replay canonicalization is independent of current owner scope", ()
   assert.equal(canonical.studentFields.name, "Runtime Student");
   assert.throws(() => normalizeStudentCreationCommand(commandWithDifferentCurrentActor, "Abby", false), /只能为自己负责/);
 });
+
+test("retired owner remains replayable but cannot receive a new student", () => {
+  const retired = parseStudentCreationCommand({ ...command, studentFields: { ...command.studentFields, owner: "思佳" } });
+  assert.equal(canonicalizeStudentCreationCommand(retired).studentFields.owner, "思佳");
+  assert.throws(() => normalizeStudentCreationCommand(retired, "Nixon", true), /已归档账号不能接收新学生/);
+});

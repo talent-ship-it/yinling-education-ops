@@ -56,3 +56,14 @@ export function isDemoTeacher(user: string): user is DemoTeacherUser {
 export function isDemoStaff(user: string): user is DemoStaffUser {
   return DEMO_STAFF_USERS.some((staff) => normaliseDemoUserName(staff) === normaliseDemoUserName(user));
 }
+
+// Retain historical identities above for account history and command replay.
+// This departed demo identity must not re-enter new assignment pickers. The
+// database additionally checks the current lifecycle of every staff account.
+export function isRetiredOperationsIdentity(value: string) {
+  return normaliseDemoUserName(value) === normaliseDemoUserName("思佳");
+}
+
+export const ASSIGNABLE_DEMO_STAFF_USERS = DEMO_STAFF_USERS.filter(
+  (staff) => !isRetiredOperationsIdentity(staff),
+);

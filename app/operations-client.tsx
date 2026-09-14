@@ -123,6 +123,8 @@ import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
   DEMO_STAFF_USERS,
+  ASSIGNABLE_DEMO_STAFF_USERS,
+  isRetiredOperationsIdentity,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
@@ -4232,7 +4234,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
-  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, "思佳", "Tiffany", "Abby", "Tara"])).filter(Boolean).sort(), [currentOperator, ownerOptions]);
+  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, DEMO_LIMITED_ADMIN_USER, ...ASSIGNABLE_DEMO_STAFF_USERS])).filter((owner) => Boolean(owner) && !isRetiredOperationsIdentity(owner)).sort(), [currentOperator, ownerOptions]);
   const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
   const jiaowubaoAuthorityStatus = useMemo(() => findJiaowubaoAuthorityStatus(syncSources), [syncSources]);
   const activeSources = sourceGroups.active;
@@ -12824,8 +12826,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const task: Task = {
       id: id("TSK"),
       title,
-      owner: String(data.get("owner") ?? "思佳"),
-      ...taskRecipients(String(data.get("owner") ?? "思佳")),
+      owner: String(data.get("owner") ?? DEMO_LIMITED_ADMIN_USER),
+      ...taskRecipients(String(data.get("owner") ?? DEMO_LIMITED_ADMIN_USER)),
       studentId,
       due: formatInstant(parsedDue, "Australia/Melbourne", displayPreferences),
       dueAt: parsedDue.toISOString(),
@@ -14580,7 +14582,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>学生姓名<input name="name" data-dialog-autofocus="true" defaultValue={studentModalTargetStudent.name} /></label>
           <label>课程 / 年级<input name="course" defaultValue={studentModalTargetStudent.course} required /></label>
           <label>当前年级<input name="grade" defaultValue={studentModalTargetStudent.grade ?? ""} /></label>
-          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
+          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{!teamOwnerOptions.includes(studentModalTargetStudent.owner) && <option value={studentModalTargetStudent.owner} disabled>{studentModalTargetStudent.owner}（已归档）</option>}{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
           <label>规划老师<select name="planner" defaultValue={studentModalTargetStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label>
           <label>所在地<select name="location" defaultValue={studentModalTargetStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(studentModalTargetStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>

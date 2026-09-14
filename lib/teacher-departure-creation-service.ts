@@ -534,7 +534,7 @@ function tasksForStudent(input: {
     departureTask({ ...input, rule: "new-teacher-contact", title: "开启新老师沟通", dueDate: fourteenDaysBefore, futureTone: "amber", trigger: "老师离职：新老师沟通" }),
     departureTask({ ...input, rule: "handover", title: "确认 Handover Notes 与原老师约定 DDL", dueDate: sevenDaysBefore, futureTone: "blue", trigger: "老师离职：交接资料" }),
     departureTask({ ...input, rule: "parent-contact", title: "告知家长并记录最终安排", dueDate: sevenDaysBefore, futureTone: "red", trigger: "老师离职：家长沟通" }),
-    departureTask({ ...input, rule: "management-watcher", title: "向龙老师汇报离职交接进度", owner: "思佳", dueDate: sevenDaysBefore, futureTone: "amber", trigger: "老师离职：管理确认" }),
+    departureTask({ ...input, rule: "management-watcher", title: "向龙老师汇报离职交接进度", owner: DEFAULT_TEACHING_CONTROL_WATCHER, dueDate: sevenDaysBefore, futureTone: "amber", trigger: "老师离职：管理确认" }),
     ...(lpFollowUpDate ? [departureTask({
       ...input,
       rule: "lp-to-new-teacher",
