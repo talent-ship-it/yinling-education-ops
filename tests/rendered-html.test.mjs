@@ -566,7 +566,7 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /const validationCount = recurring\s+\? recurrenceOccurrenceCount\([\s\S]*?\) \?\? 104\s+: 1/);
   assert.match(client, /authoritativeRecurrenceEndDate/);
   assert.match(client, /const proposedDates = Array\.from\(\{ length: validationCount \}/);
-  assert.match(client, /const weekOccurrences = scopedBookings/);
+  assert.match(client, /const weekOccurrences = scheduleMode === "month" \? \[\] : scopedBookings/);
   assert.match(client, /bookingOccurrencesWithinRange\(booking, shiftIsoDate\(weekDays\[0\]\.date, -1\)/);
   assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
   assert.match(client, /const displayedBooking = \(selectedBookingOccurrenceKey[\s\S]*?currentScheduleScope\.find\(\(booking\) => booking\.occurrenceKey === selectedBookingOccurrenceKey\)/);

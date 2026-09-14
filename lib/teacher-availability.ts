@@ -1,3 +1,4 @@
+import { dateTimeFormat } from "./date-time-format";
 const DAY_MS = 86_400_000;
 const MINUTES_PER_DAY = 1_440;
 const MINUTES_PER_WEEK = 10_080;
@@ -239,7 +240,7 @@ function assertDay(day: number): void {
 
 function assertTimezone(timezone: string): void {
   try {
-    new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0);
+    dateTimeFormat("en", { timeZone: timezone }).format(0);
   } catch {
     fail("invalid-timezone", `${timezone || "(blank)"} is not a valid IANA timezone.`);
   }
@@ -323,7 +324,7 @@ export function assertValidAvailabilitySlots(
 }
 
 function zonedParts(instant: Date, timezone: string): ZonedParts {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const parts = dateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",

@@ -1,6 +1,9 @@
 "use client";
 
-import React, { type CSSProperties } from "react";
+import { dateTimeFormat } from "@/lib/date-time-format";
+
+
+import React, { type CSSProperties, useMemo, useState } from "react";
 
 import {
   buildScheduleMonth,
@@ -48,7 +51,8 @@ export function ScheduleMonthView({
   selectedOccurrenceId,
   onSelect,
 }: ScheduleMonthViewProps) {
-  const days = buildScheduleMonth(month, lessons, displayTimezone);
+  const days = useMemo(() => buildScheduleMonth(month, lessons, displayTimezone), [month, lessons, displayTimezone]);
+  const [dayPages, setDayPages] = useState<Record<string, number>>({});
   const availabilityByDate = new Map<string, ScheduleMonthAvailability[]>();
   availability.forEach((entry) => {
     availabilityByDate.set(entry.date, [...(availabilityByDate.get(entry.date) ?? []), entry]);
@@ -56,15 +60,18 @@ export function ScheduleMonthView({
   const locale = language === "en-AU" ? "en-AU" : "zh-CN";
   const weekdays = Array.from({ length: 7 }, (_, offset) => {
     const date = new Date(Date.UTC(2026, 0, 5 + offset));
-    return new Intl.DateTimeFormat(locale, { weekday: language === "en-AU" ? "short" : "narrow", timeZone: "UTC" }).format(date);
+    return dateTimeFormat(locale, { weekday: language === "en-AU" ? "short" : "narrow", timeZone: "UTC" }).format(date);
   });
 
   return (
     <div className="month-board-scroll" data-month={month}>
       <div className="month-board" role="region" aria-label={language === "en-AU" ? `${month} month schedule` : `${month} 月课表`}>
         {weekdays.map((weekday, index) => <div className="month-weekday" aria-hidden="true" key={`${weekday}-${index}`}>{weekday}</div>)}
-        {days.map((day) => (
-          <section
+        {days.map((day) => {
+          const pages = Math.max(1, Math.ceil(day.occurrences.length / 4));
+          const page = Math.min(dayPages[day.date] ?? 1, pages);
+          const visibleLessons = day.occurrences.slice((page - 1) * 4, page * 4);
+          return <section
             className={`month-day ${day.inMonth ? "" : "outside-month"} ${availabilityTeacherName && !(availabilityByDate.get(day.date)?.length) ? "outside-availability" : ""}`}
             role="group"
             aria-label={day.date}
@@ -82,7 +89,7 @@ export function ScheduleMonthView({
                   <span>{availabilityTeacherName ?? "可排"}</span>
                 </div>
               ))}
-              {day.occurrences.map((lesson) => {
+              {visibleLessons.map((lesson) => {
                 const color = stableStudentCalendarColor(lesson.studentId);
                 const style: StudentColorStyle = {
                   "--student-event-bg": color.background,
@@ -106,8 +113,13 @@ export function ScheduleMonthView({
                 );
               })}
             </div>
-          </section>
-        ))}
+            {pages > 1 ? <div className="month-day-pagination">
+              <button type="button" aria-label={`${day.date} ${language === "en-AU" ? "previous lessons" : "上一组课程"}`} disabled={page === 1} onClick={() => setDayPages((current) => ({ ...current, [day.date]: page - 1 }))}>‹</button>
+              <span>{page} / {pages}</span>
+              <button type="button" aria-label={`${day.date} ${language === "en-AU" ? "next lessons" : "下一组课程"}`} disabled={page === pages} onClick={() => setDayPages((current) => ({ ...current, [day.date]: page + 1 }))}>›</button>
+            </div> : null}
+          </section>;
+        })}
       </div>
     </div>
   );

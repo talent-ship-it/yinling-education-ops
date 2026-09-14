@@ -56,7 +56,8 @@ test("renders imported schedule events as a separate, clearly read-only source p
   assert.match(html, /占用老师 AVA/);
   assert.doesNotMatch(html, /源课表时间无法核验|未放入日历或 AVA/);
   assert.doesNotMatch(html, /JWB-EVT-001-opaque/);
-  assert.doesNotMatch(html, /<button/);
+  // Pagination may navigate source evidence; individual rows stay read-only.
+  for (const row of html.matchAll(/<article[^>]*>[\s\S]*?<\/article>/g)) assert.doesNotMatch(row[0], /<button/);
 });
 
 test("prefers the bounded 教务宝 teacher label over an internal roster mapping", () => {
@@ -349,4 +350,13 @@ test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", 
     hasMore: false,
     nextCursor: null,
   }), /禁止字段/);
+});
+
+test("large imported schedules keep all records available but mount only one page", () => {
+  const largeFeed = { ...feed, events: Array.from({ length: 2500 }, (_, index) => ({ ...feed.events[0]!, eventId: `fixture-${index}` })) };
+  const html = renderToStaticMarkup(<JiaowubaoImportedSchedulePanel feed={largeFeed} loading={false} error={false} timezone="Australia/Melbourne" language="zh-CN" studentNameForId={() => "测试学生"} teacherNameForId={() => "测试老师"} />);
+  assert.equal((html.match(/class="jiaowubao-imported-schedule-row"/g) ?? []).length, 25);
+  assert.match(html, /共 2500 节 · 第 1 \/ 100 页/);
+  assert.match(html, /下一页/);
+  assert.equal(largeFeed.events.length, 2500);
 });
