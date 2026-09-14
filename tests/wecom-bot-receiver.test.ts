@@ -9,6 +9,40 @@ import { enrichWecomBotRecords } from "../lib/wecom-bot-routing";
 
 const { syncReceiverMessages } = await import("../scripts/wecom-receiver/sync.mjs");
 
+for (const phase of ["headers", "body"]) {
+  test(`sync releases a stalled ${phase} request and leaves records retryable`, async (t) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-timeout-"));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    await fs.mkdir(path.join(root, "messages"));
+    await fs.writeFile(path.join(root, "messages", "text.json"), JSON.stringify({
+      received_at: "2026-09-09T00:01:00.000Z",
+      message: { aibotid: "bot", msgid: "timeout-1", msgtype: "text", chatid: "room", from: { userid: "sender" }, text: { content: "synthetic" } },
+    }));
+    let aborted = false;
+    const config = {
+      dataDirectory: root,
+      endpoint: "https://example.test/ingest",
+      token: "synthetic-token",
+      startedAt: "2026-09-08T00:00:00.000Z",
+      requestTimeoutMs: 5,
+    };
+    const first = await syncReceiverMessages({ ...config, fetchImpl: async (_url: string, init: RequestInit) => {
+      const stalled = () => new Promise<never>((_resolve, reject) => init.signal?.addEventListener("abort", () => {
+        aborted = true;
+        reject(new DOMException("timeout", "AbortError"));
+      }, { once: true }));
+      return phase === "headers" ? stalled() : { ok: true, status: 200, json: stalled } as Response;
+    } });
+    assert.equal(aborted, true);
+    assert.equal(first.failed, 1);
+    assert.equal(first.acknowledged, 0);
+    const second = await syncReceiverMessages({ ...config, fetchImpl: async () => new Response('{"outcome":"committed","inserted":1}') });
+    assert.equal(second.inserted, 1);
+    assert.equal(second.acknowledged, 1);
+    assert.equal(second.skipped, 0);
+  });
+}
+
 test("normalizes bot records without accepting extra fields", () => {
   const records = normalizeWecomBotBatch({
     records: [{
