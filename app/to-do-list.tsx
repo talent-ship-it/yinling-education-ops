@@ -148,6 +148,7 @@ function TaskRows({
                 type="button"
                 onClick={() => onTeacherReplied(task)}
               >老师已回</button> : null}
+            <div className="task-action-icons">
             <button
               className="task-note-button"
               type="button"
@@ -181,6 +182,7 @@ function TaskRows({
               aria-label={`恢复到待办：${title.primary}`}
               onClick={() => onReopen(task.id)}
             ><RotateCcw size={14} /><span>恢复</span></button> : null}
+            </div>
             {(() => {
               const deadline = formatCompactTaskDeadline(task.dueAt, deadlineTimeZone);
               if (deadline && task.dueAt) return <time
