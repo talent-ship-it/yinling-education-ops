@@ -27,3 +27,17 @@ PGOPTIONS="-c student_operation.dsn=dbname=il_fixture_review" psql -d il_fixture
 Add host, port, and user to both connection settings when using a separate local
 cluster. An unmarked dblink destination is rejected even if the primary
 database is marked. Do not use production credentials with these fixtures.
+
+The WeCom lock-order regression rebuilds a synthetic schema and uses two real
+connections. It reproduces the old deadlock before applying the new migration,
+then checks archive and bot batches in opposite orders, including exact insert
+and duplicate counts. It commits its fixture state for inspection:
+
+```sh
+createdb il_fixture_wecom
+psql -d il_fixture_wecom -c "COMMENT ON DATABASE il_fixture_wecom IS 'insiderleads-disposable-fixture'"
+PGDATABASE=il_fixture_wecom python3 tests/sql/wecom-batch-lock-order-runtime.py
+```
+
+Use the normal `PGHOST`, `PGPORT`, and `PGUSER` variables for a dedicated local
+cluster. `PSQL` can select an absolute path to the PostgreSQL client binary.
