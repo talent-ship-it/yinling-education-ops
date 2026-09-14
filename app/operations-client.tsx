@@ -1,5 +1,7 @@
 "use client";
 
+import { createSharedStatePoller } from "@/lib/shared-state-poller";
+
 import { isLessonDuration } from "../lib/lesson-duration";
 import { LessonDurationInput } from "./lesson-duration-input";
 import { useWorkspaceLocation } from "./use-workspace-location";
@@ -5531,27 +5533,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   useEffect(() => {
     let stopped = false;
-    let polling = false;
-    let timeout: number | null = null;
-    const activeDelayMs = 15_000;
-    const errorDelayMs = 60_000;
-
-    const schedule = (delayMs: number) => {
-      if (stopped || document.hidden) return;
-      if (timeout !== null) window.clearTimeout(timeout);
-      timeout = window.setTimeout(() => {
-        timeout = null;
-        void poll();
-      }, delayMs);
-    };
-
-    const poll = async () => {
-      if (stopped || polling || document.hidden) return;
-      polling = true;
-      let nextDelayMs = activeDelayMs;
-      try {
-        const versionResponse = await fetch("/api/app-state?mode=versions", { cache: "no-store" });
-        const versionBody = await versionResponse.json().catch(() => ({}));
+    const poller = createSharedStatePoller({
+      canRun: () => !document.hidden,
+      onError: (error) => {
+        clearManagedExamProjection();
+        clearManagedTrialPaymentProjection();
+        reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "同步暂时不可用");
+      },
+      run: async (signal) => {
+        const { response: versionResponse, body: receivedVersions } = await fetchJsonWithTimeout(fetch, "/api/app-state?mode=versions", { cache: "no-store", signal });
+        const versionBody = receivedVersions ?? {};
         if (!versionResponse.ok) throw new Error(versionBody.error || "共享状态检查失败");
         if (!Array.isArray(versionBody.versions)) throw new Error("共享状态版本响应无效");
         const versionRows = versionBody.versions as RemoteStateRow[];
@@ -5609,8 +5600,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           const query = new URLSearchParams({ entities: [...requestedEntities].join(",") });
           if (refreshManagedExamSnapshot) query.set("includeManagedExamSnapshot", "1");
           if (refreshManagedTrialPaymentSnapshot) query.set("includeManagedTrialPaymentSnapshot", "1");
-          const stateResponse = await fetch(`/api/app-state?${query.toString()}`, { cache: "no-store" });
-          const stateBody = await stateResponse.json().catch(() => ({}));
+          const { response: stateResponse, body: receivedState } = await fetchJsonWithTimeout(fetch, `/api/app-state?${query.toString()}`, { cache: "no-store", signal });
+          const stateBody = receivedState ?? {};
           if (!stateResponse.ok) throw new Error(stateBody.error || "共享资料刷新失败");
           if (!Array.isArray(stateBody.rows)) throw new Error("共享资料刷新响应无效");
           const responseRows = stateBody.rows as RemoteStateRow[];
@@ -5663,35 +5654,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         } else if (!stopped && navigator.onLine) {
           reportSharedSync("synced", "已同步");
         }
-      } catch (error) {
-        nextDelayMs = errorDelayMs;
-        if (!stopped) {
-          clearManagedExamProjection();
-          clearManagedTrialPaymentProjection();
-          reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "同步暂时不可用");
-        }
-      } finally {
-        polling = false;
-        schedule(nextDelayMs);
-      }
-    };
-
-    const wake = () => {
-      if (stopped || document.hidden) return;
-      if (timeout !== null) {
-        window.clearTimeout(timeout);
-        timeout = null;
-      }
-      void poll();
-    };
+      },
+    });
+    const wake = () => { void poller.wake(); };
     const onVisible = () => { if (!document.hidden) wake(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", wake);
     window.addEventListener("online", wake);
-    void poll();
+    wake();
     return () => {
       stopped = true;
-      if (timeout !== null) window.clearTimeout(timeout);
+      poller.stop();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", wake);
       window.removeEventListener("online", wake);

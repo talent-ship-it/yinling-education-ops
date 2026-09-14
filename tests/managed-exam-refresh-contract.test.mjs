@@ -11,8 +11,8 @@ const [client, stateRoute, snapshotRoute, toDoList] = await Promise.all([
 
 test("the 15-second poll refreshes both authority rows and their one-snapshot projection", () => {
   const poll = client.slice(
-    client.indexOf("const activeDelayMs = 15_000"),
-    client.indexOf("const onKeyDown", client.indexOf("const activeDelayMs = 15_000")),
+    client.indexOf("const poller = createSharedStatePoller"),
+    client.indexOf("const onKeyDown", client.indexOf("const poller = createSharedStatePoller")),
   );
   assert.match(poll, /MANAGED_EXAM_AUTHORITY_ENTITIES\.forEach\(\(entity\) => requestedEntities\.add\(entity\)\)/);
   assert.match(poll, /includeManagedExamSnapshot/);

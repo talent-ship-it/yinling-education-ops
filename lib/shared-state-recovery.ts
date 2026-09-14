@@ -53,6 +53,9 @@ export async function fetchJsonWithTimeout<T = ReturnType<typeof JSON.parse>>(
   timeoutMs = SHARED_STATE_REQUEST_TIMEOUT_MS,
 ) {
   const controller = new AbortController();
+  const abort = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener("abort", abort, { once: true });
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(input, { ...init, signal: controller.signal });
@@ -63,6 +66,7 @@ export async function fetchJsonWithTimeout<T = ReturnType<typeof JSON.parse>>(
     return { response, body } as const;
   } finally {
     clearTimeout(timeoutId);
+    init.signal?.removeEventListener("abort", abort);
   }
 }
 
