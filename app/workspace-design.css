@@ -323,3 +323,47 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
 @media (hover:none) and (prefers-color-scheme:dark) {
   .app-shell :is(.primary-button,.new-button):hover { color:#102e29; }
 }
+
+/* Keep action columns stable when a task deliberately omits completion. */
+.app-shell .to-do-row { grid-template-columns:7px minmax(0,1fr) 120px; }
+.app-shell .to-do-row .task-row-actions { display:flex; flex-direction:column; align-items:stretch; width:120px; gap:6px; justify-self:end; }
+.app-shell .task-action-icons { display:grid; grid-template-columns:repeat(3,36px); gap:6px; }
+.app-shell .task-action-icons .task-note-button { grid-column:1; grid-row:1; }
+.app-shell .task-action-icons .cannot-do-button { grid-column:2; grid-row:1; }
+.app-shell .task-action-icons .complete-button { grid-column:3; grid-row:1; }
+.app-shell .task-action-icons :is(.deadline-edit-button,.reopen-task-button) { grid-column:2 / 4; grid-row:1; width:100%; min-width:0; }
+.app-shell .to-do-row .due-label { flex:none; margin:0; text-align:right; width:100%; }
+.app-shell .to-do-row .reply-button { flex:none; width:100%; }
+
+/* Grid tracks and their contents must both be allowed to shrink. */
+.app-shell .classroom-hub-layout { grid-template-columns:minmax(0,1fr) minmax(280px,32%); }
+.app-shell .classroom-room-list .classroom-grid-row { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) 80px; width:100%; min-width:0; box-sizing:border-box; }
+.app-shell .classroom-grid-row > span { min-width:0; }
+.app-shell .classroom-grid-row :is(strong,small) { white-space:normal; overflow-wrap:anywhere; }
+.app-shell .classroom-room-preview { min-width:0; overflow-wrap:anywhere; }
+.app-shell .classroom-room-preview .detail-heading { flex-wrap:wrap; }
+.app-shell .classroom-room-list .collection-row:focus-visible { outline-offset:-3px; }
+
+.app-shell .teacher-leave-panel { margin-bottom:24px; overflow:hidden; }
+.app-shell .teacher-leave-panel .panel-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; padding:20px; }
+.app-shell .teacher-leave-panel h2 { margin:0; }
+.app-shell .teacher-leave-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.app-shell .teacher-leave-body { padding:0 20px 20px; }
+.app-shell .teacher-leave-description { margin:0 0 20px; color:var(--muted); line-height:1.6; }
+.app-shell .teacher-leave-panel .form-grid { margin-bottom:20px; }
+.app-shell .teacher-leave-panel .record-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; padding:16px 0; }
+.app-shell .teacher-leave-panel .record-row > div { flex:1 1 240px; min-width:0; overflow-wrap:anywhere; }
+.app-shell .teacher-leave-panel .record-row p { margin:6px 0 0; color:var(--muted); }
+.app-shell .teacher-leave-empty { padding:28px 20px; text-align:center; background:var(--surface-muted); border:1px solid var(--line); border-radius:12px; }
+.app-shell .teacher-leave-empty p { margin:8px 0 0; color:var(--muted); }
+@media (max-width:1210px) {
+ .app-shell .classroom-hub-layout { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:760px) {
+ .app-shell .to-do-row { grid-template-columns:7px minmax(0,1fr); }
+ .app-shell .to-do-row .task-row-actions { grid-column:2; width:144px; }
+ .app-shell .task-action-icons { grid-template-columns:repeat(3,44px); }
+ .app-shell .classroom-room-list .collection-row.classroom-grid-row { grid-template-columns:minmax(0,1fr) 80px; }
+ .app-shell .teacher-leave-panel .panel-header { padding:16px; }
+ .app-shell .teacher-leave-body { padding:0 16px 16px; }
+}

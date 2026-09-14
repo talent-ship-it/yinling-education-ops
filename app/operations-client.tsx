@@ -8428,7 +8428,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </select>
           )}
           {scheduleMode === "week" ? <select className="filter-select" value={scheduleDensity} onChange={(event) => updateDisplayPreferences({ density: event.target.value as DisplayPreferences["density"] })} aria-label={englishSchedule ? "Week view density" : "周视图显示密度"}><option value="comfortable">{englishSchedule ? "Comfortable" : "放大显示"}</option><option value="compact">{englishSchedule ? "Compact" : "紧凑显示"}</option></select> : null}
-          <select className="filter-select" value={scheduleTimezone} onChange={(event) => { updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) }); setSchedulePage(1); }} aria-label={englishSchedule ? "Schedule timezone" : "排课显示时区"}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{englishSchedule ? `Display: ${option.en}` : `显示：${option.zh}`}</option>)}</select>
+          <select className="filter-select" value={scheduleTimezone} onChange={(event) => { updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) }); setSchedulePage(1); }} aria-label={englishSchedule ? "Schedule timezone" : "排课显示时区"}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{englishSchedule ? `Time zone: ${option.en}` : `时区：${option.zh}`}</option>)}</select>
           <select className="filter-select" value={scheduleTeacherFilter} onChange={(event) => { setScheduleTeacherFilter(event.target.value); setSchedulePage(1); }} aria-label={englishSchedule ? "Teacher schedule and availability" : "按老师查看课表与空余 AVA"}><option value="all">{englishSchedule ? "All teachers" : "全部老师"}</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select>
           <select className="filter-select" value={scheduleFilter} onChange={(event) => { setScheduleFilter(event.target.value); setSchedulePage(1); }} aria-label={englishSchedule ? "Schedule filter" : "排课筛选"}><option value="all">{englishSchedule ? "All lessons" : "全部课程"}</option><option value="pending">{englishSchedule ? "Pending" : "待确认"}</option><option value="trial">{englishSchedule ? "Trials only" : "仅试听"}</option><option value="dst">{englishSchedule ? "DST review" : "夏令时需复核"}</option></select>
         </div>
@@ -9013,7 +9013,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!selectedOperation) {
       return (
         <>
-          <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
         <ViewHeading
             eyebrow="异常管理"
             title="调课与代课"
@@ -9027,6 +9026,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </button>
             }
           />
+          <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
           <section className="panel collection-shell">
             <ViewTabs
               value={operationFilter}
@@ -9081,7 +9081,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       .filter((teacher): teacher is Teacher => Boolean(teacher));
     return (
       <>
-        <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
         <ViewHeading
           eyebrow="异常管理"
           title="调课与代课"
@@ -9095,6 +9094,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </button>
           }
         />
+        <TeacherLeavePanel onProcess={(request) => { clearTeacherAbsencePreview(); setOperationDraft({ type: "老师请假", teacherId: request.teacher_id, eventStart: request.start_date, eventEnd: request.end_date, detail: request.reason }); setModal("operation"); }} />
         <section className="panel collection-shell">
           <ViewTabs
             value={operationFilter}
