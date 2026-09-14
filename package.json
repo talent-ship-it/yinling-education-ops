@@ -9,8 +9,9 @@
     "dev": "node scripts/dev-fixed-port.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --import tsx --test tests/*.test.ts tests/*.test.tsx tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern .next"
+    "test": "npm run build && npm run test:unit",
+    "lint": "eslint . --ignore-pattern .next",
+    "test:unit": "node scripts/run-unit-tests.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.87.1",
