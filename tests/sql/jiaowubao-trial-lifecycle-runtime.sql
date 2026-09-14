@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 -- Run only in a disposable, empty LOCAL PostgreSQL database. All fixture
 -- objects/data are rolled back, so the same file can run repeatedly.

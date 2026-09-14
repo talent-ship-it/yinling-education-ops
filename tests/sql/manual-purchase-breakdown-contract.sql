@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 -- Run after applying 20260819101000_allow_manual_purchase_hours_breakdown.sql.
 -- This is a read-only contract check: it does not rewrite legacy/JWB data.
 do $contract$

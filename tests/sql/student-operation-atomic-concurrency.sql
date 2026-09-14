@@ -1,7 +1,8 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Disposable concurrency seam for the 20260821191021/22 lock contract.
--- Run after student-operation-atomic-runtime.sql has seeded a fresh local
+-- Run after student-operation-atomic-runtime.sql with -v fixture_keep_state=true has seeded a fresh local
 -- database. Set session-local `student_operation.dsn` to that disposable
 -- database DSN to enable dblink; without it this file is EXPLAIN-only and
 -- never contacts a remote database.
@@ -114,8 +115,11 @@ begin
   $sql$, secret, student_key_a, student_intent_a::text, 'Nixon');
 
   perform dblink_connect('student-op-a', dsn);
+  perform dblink_exec('student-op-a', pg_temp.disposable_database_assertion_sql());
   perform dblink_connect('student-op-b', dsn);
+  perform dblink_exec('student-op-b', pg_temp.disposable_database_assertion_sql());
   perform dblink_connect('student-op-replay', dsn);
+  perform dblink_exec('student-op-replay', pg_temp.disposable_database_assertion_sql());
 
   -- A owns the rows first. B is sent while A owns them and therefore waits;
   -- A's command commits v+1, then B sees the upgraded current rows and its
@@ -210,8 +214,11 @@ begin
   $sql$, secret, legacy_key_a, legacy_intent_a::text, 'Nixon');
 
   perform dblink_connect('legacy-op-a', dsn);
+  perform dblink_exec('legacy-op-a', pg_temp.disposable_database_assertion_sql());
   perform dblink_connect('legacy-op-b', dsn);
+  perform dblink_exec('legacy-op-b', pg_temp.disposable_database_assertion_sql());
   perform dblink_connect('legacy-op-replay', dsn);
+  perform dblink_exec('legacy-op-replay', pg_temp.disposable_database_assertion_sql());
   perform dblink_exec('legacy-op-a', 'begin');
   select value into lock_receipt
     from dblink('legacy-op-a', $sql$

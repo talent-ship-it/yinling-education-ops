@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 begin;
 
 \ir ../../supabase/migrations/20260819000400_archive_referenced_student_jwb_facts.sql

@@ -1,4 +1,7 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
+
+begin;
 
 -- Disposable local execution contract for 20260828000200. Never run this
 -- fixture against production.
@@ -425,3 +428,5 @@ end;
 $trial_policy_idempotency_runtime$;
 
 select 'trial_manual_lp_atomic_runtime_ok' as result;
+
+rollback;

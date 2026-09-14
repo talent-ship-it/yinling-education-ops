@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Disposable PostgreSQL 16 execution fixture for migration 20260819101900.
 drop schema if exists internal cascade;
@@ -631,8 +632,11 @@ begin
   from public.ops_state;
 
   perform extensions.dblink_connect('booking_mix_writer', connection_string);
+  perform extensions.dblink_exec('booking_mix_writer', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_connect('booking_mix_reader', connection_string);
+  perform extensions.dblink_exec('booking_mix_reader', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_connect('booking_mix_probe', connection_string);
+  perform extensions.dblink_exec('booking_mix_probe', pg_temp.disposable_database_assertion_sql());
   select pid into reader_pid
   from extensions.dblink('booking_mix_reader', 'select pg_backend_pid()') result(pid integer);
 

@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Local-only lifecycle contract for resumable direct Jiaowubao staging.

@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Disposable runtime contract for migration 20260819101800.
 --
