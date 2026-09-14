@@ -1,4 +1,5 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Disposable runtime fixture for
 -- 20260821200000_record_pinned_jwb_live_teacher_subject_observations.sql.

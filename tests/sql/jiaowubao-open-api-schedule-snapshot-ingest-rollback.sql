@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 -- Local disposable-Postgres fixture. Run after applying the migration in a
 -- transaction; every write below is rolled back, including the abort cleanup.
 begin;

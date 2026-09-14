@@ -195,7 +195,7 @@ test("client polls and mutates payment lifecycle without optimistic task writes"
     read("lib/trial-payment-pending.ts"),
     read("lib/managed-trial-payment.ts"),
   ]);
-  assert.match(client, /const activeDelayMs = 15_000/);
+  assert.match(client, /createSharedStatePoller/);
   assert.match(client, /includeManagedTrialPaymentSnapshot/);
   assert.match(client, /parseManagedTrialPaymentAuthorityVersions\(responseRows\)/);
   assert.match(client, /fetchJsonWithTimeout\(fetch, "\/api\/tasks\/trial-payment"/);

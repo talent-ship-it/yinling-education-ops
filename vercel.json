@@ -1,3 +1,4 @@
 {
-  "crons": []
+  "crons": [],
+  "buildCommand": "npm run lint && npm test"
 }

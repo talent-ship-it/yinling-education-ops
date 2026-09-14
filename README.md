@@ -26,14 +26,27 @@ The app is a Next.js internal operations site backed by Supabase shared state. E
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run dev
 npm run lint
-npm run build
-node --test tests/rendered-html.test.mjs
+npm test
 ```
 
 The local dev server uses a fixed port through `scripts/dev-fixed-port.mjs`.
+`npm test` builds the app and then runs all unit/contract tests. Use
+`npm run test:unit` to rerun tests against an existing build. The test runner
+uses UTC and excludes inherited deployment credentials; tests supply their
+own synthetic fixtures.
+
+GitHub Actions runs install, lint, build, the full test suite, and a production
+dependency audit on pull requests and pushes to `main` or `codex/**`.
+The repository's `vercel.json` also requires lint and the complete build/test
+command to succeed before a deployment can become ready. Its
+[build command overrides the dashboard setting](https://vercel.com/docs/project-configuration/vercel-json#buildcommand).
+Required GitHub status checks still depend on repository plan and protection
+settings; this workflow does not change those settings. SQL runtime fixtures
+run separately on explicitly marked disposable databases; see
+[their instructions](tests/sql/README.md).
 
 ## Required Environment
 

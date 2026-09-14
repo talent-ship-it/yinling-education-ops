@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Local rollback fixture for the normalized JWB student-source protocol.

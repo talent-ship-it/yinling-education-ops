@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Run against a disposable database at the actual 20260818000500 predecessor

@@ -9,14 +9,15 @@
     "dev": "node scripts/dev-fixed-port.mjs",
     "build": "next build",
     "start": "next start",
-    "test": "npm run build && node --import tsx --test tests/*.test.ts tests/*.test.tsx tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern .next"
+    "test": "npm run build && npm run test:unit",
+    "lint": "eslint . --ignore-pattern .next",
+    "test:unit": "node scripts/run-unit-tests.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.87.1",
     "fast-xml-parser": "^5.10.1",
     "lucide-react": "^1.25.0",
-    "next": "16.3.3",
+    "next": "16.3.5",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-loading-skeleton": "3.5.0"
@@ -27,7 +28,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.3.3",
+    "eslint-config-next": "16.3.5",
     "tailwindcss": "4.2.1",
     "tsx": "^4.23.1",
     "typescript": "5.9.3"

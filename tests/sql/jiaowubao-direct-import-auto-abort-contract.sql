@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Local-only contract for the guarded authority-drift auto-abort helper. It

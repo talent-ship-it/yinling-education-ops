@@ -1,4 +1,7 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
+
+begin;
 
 drop schema if exists internal cascade;
 drop schema if exists extensions cascade;
@@ -128,3 +131,5 @@ begin
   end if;
 end;
 $$;
+
+rollback;

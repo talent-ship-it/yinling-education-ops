@@ -210,8 +210,11 @@ immutable ledger 为准。
 node --import tsx --test tests/jiaowubao-trial-lifecycle.test.ts \
   tests/jiaowubao-trial-sync.test.ts tests/jiaowubao-trial-auto-sync.test.ts \
   tests/jiaowubao-trial-sync-contract.test.mjs tests/trial-operations.test.ts
+createdb -h /LOCAL/POSTGRES/SOCKET -p LOCAL_PORT il_fixture_jwb_trial
 psql -X -v ON_ERROR_STOP=1 -h /LOCAL/POSTGRES/SOCKET -p LOCAL_PORT \
-  -d EMPTY_LOCAL_DATABASE -f tests/sql/jiaowubao-trial-lifecycle-runtime.sql
+  -d il_fixture_jwb_trial -c "COMMENT ON DATABASE il_fixture_jwb_trial IS 'insiderleads-disposable-fixture'"
+psql -X -v ON_ERROR_STOP=1 -h /LOCAL/POSTGRES/SOCKET -p LOCAL_PORT \
+  -d il_fixture_jwb_trial -f tests/sql/jiaowubao-trial-lifecycle-runtime.sql
 ```
 
 发布仍需遵循项目的生产数据库授权和 GitHub → Vercel 发布流程；本修复没有执行

@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Disposable execution contract for the manual legacy-task deadline repair.

@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 
 -- Local-only 005 -> 007 compatibility and scale regression. It creates one

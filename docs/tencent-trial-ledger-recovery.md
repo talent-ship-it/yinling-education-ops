@@ -52,7 +52,9 @@ Run the real migration and its recovery fixture in an empty disposable local
 PostgreSQL database; the fixture transaction rolls back all objects:
 
 ```sh
-psql -X -v ON_ERROR_STOP=1 -d DISPOSABLE_DATABASE -f tests/sql/tencent-trial-ledger-recovery-runtime.sql
+createdb il_fixture_tencent_trial
+psql -X -v ON_ERROR_STOP=1 -d il_fixture_tencent_trial -c "COMMENT ON DATABASE il_fixture_tencent_trial IS 'insiderleads-disposable-fixture'"
+psql -X -v ON_ERROR_STOP=1 -d il_fixture_tencent_trial -f tests/sql/tencent-trial-ledger-recovery-runtime.sql
 node --import tsx --test tests/tencent-trial-ledger*.test.ts tests/tencent-trial-ledger*.test.mjs
 ```
 

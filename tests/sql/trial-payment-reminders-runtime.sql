@@ -1,7 +1,8 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Compile 191020 against the real 191019 migration seam, then exercise all
--- payment reminder writes in a disposable PostgreSQL transaction fixture.
+-- payment reminder writes in a dedicated disposable PostgreSQL database (commits fixture state).
 \ir booking-projection-atomic-runtime.sql
 \ir ../../supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql
 
@@ -458,8 +459,11 @@ declare
   second_audit uuid;
 begin
   perform extensions.dblink_connect('trial_payment_holder', connection_string);
+  perform extensions.dblink_exec('trial_payment_holder', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_connect('trial_payment_first', connection_string);
+  perform extensions.dblink_exec('trial_payment_first', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_connect('trial_payment_second', connection_string);
+  perform extensions.dblink_exec('trial_payment_second', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_exec('trial_payment_holder', 'begin');
   perform held.entity from extensions.dblink(
     'trial_payment_holder',

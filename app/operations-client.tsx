@@ -1,5 +1,7 @@
 "use client";
 
+import { createSharedStatePoller } from "@/lib/shared-state-poller";
+
 import { isLessonDuration } from "../lib/lesson-duration";
 import { LessonDurationInput } from "./lesson-duration-input";
 import { useWorkspaceLocation } from "./use-workspace-location";
@@ -121,6 +123,8 @@ import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
   DEMO_STAFF_USERS,
+  ASSIGNABLE_DEMO_STAFF_USERS,
+  isRetiredOperationsIdentity,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
@@ -362,7 +366,6 @@ import {
 } from "@/lib/teacher-availability";
 import {
   fetchJsonWithTimeout,
-  fetchWithTimeout,
   recoverSharedStateAfterUnknownWrite,
   SHARED_STATE_REQUEST_TIMEOUT_MS,
   type SharedStateRow,
@@ -1469,7 +1472,7 @@ function useSharedState<T>(
           updated_at: "",
           updated_by: actor,
         };
-        const response = await fetchWithTimeout(fetch, "/api/app-state", {
+        const { response, body: receivedBody } = await fetchJsonWithTimeout(fetch, "/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1479,7 +1482,7 @@ function useSharedState<T>(
             ...(scheduledScopeVersions ? { scopeVersions: scheduledScopeVersions } : {}),
           }),
         }, SHARED_STATE_REQUEST_TIMEOUT_MS);
-        const body = await response.json().catch(() => ({}));
+        const body = receivedBody ?? {};
 
         if (scheduledGeneration !== remoteGenerationRef.current) return;
 
@@ -1630,9 +1633,7 @@ function useSharedState<T>(
         updated_by: actor,
       };
       sentCommittedBaseline = baseline;
-      let response: Response;
-      try {
-        response = await fetchWithTimeout(fetch, "/api/app-state", {
+      const received = await fetchJsonWithTimeout(fetch, "/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1642,10 +1643,8 @@ function useSharedState<T>(
             ...(scopeVersionsKey !== "null" ? { scopeVersions: JSON.parse(scopeVersionsKey) } : {}),
           }),
         }, SHARED_STATE_REQUEST_TIMEOUT_MS);
-      } catch (error) {
-        throw error;
-      }
-      const body = await response.json().catch(() => ({}));
+      const { response, body: receivedBody } = received;
+      const body = receivedBody ?? {};
 
       if (response.status === 409 && body.current) {
         const current = body.current as RemoteStateRow<T>;
@@ -1815,7 +1814,7 @@ const BOOKING_MUTATION_CLIENT_TIMEOUT_MS = 20_000;
 
 async function classroomFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   try {
-    return await fetchWithTimeout(fetch, input, init, CLASSROOM_CLIENT_TIMEOUT_MS);
+    return await fetchJsonWithTimeout(fetch, input, init, CLASSROOM_CLIENT_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("在线教室请求超时，请检查网络后重试；系统会复用同一课堂。");
@@ -1826,7 +1825,7 @@ async function classroomFetch(input: RequestInfo | URL, init: RequestInit = {}) 
 
 async function bookingMutationFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   try {
-    return await fetchWithTimeout(fetch, input, init, BOOKING_MUTATION_CLIENT_TIMEOUT_MS);
+    return await fetchJsonWithTimeout(fetch, input, init, BOOKING_MUTATION_CLIENT_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("排课命令请求超时，请稍后重试；系统会复用同一命令。");
@@ -4235,7 +4234,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
-  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, "思佳", "Tiffany", "Abby", "Tara"])).filter(Boolean).sort(), [currentOperator, ownerOptions]);
+  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, DEMO_LIMITED_ADMIN_USER, ...ASSIGNABLE_DEMO_STAFF_USERS])).filter((owner) => Boolean(owner) && !isRetiredOperationsIdentity(owner)).sort(), [currentOperator, ownerOptions]);
   const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
   const jiaowubaoAuthorityStatus = useMemo(() => findJiaowubaoAuthorityStatus(syncSources), [syncSources]);
   const activeSources = sourceGroups.active;
@@ -5536,27 +5535,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   useEffect(() => {
     let stopped = false;
-    let polling = false;
-    let timeout: number | null = null;
-    const activeDelayMs = 15_000;
-    const errorDelayMs = 60_000;
-
-    const schedule = (delayMs: number) => {
-      if (stopped || document.hidden) return;
-      if (timeout !== null) window.clearTimeout(timeout);
-      timeout = window.setTimeout(() => {
-        timeout = null;
-        void poll();
-      }, delayMs);
-    };
-
-    const poll = async () => {
-      if (stopped || polling || document.hidden) return;
-      polling = true;
-      let nextDelayMs = activeDelayMs;
-      try {
-        const versionResponse = await fetch("/api/app-state?mode=versions", { cache: "no-store" });
-        const versionBody = await versionResponse.json().catch(() => ({}));
+    const poller = createSharedStatePoller({
+      canRun: () => !document.hidden,
+      onError: (error) => {
+        clearManagedExamProjection();
+        clearManagedTrialPaymentProjection();
+        reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "同步暂时不可用");
+      },
+      run: async (signal) => {
+        const { response: versionResponse, body: receivedVersions } = await fetchJsonWithTimeout(fetch, "/api/app-state?mode=versions", { cache: "no-store", signal });
+        const versionBody = receivedVersions ?? {};
         if (!versionResponse.ok) throw new Error(versionBody.error || "共享状态检查失败");
         if (!Array.isArray(versionBody.versions)) throw new Error("共享状态版本响应无效");
         const versionRows = versionBody.versions as RemoteStateRow[];
@@ -5614,8 +5602,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           const query = new URLSearchParams({ entities: [...requestedEntities].join(",") });
           if (refreshManagedExamSnapshot) query.set("includeManagedExamSnapshot", "1");
           if (refreshManagedTrialPaymentSnapshot) query.set("includeManagedTrialPaymentSnapshot", "1");
-          const stateResponse = await fetch(`/api/app-state?${query.toString()}`, { cache: "no-store" });
-          const stateBody = await stateResponse.json().catch(() => ({}));
+          const { response: stateResponse, body: receivedState } = await fetchJsonWithTimeout(fetch, `/api/app-state?${query.toString()}`, { cache: "no-store", signal });
+          const stateBody = receivedState ?? {};
           if (!stateResponse.ok) throw new Error(stateBody.error || "共享资料刷新失败");
           if (!Array.isArray(stateBody.rows)) throw new Error("共享资料刷新响应无效");
           const responseRows = stateBody.rows as RemoteStateRow[];
@@ -5668,35 +5656,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         } else if (!stopped && navigator.onLine) {
           reportSharedSync("synced", "已同步");
         }
-      } catch (error) {
-        nextDelayMs = errorDelayMs;
-        if (!stopped) {
-          clearManagedExamProjection();
-          clearManagedTrialPaymentProjection();
-          reportSharedSync(navigator.onLine ? "error" : "offline", error instanceof Error ? error.message : "同步暂时不可用");
-        }
-      } finally {
-        polling = false;
-        schedule(nextDelayMs);
-      }
-    };
-
-    const wake = () => {
-      if (stopped || document.hidden) return;
-      if (timeout !== null) {
-        window.clearTimeout(timeout);
-        timeout = null;
-      }
-      void poll();
-    };
+      },
+    });
+    const wake = () => { void poller.wake(); };
     const onVisible = () => { if (!document.hidden) wake(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", wake);
     window.addEventListener("online", wake);
-    void poll();
+    wake();
     return () => {
       stopped = true;
-      if (timeout !== null) window.clearTimeout(timeout);
+      poller.stop();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", wake);
       window.removeEventListener("online", wake);
@@ -6210,11 +6180,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const commandKey = crypto.randomUUID();
     setTrialLedgerSaving((current) => ({ ...current, [savingKey]: true }));
     try {
-      let response: Response | undefined;
+      let received: Awaited<ReturnType<typeof fetchJsonWithTimeout>> | undefined;
       let lastNetworkError: unknown;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          response = await fetchWithTimeout(fetch, "/api/operations/trial-ledger", {
+          received = await fetchJsonWithTimeout(fetch, "/api/operations/trial-ledger", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -6230,8 +6200,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           lastNetworkError = error;
         }
       }
-      if (!response) throw lastNetworkError instanceof Error ? lastNetworkError : new Error("试听台账请求失败");
-      const body = await response.json().catch(() => ({})) as {
+      if (!received) throw lastNetworkError instanceof Error ? lastNetworkError : new Error("试听台账请求失败");
+      const { response, body: receivedBody } = received;
+      const body = (receivedBody ?? {}) as {
         error?: string;
         lpItemsRow?: RemoteStateRow<LpItem[]>;
       };
@@ -6343,12 +6314,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
     bookingProjectionBusyRef.current = true;
     try {
-      const response = await bookingMutationFetch("/api/bookings/mutate", {
+      const { response, body: receivedBody } = await bookingMutationFetch("/api/bookings/mutate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: pending.command,
       });
-      const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      const body = (receivedBody ?? {}) as Record<string, unknown>;
       if (!response.ok || body.committed !== true) {
         if (response.status === 409) {
           bookingProjectionCommandKeysRef.current = removeBookingProjectionPendingCommand(
@@ -7490,23 +7461,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const classroomRequest = async (body: { action: "create" | "teacher-join" | "student-link" | "end"; bookingId: string; occurrenceId: string; sourceDate: string }) => {
-    const response = await classroomFetch("/api/classroom", {
+    const { response, body: receivedBody } = await classroomFetch("/api/classroom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json().catch(() => ({}));
+    const result = receivedBody ?? {};
     if (!response.ok) throw new Error(result.error || "在线教室操作失败");
     return result;
   };
 
   const temporaryClassroomRequest = async (body: Record<string, unknown>) => {
-    const response = await classroomFetch("/api/classroom/temporary", {
+    const { response, body: receivedBody } = await classroomFetch("/api/classroom/temporary", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json().catch(() => ({}));
+    const result = receivedBody ?? {};
     if (!response.ok) throw new Error(result.error || "临时课堂创建失败");
     return result;
   };
@@ -7529,8 +7500,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const refreshClassroom = async (booking: BookingOccurrence, quiet = false) => {
     try {
-      const response = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}&occurrenceId=${encodeURIComponent(booking.occurrenceKey)}&sourceDate=${encodeURIComponent(booking.sourceDate)}`, { cache: "no-store" });
-      const result = await response.json().catch(() => ({}));
+      const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}&occurrenceId=${encodeURIComponent(booking.occurrenceKey)}&sourceDate=${encodeURIComponent(booking.sourceDate)}`, { cache: "no-store" });
+      const result = receivedBody ?? {};
       if (!response.ok) throw new Error(result.error || "无法读取教室状态");
       const recordings = Array.isArray(result.recordings) ? result.recordings : [];
       const runtime: ClassroomRuntime = { ...result.status, recordings };
@@ -12855,8 +12826,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const task: Task = {
       id: id("TSK"),
       title,
-      owner: String(data.get("owner") ?? "思佳"),
-      ...taskRecipients(String(data.get("owner") ?? "思佳")),
+      owner: String(data.get("owner") ?? DEMO_LIMITED_ADMIN_USER),
+      ...taskRecipients(String(data.get("owner") ?? DEMO_LIMITED_ADMIN_USER)),
       studentId,
       due: formatInstant(parsedDue, "Australia/Melbourne", displayPreferences),
       dueAt: parsedDue.toISOString(),
@@ -13422,9 +13393,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     void (async () => {
       try {
         for (const entry of pending.values()) {
-          let response: Response;
+          let received: Awaited<ReturnType<typeof bookingMutationFetch>>;
           try {
-            response = await bookingMutationFetch("/api/bookings/mutate", {
+            received = await bookingMutationFetch("/api/bookings/mutate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: entry.command,
@@ -13432,7 +13403,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           } catch {
             break;
           }
-          const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+          const { response, body: receivedBody } = received;
+          const body = (receivedBody ?? {}) as Record<string, unknown>;
           if (cancelled) return;
           if (response.ok && body.committed === true
             && body.bookingRow && body.studentRow && body.taskRow && body.teacherRow) {
@@ -14610,7 +14582,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>学生姓名<input name="name" data-dialog-autofocus="true" defaultValue={studentModalTargetStudent.name} /></label>
           <label>课程 / 年级<input name="course" defaultValue={studentModalTargetStudent.course} required /></label>
           <label>当前年级<input name="grade" defaultValue={studentModalTargetStudent.grade ?? ""} /></label>
-          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
+          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{!teamOwnerOptions.includes(studentModalTargetStudent.owner) && <option value={studentModalTargetStudent.owner} disabled>{studentModalTargetStudent.owner}（已归档）</option>}{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
           <label>规划老师<select name="planner" defaultValue={studentModalTargetStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label>
           <label>所在地<select name="location" defaultValue={studentModalTargetStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(studentModalTargetStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>

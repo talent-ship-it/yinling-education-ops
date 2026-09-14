@@ -1,4 +1,7 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
+
+begin;
 
 -- These non-login roles are only migration-grant fixtures on a disposable
 -- local cluster. The production roles already exist in the target project.
@@ -91,4 +94,13 @@ begin
   begin select * into replay from public.get_legacy_operation_task_command_result('student-operation-fixture-secret','operation-task-create:123e4567-e89b-42d3-a456-426614174000',op_intent,'Forged Actor'); exception when unique_violation then null; end;
 end;
 $runtime$;
+-- Opt in only when seeding the separate dblink concurrency fixture.
+\if :{?fixture_keep_state}
+\else
+\set fixture_keep_state false
+\endif
+\if :fixture_keep_state
+commit;
+\else
 rollback;
+\endif

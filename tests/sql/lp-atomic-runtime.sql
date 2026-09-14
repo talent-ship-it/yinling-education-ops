@@ -1,10 +1,11 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
 
 -- Disposable local execution contract for migration 20260819101600.
 -- It rebuilds only fixture schemas in the selected database; never run this
 -- against production. Example:
---   createdb lp_atomic_fixture
---   psql lp_atomic_fixture -f tests/sql/lp-atomic-runtime.sql
+--   See tests/sql/README.md for the mandatory database name and marker.
+--   Concurrency fixtures commit state and require a dedicated database.
 
 drop schema if exists internal cascade;
 drop schema if exists extensions cascade;
@@ -104,6 +105,7 @@ begin
     current_setting('port'), current_database(), current_user
   );
   perform extensions.dblink_connect('lp_attachment_lock', lock_connection);
+  perform extensions.dblink_exec('lp_attachment_lock', pg_temp.disposable_database_assertion_sql());
   perform extensions.dblink_send_query('lp_attachment_lock', 'select internal.lp_fixture_attachment_lock()');
   perform pg_sleep(0.05);
   perform set_config('deadlock_timeout', '100ms', true);

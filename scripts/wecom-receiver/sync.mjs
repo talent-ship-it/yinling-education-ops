@@ -93,20 +93,28 @@ async function readState(file) {
   }
 }
 
-async function postBatch({ endpoint, token, records, fetchImpl }) {
-  const response = await fetchImpl(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ records }),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.outcome !== "committed") {
-    throw new Error(`archive_http_${response.status}`);
+async function postBatch({ endpoint, token, records, fetchImpl, requestTimeoutMs }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ records }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (controller.signal.aborted) throw new Error("archive_request_timeout");
+    if (!response.ok || payload?.outcome !== "committed") {
+      throw new Error(`archive_http_${response.status}`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
   }
-  return payload;
 }
 
 export async function syncReceiverMessages({
@@ -115,7 +123,11 @@ export async function syncReceiverMessages({
   token = process.env.WECOM_ARCHIVE_BRIDGE_TOKEN,
   startedAt = process.env.WECOM_ARCHIVE_STARTED_AT,
   fetchImpl = fetch,
+  requestTimeoutMs = 30_000,
 } = {}) {
+  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0 || requestTimeoutMs > 60_000) {
+    throw new Error("invalid_request_timeout");
+  }
   const ingestUrl = required("WECOM_BOT_INGEST_URL", endpoint);
   const bridgeToken = required("WECOM_ARCHIVE_BRIDGE_TOKEN", token);
   const cutoffText = required("WECOM_ARCHIVE_STARTED_AT", startedAt);
@@ -187,7 +199,7 @@ export async function syncReceiverMessages({
     }
 
     try {
-      const result = await postBatch({ endpoint: ingestUrl, token: bridgeToken, records: batch, fetchImpl });
+      const result = await postBatch({ endpoint: ingestUrl, token: bridgeToken, records: batch, fetchImpl, requestTimeoutMs });
       summary.inserted += Number(result.inserted) || 0;
       summary.promoted += Number(result.promoted) || 0;
       summary.duplicates += Number(result.duplicates) || 0;

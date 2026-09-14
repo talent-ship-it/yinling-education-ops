@@ -53,9 +53,30 @@ test("JSON timeout remains active after response headers arrive", async () => {
     }),
   }) as Response;
 
-  const result = await fetchJsonWithTimeout(fetchImpl, "/api/tasks/trial-payment", { method: "POST" }, 5);
+  await assert.rejects(fetchJsonWithTimeout(fetchImpl, "/api/tasks/trial-payment", { method: "POST" }, 5), /body timeout/);
   assert.equal(aborted, true);
-  assert.equal(result.body, null);
+});
+
+test("JSON response deadline rejects a stalled body after successful headers", async () => {
+  const fetchImpl: SharedStateFetch = async (_input, init) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"rows":'));
+      init?.signal?.addEventListener("abort", () => controller.error(new DOMException("Body timed out", "AbortError")), { once: true });
+    },
+  }), { status: 200 });
+  await assert.rejects(fetchJsonWithTimeout(fetchImpl, "/api/app-state", { method: "PUT" }, 5), { name: "AbortError" });
+  const recovered = await recoverSharedStateAfterUnknownWrite({ entity: "tasks", committedBaseline: baseline, fetchImpl, timeoutMs: 5 });
+  assert.equal(recovered.outcome, "baseline");
+  assert.deepEqual(recovered.row, baseline);
+});
+
+test("JSON response preserves status, headers and the body for callers", async () => {
+  const original = response({ rows: [baseline] }, 409);
+  const { response: received, body } = await fetchJsonWithTimeout(async () => original, "/api/app-state", {}, 50);
+  assert.equal(received, original);
+  assert.equal(received.status, 409);
+  assert.equal(received.headers.get("content-type"), "application/json");
+  assert.deepEqual(body, { rows: [baseline] });
 });
 
 test("network timeout returns the committed baseline without retrying the PUT", async () => {

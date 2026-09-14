@@ -1,4 +1,7 @@
 \set ON_ERROR_STOP on
+\ir assert-disposable-database.sql
+
+begin;
 
 -- Disposable local PostgreSQL fixture only.  Run against a fresh local
 -- database; the final rollback leaves no state behind and no production
@@ -80,7 +83,6 @@ insert into public.ops_state(entity, payload, version, updated_by) values
      "category":"续课","title":"Fixture renewal"}
   ]', 1, 'fixture');
 
-begin;
 do $runtime$
 declare
   intent jsonb := jsonb_build_object(

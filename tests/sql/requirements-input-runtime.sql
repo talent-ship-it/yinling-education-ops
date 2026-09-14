@@ -1,3 +1,4 @@
+\ir assert-disposable-database.sql
 \set ON_ERROR_STOP on
 -- Synthetic local-only assertions; never execute against production.
 begin;

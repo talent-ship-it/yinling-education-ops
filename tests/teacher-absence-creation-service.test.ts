@@ -199,3 +199,10 @@ test("substitute lessons are affected, define LP history, and block a busy candi
   assert.deepEqual(prepared.affectedGroups[0].candidateTeacherIds, []);
   assert.equal(prepared.tasks.find((task) => task.ruleKey?.endsWith(":lp-handover"))?.due, "2026-09-15 18:00");
 });
+
+test("absence management confirmation routes to teaching control", () => {
+  const prepared = prepareTeacherAbsenceCreation({ command: parseTeacherAbsenceCreationCommand(command), rows: rows(), actor: "Nixon", role: "admin", fullAdmin: true, now: new Date("2026-09-10T00:00:00.000Z") });
+  const confirmation = prepared.tasks.find((task) => task.ruleKey?.endsWith(":candidate-confirm"));
+  assert.equal(confirmation?.owner, "Ops Admin");
+  assert.ok(prepared.tasks.every((task) => task.owner !== "思佳"));
+});

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { OpsStateRow } from "@/lib/ops-store";
 import { displayTimezoneOptions } from "@/lib/display-preferences";
 import { resolveStudentDisplayName } from "@/lib/student-intake";
-import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS, normaliseDemoUserName } from "@/lib/demo-users";
+import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER, DEMO_STAFF_USERS, isRetiredOperationsIdentity, normaliseDemoUserName } from "@/lib/demo-users";
 
 type Value = Record<string, unknown>;
 const COMMAND = /^student-create:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -86,6 +86,9 @@ export function canonicalizeStudentCreationCommand(command: StudentCreationComma
 
 /** Apply mutable current actor/owner authorization only on a ledger miss. */
 export function authorizeStudentCreationCommand(command: StudentCreationCommand, actor: string, elevated: boolean): StudentCreationCommand {
+  if (isRetiredOperationsIdentity(command.studentFields.owner)) {
+    fail("scope_forbidden", "已归档账号不能接收新学生，请选择在职负责人。");
+  }
   if (!elevated && normaliseDemoUserName(command.studentFields.owner) !== normaliseDemoUserName(actor)) {
     fail("scope_forbidden", "教务账号只能为自己负责的学生建档。");
   }
