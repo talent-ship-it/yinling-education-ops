@@ -46,7 +46,7 @@ export async function fetchWithTimeout(
 }
 
 /** Keeps the same abort deadline active until the response body is consumed. */
-export async function fetchJsonWithTimeout<T = unknown>(
+export async function fetchJsonWithTimeout<T = ReturnType<typeof JSON.parse>>(
   fetchImpl: SharedStateFetch,
   input: RequestInfo | URL,
   init: RequestInit,
@@ -56,7 +56,10 @@ export async function fetchJsonWithTimeout<T = unknown>(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(input, { ...init, signal: controller.signal });
-    const body = await response.json().catch(() => null) as T | null;
+    const body = await response.json().catch((error: unknown) => {
+      if (controller.signal.aborted) throw error;
+      return null;
+    }) as T | null;
     return { response, body } as const;
   } finally {
     clearTimeout(timeoutId);
@@ -77,13 +80,12 @@ export async function recoverSharedStateAfterUnknownWrite<T>(input: Readonly<{
   timeoutMs?: number;
 }>): Promise<SharedStateRecoveryResult<T>> {
   try {
-    const response = await fetchWithTimeout(
+    const { response, body } = await fetchJsonWithTimeout<{ rows?: unknown; error?: unknown }>(
       input.fetchImpl,
       `/api/app-state?entities=${encodeURIComponent(input.entity)}`,
       { cache: "no-store" },
       input.timeoutMs,
     );
-    const body = await response.json().catch(() => null) as { rows?: unknown; error?: unknown } | null;
     if (!response.ok) throw new Error(body && "error" in body && typeof body.error === "string" ? body.error : `${input.entity} 权威状态读取失败`);
     const row = Array.isArray(body?.rows) ? body.rows.find((candidate) => validRow<T>(candidate, input.entity)) : undefined;
     if (!validRow<T>(row, input.entity) || row.version < input.committedBaseline.version) {

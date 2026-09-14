@@ -15,7 +15,7 @@ test("generic shared writes recover unknown results from a complete authoritativ
   assert.match(helper, /outcome: "authoritative"/);
   assert.match(helper, /outcome: "baseline"/);
   assert.match(hook, /sentCommittedBaseline/);
-  assert.match(hook, /fetchWithTimeout\(fetch, "\/api\/app-state"/);
+  assert.match(hook, /fetchJsonWithTimeout\(fetch, "\/api\/app-state"/);
   assert.match(hook, /recoverSharedStateAfterUnknownWrite\(/);
   assert.match(hook, /committedBaseline: sentCommittedBaseline/);
   assert.match(hook, /if \(body\.accessChanged \|\| current\.version <= versionRef\.current\) \{\s*throw new Error/);

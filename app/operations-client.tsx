@@ -362,7 +362,6 @@ import {
 } from "@/lib/teacher-availability";
 import {
   fetchJsonWithTimeout,
-  fetchWithTimeout,
   recoverSharedStateAfterUnknownWrite,
   SHARED_STATE_REQUEST_TIMEOUT_MS,
   type SharedStateRow,
@@ -1469,7 +1468,7 @@ function useSharedState<T>(
           updated_at: "",
           updated_by: actor,
         };
-        const response = await fetchWithTimeout(fetch, "/api/app-state", {
+        const { response, body: receivedBody } = await fetchJsonWithTimeout(fetch, "/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1479,7 +1478,7 @@ function useSharedState<T>(
             ...(scheduledScopeVersions ? { scopeVersions: scheduledScopeVersions } : {}),
           }),
         }, SHARED_STATE_REQUEST_TIMEOUT_MS);
-        const body = await response.json().catch(() => ({}));
+        const body = receivedBody ?? {};
 
         if (scheduledGeneration !== remoteGenerationRef.current) return;
 
@@ -1630,9 +1629,7 @@ function useSharedState<T>(
         updated_by: actor,
       };
       sentCommittedBaseline = baseline;
-      let response: Response;
-      try {
-        response = await fetchWithTimeout(fetch, "/api/app-state", {
+      const received = await fetchJsonWithTimeout(fetch, "/api/app-state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1642,10 +1639,8 @@ function useSharedState<T>(
             ...(scopeVersionsKey !== "null" ? { scopeVersions: JSON.parse(scopeVersionsKey) } : {}),
           }),
         }, SHARED_STATE_REQUEST_TIMEOUT_MS);
-      } catch (error) {
-        throw error;
-      }
-      const body = await response.json().catch(() => ({}));
+      const { response, body: receivedBody } = received;
+      const body = receivedBody ?? {};
 
       if (response.status === 409 && body.current) {
         const current = body.current as RemoteStateRow<T>;
@@ -1815,7 +1810,7 @@ const BOOKING_MUTATION_CLIENT_TIMEOUT_MS = 20_000;
 
 async function classroomFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   try {
-    return await fetchWithTimeout(fetch, input, init, CLASSROOM_CLIENT_TIMEOUT_MS);
+    return await fetchJsonWithTimeout(fetch, input, init, CLASSROOM_CLIENT_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("在线教室请求超时，请检查网络后重试；系统会复用同一课堂。");
@@ -1826,7 +1821,7 @@ async function classroomFetch(input: RequestInfo | URL, init: RequestInit = {}) 
 
 async function bookingMutationFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   try {
-    return await fetchWithTimeout(fetch, input, init, BOOKING_MUTATION_CLIENT_TIMEOUT_MS);
+    return await fetchJsonWithTimeout(fetch, input, init, BOOKING_MUTATION_CLIENT_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("排课命令请求超时，请稍后重试；系统会复用同一命令。");
@@ -6210,11 +6205,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const commandKey = crypto.randomUUID();
     setTrialLedgerSaving((current) => ({ ...current, [savingKey]: true }));
     try {
-      let response: Response | undefined;
+      let received: Awaited<ReturnType<typeof fetchJsonWithTimeout>> | undefined;
       let lastNetworkError: unknown;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          response = await fetchWithTimeout(fetch, "/api/operations/trial-ledger", {
+          received = await fetchJsonWithTimeout(fetch, "/api/operations/trial-ledger", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -6230,8 +6225,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           lastNetworkError = error;
         }
       }
-      if (!response) throw lastNetworkError instanceof Error ? lastNetworkError : new Error("试听台账请求失败");
-      const body = await response.json().catch(() => ({})) as {
+      if (!received) throw lastNetworkError instanceof Error ? lastNetworkError : new Error("试听台账请求失败");
+      const { response, body: receivedBody } = received;
+      const body = (receivedBody ?? {}) as {
         error?: string;
         lpItemsRow?: RemoteStateRow<LpItem[]>;
       };
@@ -6343,12 +6339,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
     bookingProjectionBusyRef.current = true;
     try {
-      const response = await bookingMutationFetch("/api/bookings/mutate", {
+      const { response, body: receivedBody } = await bookingMutationFetch("/api/bookings/mutate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: pending.command,
       });
-      const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+      const body = (receivedBody ?? {}) as Record<string, unknown>;
       if (!response.ok || body.committed !== true) {
         if (response.status === 409) {
           bookingProjectionCommandKeysRef.current = removeBookingProjectionPendingCommand(
@@ -7490,23 +7486,23 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const classroomRequest = async (body: { action: "create" | "teacher-join" | "student-link" | "end"; bookingId: string; occurrenceId: string; sourceDate: string }) => {
-    const response = await classroomFetch("/api/classroom", {
+    const { response, body: receivedBody } = await classroomFetch("/api/classroom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json().catch(() => ({}));
+    const result = receivedBody ?? {};
     if (!response.ok) throw new Error(result.error || "在线教室操作失败");
     return result;
   };
 
   const temporaryClassroomRequest = async (body: Record<string, unknown>) => {
-    const response = await classroomFetch("/api/classroom/temporary", {
+    const { response, body: receivedBody } = await classroomFetch("/api/classroom/temporary", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json().catch(() => ({}));
+    const result = receivedBody ?? {};
     if (!response.ok) throw new Error(result.error || "临时课堂创建失败");
     return result;
   };
@@ -7529,8 +7525,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   const refreshClassroom = async (booking: BookingOccurrence, quiet = false) => {
     try {
-      const response = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}&occurrenceId=${encodeURIComponent(booking.occurrenceKey)}&sourceDate=${encodeURIComponent(booking.sourceDate)}`, { cache: "no-store" });
-      const result = await response.json().catch(() => ({}));
+      const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}&occurrenceId=${encodeURIComponent(booking.occurrenceKey)}&sourceDate=${encodeURIComponent(booking.sourceDate)}`, { cache: "no-store" });
+      const result = receivedBody ?? {};
       if (!response.ok) throw new Error(result.error || "无法读取教室状态");
       const recordings = Array.isArray(result.recordings) ? result.recordings : [];
       const runtime: ClassroomRuntime = { ...result.status, recordings };
@@ -13422,9 +13418,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     void (async () => {
       try {
         for (const entry of pending.values()) {
-          let response: Response;
+          let received: Awaited<ReturnType<typeof bookingMutationFetch>>;
           try {
-            response = await bookingMutationFetch("/api/bookings/mutate", {
+            received = await bookingMutationFetch("/api/bookings/mutate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: entry.command,
@@ -13432,7 +13428,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           } catch {
             break;
           }
-          const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+          const { response, body: receivedBody } = received;
+          const body = (receivedBody ?? {}) as Record<string, unknown>;
           if (cancelled) return;
           if (response.ok && body.committed === true
             && body.bookingRow && body.studentRow && body.taskRow && body.teacherRow) {
