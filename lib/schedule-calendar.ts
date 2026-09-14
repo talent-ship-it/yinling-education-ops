@@ -1,3 +1,4 @@
+import { dateTimeFormat } from "./date-time-format";
 import { cleanTimezone } from "./timezone";
 import type { LessonOccurrenceStatus } from "./lesson-occurrences";
 
@@ -108,7 +109,7 @@ export function scheduleMonthWindow(month: string): ScheduleMonthWindow {
 }
 
 function zonedParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const parts = dateTimeFormat("en-CA", {
     timeZone: cleanTimezone(timezone),
     year: "numeric",
     month: "2-digit",
@@ -164,11 +165,14 @@ export function buildScheduleMonth<Occurrence extends ScheduleCalendarOccurrence
   const window = scheduleMonthWindow(month);
   const grouped = new Map<string, Occurrence[]>();
   const seen = new Set<string>();
+  const timestamps = new Map<string, number>();
 
   for (const occurrence of occurrences) {
     if (seen.has(occurrence.occurrenceId)) continue;
     seen.add(occurrence.occurrenceId);
-    const date = scheduleOccurrenceDisplayDate(occurrence, displayTimezone);
+    const instant = scheduleOccurrenceInstant(occurrence);
+    timestamps.set(occurrence.occurrenceId, instant.getTime());
+    const date = scheduleDateInTimezone(instant, displayTimezone);
     if (date < window.gridStart || date > window.gridEnd) continue;
     const entries = grouped.get(date) ?? [];
     entries.push(occurrence);
@@ -176,7 +180,7 @@ export function buildScheduleMonth<Occurrence extends ScheduleCalendarOccurrence
   }
 
   for (const entries of grouped.values()) {
-    entries.sort((left, right) => scheduleOccurrenceInstant(left).getTime() - scheduleOccurrenceInstant(right).getTime() || left.occurrenceId.localeCompare(right.occurrenceId));
+    entries.sort((left, right) => timestamps.get(left.occurrenceId)! - timestamps.get(right.occurrenceId)! || left.occurrenceId.localeCompare(right.occurrenceId));
   }
 
   const days: ScheduleMonthDay<Occurrence>[] = [];

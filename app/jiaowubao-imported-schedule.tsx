@@ -1,5 +1,9 @@
 "use client";
 
+import { dateTimeFormat } from "@/lib/date-time-format";
+
+
+import { useMemo, useState } from "react";
 import { CalendarClock, LockKeyhole } from "lucide-react";
 
 import type { InterfaceLanguage } from "@/lib/display-preferences";
@@ -300,7 +304,7 @@ type JiaowubaoImportedSchedulePanelProps = Readonly<{
 function eventTime(value: string, timezone: string, language: InterfaceLanguage) {
   const instant = new Date(value);
   if (Number.isNaN(instant.getTime())) return "—";
-  return new Intl.DateTimeFormat(language === "en-AU" ? "en-AU" : "zh-CN", {
+  return dateTimeFormat(language === "en-AU" ? "en-AU" : "zh-CN", {
     timeZone: timezone,
     month: "numeric",
     day: "numeric",
@@ -331,7 +335,11 @@ export function JiaowubaoImportedSchedulePanel({
   teacherNameForId,
 }: JiaowubaoImportedSchedulePanelProps) {
   const english = language === "en-AU";
-  const events = [...(feed?.events ?? [])].sort((left, right) => eventSortTime(left) - eventSortTime(right));
+  const events = useMemo(() => [...(feed?.events ?? [])].sort((left, right) => eventSortTime(left) - eventSortTime(right)), [feed]);
+  const [pagination, setPagination] = useState({ feed, page: 1 });
+  const pageCount = Math.max(1, Math.ceil(events.length / 25));
+  const page = pagination.feed === feed ? Math.min(pagination.page, pageCount) : 1;
+  const visibleEvents = events.slice((page - 1) * 25, page * 25);
 
   return (
     <section className="jiaowubao-imported-schedule" aria-labelledby="jiaowubao-imported-schedule-title">
@@ -356,7 +364,7 @@ export function JiaowubaoImportedSchedulePanel({
 
       {!loading && !error && events.length > 0 ? (
         <div className="jiaowubao-imported-schedule-list">
-          {events.map((event) => {
+          {visibleEvents.map((event) => {
             const studentNames = event.visibleStudentIds
               .map((studentId) => studentNameForId(studentId))
               .filter((name): name is string => Boolean(name));
@@ -397,6 +405,11 @@ export function JiaowubaoImportedSchedulePanel({
           })}
         </div>
       ) : null}
+      {!loading && !error && events.length > 0 ? <nav className="pagination" aria-label={english ? "Synced schedule pages" : "同步课表分页"}>
+        <span>{english ? `${events.length} lessons · Page ${page} of ${pageCount}` : `共 ${events.length} 节 · 第 ${page} / ${pageCount} 页`}</span>
+        <button type="button" disabled={page <= 1} onClick={() => setPagination({ feed, page: page - 1 })}>{english ? "Previous" : "上一页"}</button>
+        <button type="button" disabled={page >= pageCount} onClick={() => setPagination({ feed, page: page + 1 })}>{english ? "Next" : "下一页"}</button>
+      </nav> : null}
     </section>
   );
 }

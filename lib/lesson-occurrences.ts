@@ -326,7 +326,11 @@ export function expandLessonOccurrences(
   } else {
     const maximum = series.repeatCount ?? Number.POSITIVE_INFINITY;
     const interval = series.recurrenceIntervalDays ?? recurrence.recurrenceIntervalDays ?? LEGACY_BOOKING_RECURRENCE_INTERVAL_DAYS;
-    for (let index = 0, date = series.date; index < maximum && date <= options.rangeEnd; index += 1, date = shiftBookingDate(date, interval)) {
+    // Jump straight to the first requested source occurrence. Do not walk
+    // years of historical daily/weekly dates on every calendar navigation.
+    const elapsedDays = Math.round((Date.parse(options.rangeStart) - Date.parse(series.date)) / 86_400_000);
+    const firstIndex = Math.max(0, Math.ceil(elapsedDays / interval));
+    for (let index = firstIndex, date = shiftBookingDate(series.date, firstIndex * interval); index < maximum && date <= options.rangeEnd; index += 1, date = shiftBookingDate(date, interval)) {
       if (series.recurrenceEndDate && date > series.recurrenceEndDate) break;
       if (date >= options.rangeStart) sourceDates.push(date);
     }

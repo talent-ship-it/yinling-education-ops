@@ -1,5 +1,8 @@
 "use client";
 
+import { dateTimeFormat } from "@/lib/date-time-format";
+
+
 import { createSharedStatePoller } from "@/lib/shared-state-poller";
 
 import { isLessonDuration } from "../lib/lesson-duration";
@@ -1851,7 +1854,7 @@ function timezoneLabel(value: string, language: InterfaceLanguage = "zh-CN") {
 }
 
 function zonedParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const parts = dateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
@@ -1889,7 +1892,7 @@ function formatDisplayDate(date: Date, timezone: string, preferences = defaultDi
 
 function formatInstant(date: Date, timezone: string, preferences = defaultDisplayPreferences()) {
   const safeTimezone = cleanTimezone(timezone);
-  const weekday = new Intl.DateTimeFormat(localeFor(preferences.language), { timeZone: safeTimezone, weekday: "short" }).format(date);
+  const weekday = dateTimeFormat(localeFor(preferences.language), { timeZone: safeTimezone, weekday: "short" }).format(date);
   return `${formatDisplayDate(date, safeTimezone, preferences)} ${weekday} ${formatClock(date, safeTimezone, preferences)}`;
 }
 
@@ -1973,7 +1976,7 @@ function weekDatesForTimezone(timezone: string, preferences = defaultDisplayPref
   return Array.from({ length: 7 }, (_, index) => {
     const date = shiftIsoDate(monday, index);
     const dateAtNoon = new Date(`${date}T12:00:00Z`);
-    return { date, label: new Intl.DateTimeFormat(localeFor(preferences.language), { weekday: "short", day: "numeric", timeZone: "UTC" }).format(dateAtNoon) };
+    return { date, label: dateTimeFormat(localeFor(preferences.language), { weekday: "short", day: "numeric", timeZone: "UTC" }).format(dateAtNoon) };
   });
 }
 
@@ -2191,7 +2194,7 @@ function examRecordsForStudent(student: Student): StudentExamRecord[] {
 function examMonthLabel(month: string, preferences: DisplayPreferences) {
   const [year, monthNumber] = month.split("-").map(Number);
   if (!Number.isSafeInteger(year) || !Number.isSafeInteger(monthNumber)) return month;
-  return new Intl.DateTimeFormat(localeFor(preferences.language), {
+  return dateTimeFormat(localeFor(preferences.language), {
     year: "numeric",
     month: "long",
     timeZone: "Australia/Melbourne",
@@ -3794,8 +3797,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [active, activeJiaowubaoScheduleWindow, activeJiaowubaoTeacherFilter, jiaowubaoScheduleRequestKey]);
 
   const selectedTeacher = teachers.find((teacher) => teacher.id === selectedTeacherId) ?? teachers[0];
-  const studentById = (studentId: string) => students.find((student) => student.id === studentId);
-  const teacherById = (teacherId: string) => teachers.find((teacher) => teacher.id === teacherId);
+  const studentsById = useMemo(() => new Map(students.map((student) => [student.id, student])), [students]);
+  const teachersById = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher])), [teachers]);
+  const studentById = (studentId: string) => studentsById.get(studentId);
+  const teacherById = (teacherId: string) => teachersById.get(teacherId);
   const jiaowubaoCompletedLessonsByStudentId = useMemo(() => {
     const grouped = new Map<string, JiaowubaoCompletedLessonFeedItem[]>();
     if (jiaowubaoCompletedLessonFeed?.state !== "complete") return grouped;
@@ -7993,7 +7998,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           bookingInstant(left).getTime() - bookingInstant(right).getTime(),
       );
     const totalMinutes = teacherOccurrences.reduce((sum, booking) => sum + booking.duration, 0);
-    const todayLabel = new Intl.DateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
+    const todayLabel = dateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title={english ? "My teaching workspace" : "我的教学工作台"} actions={<><button className="secondary-button" type="button" onClick={() => { teacherAvailabilitySubmissionKey.current = crypto.randomUUID(); setModal("teacherAvailabilitySubmit"); }}><Clock3 size={17} /> {english ? "Submit availability" : "提交月度 AVA"}</button><button className="secondary-button" type="button" onClick={() => setActive("students")}><Users size={17} /> {english ? "My students" : "我的学生"}</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> {english ? "New booking" : "新建约课"}</button></>} />
       <TeacherLeavePanel teacherId={currentTeacher?.id} />
@@ -8039,7 +8044,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       + operatorExamStudents.length
       + operatorDstBookings.length
       + authoritativeAvaIssueCount;
-    const todayLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Australia/Melbourne" }).format(new Date());
+    const todayLabel = dateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Australia/Melbourne" }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
@@ -8252,8 +8257,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>;
   };
 
-  const renderSchedule = () => {
-    const now = new Date();
+  const [scheduleMinute, setScheduleMinute] = useState(() => Math.floor(Date.now() / 60_000));
+  useEffect(() => {
+    if (active !== "schedule" && active !== "classroom") return;
+    const tick = () => setScheduleMinute(Math.floor(Date.now() / 60_000));
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  const scheduleProjection = useMemo(() => {
+    if (active !== "schedule") return null;
+    const now = new Date(scheduleMinute * 60_000);
     const todayInScheduleTimezone = isoDateInTimezone(now, scheduleTimezone);
     const attendanceMonthWindow = scheduleMonthWindow(todayInScheduleTimezone.slice(0, 7));
     const lastSevenDaysStart = shiftIsoDate(todayInScheduleTimezone, -6);
@@ -8298,7 +8311,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const weekDays = weekDatesForTimezone(scheduleTimezone, displayPreferences);
     const weekRangeLabel = `${formatDisplayDate(new Date(`${weekDays[0]?.date}T12:00:00Z`), scheduleTimezone, displayPreferences)} - ${formatDisplayDate(new Date(`${weekDays.at(-1)?.date}T12:00:00Z`), scheduleTimezone, displayPreferences)}`;
     const weekDateSet = new Set(weekDays.map((day) => day.date));
-    const weekOccurrences = scopedBookings
+    const weekOccurrences = scheduleMode === "month" ? [] : scopedBookings
       .flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate(weekDays[0].date, -1), shiftIsoDate(weekDays.at(-1)!.date, 1)))
       .filter(visibleToSignedTeacher)
       .filter((booking) => {
@@ -8306,7 +8319,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         return weekDateSet.has(`${local.year}-${local.month}-${local.day}`);
       });
     const monthWindow = scheduleMonthWindow(scheduleMonth);
-    const monthOccurrences = scopedBookings.flatMap((booking) => bookingOccurrencesWithinRange(
+    const monthOccurrences = scheduleMode !== "month" ? [] : scopedBookings.flatMap((booking) => bookingOccurrencesWithinRange(
       booking,
       shiftIsoDate(monthWindow.gridStart, -1),
       shiftIsoDate(monthWindow.gridEnd, 1),
@@ -8321,7 +8334,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ? []
       : jiaowubaoImportedAvailabilityBlocksForTeacher(currentJiaowubaoImportedSchedule, scheduleTeacher?.id);
     let monthAvailability: ScheduleMonthAvailability[] = [];
-    if (scheduleTeacher) {
+    if (scheduleTeacher && scheduleMode === "month") {
       try {
         const confirmedAvailability = expandTeacherAvailability(scheduleTeacher.availabilityWindows ?? [], {
           from: monthWindow.gridStart,
@@ -8347,13 +8360,33 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       }
     }
     const sourceOccurrences = scheduleMode === "month" ? monthOccurrences : weekOccurrences;
+    const startTimes = new Map(sourceOccurrences.map((booking) => [booking.occurrenceKey, bookingInstant(booking).getTime()]));
+    const dstRiskIds = new Set(dstRiskBookings.map((booking) => booking.id));
     const filteredBookings = sourceOccurrences.filter((booking) => {
       const matchesTeacher = scheduleTeacherFilter === "all" || booking.teacherId === scheduleTeacherFilter;
-      const matchesStatus = scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskBookings.some((risk) => risk.id === booking.id) : true;
+      const matchesStatus = scheduleFilter === "pending" ? booking.status === "待确认" : scheduleFilter === "trial" ? booking.kind === "试听" : scheduleFilter === "dst" ? dstRiskIds.has(booking.id) : true;
       if (!matchesTeacher || !matchesStatus || scheduleMode === "month" || scheduleDay === "all") return matchesTeacher && matchesStatus;
       const local = zonedParts(bookingInstant(booking), scheduleTimezone);
       return `${local.year}-${local.month}-${local.day}` === scheduleDay;
-    }).sort((a, b) => bookingInstant(a).getTime() - bookingInstant(b).getTime());
+    }).sort((a, b) => startTimes.get(a.occurrenceKey)! - startTimes.get(b.occurrenceKey)!);
+    const monthLessons: ScheduleMonthLesson[] = filteredBookings.map((booking) => ({
+      occurrenceId: booking.occurrenceKey,
+      date: booking.date,
+      start: booking.start,
+      timezone: booking.timezone,
+      studentId: booking.studentId,
+      status: booking.occurrenceStatus,
+      studentName: studentsById.get(booking.studentId)?.name ?? booking.studentId,
+      teacherName: teachersById.get(booking.teacherId)?.name ?? booking.teacherId,
+      courseLabel: booking.course ?? booking.kind,
+      displayTime: formatClock(bookingInstant(booking), scheduleTimezone, displayPreferences),
+    }));
+    return { todayInScheduleTimezone, lastSevenDaysAttendance, monthAttendance, weekDays, weekRangeLabel, scheduleTeacher, monthAvailability, filteredBookings, monthLessons };
+  }, [active, scheduleMinute, scheduleTimezone, scheduleMonth, scheduleMode, scheduleTeacherFilter, scheduleFilter, scheduleDay, isTeacherView, currentTeacher, currentTeacherIds, scopedBookings, recordTeachers, displayPreferences, dstRiskBookings, jiaowubaoImportedScheduleLoading, currentJiaowubaoImportedSchedule, studentsById, teachersById]);
+
+  const renderSchedule = () => {
+    if (!scheduleProjection) return null;
+    const { todayInScheduleTimezone, lastSevenDaysAttendance, monthAttendance, weekDays, weekRangeLabel, scheduleTeacher, monthAvailability, filteredBookings, monthLessons } = scheduleProjection;
     const schedulePageSize = 10;
     const safeSchedulePage = Math.min(schedulePage, Math.max(1, Math.ceil(filteredBookings.length / schedulePageSize)));
     const pagedScheduleBookings = filteredBookings.slice((safeSchedulePage - 1) * schedulePageSize, safeSchedulePage * schedulePageSize);
@@ -8368,7 +8401,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       : undefined) ?? currentScheduleScope[0] ?? fallbackScheduleOccurrence;
     const displayedBookingSeries = displayedBooking ? scopedBookings.find((booking) => booking.id === displayedBooking.id) ?? displayedBooking : undefined;
     const englishSchedule = displayPreferences.language === "en-AU";
-    const monthLabel = new Intl.DateTimeFormat(localeFor(displayPreferences.language), {
+    const monthLabel = dateTimeFormat(localeFor(displayPreferences.language), {
       year: "numeric",
       month: "long",
       timeZone: "UTC",
@@ -8448,18 +8481,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const selectedInstant = bookingInstant(displayedBooking);
     const selectedDstRisk = bookingHasDstRisk(displayedBookingSeries, bookingStudent, bookingTeacher);
     const historicalBooking = isPastBooking(displayedBooking);
-    const monthLessons: ScheduleMonthLesson[] = filteredBookings.map((booking) => ({
-      occurrenceId: booking.occurrenceKey,
-      date: booking.date,
-      start: booking.start,
-      timezone: booking.timezone,
-      studentId: booking.studentId,
-      status: booking.occurrenceStatus,
-      studentName: studentById(booking.studentId)?.name ?? booking.studentId,
-      teacherName: teacherById(booking.teacherId)?.name ?? booking.teacherId,
-      courseLabel: booking.course ?? booking.kind,
-      displayTime: formatClock(bookingInstant(booking), scheduleTimezone, displayPreferences),
-    }));
     const openMonthLesson = (lesson: ScheduleMonthLesson) => {
       const booking = filteredBookings.find((entry) => entry.occurrenceKey === lesson.occurrenceId);
       if (!booking) return;
@@ -8471,7 +8492,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         {scheduleToolbar}
         {scheduleAttendancePanel}
         {dstRiskBookings.length ? <div className="timezone-audit warning"><Clock3 size={17} /><span><strong>{dstRiskBookings.length} 节长期课的师生时差会在未来 140 天内变化</strong></span></div> : null}
-        {importedSchedulePanel}
         <div className="master-detail-layout schedule-layout">
           <article className="collection-main schedule-main">
             {scheduleMode === "month" ? (
@@ -8583,6 +8603,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <button className="secondary-button full" type="button" onClick={() => goToStudent(bookingStudent.id)}>{bookingStudent.importArchived ? "查看历史归档档案" : "打开学生档案"}</button>
           </aside>
         </div>
+        {importedSchedulePanel}
       </section>
     </>;
   };
@@ -11797,25 +11818,42 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     );
   };
 
-  const renderClassroom = () => {
-    const classroomToday = isoDateInTimezone(new Date(), scheduleTimezone);
-    const classroomOccurrences = scopedBookings.flatMap((booking) =>
+  const classroomToday = isoDateInTimezone(new Date(scheduleMinute * 60_000), scheduleTimezone);
+  const classroomMinute = scheduleMinute;
+  const classroomLists = useMemo(() => {
+    if (active !== "classroom") return { upcomingBookings: [], historicalBookings: [] };
+    const now = classroomMinute * 60_000;
+    const dated = scopedBookings.flatMap((booking) =>
       bookingOccurrencesWithinRange(booking, shiftIsoDate(classroomToday, -366), shiftIsoDate(classroomToday, 366)),
-    ).filter((booking) => !isTeacherView || currentTeacherIds.has(booking.teacherId));
-    const upcomingBookings = classroomOccurrences
-      .filter((booking) => !isPastBooking(booking))
-      .sort(
-        (left, right) =>
-          bookingInstant(left).getTime() - bookingInstant(right).getTime(),
-      );
-    const historicalBookings = classroomOccurrences
-      .filter((booking) => isPastBooking(booking))
-      .sort(
-        (left, right) =>
-          bookingInstant(right).getTime() - bookingInstant(left).getTime(),
-      );
-    const visibleClassrooms =
-      classroomView === "upcoming" ? upcomingBookings : historicalBookings;
+    ).filter((booking) => !isTeacherView || currentTeacherIds.has(booking.teacherId))
+      .map((booking) => ({ booking, startsAt: bookingInstant(booking).getTime() }));
+    return {
+      upcomingBookings: dated.filter(({ booking, startsAt }) => startsAt + Math.max(1, booking.duration || 0) * 60_000 >= now)
+        .sort((a, b) => a.startsAt - b.startsAt).map(({ booking }) => booking),
+      historicalBookings: dated.filter(({ booking, startsAt }) => startsAt + Math.max(1, booking.duration || 0) * 60_000 < now)
+        .sort((a, b) => b.startsAt - a.startsAt).map(({ booking }) => booking),
+    };
+  }, [active, classroomToday, classroomMinute, scopedBookings, isTeacherView, currentTeacherIds]);
+  const [classroomPage, setClassroomPage] = useState(1);
+  const renderClassroom = () => {
+    const { upcomingBookings, historicalBookings } = classroomLists;
+    const visibleClassrooms = classroomView === "upcoming" ? upcomingBookings : historicalBookings;
+    const roomPageCount = Math.max(1, Math.ceil(visibleClassrooms.length / 12));
+    const selectedRoomIndex = selectedBookingOccurrenceKey
+      ? visibleClassrooms.findIndex((booking) => booking.id === selectedBookingId && booking.occurrenceKey === selectedBookingOccurrenceKey)
+      : -1;
+    const safeRoomPage = selectedRoomIndex >= 0
+      ? Math.floor(selectedRoomIndex / 12) + 1
+      : Math.min(classroomPage, roomPageCount);
+    const changeClassroomPage = (page: number) => {
+      const first = visibleClassrooms[(page - 1) * 12];
+      if (!first) return;
+      setClassroomPage(page);
+      selectBookingRecord(first);
+      setClassroomRuntime(null);
+      setMobilePreview(null);
+    };
+    const pageClassrooms = visibleClassrooms.slice((safeRoomPage - 1) * 12, safeRoomPage * 12);
     const selectedRoomBooking = selectedBookingOccurrenceKey
       ? visibleClassrooms.find((booking) => booking.id === selectedBookingId && booking.occurrenceKey === selectedBookingOccurrenceKey)
       : undefined;
@@ -11824,9 +11862,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       : [];
     const roomBooking = selectedRoomBooking
       ?? (legacyRoomCandidates.length === 1 ? legacyRoomCandidates[0] : undefined)
-      ?? (!selectedBookingOccurrenceKey && !selectedBookingDate
-        ? visibleClassrooms[0]
+      ?? (selectedBookingOccurrenceKey || !selectedBookingDate
+        ? pageClassrooms[0]
         : undefined);
+    const roomRuntime = roomBooking?.classroom?.meetingId === classroomRuntime?.meetingId
+      ? classroomRuntime : null;
     const historicalRoom = roomBooking ? isPastBooking(roomBooking) : false;
     const roomStudent = roomBooking
       ? studentById(roomBooking.studentId)
@@ -11834,16 +11874,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const roomTeacher = roomBooking
       ? teacherById(roomBooking.teacherId)
       : undefined;
-    const classroomStatus = classroomRuntime?.running
+    const classroomStatus = roomRuntime?.running
       ? { label: "课堂进行中", tone: "green" as Tone }
-      : classroomRuntime?.recordings.some((recording) => recording.playbackUrl)
+      : roomRuntime?.recordings.some((recording) => recording.playbackUrl)
         ? { label: "录播已就绪", tone: "blue" as Tone }
         : roomBooking?.classroom?.status === "ended"
           ? { label: "课堂已结束", tone: "neutral" as Tone }
           : roomBooking?.classroom?.meetingId
             ? { label: "待开课", tone: "amber" as Tone }
             : { label: "未创建", tone: "neutral" as Tone };
-    const playback = classroomRuntime?.recordings.find(
+    const playback = roomRuntime?.recordings.find(
       (recording) => recording.playbackUrl,
     );
     return (
@@ -11942,6 +11982,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   ? upcomingBookings[0]
                   : historicalBookings[0];
               setClassroomView(nextView);
+              setClassroomPage(1);
               if (nextBooking) {
                 selectBookingRecord(nextBooking);
               }
@@ -11958,7 +11999,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                   <span>时间</span>
                   <span>教室</span>
                 </div>
-                {visibleClassrooms.slice(0, 12).map((booking) => {
+                {pageClassrooms.map((booking) => {
                   const student = studentById(booking.studentId);
                   const status =
                     booking.classroom?.status === "running"
@@ -12011,6 +12052,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     </button>
                   );
                 })}
+                <div className="pagination" aria-label="教室列表分页">
+                  <span>共 {visibleClassrooms.length} 节 · 第 {safeRoomPage} / {roomPageCount} 页</span>
+                  <button type="button" disabled={safeRoomPage <= 1} onClick={() => changeClassroomPage(safeRoomPage - 1)}>上一页</button>
+                  <button type="button" disabled={safeRoomPage >= roomPageCount} onClick={() => changeClassroomPage(safeRoomPage + 1)}>下一页</button>
+                </div>
               </article>
               {roomBooking && (
                 <aside
@@ -12033,9 +12079,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       {classroomStatus.label}
                     </StatusPill>
                   </div>
-                  {classroomRuntime?.running ? <div className="classroom-link-preview">
+                  {roomRuntime?.running ? <div className="classroom-link-preview">
                     <Video size={24} />
-                    <span><strong>{classroomRuntime.participantCount} 人在线 · {classroomRuntime.moderatorCount} 位老师</strong></span>
+                    <span><strong>{roomRuntime.participantCount} 人在线 · {roomRuntime.moderatorCount} 位老师</strong></span>
                   </div> : null}
                   {temporaryClassroomLink?.occurrenceId === roomBooking.occurrenceKey && (
                     <div className="classroom-share-link">
@@ -12117,7 +12163,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                           <RefreshCw size={16} /> 刷新教室状态
                         </button>
                       )}
-                      {(classroomRuntime?.running ||
+                      {(roomRuntime?.running ||
                         roomBooking.classroom.status === "running") && (
                         <button
                           className="danger-button full"
