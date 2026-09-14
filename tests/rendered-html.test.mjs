@@ -99,8 +99,8 @@ test("shares the To Do UI across operations roles and leaves the teacher workspa
 
   assert.doesNotMatch(client, /<section className="command-strip/);
   assert.doesNotMatch(css, /command-strip/);
-  assert.match(toDoList, /aria-expanded=\{expanded\}/);
-  assert.match(toDoList, /hidden=\{!expanded\}/);
+  assert.doesNotMatch(toDoList, /to-do-collapse-button|收起/);
+  assert.match(toDoList, /id="to-do-list-content">/);
   assert.match(toDoList, /formatCompactTaskDeadline\(task\.dueAt, deadlineTimeZone\)/);
   assert.match(toDoList, /taskTitlePresentation\(displayTitle, task\.ruleKey\)/);
   assert.match(toDoList, /title="待补截止时间"/);
