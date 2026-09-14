@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ChevronDown, ChevronUp, Pencil, RotateCcw, X } from "lucide-react";
+import { Pencil, RotateCcw, X } from "lucide-react";
 
 import { formatCompactTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 
@@ -258,7 +258,6 @@ export function ToDoList({
   deadlineTimeZoneLabel,
   taskTitle,
 }: ToDoListProps) {
-  const [expanded, setExpanded] = React.useState(true);
   const [view, setView] = React.useState<TaskListView>("todo");
   const filtered = filterTasks(tasks, filter, view, deadlineTimeZone);
   const pendingDeadline = sortTasksByDueAt(filtered.filter((task) => view === "todo" && !isExecutableOpenTask(task)));
@@ -293,17 +292,10 @@ export function ToDoList({
               >{FILTER_LABELS[value]}</button>
             ))}
           </div>
-          <button
-            className="to-do-collapse-button"
-            type="button"
-            aria-expanded={expanded}
-            aria-controls="to-do-list-content"
-            onClick={() => setExpanded((current) => !current)}
-          ><span>{expanded ? "收起" : "展开"}</span>{expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}</button>
         </div>
       </header>
 
-      <div id="to-do-list-content" hidden={!expanded}>
+      <div id="to-do-list-content">
         {view === "todo" ? <>
           {today.length > 0 && <TaskSection title="今日到期" className="today" tasks={today} {...rowProps} />}
           {overdue.length > 0 && <TaskSection title="已逾期" className="overdue" tasks={overdue} {...rowProps} />}
