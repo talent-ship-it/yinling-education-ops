@@ -142,6 +142,24 @@ test("extracts the current 【学生】 field used by trial handovers", () => {
   assert.equal(enriched?.studentNameHint, "Synthetic Student");
 });
 
+test("forwards the trial WeChat identity and the two required staff fields", () => {
+  const [record] = normalizeWecomBotBatch({
+    records: [{
+      messageId: "bot:" + "g".repeat(64),
+      chatId: "room-identity-1",
+      senderId: "sender-1",
+      sentAt: "2026-09-15T00:00:00.000Z",
+      messageType: "text",
+      text: "[Rose]试听LP 信息交接[Rose]\n【微信名】：Parent Synthetic\n【教务】：Thea\n【课程规划老师】：Elaine@Insider Leads",
+    }],
+  });
+  const [enriched] = enrichWecomBotRecords([record!]);
+  assert.equal(enriched?.classification, "handover");
+  assert.equal(enriched?.guardianWechatHint, "Parent Synthetic");
+  assert.equal(enriched?.operationsOwnerHint, "Thea");
+  assert.equal(enriched?.coursePlannerHint, "Elaine@Insider Leads");
+});
+
 test("syncs callback files once and treats non-text callbacks as pending other records", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-bot-sync-"));
   const messages = path.join(root, "messages");

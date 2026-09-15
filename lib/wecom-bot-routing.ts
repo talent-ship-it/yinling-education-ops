@@ -5,9 +5,10 @@ import { normalizeWecomArchiveBatch } from "./wecom-archive";
  * Bot callbacks do not carry the authenticated archive-worker context, so
  * they use a narrower ingress contract. Text callbacks still use the same
  * deterministic classifier and explicit identity-hint extraction as the
- * archive worker before persistence. The database may then auto-link only a
- * unique exact active-student match; everything else remains in the review
- * inbox without projecting business state.
+ * archive worker before persistence. Trial handovers are additionally grouped
+ * by the explicit WeChat name while the student name is still unknown. The
+ * database may auto-link only a unique exact active-student match; everything
+ * else remains in the review inbox without projecting business state.
  */
 export function enrichWecomBotRecords(
   records: readonly NormalizedWecomBotRecord[],
@@ -37,6 +38,8 @@ export function enrichWecomBotRecords(
     if (archiveRecord.classification !== "other") metadata.classification = archiveRecord.classification;
     if (archiveRecord.studentNameHint) metadata.studentNameHint = archiveRecord.studentNameHint;
     if (archiveRecord.guardianWechatHint) metadata.guardianWechatHint = archiveRecord.guardianWechatHint;
+    if (archiveRecord.operationsOwnerHint) metadata.operationsOwnerHint = archiveRecord.operationsOwnerHint;
+    if (archiveRecord.coursePlannerHint) metadata.coursePlannerHint = archiveRecord.coursePlannerHint;
     return Object.freeze({ ...record, ...metadata });
   }));
 }

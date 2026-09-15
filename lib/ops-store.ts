@@ -129,6 +129,11 @@ export type WecomArchiveInboxRow = Readonly<{
   classification: "handover" | "renewal_follow_up" | "trial_scheduling" | "other";
   student_name_hint: string | null;
   guardian_wechat_hint: string | null;
+  operations_owner_hint: string | null;
+  course_planner_hint: string | null;
+  trial_handover_id: string | null;
+  trial_identity_status: "awaiting_student_name" | "identified" | "identity_conflict" | null;
+  trial_identity_student_name: string | null;
   student_id: string | null;
   match_status: "pending" | "ambiguous" | "linked";
   media_count: number;
@@ -141,6 +146,9 @@ export type WecomArchiveStatus = Readonly<{
   linked: number;
   ambiguous: number;
   pending: number;
+  trialAwaitingStudentName: number;
+  trialIdentified: number;
+  trialIdentityConflict: number;
   latestSentAt: string | null;
   latestIngestedAt: string | null;
 }>;
@@ -1773,7 +1781,8 @@ export function ingestWecomArchiveBatch(input: {
   });
 }
 
-/** Stores bot callbacks and auto-projects only unique exact active-student matches. */
+/** Stores bot callbacks, groups trial handovers by explicit WeChat identity,
+ * and auto-projects only unique exact active-student matches. */
 export function ingestWecomBotBatch(input: {
   records: readonly Readonly<Record<string, unknown>>[];
   startedAt: string;

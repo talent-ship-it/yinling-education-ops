@@ -33,6 +33,8 @@ export type NormalizedWecomArchiveRecord = Readonly<{
   classification: WecomArchiveClassification;
   studentNameHint: string | null;
   guardianWechatHint: string | null;
+  operationsOwnerHint: string | null;
+  coursePlannerHint: string | null;
   media: readonly NormalizedWecomArchiveMedia[];
 }>;
 
@@ -229,6 +231,15 @@ function labelCandidates(text: string, labels: readonly string[]) {
   return [...text.matchAll(pattern)].map((match) => match[1]?.trim() ?? "").filter(Boolean);
 }
 
+const STUDENT_NAME_LABELS = ["学生姓名", "学生名", "学生", "姓名(如提到)", "姓名（如提到）", "姓名"];
+// `微信名` is deliberately accepted alongside the older `家长微信名` label.
+// For a trial student, that name is the stable bridge until the family gives
+// the English/Chinese student name; it is not an active-roster match hint by
+// itself.
+const GUARDIAN_WECHAT_LABELS = ["家长微信名", "家长微信", "微信名"];
+const OPERATIONS_OWNER_LABELS = ["教务老师", "负责教务", "对接教务", "教务"];
+const COURSE_PLANNER_LABELS = ["课程规划老师", "课程规划师", "课程规划"];
+
 function conservativeHint(explicit: unknown, derived: readonly string[], field: string) {
   const direct = cleanText(explicit, 240, field);
   if (direct) return direct;
@@ -249,7 +260,12 @@ function classify(text: string, context: readonly string[], media: readonly Norm
   // explicit phrase as handover evidence while keeping generic “交接” text
   // on the conservative structured-field path below.
   if (/信息交接(?:表|单)?/u.test(evidence)) return "handover" as const;
-  const structuredHandoverLabels = ["家长微信", "学生姓名", "科目", "所在地", "偏好时间", "对接对象"]
+  // A later identity confirmation may contain only the shared WeChat name
+  // and a now-known student name.  It belongs to the same conservative
+  // handover pipeline even though it does not repeat the full template.
+  if (labelCandidates(evidence, STUDENT_NAME_LABELS).length > 0
+    && labelCandidates(evidence, GUARDIAN_WECHAT_LABELS).length > 0) return "handover" as const;
+  const structuredHandoverLabels = ["微信名", "学生姓名", "科目", "所在地", "偏好时间", "对接对象"]
     .filter((label) => evidence.includes(label)).length;
   if (/试听/u.test(evidence) && structuredHandoverLabels >= 3) return "handover" as const;
   if (/续费前跟进/u.test(evidence) || /续(?:费|课)[^\n]{0,24}跟进/u.test(evidence)) return "renewal_follow_up" as const;
@@ -260,6 +276,7 @@ function classify(text: string, context: readonly string[], media: readonly Norm
 const RECORD_KEYS = new Set([
   "messageId", "msgid", "chatId", "roomid", "senderId", "from", "sentAt", "msgtime",
   "messageType", "msgtype", "text", "classification", "studentNameHint", "guardianWechatHint",
+  "operationsOwnerHint", "coursePlannerHint",
   "contextText", "media", "action", "tolist",
 ]);
 
@@ -289,15 +306,25 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomArchiveR
     [
       // The live trial-handover template uses `【学生】` rather than
       // `【学生姓名】`; both are explicit identity fields, not fuzzy evidence.
-      ...labelCandidates(allText, ["学生姓名", "学生名", "学生", "姓名(如提到)", "姓名（如提到）", "姓名"]),
+      ...labelCandidates(allText, STUDENT_NAME_LABELS),
       ...leadingRenewalStudent(allText),
     ],
     `record ${index}.studentNameHint`,
   );
   const guardianWechatHint = conservativeHint(
     value.guardianWechatHint,
-    labelCandidates(allText, ["家长微信名", "家长微信"]),
+    labelCandidates(allText, GUARDIAN_WECHAT_LABELS),
     `record ${index}.guardianWechatHint`,
+  );
+  const operationsOwnerHint = conservativeHint(
+    value.operationsOwnerHint,
+    labelCandidates(allText, OPERATIONS_OWNER_LABELS),
+    `record ${index}.operationsOwnerHint`,
+  );
+  const coursePlannerHint = conservativeHint(
+    value.coursePlannerHint,
+    labelCandidates(allText, COURSE_PLANNER_LABELS),
+    `record ${index}.coursePlannerHint`,
   );
   return Object.freeze({
     messageId,
@@ -309,6 +336,8 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomArchiveR
     classification,
     studentNameHint,
     guardianWechatHint,
+    operationsOwnerHint,
+    coursePlannerHint,
     media: Object.freeze(media),
   });
 }

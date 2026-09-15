@@ -41,3 +41,13 @@ PGDATABASE=il_fixture_wecom python3 tests/sql/wecom-batch-lock-order-runtime.py
 
 Use the normal `PGHOST`, `PGPORT`, and `PGUSER` variables for a dedicated local
 cluster. `PSQL` can select an absolute path to the PostgreSQL client binary.
+
+The trial-handover identity fixture verifies that an initial WeChat-name-only
+handover remains internal and awaits a student name, then a same-group identity
+confirmation updates that exact case without creating operational state:
+
+```sh
+createdb il_fixture_wecom_identity
+psql -d il_fixture_wecom_identity -c "COMMENT ON DATABASE il_fixture_wecom_identity IS 'insiderleads-disposable-fixture'"
+psql -d il_fixture_wecom_identity -f tests/sql/wecom-trial-handover-identity-runtime.sql
+```
