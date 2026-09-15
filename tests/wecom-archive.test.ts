@@ -44,8 +44,32 @@ test("normalises official aliases and detects a structured information handover"
     classification: "handover",
     studentNameHint: "Mia示例",
     guardianWechatHint: "Parent-Synthetic",
+    operationsOwnerHint: null,
+    coursePlannerHint: null,
     media: [],
   });
+});
+
+test("extracts the trial identity bridge and staff assignments from explicit labels", () => {
+  const [result] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-trial-identity-1",
+    text: "[Rose]试听LP 信息交接[Rose]\n【微信名】：Parent Synthetic\n【教务】：Thea\n【课程规划老师】：Elaine@Insider Leads\n【学生】：",
+  })]);
+  assert.equal(result?.classification, "handover");
+  assert.equal(result?.studentNameHint, null);
+  assert.equal(result?.guardianWechatHint, "Parent Synthetic");
+  assert.equal(result?.operationsOwnerHint, "Thea");
+  assert.equal(result?.coursePlannerHint, "Elaine@Insider Leads");
+});
+
+test("treats a later same-group WeChat-name plus student-name message as a handover identity update", () => {
+  const [result] = normalizeWecomArchiveBatch([base({
+    messageId: "synthetic-trial-identity-2",
+    text: "【微信名】：Parent Synthetic\n【学生姓名】：Mia Example米娅",
+  })]);
+  assert.equal(result?.classification, "handover");
+  assert.equal(result?.guardianWechatHint, "Parent Synthetic");
+  assert.equal(result?.studentNameHint, "Mia Example米娅");
 });
 
 test("classifies renewal screenshots and extracts only one explicit student hint", () => {
