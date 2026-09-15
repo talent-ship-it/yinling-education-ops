@@ -6,6 +6,10 @@ const migration = readFileSync(new URL(
   "../supabase/migrations/20260915000300_wecom_trial_handover_identity.sql",
   import.meta.url,
 ), "utf8");
+const tolerantMigration = readFileSync(new URL(
+  "../supabase/migrations/20260915000400_wecom_trial_handover_tolerant_identity.sql",
+  import.meta.url,
+), "utf8");
 const archiveParser = readFileSync(new URL("../lib/wecom-archive.ts", import.meta.url), "utf8");
 const botRouter = readFileSync(new URL("../lib/wecom-bot-routing.ts", import.meta.url), "utf8");
 const reviewPage = readFileSync(new URL("../app/handover-review/page.tsx", import.meta.url), "utf8");
@@ -34,6 +38,16 @@ test("the bot contract persists the explicit ownership hints and drives the iden
   assert.match(migration, /trialAwaitingStudentName/i);
 });
 
+test("a later trial identity update tolerates only one obvious same-group WeChat candidate", () => {
+  assert.match(tolerantMigration, /create or replace function internal\.wecom_trial_identity_core_key/i);
+  assert.match(tolerantMigration, /pg_catalog\.char_length\(canonical_wechat_core_key\) >= 3/i);
+  assert.match(tolerantMigration, /identity_match_mode := 'tolerant_unique'/i);
+  assert.match(tolerantMigration, /identity_ambiguous/i);
+  assert.match(tolerantMigration, /tolerantCandidateCount/i);
+  assert.match(tolerantMigration, /hashtextextended\(archive\.chat_id, 0\)/i);
+  assert.doesNotMatch(tolerantMigration, /insert\s+into\s+public\.ops_state/i);
+});
+
 test("the parser and bot route use explicit labels only", () => {
   assert.match(archiveParser, /GUARDIAN_WECHAT_LABELS = \["家长微信名", "家长微信", "微信名"\]/u);
   assert.match(archiveParser, /OPERATIONS_OWNER_LABELS/u);
@@ -52,5 +66,7 @@ test("the existing full-admin handover review page surfaces trial identity state
   assert.match(reviewPage, /readWecomArchiveInbox/i);
   assert.match(reviewPage, /待补学生姓名的试听交接/u);
   assert.match(reviewPage, /trial_identity_status/i);
+  assert.match(reviewPage, /微信名候选不唯一/u);
+  assert.match(reviewPage, /轻微差异/u);
   assert.match(reviewPage, /hasFullAdminAccess/i);
 });
