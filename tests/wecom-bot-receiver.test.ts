@@ -126,6 +126,22 @@ test("extracts the filled name variants used by handover templates", () => {
   assert.equal(enriched?.guardianWechatHint, "SyntheticParent");
 });
 
+test("extracts the current 【学生】 field used by trial handovers", () => {
+  const [record] = normalizeWecomBotBatch({
+    records: [{
+      messageId: "bot:" + "f".repeat(64),
+      chatId: "room-1",
+      senderId: "sender-1",
+      sentAt: "2026-09-15T00:00:00.000Z",
+      messageType: "text",
+      text: "[Rose]试听LP 信息交接[Rose]\n【学生】：Synthetic Student\n【安排教师】：Teacher Example",
+    }],
+  });
+  const [enriched] = enrichWecomBotRecords([record!]);
+  assert.equal(enriched?.classification, "handover");
+  assert.equal(enriched?.studentNameHint, "Synthetic Student");
+});
+
 test("syncs callback files once and treats non-text callbacks as pending other records", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-bot-sync-"));
   const messages = path.join(root, "messages");
