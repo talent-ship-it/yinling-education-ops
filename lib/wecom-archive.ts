@@ -287,7 +287,9 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomArchiveR
   const studentNameHint = conservativeHint(
     value.studentNameHint,
     [
-      ...labelCandidates(allText, ["学生姓名", "学生名", "姓名(如提到)", "姓名（如提到）", "姓名"]),
+      // The live trial-handover template uses `【学生】` rather than
+      // `【学生姓名】`; both are explicit identity fields, not fuzzy evidence.
+      ...labelCandidates(allText, ["学生姓名", "学生名", "学生", "姓名(如提到)", "姓名（如提到）", "姓名"]),
       ...leadingRenewalStudent(allText),
     ],
     `record ${index}.studentNameHint`,
