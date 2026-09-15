@@ -11,6 +11,7 @@ function trialIdentityStatus(status: string | null) {
  switch (status) {
   case "identified": return "已确认学生身份";
   case "identity_conflict": return "姓名冲突 · 待核对";
+  case "identity_ambiguous": return "微信名候选不唯一 · 待核对";
   default: return "等待学生姓名";
  }
 }
@@ -37,7 +38,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   <div className={styles.notice}><strong>保留原文，先核对再进入正式流程</strong><p>这里保存镜像采集的交接资料和核对结果。导入不会自动标记 LP、收费或排课已完成；时间冲突和身份不明确的记录需继续核实。OCR 可能存在错字，以原始截图为准。</p>{data.batch && <small>采集截至 {new Date(data.batch.capturedAt).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}（墨尔本） · 对照为该次核对快照，不代表当前完成状态</small>}</div>
   <section className={styles.botTrialIntake} aria-labelledby="wecom-trial-intake-heading">
    <div className={styles.botTrialHeading}><div><p className={styles.eyebrow}>企业微信机器人 · 试听身份确认</p><h2 id="wecom-trial-intake-heading">待补学生姓名的试听交接</h2></div><span>{trialHandovers.length} 条</span></div>
-   <p>首条交接按群内微信名收录；收到同一微信名和学生中英文姓名后，系统只会确认身份并保留原始资料，不会自动创建正式学生、LP、排课或付款。</p>
+   <p>首条交接按群内微信名收录；后续补学生姓名时，微信名可有空格、标点或简短角色后缀等轻微差异，但必须在同群中只有一个明显候选。系统只会确认身份并保留原始资料，不会自动创建正式学生、LP、排课或付款。</p>
    {trialHandovers.length ? <div className={styles.botTrialRecords}>{trialHandovers.map((row) => <article className={styles.botTrialRecord} key={row.trial_handover_id ?? row.message_id}>
     <div><h3>{row.trial_identity_student_name || row.guardian_wechat_hint || "微信名待补"}</h3><p>微信名：{row.guardian_wechat_hint || "待填写"} · 收录于 {new Date(row.sent_at).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}</p><p>教务：{row.operations_owner_hint || "待填写"} · 课程规划老师：{row.course_planner_hint || "待填写"}</p></div>
     <span className={styles.botTrialStatus}>{trialIdentityStatus(row.trial_identity_status)}</span>

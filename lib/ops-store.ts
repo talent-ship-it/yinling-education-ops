@@ -132,7 +132,7 @@ export type WecomArchiveInboxRow = Readonly<{
   operations_owner_hint: string | null;
   course_planner_hint: string | null;
   trial_handover_id: string | null;
-  trial_identity_status: "awaiting_student_name" | "identified" | "identity_conflict" | null;
+  trial_identity_status: "awaiting_student_name" | "identified" | "identity_conflict" | "identity_ambiguous" | null;
   trial_identity_student_name: string | null;
   student_id: string | null;
   match_status: "pending" | "ambiguous" | "linked";
@@ -149,6 +149,7 @@ export type WecomArchiveStatus = Readonly<{
   trialAwaitingStudentName: number;
   trialIdentified: number;
   trialIdentityConflict: number;
+  trialIdentityAmbiguous: number;
   latestSentAt: string | null;
   latestIngestedAt: string | null;
 }>;

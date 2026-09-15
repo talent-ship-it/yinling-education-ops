@@ -51,3 +51,13 @@ createdb il_fixture_wecom_identity
 psql -d il_fixture_wecom_identity -c "COMMENT ON DATABASE il_fixture_wecom_identity IS 'insiderleads-disposable-fixture'"
 psql -d il_fixture_wecom_identity -f tests/sql/wecom-trial-handover-identity-runtime.sql
 ```
+
+The tolerant follow-up fixture builds on that contract. It accepts a unique
+same-group display-name variation, but holds a multi-candidate result for
+review rather than associating it automatically:
+
+```sh
+createdb il_fixture_wecom_tolerant_identity
+psql -d il_fixture_wecom_tolerant_identity -c "COMMENT ON DATABASE il_fixture_wecom_tolerant_identity IS 'insiderleads-disposable-fixture'"
+psql -d il_fixture_wecom_tolerant_identity -f tests/sql/wecom-trial-handover-tolerant-identity-runtime.sql
+```
