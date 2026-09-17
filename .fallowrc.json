@@ -1,0 +1,6 @@
+{
+  "entry": [
+    "tests/*.test.{ts,tsx,mjs}",
+    "scripts/wecom-receiver/receiver.mjs"
+  ]
+}
