@@ -89,7 +89,7 @@ test("administrator system pages keep visible controls connected to their bounda
   assert.match(audit, /onQuery=\{\(value\) => \{/);
   assert.match(audit, /onClick=\{\(\) => exportAudit\(filteredAudit\)\}/);
   assert.doesNotMatch(audit, /onClick=\{exportDemo\}/);
-  assert.match(audit, /entry\.tone === "amber" \|\| entry\.tone === "red"/);
+  assert.match(audit, /buildAuditView\(audit, auditQuery, auditFilter, auditPage, operatorLabel\)/);
   assert.match(client, /fetch\("\/api\/audit", \{ cache: "no-store" \}\)/);
   assert.match(client, /setAudit\(body\.entries as AuditEntry\[\]\)/);
   assert.doesNotMatch(client, /JSON\.stringify\(\{ action, detail: auditDetail, tone \}\)/);

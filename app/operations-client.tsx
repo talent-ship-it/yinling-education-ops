@@ -1,6 +1,7 @@
 "use client";
 
 import { dateTimeFormat } from "@/lib/date-time-format";
+import { buildAuditView } from "@/lib/audit-view";
 
 
 import { createSharedStatePoller } from "@/lib/shared-state-poller";
@@ -11704,31 +11705,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderAudit = () => {
-    const filteredAudit = audit.filter((entry) => {
-      const matchesQuery = `${operatorLabel(entry.actor)} ${entry.actor} ${entry.action} ${entry.detail}`
-        .toLowerCase()
-        .includes(auditQuery.trim().toLowerCase());
-      return (
-        matchesQuery &&
-        (auditFilter === "all" ||
-          (auditFilter === "system"
-            ? entry.actor === "系统"
-            : auditFilter === "manual"
-              ? entry.actor !== "系统"
-              : auditFilter === "amber"
-                ? entry.tone === "amber" || entry.tone === "red"
-                : entry.tone === auditFilter))
-      );
-    });
-    const auditPageSize = 8;
-    const safePage = Math.min(
-      auditPage,
-      Math.max(1, Math.ceil(filteredAudit.length / auditPageSize)),
-    );
-    const pagedAudit = filteredAudit.slice(
-      (safePage - 1) * auditPageSize,
-      safePage * auditPageSize,
-    );
+    const { filtered: filteredAudit, paged: pagedAudit, counts, safePage, pageSize: auditPageSize } =
+      buildAuditView(audit, auditQuery, auditFilter, auditPage, operatorLabel);
     return (
       <>
         <ViewHeading
@@ -11748,21 +11726,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <ViewTabs
             value={auditFilter}
             items={[
-              { id: "all", label: "全部", count: audit.length },
+              { id: "all", label: "全部", count: counts.all },
               {
                 id: "manual",
                 label: "人工操作",
-                count: audit.filter((entry) => entry.actor !== "系统").length,
+                count: counts.manual,
               },
               {
                 id: "system",
                 label: "系统事件",
-                count: audit.filter((entry) => entry.actor === "系统").length,
+                count: counts.system,
               },
               {
                 id: "amber",
                 label: "需关注",
-                count: audit.filter((entry) => entry.tone === "amber" || entry.tone === "red").length,
+                count: counts.amber,
               },
             ]}
             onChange={(value) => {
