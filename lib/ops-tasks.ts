@@ -1033,20 +1033,6 @@ export function closeTasksForBooking<T extends OpsTask>(
   });
 }
 
-// LP parent-progress reconciliation lives in a server-usable service module,
-// but is re-exported here so existing task workflow callers can adopt it
-// without importing a second task API surface.
-export {
-  LP_PARENT_PROGRESS_AUTO_ADVANCED_RESULT,
-  LP_PARENT_PROGRESS_CLOSED_RESULT,
-  LP_PARENT_PROGRESS_INTERVAL_MS,
-  LP_PARENT_PROGRESS_SYNC_RULE,
-  isCredibleLpActualBooking,
-  reconcileAllLpParentProgressTasks,
-  reconcileLpParentProgressTask,
-  reconcileLpParentProgressTasks,
-} from "./lp-parent-progress-service";
-
 /**
  * Workflow types that can satisfy the first student handover task.  Teacher
  * maintenance, substitution, and change-of-teacher workflows are deliberately
