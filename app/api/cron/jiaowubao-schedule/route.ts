@@ -14,7 +14,7 @@ import {
 import { queryJiaowubaoScheduleList } from "@/lib/jiaowubao-open-api-node";
 import {
   jiaowubaoTrialProjectionWindow,
-  runJiaowubaoTrialAutoSync,
+  runJiaowubaoTrialAutoSyncHorizon,
 } from "@/lib/jiaowubao-trial-auto-sync";
 import {
   beginJiaowubaoOpenApiScheduleSnapshot,
@@ -149,17 +149,10 @@ async function projectAuthority(revision: string, rowCount: number) {
 }
 
 async function projectTrialHorizon(snapshotRevision: string, window: { start: string; end: string }) {
-  const results = [];
-  for (const part of jiaowubaoScheduleCollectionWindows(window)) {
-    results.push(await runJiaowubaoTrialAutoSync({ snapshotRevision, window: jiaowubaoTrialProjectionWindow(part) }));
-  }
-  return {
-    outcome: results.some((result) => result.outcome === "applied") ? "applied"
-      : results.some((result) => result.outcome === "no_change") ? "no_change" : "no_match",
-    matchedCount: results.reduce((sum, result) => sum + result.matchedCount, 0),
-    appliedCount: results.reduce((sum, result) => sum + result.appliedCount, 0),
-    batchCount: results.reduce((sum, result) => sum + result.batchCount, 0),
-  };
+  return runJiaowubaoTrialAutoSyncHorizon({
+    snapshotRevision,
+    windows: jiaowubaoScheduleCollectionWindows(window).map(jiaowubaoTrialProjectionWindow),
+  });
 }
 
 /**

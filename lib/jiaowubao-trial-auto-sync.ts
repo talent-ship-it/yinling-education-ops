@@ -6,6 +6,7 @@ import {
 } from "./ops-store";
 import {
   runJiaowubaoTrialAutoSyncCore,
+  runJiaowubaoTrialAutoSyncHorizonCore,
   type JiaowubaoTrialAutoSyncDependencies,
   type JiaowubaoTrialAutoSyncResult,
 } from "./jiaowubao-trial-auto-sync-core";
@@ -36,4 +37,14 @@ export async function runJiaowubaoTrialAutoSync(
   }>,
 ): Promise<JiaowubaoTrialAutoSyncResult> {
   return runJiaowubaoTrialAutoSyncCore(input, DEFAULT_DEPENDENCIES);
+}
+
+export async function runJiaowubaoTrialAutoSyncHorizon(
+  input: Readonly<{
+    snapshotRevision: string;
+    windows: readonly JiaowubaoTrialSyncWindow[];
+    actor?: "Ops Admin";
+  }>,
+): Promise<JiaowubaoTrialAutoSyncResult> {
+  return runJiaowubaoTrialAutoSyncHorizonCore(input, DEFAULT_DEPENDENCIES);
 }
