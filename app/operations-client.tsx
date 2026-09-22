@@ -3483,8 +3483,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, []);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => setTaskRefreshKey(new Date().getTime()), 60_000);
-    return () => window.clearInterval(intervalId);
+    let timer = 0;
+    const refresh = () => {
+      setTaskRefreshKey(Date.now());
+      timer = window.setTimeout(refresh, 60_000);
+    };
+    timer = window.setTimeout(refresh, 60_000);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -8143,9 +8148,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [scheduleMinute, setScheduleMinute] = useState(() => Math.floor(Date.now() / 60_000));
   useEffect(() => {
     if (active !== "schedule" && active !== "classroom") return;
-    const tick = () => setScheduleMinute(Math.floor(Date.now() / 60_000));
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    const tick = () => {
+      const now = Date.now();
+      setScheduleMinute(Math.floor(now / 60_000));
+      timer = window.setTimeout(tick, 60_000 - now % 60_000 + 25);
+    };
+    timer = window.setTimeout(tick, 60_000 - Date.now() % 60_000 + 25);
+    return () => window.clearTimeout(timer);
   }, [active]);
   const scheduleProjection = useMemo(() => {
     if (active !== "schedule") return null;
