@@ -27,7 +27,7 @@ test("renewal UI keeps automatic depletion evidence read-only and preserves manu
   assert.match(rows, /automaticRenewalDateNote: automaticRenewalDateNote \|\| undefined/);
   assert.match(rows, /自动提示：\{renewal\.automaticRenewalDateNote\}/);
   assert.match(rows, /人工备注：\{renewal\.renewalDateNote\}/);
-  assert.match(rows, /renewalTaskAnchor\(renewal\.studentId, renewal\.packageId\)/);
+  assert.match(rows, /renewalCycleTaskAnchor\(\{ studentId: renewal\.studentId, packageId: renewal\.packageId/);
   assert.match(rows, /还没有可跟进的活跃学生/);
   assert.match(rows, /先新建学生/);
   assert.match(rows, /去同步与导入/);

@@ -35,10 +35,14 @@ export interface RenewalPackageProjection {
   /** Human-readable evidence explaining which lesson consumes the shared package. */
   renewalDateNote?: string;
   owner: string;
+  /** Latest authoritative purchase timestamp; a new purchase starts a new task cycle. */
+  cycleStartedAt?: string;
+  remainingHours?: number;
   /**
    * Projected instant at which this package is exhausted. A missing value is
-   * deliberate: low-balance evidence may remain visible, but an automatic
-   * task must not invent an immediate deadline.
+   * deliberate: low-balance evidence remains visible and existing follow-up
+   * deadlines are retained. An exhausted balance needs immediate follow-up,
+   * which is explicitly distinguished from a projected depletion date.
    */
   depletionAt?: Date | string | null;
   status?: RenewalProjectionStatus;
@@ -86,20 +90,16 @@ function projectionState(status: RenewalProjectionStatus | undefined): Projectio
 }
 
 /**
- * Student activity is authoritative for automatic task lifecycle. A renewed
- * package remains terminal; every other package closes while the student is
- * inactive and becomes eligible for the same stable task again on reactivation.
+ * Student inactivity can close an active package. Reactivating the student
+ * never overrides an explicit package-level terminal decision.
  */
 export function renewalProjectionStateForStudent(
   status: RenewalProjectionStatus | undefined,
   studentActive: boolean,
 ): ProjectionState {
   if (typeof studentActive !== "boolean") throw new TypeError("studentActive must be boolean");
-  return projectionState(status) === "renewed"
-    ? "renewed"
-    : studentActive
-      ? "active"
-      : "inactive";
+  const state = projectionState(status);
+  return state === "active" && !studentActive ? "inactive" : state;
 }
 
 export type RenewalStatusRecord = Readonly<{
@@ -108,7 +108,48 @@ export type RenewalStatusRecord = Readonly<{
   /** Legacy subject-level rows are display/history evidence, never package state. */
   subjectId?: string;
   status?: RenewalProjectionStatus;
+  lastAttemptAt?: string;
+  remainingHoursAtRenewal?: number;
 }>;
+
+type RenewalPackageStateInput = Readonly<{ studentId: string; packageId: string; packageCount: number; cycleStartedAt?: string; remainingHours?: number }>;
+
+/** Purchase order in imported arrays is not necessarily chronological. */
+export function latestRenewalPurchaseAt(purchases: readonly { purchasedAt: string }[]) {
+  const times = purchases.map((purchase) => Date.parse(purchase.purchasedAt)).filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : undefined;
+}
+
+function consumedAfterRenewal(record: RenewalStatusRecord | undefined, remainingHours: number | undefined) {
+  return record && projectionState(record.status) === "renewed" && record.lastAttemptAt
+    && Number.isFinite(Date.parse(record.lastAttemptAt))
+    && Number.isFinite(remainingHours)
+    && (remainingHours! <= 0 || (Number.isFinite(record.remainingHoursAtRenewal) && remainingHours! < record.remainingHoursAtRenewal!));
+}
+
+function statusInCycle(record: RenewalStatusRecord | undefined, input: RenewalPackageStateInput) {
+  if (!record) return undefined;
+  projectionState(record.status);
+  if ((input.cycleStartedAt && record.lastAttemptAt
+    && Date.parse(input.cycleStartedAt) > Date.parse(record.lastAttemptAt))
+    || consumedAfterRenewal(record, input.remainingHours)) return "not_renewed_active" as const;
+  return record.status;
+}
+
+function packageStatusRecord(records: readonly RenewalStatusRecord[], input: RenewalPackageStateInput) {
+  return records.find((record) => record.studentId === input.studentId && record.packageId === input.packageId && !record.subjectId)
+    ?? (input.packageCount === 1 ? records.find((record) => record.studentId === input.studentId && !record.packageId && !record.subjectId) : undefined);
+}
+
+/** A settled renewal can precede or follow its purchase entry. Once lessons
+ * consume the saved renewal balance, retain its completed task and begin the
+ * next follow-up cycle using the immutable decision timestamp. */
+export function renewalTaskCycleForPackage(records: readonly RenewalStatusRecord[], input: RenewalPackageStateInput) {
+  const record = packageStatusRecord(records, input);
+  return consumedAfterRenewal(record, input.remainingHours)
+    ? latestRenewalPurchaseAt([{ purchasedAt: input.cycleStartedAt ?? record!.lastAttemptAt! }, { purchasedAt: record!.lastAttemptAt! }])
+    : input.cycleStartedAt;
+}
 
 /**
  * Resolve business state for one package. A legacy student-only record is safe
@@ -117,7 +158,7 @@ export type RenewalStatusRecord = Readonly<{
  */
 export function renewalStatusForPackage(
   records: readonly RenewalStatusRecord[],
-  input: Readonly<{ studentId: string; packageId: string; packageCount: number }>,
+  input: RenewalPackageStateInput,
 ) {
   requireIdentifier(input.studentId, "studentId");
   requireIdentifier(input.packageId, "packageId");
@@ -128,15 +169,13 @@ export function renewalStatusForPackage(
     && record.packageId === input.packageId
     && !record.subjectId);
   if (exact) {
-    projectionState(exact.status);
-    return exact.status;
+    return statusInCycle(exact, input);
   }
   if (input.packageCount !== 1) return undefined;
   const legacy = records.find((record) => record.studentId === input.studentId
     && !record.packageId
     && !record.subjectId);
-  if (legacy) projectionState(legacy.status);
-  return legacy?.status;
+  return statusInCycle(legacy, input);
 }
 
 /** Stable task anchor for one student's package. Shared-package subjects never fork the task. */
@@ -144,6 +183,13 @@ export function renewalTaskAnchor(studentId: string, packageId: string) {
   requireIdentifier(studentId, "studentId");
   requireIdentifier(packageId, "packageId");
   return `renewal:${encodeURIComponent(studentId.trim())}:${encodeURIComponent(packageId.trim())}`;
+}
+
+export function renewalCycleTaskAnchor(projection: Pick<RenewalPackageProjection, "studentId" | "packageId" | "cycleStartedAt">) {
+  const anchor = renewalTaskAnchor(projection.studentId, projection.packageId);
+  return projection.cycleStartedAt
+    ? `${anchor}:cycle:${asDate(projection.cycleStartedAt, "cycleStartedAt").getTime()}`
+    : anchor;
 }
 
 export type RenewalDateNoteInput = Readonly<{
@@ -231,6 +277,7 @@ function validateProjection(projection: RenewalPackageProjection) {
   if (projection.depletionAt !== undefined && projection.depletionAt !== null) {
     asDate(projection.depletionAt, "depletionAt");
   }
+  if (projection.cycleStartedAt) asDate(projection.cycleStartedAt, "cycleStartedAt");
   return projectionState(projection.status);
 }
 
@@ -240,15 +287,16 @@ export function generateRenewalTask(
   options: RenewalTaskOptions,
 ): RenewalRuleTask | null {
   if (validateProjection(projection) !== "active") return null;
-  if (projection.depletionAt === undefined || projection.depletionAt === null) return null;
+  const exhausted = projection.remainingHours !== undefined && projection.remainingHours <= 0;
+  if (projection.depletionAt == null && !exhausted) return null;
   const now = asDate(options.now, "now");
   const timeZone = options.timeZone ?? MELBOURNE_TIME_ZONE;
   const dueAt = calculateRenewalTaskDueAt(
-    projection.depletionAt,
+    projection.depletionAt ?? now,
     now,
     options.leadDaysBeforeDepletion,
   );
-  const anchorBookingId = renewalTaskAnchor(projection.studentId, projection.packageId);
+  const anchorBookingId = renewalCycleTaskAnchor(projection);
   const idFactory = options.idFactory
     ?? ((ruleKey: typeof RENEWAL_TASK_RULE_KEY, anchor: string) => `TSK:${anchor}:${ruleKey}`);
   const packageLabel = projection.packageName?.trim() || projection.packageId.trim();
@@ -265,7 +313,9 @@ export function generateRenewalTask(
     status: statusForDueAt(dueAt, now, timeZone),
     tone: "amber",
     category: "续课",
-    trigger: projection.renewalDateNote?.trim() || "课包预计耗尽",
+    trigger: exhausted && !projection.depletionAt
+      ? "课时已耗尽，请立即跟进（耗尽日期待确认）"
+      : projection.renewalDateNote?.trim() || "课包预计耗尽",
     ruleKey: RENEWAL_TASK_RULE_KEY,
     anchorBookingId,
   };
@@ -315,7 +365,7 @@ function closeRenewalTask(
   state: Exclude<ProjectionState, "active">,
   now: Date,
 ) {
-  const identity = `${RENEWAL_TASK_RULE_KEY}\u0000${renewalTaskAnchor(projection.studentId, projection.packageId)}`;
+  const identity = `${RENEWAL_TASK_RULE_KEY}\u0000${renewalCycleTaskAnchor(projection)}`;
   const matching = tasks.filter((task) => taskRuleIdentity(task) === identity);
   if (!matching.length) return [...tasks];
   const existing = matching.find((task) => task.status === "done" && !isAutomaticRenewalClosure(task))
@@ -343,31 +393,33 @@ function closeRenewalTask(
 }
 
 /**
- * Close a previously generated automatic task when its exact depletion
- * evidence disappears. The renewal row remains available for low-balance
- * evidence, but the stale task is not left with a misleading deadline.
+ * Missing schedule evidence is not evidence of renewal. Keep the previous
+ * follow-up deadline and show that the depletion estimate needs verification.
  */
-function closeRenewalTaskWithoutDue(
+function preserveRenewalTaskWithoutDue(
   tasks: readonly OpsTask[],
   projection: RenewalPackageProjection,
   now: Date,
 ) {
-  const identity = `${RENEWAL_TASK_RULE_KEY}\u0000${renewalTaskAnchor(projection.studentId, projection.packageId)}`;
+  const identity = `${RENEWAL_TASK_RULE_KEY}\u0000${renewalCycleTaskAnchor(projection)}`;
   const matching = tasks.filter((task) => taskRuleIdentity(task) === identity);
   if (!matching.length) return [...tasks];
   const existing = matching.find((task) => task.status === "done" && !isAutomaticRenewalClosure(task))
     ?? matching.find((task) => task.status === "done")
     ?? matching[0];
   if (existing.status === "done" && !isAutomaticRenewalClosure(existing)) return [...tasks];
-  return upsertTaskByRule(tasks, {
+  const prepared = tasks.map((task) => taskRuleIdentity(task) === identity && isAutomaticRenewalClosure(task)
+    ? { ...task, status: task.dueAt ? statusForDueAt(task.dueAt, now) : "waiting" as const, result: undefined, closedAt: undefined }
+    : task);
+  return upsertTaskByRule(prepared, {
     ...existing,
     owner: projection.owner,
     assignees: [projection.owner],
     watchers: [DEFAULT_TEACHING_CONTROL_WATCHER],
-    status: "done",
-    tone: "green",
-    result: RENEWAL_NOT_DUE_RESULT,
-    closedAt: now.toISOString(),
+    status: existing.dueAt ? statusForDueAt(existing.dueAt, now) : "waiting",
+    result: undefined,
+    closedAt: undefined,
+    trigger: "耗尽日期待确认，请核对课时余额与排课后继续跟进",
   });
 }
 
@@ -385,18 +437,32 @@ export function reconcileRenewalTasks<T extends OpsTask>(
   const seenAnchors = new Set<string>();
   for (const projection of projections) {
     validateProjection(projection);
-    const anchor = renewalTaskAnchor(projection.studentId, projection.packageId);
+    const anchor = renewalCycleTaskAnchor(projection);
     if (seenAnchors.has(anchor)) throw new TypeError(`duplicate renewal projection for ${anchor}`);
     seenAnchors.add(anchor);
   }
 
-  const initial = closeMissingRenewalTasks(tasks, seenAnchors, options.scopeStudentIds, now);
+  // Adopt pre-cycle tasks without reopening human-completed work from this
+  // same purchase. Earlier completed cycles remain immutable history.
+  const adopted = tasks.map((task): OpsTask => {
+    if (task.ruleKey !== RENEWAL_TASK_RULE_KEY) return task;
+    const projection = projections.find((entry) => entry.cycleStartedAt
+      && task.anchorBookingId === renewalTaskAnchor(entry.studentId, entry.packageId));
+    if (!projection || tasks.some((other) => other.anchorBookingId === renewalCycleTaskAnchor(projection))) return task;
+    if (task.closedAt && Date.parse(task.closedAt) < Date.parse(projection.cycleStartedAt!)) return task;
+    return { ...task, anchorBookingId: renewalCycleTaskAnchor(projection) };
+  });
+  const initial = closeMissingRenewalTasks(adopted, seenAnchors, options.scopeStudentIds, now);
   const reconciled = projections.reduce<OpsTask[]>((current, projection) => {
     const state = projectionState(projection.status);
     if (state !== "active") return closeRenewalTask(current, projection, state, now);
 
-    const incoming = generateRenewalTask(projection, options);
-    if (!incoming) return closeRenewalTaskWithoutDue(current, projection, now);
+    let incoming = generateRenewalTask(projection, options);
+    if (!incoming) return preserveRenewalTaskWithoutDue(current, projection, now);
+    if (!projection.depletionAt) {
+      const existing = current.find((task) => taskRuleIdentity(task) === taskRuleIdentity(incoming!));
+      if (existing?.dueAt) incoming = { ...incoming, dueAt: existing.dueAt, due: existing.due, status: statusForDueAt(existing.dueAt, now, options.timeZone ?? MELBOURNE_TIME_ZONE) };
+    }
     const identity = taskRuleIdentity(incoming);
     const prepared = current.map((task) => taskRuleIdentity(task) === identity && isAutomaticRenewalClosure(task)
       ? { ...task, status: "waiting" as const, result: undefined, closedAt: undefined }

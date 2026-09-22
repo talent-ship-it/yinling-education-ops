@@ -14,6 +14,9 @@ import {
   renewalProjectionStateForStudent,
   renewalTaskAnchor,
   renewalStatusForPackage,
+  renewalCycleTaskAnchor,
+  latestRenewalPurchaseAt,
+  renewalTaskCycleForPackage,
 } from "../lib/renewal-tasks";
 
 const NOW = "2026-08-10T00:00:00.000Z";
@@ -105,6 +108,58 @@ test("does not generate a task when depletion evidence is missing", () => {
   assert.deepEqual(reconcileRenewalTasks([], [projection({ depletionAt: undefined })], { now: NOW }), []);
 });
 
+test("zero balance gets an immediate follow-up task whose deadline does not slide on refresh", () => {
+  const exhausted = projection({ depletionAt: undefined, remainingHours: 0 });
+  const initial = reconcileRenewalTasks([], [exhausted], { now: NOW });
+  assert.equal(initial.length, 1);
+  assert.equal(initial[0].dueAt, NOW);
+  assert.match(initial[0].trigger, /课时已耗尽.*耗尽日期待确认/);
+  const later = reconcileRenewalTasks(initial, [exhausted], { now: "2026-08-11T00:00:00.000Z" });
+  assert.equal(later[0].dueAt, NOW);
+  assert.equal(later[0].status, "overdue");
+});
+
+test("new purchase creates a new follow-up cycle and retains the completed task history", () => {
+  const firstCycle = "2026-07-01T00:00:00.000Z";
+  const nextCycle = latestRenewalPurchaseAt([{ purchasedAt: "2026-08-11T00:00:00.000Z" }, { purchasedAt: firstCycle }]);
+  assert.equal(nextCycle, "2026-08-11T00:00:00.000Z");
+  const oldProjection = projection({ cycleStartedAt: firstCycle });
+  const active = reconcileRenewalTasks([], [oldProjection], { now: NOW });
+  const completed = reconcileRenewalTasks(active, [{ ...oldProjection, status: "renewed" }], { now: NOW });
+  const status = renewalStatusForPackage([{
+    studentId: "STU-1", packageId: "PKG-1", status: "renewed", lastAttemptAt: NOW,
+  }], { studentId: "STU-1", packageId: "PKG-1", packageCount: 1, cycleStartedAt: nextCycle });
+  assert.equal(status, "not_renewed_active");
+  const nextProjection = projection({ cycleStartedAt: nextCycle, status });
+  const next = reconcileRenewalTasks(completed, [nextProjection], { now: NOW, scopeStudentIds: ["STU-1"] });
+  assert.equal(next.length, 2);
+  assert.deepEqual(next.find((task) => task.id === completed[0].id), completed[0]);
+  assert.notEqual(next.find((task) => task.anchorBookingId === renewalCycleTaskAnchor(nextProjection))?.status, "done");
+  assert.equal(renewalStatusForPackage([{
+    studentId: "STU-1", packageId: "PKG-1", status: "renewed", lastAttemptAt: "2026-08-12T00:00:00.000Z",
+  }], { studentId: "STU-1", packageId: "PKG-1", packageCount: 1, cycleStartedAt: nextCycle }), "renewed");
+});
+
+test("adopting cycle identities retains human completion for the same purchase", () => {
+  const [task] = reconcileRenewalTasks([], [projection()], { now: NOW });
+  const completed = { ...task, status: "done" as const, result: "家长已确认", closedAt: NOW };
+  const result = reconcileRenewalTasks([completed], [projection({ cycleStartedAt: "2026-07-01T00:00:00.000Z" })], { now: NOW, scopeStudentIds: ["STU-1"] });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, completed.id);
+  assert.equal(result[0].result, completed.result);
+  assert.equal(result[0].status, "done");
+});
+
+test("a renewal recorded after purchase starts a fresh task when that balance is consumed", () => {
+  const input = { studentId: "STU-1", packageId: "PKG-1", packageCount: 1, cycleStartedAt: "2026-08-11T00:00:00.000Z", remainingHours: 20 };
+  const records = [{ studentId: "STU-1", packageId: "PKG-1", status: "renewed" as const, lastAttemptAt: "2026-08-12T00:00:00.000Z", remainingHoursAtRenewal: 20 }];
+  assert.equal(renewalStatusForPackage(records, input), "renewed");
+  const next = { ...input, remainingHours: 4 };
+  assert.equal(renewalStatusForPackage(records, next), "not_renewed_active");
+  assert.equal(renewalTaskCycleForPackage(records, next), records[0].lastAttemptAt);
+  assert.equal(renewalStatusForPackage([{ ...records[0], remainingHoursAtRenewal: undefined }], { ...next, remainingHours: 0 }), "not_renewed_active");
+});
+
 test("keeps an exact past depletion timestamp and marks it overdue", () => {
   const task = generateRenewalTask(projection({ depletionAt: "2026-08-09T09:00:00.000Z" }), { now: NOW });
   assert.ok(task);
@@ -112,14 +167,15 @@ test("keeps an exact past depletion timestamp and marks it overdue", () => {
   assert.equal(task.status, "overdue");
 });
 
-test("closes an old automatic task when depletion evidence disappears", () => {
+test("missing depletion evidence preserves the follow-up deadline and does not mark it completed", () => {
   const active = reconcileRenewalTasks([], [projection()], { now: NOW });
   const withoutEvidence = reconcileRenewalTasks(active, [projection({ depletionAt: undefined })], {
     now: "2026-08-11T00:00:00.000Z",
   });
   assert.equal(withoutEvidence.length, 1);
-  assert.equal(withoutEvidence[0].status, "done");
-  assert.equal(withoutEvidence[0].result, RENEWAL_NOT_DUE_RESULT);
+  assert.notEqual(withoutEvidence[0].status, "done");
+  assert.equal(withoutEvidence[0].result, undefined);
+  assert.match(withoutEvidence[0].trigger, /耗尽日期待确认/);
   assert.equal(withoutEvidence[0].dueAt, "2026-08-20T09:00:00.000Z");
 });
 
@@ -152,8 +208,8 @@ test("resolves renewal state by student and package without spreading one packag
 
 test("student activity explicitly closes and later rebuilds the stable automatic package task", () => {
   assert.equal(renewalProjectionStateForStudent("not_renewed_active", false), "inactive");
-  assert.equal(renewalProjectionStateForStudent("not_renewed_inactive", true), "active");
-  assert.equal(renewalProjectionStateForStudent("not_renewed_exam_finished", true), "active");
+  assert.equal(renewalProjectionStateForStudent("not_renewed_inactive", true), "inactive");
+  assert.equal(renewalProjectionStateForStudent("not_renewed_exam_finished", true), "inactive");
   assert.equal(renewalProjectionStateForStudent("renewed", true), "renewed");
   assert.equal(renewalProjectionStateForStudent("renewed", false), "renewed");
 
@@ -163,7 +219,7 @@ test("student activity explicitly closes and later rebuilds the stable automatic
   })], { now: "2026-08-11T00:00:00.000Z" });
   assert.equal(inactive[0].result, RENEWAL_INACTIVE_RESULT);
   const restored = reconcileRenewalTasks(inactive, [projection({
-    status: renewalProjectionStateForStudent("not_renewed_inactive", true),
+    status: renewalProjectionStateForStudent("not_renewed_active", true),
   })], { now: "2026-08-12T00:00:00.000Z", idFactory: () => "discarded-id" });
   assert.equal(restored[0].id, "stable-activity-id");
   assert.notEqual(restored[0].status, "done");

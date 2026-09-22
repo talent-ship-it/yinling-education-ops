@@ -296,7 +296,7 @@ import {
   type TeacherAvailabilityEditAction,
   type TeacherAvailabilitySubmissionReview,
 } from "@/app/teacher-availability-panel";
-import { buildRenewalDateNote, reconcileRenewalTasks, renewalProjectionStateForStudent, renewalStatusForPackage, renewalTaskAnchor, type RenewalPackageProjection } from "@/lib/renewal-tasks";
+import { buildRenewalDateNote, latestRenewalPurchaseAt, reconcileRenewalTasks, renewalCycleTaskAnchor, renewalProjectionStateForStudent, renewalStatusForPackage, renewalTaskAnchor, renewalTaskCycleForPackage, type RenewalPackageProjection } from "@/lib/renewal-tasks";
 import {
   earliestLessonOccurrenceTargetDate,
   expandLessonOccurrences,
@@ -727,6 +727,7 @@ type Renewal = {
   businessStatus?: RenewalBusinessStatus;
   owner: string;
   lastAttemptAt?: string;
+  remainingHoursAtRenewal?: number;
   lastContactedAt?: string;
   followUpNote?: string;
   followUpAttachmentId?: string;
@@ -4282,6 +4283,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       packageId: renewal.packageId,
       subjectId: renewal.subjectId,
       status: renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status),
+      lastAttemptAt: renewal.lastAttemptAt,
+      remainingHoursAtRenewal: renewal.remainingHoursAtRenewal,
     }));
     const scopeStudentIds: string[] = [];
     const projections = targetStudents.flatMap((student) => {
@@ -4321,6 +4324,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           studentId: student.id,
           packageId: estimate.packageId,
           packageCount: packages.length,
+          cycleStartedAt: latestRenewalPurchaseAt(lessonPackage.purchaseRecords),
+          remainingHours,
         }) ?? "not_renewed_active";
         const status = renewalProjectionStateForStudent(recordedStatus, isActiveStudent(student));
         const packageOccurrences = occurrences
@@ -4361,9 +4366,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           packageName: lessonPackage.name,
           renewalDateNote: renewalDateNote || undefined,
           owner: student.owner,
-          // A dueAt is valid only when the balance projection points to an
-          // actual future native booking occurrence. Never substitute a
-          // package-table date or an immediate fallback timestamp.
+          cycleStartedAt: renewalTaskCycleForPackage(renewalStatusRecords, {
+            studentId: student.id, packageId: estimate.packageId, packageCount: packages.length,
+            cycleStartedAt: latestRenewalPurchaseAt(lessonPackage.purchaseRecords), remainingHours,
+          }),
+          remainingHours,
+          // Depletion dates come only from real lesson evidence. Zero balance
+          // without one generates an explicitly labeled follow-up deadline.
           depletionAt: estimate.depletionDate && depletionInstant
             ? depletionInstant.toISOString()
             : undefined,
@@ -9580,7 +9589,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           // read-only depletion evidence shown alongside it.
           renewalDateNote: existing?.renewalDateNote,
           automaticRenewalDateNote: automaticRenewalDateNote || undefined,
-          businessStatus: existing?.businessStatus ?? normalizeRenewalBusinessStatus(existing?.status ?? "待跟进"),
+          businessStatus: renewalStatusForPackage(existing ? [{
+            ...existing,
+            subjectId: undefined,
+            status: existing.businessStatus ?? normalizeRenewalBusinessStatus(existing.status),
+          }] : [], {
+            studentId: student.id, packageId: lessonPackage.id, packageCount: packages.length,
+            cycleStartedAt: latestRenewalPurchaseAt(lessonPackage.purchaseRecords),
+            remainingHours: remaining,
+          }) as RenewalBusinessStatus | undefined ?? "not_renewed_active",
         }];
       });
       const representedRenewalIds = new Set(structuredRows.map((row) => row.id));
@@ -9714,7 +9731,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               const displayStatus = RENEWAL_STATUS_LABELS[businessStatus];
               const businessTone: Tone = businessStatus === "renewed" ? "green" : businessStatus === "not_renewed_active" ? "amber" : "neutral";
               const rowKey = renewal.packageId
-                ? renewalTaskAnchor(renewal.studentId, renewal.packageId)
+                ? renewalCycleTaskAnchor({ studentId: renewal.studentId, packageId: renewal.packageId,
+                    cycleStartedAt: latestRenewalPurchaseAt(student?.lessonPackages?.find((entry) => entry.id === renewal.packageId)?.purchaseRecords ?? []) })
                 : `renewal-record:${renewal.id}`;
               return <div className="collection-row renewal-grid-row" key={rowKey}>
                 <button className="row-primary table-person" type="button" onClick={() => goToStudent(renewal.studentId)}><Avatar initials={student?.initials ?? "?"} tone={lowHours ? "red" : businessTone} /><span><strong>{student?.name}</strong><small>{renewal.packageName ?? "未关联课包"} · {renewal.subjectLabel ?? student?.course}</small></span></button>
