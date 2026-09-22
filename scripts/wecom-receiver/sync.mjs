@@ -93,7 +93,15 @@ async function readState(file) {
   }
 }
 
-async function postBatch({ endpoint, token, records, fetchImpl, requestTimeoutMs }) {
+async function postCommittedJson({
+  endpoint,
+  token,
+  body,
+  fetchImpl,
+  requestTimeoutMs,
+  timeoutCode,
+  httpErrorPrefix,
+}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
@@ -103,18 +111,30 @@ async function postBatch({ endpoint, token, records, fetchImpl, requestTimeoutMs
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ records }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     const payload = await response.json().catch(() => null);
-    if (controller.signal.aborted) throw new Error("archive_request_timeout");
+    if (controller.signal.aborted) throw new Error(timeoutCode);
     if (!response.ok || payload?.outcome !== "committed") {
-      throw new Error(`archive_http_${response.status}`);
+      throw new Error(`${httpErrorPrefix}_${response.status}`);
     }
     return payload;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function postBatch({ endpoint, token, records, fetchImpl, requestTimeoutMs }) {
+  return postCommittedJson({
+    endpoint,
+    token,
+    body: { records },
+    fetchImpl,
+    requestTimeoutMs,
+    timeoutCode: "archive_request_timeout",
+    httpErrorPrefix: "archive_http",
+  });
 }
 
 function healthEndpointFor(ingestUrl, explicit) {
@@ -186,19 +206,15 @@ async function readReceiverHealth(dataDirectory) {
 }
 
 async function postHealth({ endpoint, token, health, fetchImpl, requestTimeoutMs }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-  try {
-    const response = await fetchImpl(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ health }),
-      signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => null);
-    if (controller.signal.aborted) throw new Error("health_request_timeout");
-    if (!response.ok || payload?.outcome !== "committed") throw new Error(`health_http_${response.status}`);
-  } finally { clearTimeout(timeout); }
+  await postCommittedJson({
+    endpoint,
+    token,
+    body: { health },
+    fetchImpl,
+    requestTimeoutMs,
+    timeoutCode: "health_request_timeout",
+    httpErrorPrefix: "health_http",
+  });
 }
 
 export async function syncReceiverMessages({

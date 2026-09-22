@@ -1,3 +1,5 @@
+import { isWecomRecord } from "./wecom-validation";
+
 const STATES = new Set([
   "starting", "connected", "authenticated", "disconnected", "reconnecting",
   "error", "terminal_connection_error", "storage_error",
@@ -59,10 +61,6 @@ export class WecomReceiverHealthError extends Error {
   }
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
 function fail(code: string, message: string): never {
   throw new WecomReceiverHealthError(code, message);
 }
@@ -94,7 +92,7 @@ function errorCode(value: unknown, field: string) {
 
 /** Accepts only aggregate health fields; callback frames and content cannot cross this boundary. */
 export function normalizeWecomReceiverHealth(input: unknown): WecomReceiverHealth {
-  if (!record(input) || Object.keys(input).some((key) => key !== "health") || !record(input.health)) {
+  if (!isWecomRecord(input) || Object.keys(input).some((key) => key !== "health") || !isWecomRecord(input.health)) {
     fail("invalid_health", "health must be an object.");
   }
   const health = input.health;

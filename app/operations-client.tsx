@@ -65,6 +65,7 @@ import {
 
 import { cleanTimezone } from "@/lib/timezone";
 import { AccountLifecycleWorkspace } from "@/app/account-lifecycle-workspace";
+import { AuthStatusScreen } from "@/app/auth-status-screen";
 import { JiaowubaoAuthorityStatusPanel } from "@/app/jiaowubao-authority-status";
 import type { AccountDirectoryRecord } from "@/app/account-admin-lifecycle";
 import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
@@ -2257,19 +2258,6 @@ function Pagination({ page, total, pageSize, onPage }: { page: number; total: nu
 
 function EmptyState({ title, detail, action }: { title: string; detail?: string; action?: ReactNode }) {
   return <div className="collection-empty" role="status" aria-live="polite"><Search size={22} aria-hidden="true" /><strong>{title}</strong>{detail ? <span>{detail}</span> : null}{action ? <div className="collection-empty-action">{action}</div> : null}</div>;
-}
-
-function AuthStatusScreen({ title, detail }: { title: string; detail: string }) {
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
-        <h1>{title}</h1>
-        <p className="login-copy">{detail}</p>
-      </section>
-    </main>
-  );
 }
 
 function PasswordUsernameContext({ login }: { login: string }) {

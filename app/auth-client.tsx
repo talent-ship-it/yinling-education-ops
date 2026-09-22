@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { AuthStatusScreen } from "@/app/auth-status-screen";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import { fetchJsonWithTimeout, type SharedStateFetch } from "@/lib/shared-state-recovery";
 
@@ -31,19 +32,6 @@ export async function readInitialSession(
     role: typeof body.role === "string" ? body.role as DemoSessionRole : "",
     mustChangePassword: body.mustChangePassword === true,
   };
-}
-
-function AuthStatusScreen({ title, detail }: { title: string; detail: string }) {
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
-        <h1>{title}</h1>
-        <p className="login-copy">{detail}</p>
-      </section>
-    </main>
-  );
 }
 
 const OperationsApp = dynamic(() => import("./operations-client"), {
