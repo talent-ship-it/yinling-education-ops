@@ -7537,11 +7537,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         : booking.classroom?.status === "running" || recordings.length
           ? "ended"
           : "ready";
-      if (booking.classroom?.meetingId === runtime.meetingId || runtime.running || recordings.length) {
+      if (!result.closing && !result.ended && (booking.classroom?.meetingId === runtime.meetingId || runtime.running || recordings.length)) {
         await persistClassroom(booking, runtime.meetingId, nextStatus);
       }
       setClassroomRuntime(runtime);
-      if (!quiet) notify(runtime.running ? `教室进行中，当前 ${runtime.participantCount} 人在线` : recordings.length ? "课堂已结束，录播正在处理或已就绪" : "教室已创建，尚未开始");
+      if (!quiet) notify(result.closing ? "结束请求已保存，系统正在确认教室关闭" : result.ended ? "课堂已结束，录播正在处理或已就绪" : runtime.running ? `教室进行中，当前 ${runtime.participantCount} 人在线` : recordings.length ? "课堂已结束，录播正在处理或已就绪" : "教室已创建，尚未开始");
       return runtime;
     } catch (error) {
       if (!quiet) notify(error instanceof Error ? error.message : "无法读取教室状态");
@@ -7901,10 +7901,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         setClassroomBusy(true);
         try {
           const result = await classroomRequest({ action: "end", bookingId: booking.id, occurrenceId: booking.occurrenceKey, sourceDate: booking.sourceDate });
-          await persistClassroom(booking, String(result.meetingId || booking.classroom?.meetingId || ""), "ended");
-          setClassroomRuntime((current) => current ? { ...current, running: false, participantCount: 0, moderatorCount: 0 } : current);
-          addAudit("结束在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
-          notify("课堂已结束，正在等待出勤证据结算");
+          if (result.ended === true) {
+            setClassroomRuntime((current) => current ? { ...current, running: false, participantCount: 0, moderatorCount: 0 } : current);
+            notify("课堂已结束，正在等待出勤证据结算");
+          } else {
+            notify("结束请求已保存，系统正在确认教室关闭；请稍后刷新状态。");
+          }
         } catch (error) {
           notify(error instanceof Error ? error.message : "在线教室结束失败");
         } finally {

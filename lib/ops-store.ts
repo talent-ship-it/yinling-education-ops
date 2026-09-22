@@ -1329,6 +1329,38 @@ export function getOpsState(entities?: string[], options: OpsRpcOptions = {}) {
   }, options);
 }
 
+export type ClassroomEndRequest = Readonly<{
+  occurrence_id: string;
+  meeting_id: string;
+  status: "closing" | "ended";
+}>;
+
+export function claimClassroomCreation(occurrenceId: string, meetingId: string, leaseId: string, temporaryRequestIdentity?: string) {
+  const { secret } = configuration();
+  if (temporaryRequestIdentity) return rpc<boolean>("claim_temporary_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_meeting_id: meetingId, p_lease_id: leaseId, p_request_identity: temporaryRequestIdentity });
+  return rpc<boolean>("claim_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_meeting_id: meetingId, p_lease_id: leaseId });
+}
+
+export function releaseClassroomCreation(occurrenceId: string, leaseId: string) {
+  const { secret } = configuration();
+  return rpc<boolean>("release_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_lease_id: leaseId });
+}
+
+export function readClassroomEndRequests(occurrenceId?: string) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest[]>("read_classroom_end_requests", { p_secret: secret, p_occurrence_id: occurrenceId ?? null });
+}
+
+export function beginClassroomEnd(input: { occurrenceId: string; meetingId: string; expectedVersion: number; actor: string }) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest>("begin_classroom_end", { p_secret: secret, p_occurrence_id: input.occurrenceId, p_meeting_id: input.meetingId, p_expected_version: input.expectedVersion, p_actor: input.actor });
+}
+
+export function finishClassroomEnd(occurrenceId: string, providerStopped: boolean) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest>("finish_classroom_end", { p_secret: secret, p_occurrence_id: occurrenceId, p_provider_stopped: providerStopped });
+}
+
 export function getOperationalAudit(limit = 500) {
   const { secret } = configuration();
   return rpc<OperationalAuditRecord[]>("read_operational_contract_audit", {

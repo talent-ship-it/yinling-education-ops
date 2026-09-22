@@ -346,6 +346,7 @@ export async function POST(request: NextRequest) {
       bookingId,
       studentId: details.studentId,
       teacherId: details.teacherId,
+      temporaryRequestIdentity: claim[0].request_identity,
     });
     const saved = await mutateBookingCapacityAtomic({
       ...prepared,
