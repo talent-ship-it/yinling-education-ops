@@ -865,7 +865,7 @@
         "count": 9
       },
       "complexity_moderate": {
-        "count": 5
+        "count": 4
       },
       "crap_critical": {
         "count": 52
@@ -874,7 +874,7 @@
         "count": 30
       },
       "crap_moderate": {
-        "count": 39
+        "count": 38
       }
     },
     "app/schedule-month-view.tsx": {
@@ -3496,11 +3496,6 @@
         "count": 1
       }
     },
-    "app/operations-client.tsx\u0000OperationsApp": {
-      "complexity_moderate": {
-        "count": 1
-      }
-    },
     "app/operations-client.tsx\u0000OperationsWorkspace": {
       "complexity_critical": {
         "count": 1
@@ -4137,11 +4132,6 @@
     },
     "app/operations-client.tsx\u0000useSharedState": {
       "complexity_moderate": {
-        "count": 1
-      }
-    },
-    "app/operations-client.tsx\u0000value": {
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -6631,8 +6621,8 @@
   },
   "runtime_coverage_findings": [],
   "target_keys": [
-    "lib/account-tokens.ts:dead code",
     "app/api/integrations/wecom/bot-inbox/route.ts:complexity",
+    "lib/account-tokens.ts:dead code",
     "app/handover-review/page.tsx:untested risk",
     "lib/jiaowubao-trial-source-window.ts:untested risk",
     "app/api/teacher-leave-requests/route.ts:untested risk",
@@ -6640,12 +6630,12 @@
     "app/to-do-list.tsx:high impact",
     "lib/legacy-operation-task-service.ts:high impact",
     "lib/jiaowubao-completed-lesson-sync.ts:complexity",
+    "app/account-menu.tsx:untested risk",
     "app/operations-client.tsx:high impact",
     "lib/lesson-occurrence-service.ts:high impact",
-    "app/api/app-state/route.ts:high impact",
     "lib/account-directory.ts:dead code",
+    "app/api/app-state/route.ts:high impact",
     "lib/classroom-provision-plan.ts:high impact",
-    "app/account-menu.tsx:untested risk",
     "scripts/jiaowubao-authoritative-student-hints-read.mjs:untested risk",
     "app/course-package-summary.tsx:dead code",
     "scripts/jiaowubao-static-small-batch-plan.mjs:untested risk",
@@ -6658,10 +6648,10 @@
     "lib/demo-auth.ts:dead code",
     "lib/ops-access.ts:high impact",
     "app/chatgpt-auth.ts:dead code",
-    "app/account-lifecycle-workspace.tsx:complexity",
-    "app/api/operations/teacher-absence/create/route.ts:complexity",
-    "lib/ops-state-transition.ts:high impact",
     "lib/wecom-bot-receiver.ts:high impact",
+    "app/account-lifecycle-workspace.tsx:complexity",
+    "lib/ops-state-transition.ts:high impact",
+    "app/api/operations/teacher-absence/create/route.ts:complexity",
     "app/api/bookings/mutate/route.ts:high impact",
     "lib/managed-trial-payment.ts:high impact",
     "app/api/operations/lp/route.ts:complexity",
@@ -6669,15 +6659,15 @@
     "lib/temporary-classroom-request.ts:untested risk",
     "scripts/jiaowubao-open-api-schedule-management-staging.ts:complexity",
     "lib/booking-capacity-service.ts:high impact",
-    "lib/wecom-archive.ts:high impact",
     "scripts/jiaowubao-open-api-schedule-staging.ts:complexity",
     "lib/teacher-absence-creation-service.ts:high impact",
+    "lib/wecom-archive.ts:high impact",
     "app/jiaowubao-schedule-mapping-priority-review.tsx:complexity",
     "app/jiaowubao-schedule-mapping-review.tsx:high impact",
     "scripts/student-import-management.ts:untested risk",
     "lib/jiaowubao-completed-schedule.ts:high impact",
-    "app/jiaowubao-completed-month-evidence.ts:high impact",
     "app/jiaowubao-imported-schedule.tsx:complexity",
+    "app/jiaowubao-completed-month-evidence.ts:high impact",
     "lib/lp-atomic-service.ts:high impact",
     "app/account-security-panel.tsx:complexity",
     "app/api/jiaowubao-open-api/completed-lessons/route.ts:untested risk",
@@ -6685,27 +6675,28 @@
     "lib/exam-follow-up-service.ts:high impact",
     "lib/renewal-tasks.ts:high impact",
     "app/api/classroom/route.ts:complexity",
+    "app/api/integrations/wecom/archive/route.ts:complexity",
     "lib/jiaowubao-completed-month-evidence.ts:dead code",
     "lib/booking-recurrence.ts:high impact",
     "app/teacher-availability-completion.tsx:high impact",
     "lib/tencent-trial-ledger-sync-plan.ts:high impact",
     "app/api/accounts/access/route.ts:untested risk",
-    "lib/student-import-service.ts:high impact",
     "lib/jiaowubao-authority-status.ts:high impact",
     "lib/renewal-follow-up-service.ts:complexity",
     "scripts/student-import-identity-management.ts:untested risk",
     "lib/jiaowubao-completed-lessons.ts:high impact",
-    "lib/booking-projection-pending.ts:high impact",
+    "lib/student-import-service.ts:high impact",
     "app/api/operations/legacy/create/route.ts:complexity",
+    "lib/booking-projection-pending.ts:high impact",
     "lib/wecom-archive-bridge.ts:high impact",
+    "app/auth-client.tsx:high impact",
     "lib/jiaowubao-trial-sync.ts:high impact",
     "lib/teacher-import-service.ts:high impact",
     "app/api/operations/confirm/route.ts:untested risk",
-    "app/api/integrations/wecom/archive/route.ts:complexity",
-    "app/api/cron/jiaowubao-schedule/route.ts:untested risk",
     "lib/account-issued-password.ts:dead code",
     "lib/student-import.ts:high impact",
     "app/api/operations/students/create/route.ts:untested risk",
+    "app/api/cron/jiaowubao-schedule/route.ts:untested risk",
     "lib/teacher-availability-submission-service.ts:high impact",
     "lib/lesson-package-purchase-command.ts:high impact",
     "lib/jiaowubao-static-xlsx-parser.ts:complexity",
@@ -6716,14 +6707,15 @@
     "app/api/fu-attachments/route.ts:complexity",
     "app/api/operations/jiaowubao-trial-sync/route.ts:complexity",
     "lib/booking-teacher-scope.ts:high impact",
+    "lib/shared-state-poller.ts:high impact",
     "lib/jiaowubao-direct-import-projection.ts:complexity",
     "app/api/tasks/trial-payment/route.ts:complexity",
     "lib/operations-report-export.ts:dead code",
     "lib/teacher-absence-pending.ts:high impact",
-    "app/api/jiaowubao-open-api/schedule-preview/route.ts:complexity",
     "app/api/operations/departure/create/route.ts:complexity",
-    "app/api/demo-login/route.ts:complexity",
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts:complexity",
     "app/api/tasks/legacy-deadline/route.ts:complexity",
+    "app/api/demo-login/route.ts:complexity",
     "app/api/files/route.ts:untested risk",
     "lib/operation-occurrence-service.ts:complexity",
     "app/api/jiaowubao-direct-import/schedule-mappings/route.ts:untested risk",
@@ -6738,8 +6730,8 @@
     "lib/jiaowubao-open-api-schedule-reader.ts:high impact",
     "lib/teacher-departure-occurrences.ts:complexity",
     "app/api/operations/direct-enrollment/route.ts:complexity",
-    "app/api/account/password/route.ts:complexity",
     "app/api/account/mfa/route.ts:complexity",
+    "app/api/account/password/route.ts:complexity",
     "app/account-admin-lifecycle.tsx:complexity",
     "lib/demo-users.ts:high impact",
     "lib/jiaowubao-import.ts:dead code",
@@ -6749,20 +6741,20 @@
     "app/api/jiaowubao-open-api/schedule/route.ts:complexity",
     "app/teacher-availability-panel.tsx:complexity",
     "scripts/check-api-write-boundaries.mjs:untested risk",
-    "scripts/wecom-receiver/sync.mjs:complexity",
     "app/api/classroom/temporary/route.ts:complexity",
     "lib/lp-workflows.ts:complexity",
-    "app/api/lesson-occurrences/complete/route.ts:untested risk",
     "scripts/jiaowubao-completed-lesson-retirement-management.ts:untested risk",
+    "app/api/lesson-occurrences/complete/route.ts:untested risk",
+    "scripts/wecom-receiver/sync.mjs:complexity",
     "lib/jiaowubao-completed-lesson-resumable-sync.ts:complexity",
     "scripts/run-sql-runtime-fixtures.mjs:untested risk",
     "app/api/integrations/tencent-trial-ledger/route.ts:complexity",
+    "scripts/wecom-receiver/receiver.mjs:complexity",
     "lib/jiaowubao-static-import.ts:complexity",
     "app/api/cron/trial-payment/route.ts:untested risk",
     "lib/payroll-export.ts:complexity",
     "lib/xlsx-reader.ts:complexity",
     "app/api/account/sessions/route.ts:untested risk",
-    "scripts/wecom-receiver/receiver.mjs:complexity",
     "scripts/jiaowubao-student-source-staging.ts:complexity",
     "app/api/integrations/wecom/callback/route.ts:untested risk",
     "lib/jiaowubao-direct-import-batch-gate.ts:complexity",
