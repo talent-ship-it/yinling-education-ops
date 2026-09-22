@@ -23,8 +23,21 @@ begin
      or (length(original) - length(replace(original, old_absence_owner, ''))) <> length(old_absence_owner) then
     raise exception 'Unexpected absence LP owner revision';
   end if;
-  execute replace(original, old_absence_owner,
+  original := replace(original, old_absence_owner,
     $new$task_owner := coalesce(case when jsonb_typeof(student_item -> 'owner') = 'string' then nullif(trim(student_item ->> 'owner'), '') end, '待分配');$new$);
+  -- The row variable s collides with the old table alias under PostgreSQL's
+  -- default variable_conflict=error, preventing absence creation entirely.
+  if (length(original) - length(replace(original, 'from public.ops_state s where s.entity', '')))
+       <> 5 * length('from public.ops_state s where s.entity') then
+    raise exception 'Unexpected absence row-lock alias revision';
+  end if;
+  original := replace(original, 'from public.ops_state s where s.entity', 'from public.ops_state state_row where state_row.entity');
+  if position('from internal.teacher_absence_creation_commands where command_key = p_command_key' in original) = 0 then
+    raise exception 'Unexpected absence replay lookup revision';
+  end if;
+  execute replace(original,
+    'from internal.teacher_absence_creation_commands where command_key = p_command_key',
+    'from internal.teacher_absence_creation_commands command_row where command_row.command_key = p_command_key');
 end;
 $migration$;
 
