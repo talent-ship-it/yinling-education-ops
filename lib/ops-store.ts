@@ -3428,6 +3428,19 @@ export function confirmPermanentTeacherReplacementAtomic(input: {
   });
 }
 
+/** Refreshes verified departure candidates without changing lesson assignments. */
+export function refreshTeacherDepartureCandidatesAtomic(input: {
+  operationId: string;
+  expectedVersions: Readonly<{ bookings: number; operations: number; students: number; teachers: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<OpsStateRow[]>("refresh_teacher_departure_candidates_atomic", {
+    p_secret: secret, p_operation_id: input.operationId,
+    p_expected_versions: input.expectedVersions, p_actor: input.actor,
+  });
+}
+
 /** Locks all five departure inputs and atomically inserts the derived operations/tasks. */
 export function createTeacherDepartureAtomic(input: {
   commandKey: string;

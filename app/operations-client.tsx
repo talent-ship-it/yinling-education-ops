@@ -3193,6 +3193,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [studentsShared.version, tasksShared.version]);
   const [operationFilter, setOperationFilter] = useState("open");
   const [selectedOperationId, setSelectedOperationId] = useState("OPS-001");
+  const [departureCandidateRefresh, setDepartureCandidateRefresh] = useState<{ operationId: string; busy?: boolean; error?: string } | null>(null);
   const [teacherDepartureCreationBusy, setTeacherDepartureCreationBusy] = useState(false);
   // Departure keeps its existing same-page key. Teacher absence has a separate
   // actor-scoped, reload-safe command ledger in sessionStorage.
@@ -9256,6 +9257,25 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               {operationTeacher && (
                 <div className="detail-section">
                   <span>{selectedOperation.type === "老师离职" ? "永久接替老师" : "代课候选"}</span>
+                  {selectedOperation.type === "老师离职" && selectedOperation.status === "待处理" ? <>
+                    <button className="secondary-button" type="button" disabled={departureCandidateRefresh?.busy} onClick={async () => {
+                      const operationId = selectedOperation.id;
+                      setDepartureCandidateRefresh({ operationId, busy: true });
+                      try {
+                        const response = await fetch("/api/operations/departure/candidates", {
+                          method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ operationId, expectedVersions: { bookings: bookingsShared.version, operations: operationsShared.version, students: studentsShared.version, teachers: teachersShared.version } }),
+                        });
+                        const body = await response.json();
+                        if (!response.ok || !body.operationRow) throw new Error(body.error || "候选老师检查失败");
+                        operationsShared.applyRemote(body.operationRow);
+                        setDepartureCandidateRefresh(null);
+                      } catch (error) {
+                        setDepartureCandidateRefresh({ operationId, error: error instanceof Error ? error.message : "候选老师检查失败" });
+                      }
+                    }}><RefreshCw size={15} /> {departureCandidateRefresh?.operationId === selectedOperation.id && departureCandidateRefresh.busy ? "正在重新匹配…" : "重新匹配老师"}</button>
+                    {departureCandidateRefresh?.operationId === selectedOperation.id && departureCandidateRefresh.error ? <p role="alert">{departureCandidateRefresh.error}</p> : null}
+                  </> : null}
                   {recommendedTeachers.length ? (
                     <div className="operation-recommendations">
                       {recommendedTeachers.map((teacher) => (
