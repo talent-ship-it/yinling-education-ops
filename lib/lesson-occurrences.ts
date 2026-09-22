@@ -10,6 +10,8 @@ import {
   normalizeBookingRecurrence,
   shiftBookingDate,
 } from "./booking-recurrence";
+import { scheduleOccurrenceInstant } from "./schedule-calendar";
+import { cleanTimezone } from "./timezone";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -34,13 +36,16 @@ export type AttendanceAbnormalReason =
   | "invalid_student_evidence"
   | "invalid_teacher_evidence"
   | "student_duration_short"
-  | "teacher_duration_short";
+  | "teacher_duration_short"
+  | "missing_joint_timeline"
+  | "joint_duration_short";
 
 /** Compatible with the current Booking shape, including count-less legacy series. */
 export type LegacyLessonSeries = Readonly<{
   id: string;
   date: string;
   start: string;
+  timezone?: string;
   duration: number;
   recurring?: boolean;
   repeatCount?: number;
@@ -86,6 +91,7 @@ export type LessonOccurrence = Readonly<{
   sourceDate: string;
   date: string;
   start: string;
+  timezone?: string;
   scheduledDurationMinutes: number;
   status: LessonOccurrenceStatus;
   studentId?: string;
@@ -109,7 +115,7 @@ export type AttendancePartyEvidence = Readonly<{
   userId: string;
   /** Raw join/leave spans. Overlaps are merged before time is accumulated. */
   joinLeave?: readonly AttendanceSpan[];
-  /** Provider-computed cumulative time, used when raw spans are unavailable. */
+  /** Legacy/display-only total. Automatic settlement requires raw spans. */
   accumulatedSeconds?: number;
 }>;
 
@@ -127,6 +133,7 @@ export type LessonAttendanceEvaluation = Readonly<{
   teacherUserId?: string;
   studentSeconds: number;
   teacherSeconds: number;
+  jointSeconds: number | null;
   reasons: readonly AttendanceAbnormalReason[];
 }>;
 
@@ -351,6 +358,7 @@ export function expandLessonOccurrences(
       sourceDate,
       date,
       start,
+      ...(series.timezone ? { timezone: series.timezone } : {}),
       scheduledDurationMinutes,
       // Parent status is intentionally never inherited by an occurrence.
       status: override?.status ?? "confirmed",
@@ -362,7 +370,7 @@ export function expandLessonOccurrences(
   });
 }
 
-function mergedSpanSeconds(spans: readonly AttendanceSpan[]) {
+function mergedSpans(spans: readonly AttendanceSpan[]) {
   const ranges = spans.map((span) => {
     requireTimestamp(span.joinedAt, "joinedAt");
     requireTimestamp(span.leftAt, "leftAt");
@@ -372,7 +380,7 @@ function mergedSpanSeconds(spans: readonly AttendanceSpan[]) {
     return [start, end] as const;
   }).sort((left, right) => left[0] - right[0] || left[1] - right[1]);
 
-  let totalMilliseconds = 0;
+  const merged: Array<readonly [number, number]> = [];
   let activeStart: number | null = null;
   let activeEnd: number | null = null;
   for (const [start, end] of ranges) {
@@ -382,18 +390,50 @@ function mergedSpanSeconds(spans: readonly AttendanceSpan[]) {
     } else if (start <= activeEnd) {
       activeEnd = Math.max(activeEnd, end);
     } else {
-      totalMilliseconds += activeEnd - activeStart;
+      merged.push([activeStart, activeEnd]);
       activeStart = start;
       activeEnd = end;
     }
   }
-  if (activeStart !== null && activeEnd !== null) totalMilliseconds += activeEnd - activeStart;
-  return Math.floor(totalMilliseconds / 1000);
+  if (activeStart !== null && activeEnd !== null) merged.push([activeStart, activeEnd]);
+  return merged;
+}
+
+function mergedSpanSeconds(spans: readonly AttendanceSpan[]) {
+  return Math.floor(mergedSpans(spans).reduce((sum, [start, end]) => sum + end - start, 0) / 1000);
+}
+
+export function lessonAttendanceWindow(occurrence: LessonOccurrence) {
+  const start = scheduleOccurrenceInstant({ ...occurrence, timezone: cleanTimezone(occurrence.timezone) }).getTime();
+  return { start, end: start + occurrence.scheduledDurationMinutes * 60_000 };
+}
+
+/** Time is eligible only while both parties are present during the scheduled lesson. */
+function jointAttendanceSeconds(occurrence: LessonOccurrence, evidence: LessonAttendanceEvidence): number | null {
+  if (!evidence.student?.joinLeave || !evidence.teacher?.joinLeave) return null;
+  try {
+    const student = mergedSpans(evidence.student.joinLeave);
+    const teacher = mergedSpans(evidence.teacher.joinLeave);
+    const window = lessonAttendanceWindow(occurrence);
+    let milliseconds = 0;
+    let studentIndex = 0;
+    let teacherIndex = 0;
+    while (studentIndex < student.length && teacherIndex < teacher.length) {
+      const [studentStart, studentEnd] = student[studentIndex];
+      const [teacherStart, teacherEnd] = teacher[teacherIndex];
+      milliseconds += Math.max(0, Math.min(studentEnd, teacherEnd, window.end) - Math.max(studentStart, teacherStart, window.start));
+      if (studentEnd <= teacherEnd) studentIndex += 1;
+      else teacherIndex += 1;
+    }
+    return Math.floor(milliseconds / 1000);
+  } catch {
+    return null;
+  }
 }
 
 export function accumulatedAttendanceSeconds(evidence: AttendancePartyEvidence) {
   requireText(evidence.userId, "attendance userId");
-  if (evidence.joinLeave?.length) return mergedSpanSeconds(evidence.joinLeave);
+  if (evidence.joinLeave !== undefined) return mergedSpanSeconds(evidence.joinLeave);
   const seconds = evidence.accumulatedSeconds;
   if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds < 0) {
     throw new RangeError("attendance accumulatedSeconds must be a non-negative integer");
@@ -439,6 +479,9 @@ export function evaluateLessonAttendance(
   const teacherSeconds = attendanceSeconds(evidence.teacher, "invalid_teacher_evidence", reasons);
   if (studentUserId && studentSeconds < requiredSeconds) reasons.push("student_duration_short");
   if (teacherUserId && teacherSeconds < requiredSeconds) reasons.push("teacher_duration_short");
+  const jointSeconds = jointAttendanceSeconds(occurrence, evidence);
+  if (jointSeconds === null) reasons.push("missing_joint_timeline");
+  else if (jointSeconds < requiredSeconds) reasons.push("joint_duration_short");
 
   return {
     classification: reasons.length ? "abnormal" : "normal",
@@ -449,6 +492,7 @@ export function evaluateLessonAttendance(
     ...(teacherUserId ? { teacherUserId } : {}),
     studentSeconds,
     teacherSeconds,
+    jointSeconds,
     reasons,
   };
 }
