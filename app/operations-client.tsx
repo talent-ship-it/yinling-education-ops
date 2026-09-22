@@ -3,8 +3,7 @@
 import { dateTimeFormat } from "@/lib/date-time-format";
 import { dashboardLessonsForDay } from "@/lib/dashboard-schedule";
 import { buildAuditView } from "@/lib/audit-view";
-
-
+import { mergeConcurrentPayload } from "@/lib/concurrent-payload-merge";
 import { createSharedStatePoller } from "@/lib/shared-state-poller";
 
 import { isLessonDuration } from "../lib/lesson-duration";
@@ -1292,34 +1291,6 @@ const initialFiles: FileRecord[] = [];
 const initialAudit: AuditEntry[] = [];
 
 const lpStages: LpItem["stage"][] = [...LP_STAGES];
-
-function mergeConcurrentPayload<T>(committed: T, local: T, remote: T) {
-  if (!Array.isArray(committed) || !Array.isArray(local) || !Array.isArray(remote)) return { value: remote, conflicts: 0 };
-  const isItem = (value: unknown): value is { id: string } => Boolean(value) && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string";
-  if (![...committed, ...local, ...remote].every(isItem)) return { value: remote, conflicts: 0 };
-
-  const baseline = new Map(committed.map((item) => [item.id, item]));
-  const localItems = new Map(local.map((item) => [item.id, item]));
-  const remoteItems = new Map(remote.map((item) => [item.id, item]));
-  const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id)])];
-  let conflicts = 0;
-  const value = orderedIds.flatMap((itemId) => {
-    const base = baseline.get(itemId);
-    const localItem = localItems.get(itemId);
-    const remoteItem = remoteItems.get(itemId);
-    if (!base) return [localItem ?? remoteItem].filter(Boolean);
-    if (!localItem) return remoteItem ? [remoteItem] : [];
-    if (!remoteItem) return [localItem];
-    const localChanged = JSON.stringify(localItem) !== JSON.stringify(base);
-    const remoteChanged = JSON.stringify(remoteItem) !== JSON.stringify(base);
-    if (localChanged && remoteChanged && JSON.stringify(localItem) !== JSON.stringify(remoteItem)) {
-      conflicts += 1;
-      return [remoteItem];
-    }
-    return [localChanged ? localItem : remoteItem];
-  });
-  return { value: value as T, conflicts };
-}
 
 type PendingExamFollowUp = Readonly<{
   action: "complete" | "undo";
