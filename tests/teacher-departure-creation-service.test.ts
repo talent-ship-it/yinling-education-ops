@@ -181,8 +181,9 @@ test("departure adds LP handover task after the actual penultimate historical le
   const lpTask = prepared.tasks.find((task) => task.studentId === "S-1"
     && task.ruleKey === `teacher-departure:${prepared.operationIds[0]}:lp-to-new-teacher`);
   assert.equal(lpTask?.title, "写 LP 给新老师");
-  assert.equal(lpTask?.owner, "Source Teacher");
-  assert.deepEqual(lpTask?.assignees, ["Source Teacher"]);
+  assert.equal(lpTask?.owner, "Abby", "the student's operations owner must follow up with the source teacher");
+  assert.deepEqual(lpTask?.assignees, ["Abby"]);
+  assert.deepEqual(lpTask?.watchers, ["Ops Admin"]);
   assert.equal(lpTask?.due, "2026-08-19 18:00");
   assert.equal(lpTask?.dueAt, "2026-08-19T08:00:00.000Z");
   assert.equal(prepared.tasks.filter((task) => task.studentId === "S-1").length, 7);

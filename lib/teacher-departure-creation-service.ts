@@ -539,7 +539,7 @@ function tasksForStudent(input: {
       ...input,
       rule: "lp-to-new-teacher",
       title: "写 LP 给新老师",
-      owner: input.sourceTeacherName,
+      owner: input.owner,
       dueDate: lpFollowUpDate,
       futureTone: "blue",
       trigger: "老师离职：写 LP 给新老师",
