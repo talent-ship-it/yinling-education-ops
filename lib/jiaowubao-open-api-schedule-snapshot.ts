@@ -280,16 +280,35 @@ export async function collectJiaowubaoScheduleHorizon(
   window: Readonly<{ start: string; end: string }>,
   fetchPage: PageFetcher = queryJiaowubaoScheduleList,
 ): Promise<JiaowubaoScheduleSnapshot> {
+  let calls = 0;
+  const fetchWithinSharedBudget: PageFetcher = async (query) => {
+    // Both independent scans share one budget, including empty terminal pages.
+    // If either scan cannot finish, the caller fails closed and keeps the
+    // prior immutable snapshot instead of publishing partial evidence.
+    if (++calls > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("排课采集超过本轮请求上限，保留上次完整快照。");
+    return fetchPage(query);
+  };
+  const candidate = await collectJiaowubaoScheduleHorizonScan(window, fetchWithinSharedBudget);
+  const confirmation = await collectJiaowubaoScheduleHorizonScan(window, fetchWithinSharedBudget);
+  const recordsByCalId = new Map<string, JiaowubaoScheduleSnapshotRecord>();
+  for (const record of candidate) recordsByCalId.set(String(record.cal_id), record);
+  // The second scan wins for additions and updates. Candidate-only rows remain
+  // for this publication because their absence has not been observed by two
+  // independent complete scans. Rows absent from both scans stay absent.
+  for (const record of confirmation) recordsByCalId.set(String(record.cal_id), record);
+  const records = [...recordsByCalId.values()];
+  if (records.length > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS) fail("教务宝导出记录超过安全上限。");
+  return repackScheduleHorizon(window, records);
+}
+
+async function collectJiaowubaoScheduleHorizonScan(
+  window: Readonly<{ start: string; end: string }>,
+  fetchPage: PageFetcher,
+) {
   const records: JiaowubaoScheduleSnapshotRecord[] = [];
   const seen = new Set<string>();
-  let calls = 0;
   for (const part of jiaowubaoScheduleCollectionWindows(window)) {
-    const snapshot = await collectJiaowubaoScheduleSnapshot(part, async (query) => {
-      // One shared budget, including empty terminal pages, preserves the cron's
-      // runtime and supplier quota bounds across all three source windows.
-      if (++calls > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("排课采集超过本轮请求上限，保留上次完整快照。");
-      return fetchPage(query);
-    });
+    const snapshot = await collectJiaowubaoScheduleSnapshot(part, fetchPage);
     for (const item of snapshot.pages.flatMap((page) => page.records)) {
       const key = String(item.cal_id);
       if (seen.has(key)) fail("教务宝跨日期窗口返回重复排课，已停止发布。");
@@ -297,6 +316,13 @@ export async function collectJiaowubaoScheduleHorizon(
       records.push(item);
     }
   }
+  return Object.freeze(records);
+}
+
+function repackScheduleHorizon(
+  window: Readonly<{ start: string; end: string }>,
+  records: readonly JiaowubaoScheduleSnapshotRecord[],
+) {
   // Repack short boundary pages before staging: the database receives exactly
   // the declared number of 100-row chunks, never a partially covered horizon.
   const pages: JiaowubaoScheduleSnapshotPage[] = [];
