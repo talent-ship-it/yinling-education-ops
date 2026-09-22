@@ -42,10 +42,14 @@ export function createSharedStatePoller(input: {
     pending = true;
     const activeController = new AbortController();
     controller = activeController;
-    const delay = await runOnce(activeController.signal);
-    pending = false;
-    if (controller === activeController) controller = undefined;
-    scheduleNextWake(delay);
+    let delay = input.errorDelayMs ?? 60_000;
+    try {
+      delay = await runOnce(activeController.signal);
+    } finally {
+      pending = false;
+      if (controller === activeController) controller = undefined;
+      scheduleNextWake(delay);
+    }
   };
   return {
     wake,

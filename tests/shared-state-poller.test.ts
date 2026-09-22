@@ -73,6 +73,35 @@ test("a stalled JSON body releases the poller and the scheduled retry refreshes 
   poller.stop();
 });
 
+test("a throwing error handler cannot leave the poller wedged", async () => {
+  let calls = 0;
+  let resolveRecovery: (() => void) | undefined;
+  const recoveryScheduled = new Promise<void>((resolve) => { resolveRecovery = resolve; });
+  const scheduled: Array<{ callback: () => void; delay: number }> = [];
+  const poller = createSharedStatePoller({
+    canRun: () => true,
+    onError: () => { throw new Error("error_handler_failed"); },
+    schedule: (callback, delay) => {
+      scheduled.push({ callback, delay });
+      if (delay === 15_000) resolveRecovery?.();
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancel: () => {},
+    run: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("poll_failed");
+    },
+  });
+
+  await assert.rejects(poller.wake(), /error_handler_failed/);
+  assert.equal(scheduled[0].delay, 60_000);
+  scheduled[0].callback();
+  await recoveryScheduled;
+  assert.equal(calls, 2);
+  assert.equal(scheduled[1].delay, 15_000);
+  poller.stop();
+});
+
 test("stop aborts an in-flight read and prevents retries or error notifications", async () => {
   let signal: AbortSignal | undefined;
   let scheduled = 0;
