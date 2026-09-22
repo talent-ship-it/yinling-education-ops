@@ -341,6 +341,9 @@ export async function POST(request: Request) {
   }
   try {
     const sync = await syncJiaowubaoCompletedLessonMonth({ month, force });
+    if (sync.outcome === "blocked") {
+      return noStore({ outcome: "blocked", month, error: "该月份采集已被阻断，请联系管理员核对并恢复；当前显示的仍是此前已发布快照。" }, 409);
+    }
     if (sync.outcome === "already_running" || sync.outcome === "in_progress") {
       return noStore({
         outcome: sync.outcome,

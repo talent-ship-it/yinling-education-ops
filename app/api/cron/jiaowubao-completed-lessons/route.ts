@@ -66,7 +66,8 @@ export async function GET(request: Request) {
       force: operation.force,
       forceIfBlockedOnly: operation.force,
     });
-    const status = sync.outcome === "already_running" || sync.outcome === "in_progress" ? 202 : 200;
+    const status = sync.outcome === "blocked" ? 409
+      : sync.outcome === "already_running" || sync.outcome === "in_progress" ? 202 : 200;
     return noStore(sync, status);
   } catch (error) {
     // Keep source details, credentials, upstream response text, and database

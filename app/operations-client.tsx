@@ -4427,8 +4427,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const response = await fetch("/api/jiaowubao-open-api/completed-lessons", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // An administrator click is an explicit request to rebuild even when
-        // the month already has a published or previously blocked snapshot.
+        // An administrator can rebuild a published snapshot. A blocked run
+        // still needs the separate administrator recovery procedure.
         body: JSON.stringify({ month, force: true }),
       });
       const body = await response.json().catch(() => null) as {
@@ -4437,7 +4437,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         memberCount?: unknown;
         completedMemberCount?: unknown;
         rowCount?: unknown;
+        sync?: { outcome?: unknown };
       } | null;
+      if (body?.outcome === "blocked" || body?.sync?.outcome === "blocked") {
+        setJiaowubaoCompletedLessonError(true);
+        notify("该月份采集已被阻断，请联系管理员核对并恢复；当前显示的仍是此前已发布快照。");
+        return;
+      }
       if (response.status === 202 && body?.outcome === "already_running") {
         const retry = typeof body.retryAfterSeconds === "number" && body.retryAfterSeconds > 0
           ? `约 ${Math.ceil(body.retryAfterSeconds / 60)} 分钟后`
@@ -4452,7 +4458,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify(`已采集 ${completedMemberCount}/${memberCount} 个教务宝学员（${rowCount} 条已消课明细）；后台会自动续跑并在完整后发布。`);
         return;
       }
-      if (!response.ok || !body) throw new Error("教务宝已消课同步未完成。");
+      if (!response.ok || !body || !["applied", "no_change"].includes(String(body.sync?.outcome))) {
+        throw new Error("教务宝已消课同步未完成。");
+      }
       const feed = await loadAllJiaowubaoCompletedLessonPages({ month });
       setJiaowubaoCompletedLessonFeed(feed);
       addAudit("同步教务宝已消课", `${month} · ${feed.rowCount} 条学生明细 · ${feed.scheduleRowCount} 条排课角色资料`, "blue");
