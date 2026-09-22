@@ -100,7 +100,7 @@ test("exam collection aggregates structured history with Melbourne month orderin
 
 test("renewal and To Do timestamps use the configured or Melbourne timezone", async () => {
   const client = await readFile(clientUrl, "utf8");
-  assert.match(client, /dateTimeFormat\("zh-CN", \{ year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Australia\/Melbourne" \}\)/);
+  assert.match(client, /dateTimeFormat\(localeFor\(displayPreferences\.language\), \{ year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences\.timezone \}\)/);
   assert.match(client, /attemptedAtInput = String\(data\.get\("attemptedAt"\) \?\? currentDateTimeValueInTimezone\(displayPreferences\.timezone\)\)/);
   assert.match(client, /zonedDateTimeToUtc\(attemptedAtParts\[1\], attemptedAtParts\[2\], displayPreferences\.timezone\)/);
   assert.match(client, /defaultValue=\{currentDateTimeValueInTimezone\(displayPreferences\.timezone\)\}/);
