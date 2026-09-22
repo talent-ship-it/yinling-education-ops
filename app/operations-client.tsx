@@ -2334,7 +2334,7 @@ function AuthLoginScreen({ onSubmit, loading, error, mfaRequired }: { onSubmit: 
             <label htmlFor="mfa-code">验证器验证码</label>
             <input id="mfa-code" name="mfaCode" value={mfaCode} type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setMfaCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required />
           </> : null}
-          <small className="login-hint">尚未设置独立密码的账号可暂时留空“账号 / 姓名”，沿用原登录方式。</small>
+          <small className="login-hint">老师账号须先由管理员设置独立密码；无法登录时请联系管理员。</small>
           {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
           <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
         </form>
