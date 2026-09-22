@@ -17,41 +17,93 @@ function hasAsyncModifier(node: ts.Node) {
     && Boolean(ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword));
 }
 
-test("application polling never schedules an async callback with setInterval", () => {
-  const failures: string[] = [];
-  for (const file of [...sourceFiles("app"), ...sourceFiles("lib")]) {
-    const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
-    const asyncFunctions = new Set<string>();
-    const collectAsyncFunctions = (node: ts.Node) => {
-      if (ts.isFunctionDeclaration(node) && node.name && hasAsyncModifier(node)) asyncFunctions.add(node.name.text);
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
-        && node.initializer && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
-        && hasAsyncModifier(node.initializer)) {
-        asyncFunctions.add(node.name.text);
-      }
-      ts.forEachChild(node, collectAsyncFunctions);
-    };
-    collectAsyncFunctions(source);
+function isInlineFunction(node: ts.Node): node is ts.ArrowFunction | ts.FunctionExpression {
+  return ts.isArrowFunction(node) || ts.isFunctionExpression(node);
+}
 
-    const inspectIntervals = (node: ts.Node) => {
-      if (ts.isCallExpression(node)) {
-        const isSetInterval = ts.isIdentifier(node.expression)
-          ? node.expression.text === "setInterval"
-          : ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "setInterval";
-        const callback = node.arguments[0];
-        const isAsyncCallback = callback && (
-          ((ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) && hasAsyncModifier(callback))
-          || (ts.isIdentifier(callback) && asyncFunctions.has(callback.text))
-        );
-        if (isSetInterval && isAsyncCallback) {
-          const position = source.getLineAndCharacterOfPosition(node.getStart(source));
-          failures.push(`${relative(process.cwd(), file)}:${position.line + 1}`);
-        }
-      }
-      ts.forEachChild(node, inspectIntervals);
-    };
-    inspectIntervals(source);
-  }
+function asyncFunctionDeclarationName(node: ts.FunctionDeclaration) {
+  if (!node.name) return null;
+  return hasAsyncModifier(node) ? node.name.text : null;
+}
+
+function asyncVariableDeclarationName(node: ts.VariableDeclaration) {
+  if (!ts.isIdentifier(node.name)) return null;
+  const initializer = node.initializer;
+  if (!initializer || !isInlineFunction(initializer)) return null;
+  return hasAsyncModifier(initializer) ? node.name.text : null;
+}
+
+function declaredAsyncFunctionName(node: ts.Node) {
+  if (ts.isFunctionDeclaration(node)) return asyncFunctionDeclarationName(node);
+  if (ts.isVariableDeclaration(node)) return asyncVariableDeclarationName(node);
+  return null;
+}
+
+function collectAsyncFunctionNames(source: ts.SourceFile) {
+  const names = new Set<string>();
+  const visit = (node: ts.Node) => {
+    const name = declaredAsyncFunctionName(node);
+    if (name) names.add(name);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return names;
+}
+
+function isSetIntervalExpression(node: ts.Expression) {
+  if (ts.isIdentifier(node)) return node.text === "setInterval";
+  return ts.isPropertyAccessExpression(node) && node.name.text === "setInterval";
+}
+
+function isAsyncCallback(node: ts.Expression, asyncFunctions: ReadonlySet<string>) {
+  if (ts.isIdentifier(node)) return asyncFunctions.has(node.text);
+  return isInlineFunction(node) && hasAsyncModifier(node);
+}
+
+function isAsyncSetIntervalCall(node: ts.Node, asyncFunctions: ReadonlySet<string>) {
+  if (!ts.isCallExpression(node) || !isSetIntervalExpression(node.expression)) return false;
+  const callback = node.arguments[0];
+  return callback !== undefined && isAsyncCallback(callback, asyncFunctions);
+}
+
+function asyncSetIntervalFailures(file: string, contents: string) {
+  const source = ts.createSourceFile(file, contents, ts.ScriptTarget.Latest, true);
+  const asyncFunctions = collectAsyncFunctionNames(source);
+  const failures: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (isAsyncSetIntervalCall(node, asyncFunctions)) {
+      const position = source.getLineAndCharacterOfPosition(node.getStart(source));
+      failures.push(`${file}:${position.line + 1}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return failures;
+}
+
+test("polling guard recognizes every supported async callback form", () => {
+  const source = [
+    "async function declared() {}",
+    "const assigned = async function () {};",
+    "setInterval(async () => {}, 1);",
+    "window.setInterval(async function () {}, 1);",
+    "setInterval(declared, 1);",
+    "window.setInterval(assigned, 1);",
+    "setInterval(() => {}, 1);",
+  ].join("\n");
+
+  assert.deepEqual(asyncSetIntervalFailures("fixture.ts", source), [
+    "fixture.ts:3",
+    "fixture.ts:4",
+    "fixture.ts:5",
+    "fixture.ts:6",
+  ]);
+});
+
+test("application polling never schedules an async callback with setInterval", () => {
+  const failures = [...sourceFiles("app"), ...sourceFiles("lib")].flatMap((file) =>
+    asyncSetIntervalFailures(relative(process.cwd(), file), readFileSync(file, "utf8"))
+  );
 
   assert.deepEqual(failures, [], `async setInterval polling can overlap; use createSharedStatePoller instead:\n${failures.join("\n")}`);
 });
