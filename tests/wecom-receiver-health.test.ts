@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeWecomReceiverHealth } from "../lib/wecom-receiver-health";
+import { normalizeWecomReceiverHealth, WecomReceiverHealthError } from "../lib/wecom-receiver-health";
+import { wecomReceiverHealthFailure } from "../lib/wecom-receiver-health-http";
 
 const valid = {
   health: {
@@ -46,4 +47,37 @@ test("rejects extra callback fields, unbounded codes and invalid counters", () =
   assert.throws(() => normalizeWecomReceiverHealth({
     health: { ...valid.health, receivedThisRun: -1 },
   }), /bounded non-negative integer/);
+});
+
+test("maps health request and persistence failures without exposing provider details", () => {
+  assert.deepEqual(wecomReceiverHealthFailure(new RangeError("private oversized body")), {
+    status: 413,
+    payload: { error: "WeCom health request is too large.", code: "payload_too_large" },
+    logCategory: null,
+  });
+  assert.deepEqual(wecomReceiverHealthFailure(new SyntaxError("private JSON body")), {
+    status: 400,
+    payload: { error: "WeCom health request is not valid JSON.", code: "invalid_json" },
+    logCategory: null,
+  });
+  assert.deepEqual(wecomReceiverHealthFailure(new WecomReceiverHealthError("invalid_health", "bounded public error")), {
+    status: 422,
+    payload: { error: "bounded public error", code: "invalid_health" },
+    logCategory: null,
+  });
+  assert.deepEqual(wecomReceiverHealthFailure(new Error("private database detail"), "PGRST202"), {
+    status: 501,
+    payload: { error: "WeCom receiver health contract is not deployed.", code: "contract_unavailable" },
+    logCategory: "contract_unavailable",
+  });
+  assert.deepEqual(wecomReceiverHealthFailure(new Error("private database detail"), "57014"), {
+    status: 503,
+    payload: { error: "WeCom receiver health was not committed.", code: "health_commit_failed" },
+    logCategory: "57014",
+  });
+  assert.deepEqual(wecomReceiverHealthFailure(new Error("private runtime detail")), {
+    status: 503,
+    payload: { error: "WeCom receiver health was not committed.", code: "health_commit_failed" },
+    logCategory: "health",
+  });
 });

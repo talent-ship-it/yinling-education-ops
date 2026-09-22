@@ -273,3 +273,30 @@ test("sync reports only sanitized receiver health to the derived private endpoin
   assert.equal((calls[0]?.body as { health: { initialReplyFallbacksThisRun: number } }).health.initialReplyFallbacksThisRun, 2);
   assert.doesNotMatch(JSON.stringify(calls), /must-not-forward|private_provider_message/);
 });
+
+test("sync rejects malformed receiver status without publishing partial health", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-health-invalid-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, "messages"));
+  await fs.writeFile(path.join(root, "status.json"), JSON.stringify({
+    state: "authenticated",
+    started_at: "not-an-instant",
+    updated_at: "2026-09-22T00:01:00.000Z",
+    private_provider_message: "must-not-forward",
+  }));
+  let requests = 0;
+  t.mock.method(console, "error", () => {});
+  const result = await syncReceiverMessages({
+    dataDirectory: root,
+    endpoint: "https://example.test/api/integrations/wecom/bot-inbox",
+    token: "secure-bridge-token",
+    startedAt: "2026-09-08T00:00:00.000Z",
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response('{"outcome":"committed"}');
+    },
+  });
+  assert.equal(result.healthReported, 0);
+  assert.equal(result.healthFailed, 1);
+  assert.equal(requests, 0);
+});

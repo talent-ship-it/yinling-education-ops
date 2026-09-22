@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {readBot,saveMessage,disableSending,restrictSending,botMessageId,acknowledgementFilePath,replyTarget} from './core.mjs';
 import {ACTIVE_FINAL_REPLY,ACTIVE_INITIAL_REPLY,sendFinalAcknowledgement,sendInitialAcknowledgement} from './acknowledgement.mjs';
+import {providerErrorCode} from './acknowledgement.mjs';
 test('encrypted CLI credentials are read without changing their files',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));
  try{const key=crypto.randomBytes(32),nonce=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,nonce);
@@ -83,6 +84,15 @@ test('initial acknowledgement reports one terminal failure only when both delive
  assert.equal(outcome,'failed');assert.equal(status.initial_reply_failures_this_run,1);assert.equal(status.last_initial_reply_error,'ECONNRESET');
 });
 
+test('provider error codes use bounded categories from direct and nested errors',()=>{
+ assert.equal(providerErrorCode({errcode:93000,errmsg:'private'}),'93000');
+ assert.equal(providerErrorCode({code:'ECONN RESET',message:'private'}),'ECONNRESET');
+ assert.equal(providerErrorCode({cause:{errcode:'nested-code',errmsg:'private'}}),'nested-code');
+ assert.equal(providerErrorCode({cause:{code:'nested_fallback',message:'private'}}),'nested_fallback');
+ assert.equal(providerErrorCode({errcode:'!'.repeat(100),errmsg:'private'}),'reply_failed');
+ assert.equal(providerErrorCode(null),'reply_failed');
+});
+
 test('final acknowledgement waits until a stalled initial reply settles',async()=>{
  const calls=[];const status={};
  let rejectInitial;
@@ -109,4 +119,16 @@ test('final acknowledgement waits until a stalled initial reply settles',async()
   ['active','chat-1',ACTIVE_FINAL_REPLY],
  ]);
  assert.doesNotMatch(JSON.stringify(status),/private provider detail/);
+});
+
+test('final acknowledgement finishes a live stream and defers missing targets',async()=>{
+ const calls=[];
+ const client={
+  replyStream:async(...args)=>{calls.push(['stream',...args]);},
+  sendMessage:async(...args)=>{calls.push(['active',...args]);},
+ };
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1',receivedAt:1000,initialReplyState:'settled',initialReplyMode:'stream'};
+ assert.equal(await sendFinalAcknowledgement({client,pending,target:pending.target,now:()=>2000}),'sent');
+ assert.equal(await sendFinalAcknowledgement({client,pending:undefined,target:'',now:()=>2000}),'missing_target');
+ assert.deepEqual(calls,[['stream',pending.frame,'stream-1','已收录到系统审核队列。',true]]);
 });

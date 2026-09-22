@@ -139,18 +139,27 @@ function boundedCode(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/u.test(value) ? value : null;
 }
 
-async function readReceiverHealth(dataDirectory) {
-  let status;
-  try { status = JSON.parse(await fs.readFile(path.join(dataDirectory, "status.json"), "utf8")); }
+async function readReceiverStatus(file) {
+  try { return JSON.parse(await fs.readFile(file, "utf8")); }
   catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+}
+
+function requiredReceiverHealth(status) {
   const startedAt = optionalInstant(status?.started_at);
   const updatedAt = optionalInstant(status?.updated_at);
-  if (!startedAt || !updatedAt || typeof status?.state !== "string") throw new Error("invalid_receiver_health");
+  if (!startedAt) throw new Error("invalid_receiver_health");
+  if (!updatedAt) throw new Error("invalid_receiver_health");
+  if (typeof status?.state !== "string") throw new Error("invalid_receiver_health");
+  return { state: status.state, startedAt, updatedAt };
+}
+
+function normalizeReceiverHealthStatus(status) {
+  const required = requiredReceiverHealth(status);
   return {
-    state: status.state,
+    state: required.state,
     connected: status.connected === true,
-    startedAt,
-    updatedAt,
+    startedAt: required.startedAt,
+    updatedAt: required.updatedAt,
     authenticatedAt: optionalInstant(status.authenticated_at),
     lastMessageAt: optionalInstant(status.last_message_at),
     receivedThisRun: boundedCount(status.received_this_run),
@@ -169,6 +178,11 @@ async function readReceiverHealth(dataDirectory) {
     lastAcknowledgementAt: optionalInstant(status.last_acknowledgement_at),
     lastAcknowledgementError: boundedCode(status.last_acknowledgement_error),
   };
+}
+
+async function readReceiverHealth(dataDirectory) {
+  const status = await readReceiverStatus(path.join(dataDirectory, "status.json"));
+  return status === null ? null : normalizeReceiverHealthStatus(status);
 }
 
 async function postHealth({ endpoint, token, health, fetchImpl, requestTimeoutMs }) {

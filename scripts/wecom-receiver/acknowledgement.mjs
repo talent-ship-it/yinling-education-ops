@@ -6,10 +6,27 @@ const STREAM_REPLY_TTL_MS=5*60*1000;
 
 function increment(status,key){status[key]=(status[key] || 0)+1;}
 
+function objectField(value,key){
+  if(!value || typeof value!=='object' || Array.isArray(value)) return undefined;
+  return value[key];
+}
+
+function defined(value){return value!==undefined && value!==null;}
+
+function providerCodeValue(error){
+  const cause=objectField(error,'cause');
+  return [
+    objectField(error,'errcode'),
+    objectField(error,'code'),
+    objectField(cause,'errcode'),
+    objectField(cause,'code'),
+  ].find(defined);
+}
+
 /** Persist only a bounded provider category, never the provider message or frame. */
 export function providerErrorCode(error){
-  const value=error?.errcode ?? error?.code ?? error?.cause?.errcode ?? error?.cause?.code ?? 'reply_failed';
-  return String(value).replace(/[^A-Za-z0-9_-]/g,'').slice(0,80) || 'reply_failed';
+  const cleaned=String(providerCodeValue(error) ?? 'reply_failed').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);
+  return cleaned || 'reply_failed';
 }
 
 /**
@@ -58,14 +75,34 @@ export async function sendInitialAcknowledgement({client,pending,status,now=Date
   }
 }
 
-/** The committed receipt must never overtake an unresolved initial receipt. */
-export async function sendFinalAcknowledgement({client,pending,target,now=Date.now}){
-  if(pending && pending.initialReplyState!=='settled') return 'deferred';
-  if(pending?.initialReplyMode==='stream' && now()-pending.receivedAt<STREAM_REPLY_TTL_MS){
+function initialReplyPending(pending){
+  return Boolean(pending) && pending.initialReplyState!=='settled';
+}
+
+function liveStreamReply(pending,now){
+  return pending?.initialReplyMode==='stream' && now-pending.receivedAt<STREAM_REPLY_TTL_MS;
+}
+
+function finalAcknowledgementPlan(pending,target,now){
+  if(initialReplyPending(pending)) return 'deferred';
+  if(liveStreamReply(pending,now)) return 'stream';
+  return target ? 'active' : 'missing_target';
+}
+
+const FINAL_ACKNOWLEDGEMENT_DELIVERY=Object.freeze({
+  deferred:async()=> 'deferred',
+  missing_target:async()=> 'missing_target',
+  stream:async({client,pending})=>{
     await client.replyStream(pending.frame,pending.streamId,FINAL_REPLY,true);
-  } else {
-    if(!target) return 'missing_target';
+    return 'sent';
+  },
+  active:async({client,target})=>{
     await client.sendMessage(target,ACTIVE_FINAL_REPLY);
-  }
-  return 'sent';
+    return 'sent';
+  },
+});
+
+/** The committed receipt must never overtake an unresolved initial receipt. */
+export function sendFinalAcknowledgement({client,pending,target,now=Date.now}){
+  return FINAL_ACKNOWLEDGEMENT_DELIVERY[finalAcknowledgementPlan(pending,target,now())]({client,pending,target});
 }
