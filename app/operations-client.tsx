@@ -101,6 +101,7 @@ import { opsSourceIsStale, partitionOpsSources } from "@/lib/ops-source-lifecycl
 import { findJiaowubaoAuthorityStatus } from "@/lib/jiaowubao-authority-status";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel, type PayrollExportRow } from "@/lib/payroll-export";
+import { undoPayrollLocks, type PayrollLockReceipt } from "@/lib/payroll-lock-undo";
 import {
   currentJiaowubaoPayrollExportEvidence,
   JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON,
@@ -9873,23 +9874,27 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             return;
           }
           try {
+            const lockedAt = new Date().toISOString();
+            let lockReceipts: PayrollLockReceipt<PayrollRow>[] = [];
             await mutatePayrollAndCommit((current) => {
               const currentRow = current[sourceIndex];
               if (!payrollLockSnapshotIsCurrent(currentRow, row)) throw new Error("薪资资料已更新，请核对后重试");
               const sourceBlockReason = jiaowubaoPayrollSourceLockBlockReason(currentRow, freshFeed);
               if (sourceBlockReason) throw new Error(sourceBlockReason);
-              return current.map((item, index) =>
+              const next = current.map<PayrollRow>((item, index) =>
                 index === sourceIndex ? {
                     ...item,
                     status: "已锁定",
                     lockedBy: operatorLabel(sessionOperator),
-                    lockedAt: new Date().toISOString(),
+                    lockedAt,
                     note: item.note.includes("已锁定")
                       ? item.note
                       : `${item.note}；已由 ${operatorLabel(sessionOperator)} 人工锁定`,
                   }
                   : item,
               );
+              lockReceipts = [{ before: { ...currentRow }, after: { ...next[sourceIndex] } }];
+              return next;
             });
             addAudit(
               "锁定薪资记录",
@@ -9897,12 +9902,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               "green",
             );
             notify("已锁定本月薪资记录", () => {
-              void mutatePayrollAndCommit((current) => {
-                if (current[sourceIndex]?.id !== row.id) {
-                  throw new Error("薪资列表已变化，请刷新后重试");
-                }
-                return current.map((item, index) => (index === sourceIndex ? row : item));
-              })
+              void mutatePayrollAndCommit((current) => undoPayrollLocks(current, lockReceipts))
                 .then(() => addAudit(
                   "撤销锁定薪资记录",
                   `${teacherName} · ${formatMoney(row.amount, row.currency)}`,
@@ -9958,6 +9958,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           }
           const readyIndexes = new Set(readyTargets.map((target) => target.sourceIndex));
           try {
+            const lockedAt = new Date().toISOString();
+            let lockReceipts: PayrollLockReceipt<PayrollRow>[] = [];
             await mutatePayrollAndCommit((current) => {
               for (const target of readyTargets) {
                 const currentRow = current[target.sourceIndex];
@@ -9967,23 +9969,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 const sourceBlockReason = jiaowubaoPayrollSourceLockBlockReason(currentRow, freshFeed);
                 if (sourceBlockReason) throw new Error(sourceBlockReason);
               }
-              return current.map((row, index) =>
+              const next = current.map<PayrollRow>((row, index) =>
                 readyIndexes.has(index) ? {
                     ...row,
                     status: "已锁定",
                     lockedBy: operatorLabel(sessionOperator),
-                    lockedAt: new Date().toISOString(),
+                    lockedAt,
                     note: row.note.includes("批量锁定")
                       ? row.note
                       : `${row.note}；已批量锁定`,
                   }
                   : row,
               );
+              lockReceipts = readyTargets.map(({ sourceIndex }) => ({ before: { ...current[sourceIndex] }, after: { ...next[sourceIndex] } }));
+              return next;
             });
             addAudit("批量锁定薪资", `${readyRows.length} 条可审核记录`, "green");
             notify(`已锁定 ${readyRows.length} 条可审核记录`, () => {
-              const previous = new Map(readyTargets.map((target) => [target.sourceIndex, target.row]));
-              void mutatePayrollAndCommit((current) => current.map((row, index) => previous.get(index) ?? row))
+              void mutatePayrollAndCommit((current) => undoPayrollLocks(current, lockReceipts))
                 .then(() => addAudit(
                   "撤销批量锁定薪资",
                   `${readyRows.length} 条记录恢复原状态`,
