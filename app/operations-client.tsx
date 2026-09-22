@@ -7989,6 +7989,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return () => { stopped = true; window.clearInterval(interval); };
   }, [active, persistClassroom, scopedBookings, selectedClassroomBookingId, selectedClassroomOccurrenceKey, selectedClassroomMeetingId, selectedClassroomSourceDate]);
 
+  const openDashboardLesson = (booking: BookingOccurrence) => {
+    if (!selectBookingRecord(booking, "booking")) return;
+    // A stale month, page, or teacher filter must not replace this exact
+    // occurrence with the first visible lesson when the schedule renders.
+    setScheduleMode("month");
+    setScheduleMonth(isoDateInTimezone(bookingInstant(booking), displayPreferences.timezone).slice(0, 7));
+    setScheduleFilter("all");
+    setScheduleTeacherFilter("all");
+    setScheduleDay("all");
+    setSchedulePage(1);
+    setActive("schedule");
+  };
+
   const renderTeacherDashboard = () => {
     const english = displayPreferences.language === "en-AU";
     const teacherToday = isoDateInTimezone(new Date(), displayPreferences.timezone);
@@ -8021,7 +8034,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       <section className="teacher-dashboard-grid">
         <article className="panel teacher-roster-panel"><div className="panel-header"><div><h2>{english ? "My students" : "我的学生"}</h2></div><IconButton label={english ? "Open students" : "打开学生列表"} onClick={() => setActive("students")}><Users size={18} /></IconButton></div><div className="teacher-student-list">{scopedStudents.slice(0, 8).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.course} · {displayTerm(student.status, displayPreferences.language)}</small></span><ChevronRight size={16} /></button>)}{!scopedStudents.length && <EmptyState title={english ? "No linked students" : "暂无关联学生"} detail={english ? "Students appear here after they are linked by an administrator or their lessons are imported." : "管理员为老师关联学生或导入排课后，这里会自动出现。"} />}</div></article>
-        <article className="panel today-panel"><div className="panel-header"><div><h2>{english ? "Upcoming lessons" : "接下来课程"}</h2></div><IconButton label={english ? "Open schedule" : "打开排课"} onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{upcomingTeacherBookings.length ? <ScheduleList bookings={upcomingTeacherBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={(booking) => { selectBookingRecord(booking); setActive("schedule"); }} /> : <EmptyState title={english ? "No upcoming lessons" : "暂无未来排课"} detail={english ? "Use New booking to schedule a future lesson for one of your students." : "点击“新建约课”为自己的学生安排未来课程。"} />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> {english ? "Manage online classrooms" : "管理在线教室"}</button></article>
+        <article className="panel today-panel"><div className="panel-header"><div><h2>{english ? "Upcoming lessons" : "接下来课程"}</h2></div><IconButton label={english ? "Open schedule" : "打开排课"} onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{upcomingTeacherBookings.length ? <ScheduleList bookings={upcomingTeacherBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={openDashboardLesson} /> : <EmptyState title={english ? "No upcoming lessons" : "暂无未来排课"} detail={english ? "Use New booking to schedule a future lesson for one of your students." : "点击“新建约课”为自己的学生安排未来课程。"} />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> {english ? "Manage online classrooms" : "管理在线教室"}</button></article>
       </section>
     </>;
   };
@@ -8063,7 +8076,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
         <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
-        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
+        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={openDashboardLesson} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
             <div><h2>风险与缺口</h2></div>
