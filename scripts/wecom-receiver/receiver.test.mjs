@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {readBot,saveMessage,disableSending,restrictSending,botMessageId,acknowledgementFilePath,replyTarget} from './core.mjs';
-import {ACTIVE_INITIAL_REPLY,sendInitialAcknowledgement} from './acknowledgement.mjs';
+import {ACTIVE_FINAL_REPLY,ACTIVE_INITIAL_REPLY,sendFinalAcknowledgement,sendInitialAcknowledgement} from './acknowledgement.mjs';
 test('encrypted CLI credentials are read without changing their files',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));
  try{const key=crypto.randomBytes(32),nonce=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,nonce);
@@ -81,4 +81,32 @@ test('initial acknowledgement reports one terminal failure only when both delive
  const client={replyStream:async()=>{throw {errcode:93000};},sendMessage:async()=>{throw {code:'ECONNRESET'};}};
  const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:00.000Z')});
  assert.equal(outcome,'failed');assert.equal(status.initial_reply_failures_this_run,1);assert.equal(status.last_initial_reply_error,'ECONNRESET');
+});
+
+test('final acknowledgement waits until a stalled initial reply settles',async()=>{
+ const calls=[];const status={};
+ let rejectInitial;
+ const stalledInitial=new Promise((_resolve,reject)=>{rejectInitial=reject;});
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1',receivedAt:Date.parse('2026-09-22T00:00:00.000Z'),initialReplyState:'pending'};
+ const client={
+  replyStream:async(...args)=>{calls.push(['stream',...args]);return stalledInitial;},
+  sendMessage:async(...args)=>{calls.push(['active',...args]);},
+ };
+ const initial=sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:01.000Z')});
+ await Promise.resolve();
+ const earlyFinal=await sendFinalAcknowledgement({client,pending,target:pending.target,now:()=>Date.parse('2026-09-22T00:00:02.000Z')});
+ assert.equal(earlyFinal,'deferred');
+ assert.deepEqual(calls.map(call=>call[0]),['stream']);
+ assert.equal(status.acknowledgements_this_run,undefined);
+
+ rejectInitial({errcode:93000,errmsg:'private provider detail'});
+ assert.equal(await initial,'active');
+ assert.equal(pending.initialReplyState,'settled');
+ const final=await sendFinalAcknowledgement({client,pending,target:pending.target,now:()=>Date.parse('2026-09-22T00:00:03.000Z')});
+ assert.equal(final,'sent');
+ assert.deepEqual(calls.slice(1),[
+  ['active','chat-1',ACTIVE_INITIAL_REPLY],
+  ['active','chat-1',ACTIVE_FINAL_REPLY],
+ ]);
+ assert.doesNotMatch(JSON.stringify(status),/private provider detail/);
 });

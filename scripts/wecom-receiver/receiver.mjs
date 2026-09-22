@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import AiBot,{generateReqId} from '@wecom/aibot-node-sdk';
 import {readBot,atomicJson,saveMessage,restrictSending,botMessageId,replyTarget} from './core.mjs';
-import {ACTIVE_FINAL_REPLY,FINAL_REPLY,providerErrorCode,sendInitialAcknowledgement} from './acknowledgement.mjs';
+import {providerErrorCode,sendFinalAcknowledgement,sendInitialAcknowledgement} from './acknowledgement.mjs';
 process.umask(0o077);
 const data=process.env.WECOM_RECEIVER_DATA || '/home/codex/.local/share/wecom-receiver';
 fs.mkdirSync(data,{recursive:true,mode:0o700});
@@ -12,7 +12,6 @@ fs.mkdirSync(messagesDirectory,{recursive:true,mode:0o700});
 fs.mkdirSync(acknowledgementsDirectory,{recursive:true,mode:0o700});
 const status={state:'starting',started_at:new Date().toISOString(),received_this_run:0,initial_replies_this_run:0,initial_stream_replies_this_run:0,initial_stream_failures_this_run:0,initial_reply_fallbacks_this_run:0,initial_reply_failures_this_run:0,acknowledgements_this_run:0,acknowledgement_failures_this_run:0};
 function update(state){status.state=state;status.updated_at=new Date().toISOString();atomicJson(path.join(data,'status.json'),status);}
-const STREAM_REPLY_TTL_MS=5*60*1000;
 const ACK_FILE_TTL_MS=15*60*1000;
 const pendingReplies=new Map();
 const acknowledgementAttempts=new Map();
@@ -25,7 +24,7 @@ function sourceTarget(id){
 function queueReply(frame){
   try {
     const id=botMessageId(frame?.body);
-    const pending={frame,streamId:generateReqId('archive'),target:replyTarget(frame.body),receivedAt:Date.now()};
+    const pending={frame,streamId:generateReqId('archive'),target:replyTarget(frame.body),receivedAt:Date.now(),initialReplyState:'pending'};
     pendingReplies.set(id,pending);
     return [id,pending];
   } catch { return []; }
@@ -67,12 +66,9 @@ async function flushAcknowledgements(){
       if(attempt.nextAt>Date.now()) continue;
       const target=pending?.target || sourceTarget(id);
       try {
-        if(pending?.initialReplyMode==='stream' && Date.now()-pending.receivedAt<STREAM_REPLY_TTL_MS){
-          await client.replyStream(pending.frame,pending.streamId,FINAL_REPLY,true);
-        } else {
-          if(!target) { if(age>ACK_FILE_TTL_MS) removeAcknowledgement(file,id); continue; }
-          await client.sendMessage(target,ACTIVE_FINAL_REPLY);
-        }
+        const outcome=await sendFinalAcknowledgement({client,pending,target});
+        if(outcome==='deferred') continue;
+        if(outcome==='missing_target') { if(age>ACK_FILE_TTL_MS) removeAcknowledgement(file,id); continue; }
         removeAcknowledgement(file,id);
         status.acknowledgements_this_run+=1;
         status.last_acknowledgement_at=new Date().toISOString();
