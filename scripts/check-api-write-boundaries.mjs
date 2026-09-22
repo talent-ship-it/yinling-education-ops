@@ -26,8 +26,9 @@ function importsPutOpsState(file) {
     const moduleName = statement.moduleSpecifier.text;
     if (!(moduleName === "@/lib/ops-store" || /(?:^|\/)lib\/ops-store(?:\.ts)?$/u.test(moduleName))) return false;
     const bindings = statement.importClause?.namedBindings;
-    return Boolean(bindings && ts.isNamedImports(bindings) && bindings.elements.some((element) =>
-      (element.propertyName ?? element.name).text === "putOpsState"));
+    if (!bindings) return false;
+    if (ts.isNamespaceImport(bindings)) return true;
+    return bindings.elements.some((element) => (element.propertyName ?? element.name).text === "putOpsState");
   });
 }
 
