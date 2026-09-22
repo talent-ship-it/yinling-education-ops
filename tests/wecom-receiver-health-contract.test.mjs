@@ -10,6 +10,10 @@ const route = readFileSync(new URL(
   "../app/api/integrations/wecom/receiver-health/route.ts",
   import.meta.url,
 ), "utf8");
+const privateHttp = readFileSync(new URL(
+  "../lib/wecom-private-http.ts",
+  import.meta.url,
+), "utf8");
 
 test("stores receiver health in a private singleton and exposes only secret-gated RPCs", () => {
   assert.match(migration, /create table if not exists internal\.wecom_receiver_health/i);
@@ -23,7 +27,9 @@ test("stores receiver health in a private singleton and exposes only secret-gate
 });
 
 test("health route reuses the private bridge token and bounded aggregate parser", () => {
-  assert.match(route, /hasWecomArchiveBridgeToken/);
+  assert.match(route, /readTrustedWecomJsonRequest/);
+  assert.match(privateHttp, /hasWecomArchiveBridgeToken/);
+  assert.match(privateHttp, /readBoundedWecomArchiveJson/);
   assert.match(route, /normalizeWecomReceiverHealth/);
   assert.match(route, /recordWecomReceiverHealth/);
   assert.doesNotMatch(route, /putOpsState|service_role/i);

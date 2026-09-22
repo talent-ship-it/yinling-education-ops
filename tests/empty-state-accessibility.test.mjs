@@ -6,7 +6,7 @@ const client = await readFile(new URL("../app/operations-client.tsx", import.met
 
 test("shared empty states announce dynamic filter and data changes", () => {
   const start = client.indexOf("function EmptyState(");
-  const end = client.indexOf("function AuthStatusScreen(", start);
+  const end = client.indexOf("function PasswordUsernameContext(", start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const emptyState = client.slice(start, end);
