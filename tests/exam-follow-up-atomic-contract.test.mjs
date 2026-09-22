@@ -126,7 +126,7 @@ test("exam modal and idempotency key survive unknown transport outcomes", async 
   assert.match(modal, /onClose=\{\(\) => \{ if \(examSubmissionBusy\) return;/);
   assert.match(modal, /disabled=\{examSubmissionBusy\}/);
   const escape = client.slice(client.indexOf("const onKeyDown"), client.indexOf('window.addEventListener("keydown"'));
-  assert.match(escape, /if \(modal\) \{\s*if \(\(modal === "exam" && examSubmissionBusy\) \|\| \(modal === "legacyTaskDeadline" && legacyTaskDeadlineBusy\)\) return;\s*setModal\(null\);/);
+  assert.match(escape, /if \(modal\) \{\s*if \(\(modal === "exam" && examSubmissionBusy\) \|\| \(modal === "lessonPackage" && lessonPackageBusy\) \|\| \(modal === "legacyTaskDeadline" && legacyTaskDeadlineBusy\)\) return;\s*setModal\(null\);/);
 });
 
 test("canonical bootstrap carries the byte-equivalent follow-up suffix", async () => {
