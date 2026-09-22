@@ -246,6 +246,32 @@ test("departure replacement reaches every finite future lesson beyond the operat
   assert.equal(prepared.operations[0].confirmationAction, "permanent_replacement");
 });
 
+test("replacing a subject teacher preserves another subject's lessons, capacity and display teacher", () => {
+  const englishBooking = {
+    ...booking, id: "B-ENGLISH", teacherId: "T-ENGLISH", date: "2026-09-09",
+    recurring: false, repeatCount: 1, course: "English", teacherSubjectId: "English", packageId: "PKG-ENGLISH",
+  };
+  const englishTeacher = {
+    id: "T-ENGLISH", name: "English Teacher", subjects: ["English"],
+    newStudentCapacity: 3, capacityAssignments: ["STU-1"],
+  };
+  const sourceRows = departureRows().map((row) => {
+    if (row.entity === "bookings") return { ...row, payload: [...row.payload, englishBooking] };
+    if (row.entity === "teachers") return { ...row, payload: [...row.payload, englishTeacher] };
+    if (row.entity === "students") return { ...row, payload: [{ id: "STU-1", owner: "Abby", teacher: "English Teacher" }] };
+    return row;
+  });
+  const prepared = preparePermanentTeacherReplacement({
+    command: permanentCommand, rows: sourceRows, actor: "Abby", fullAdmin: false,
+  });
+  assert.equal(prepared.students[0].teacher, "English Teacher");
+  assert.deepEqual(prepared.bookings.find((entry) => entry.id === "B-ENGLISH"), englishBooking);
+  assert.deepEqual(prepared.teachers.find((entry) => entry.id === "T-ENGLISH"), englishTeacher);
+  assert.equal(prepared.bookings.find((entry) => entry.id === "B-1")?.teacherId, "T-2");
+  assert.equal(prepared.affectedOccurrenceIds.length, 4);
+  assert.deepEqual(prepared.changedTeacherIds, ["T-1", "T-2"]);
+});
+
 test("paused intake can continue an established relationship without consuming capacity again", () => {
   const existingRelationshipBooking = {
     id: "B-EXISTING",
