@@ -4105,6 +4105,9 @@ summary,
   line-height:1.45;
 }
 
+.today-panel .schedule-row { grid-template-columns:90px 3px minmax(0,1fr) 16px; }
+.today-panel .schedule-time { white-space:nowrap; }
+
 .operator-copy strong,
 .global-result strong,
 .global-result small,

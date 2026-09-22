@@ -1,6 +1,7 @@
 "use client";
 
 import { dateTimeFormat } from "@/lib/date-time-format";
+import { dashboardLessonsForDay } from "@/lib/dashboard-schedule";
 import { buildAuditView } from "@/lib/audit-view";
 
 
@@ -8020,7 +8021,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       <section className="teacher-dashboard-grid">
         <article className="panel teacher-roster-panel"><div className="panel-header"><div><h2>{english ? "My students" : "我的学生"}</h2></div><IconButton label={english ? "Open students" : "打开学生列表"} onClick={() => setActive("students")}><Users size={18} /></IconButton></div><div className="teacher-student-list">{scopedStudents.slice(0, 8).map((student) => <button type="button" key={student.id} onClick={() => goToStudent(student.id)}><Avatar initials={student.initials} tone={statusTone(student.status)} /><span><strong>{student.name}</strong><small>{student.course} · {displayTerm(student.status, displayPreferences.language)}</small></span><ChevronRight size={16} /></button>)}{!scopedStudents.length && <EmptyState title={english ? "No linked students" : "暂无关联学生"} detail={english ? "Students appear here after they are linked by an administrator or their lessons are imported." : "管理员为老师关联学生或导入排课后，这里会自动出现。"} />}</div></article>
-        <article className="panel today-panel"><div className="panel-header"><div><h2>{english ? "Upcoming lessons" : "接下来课程"}</h2></div><IconButton label={english ? "Open schedule" : "打开排课"} onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{upcomingTeacherBookings.length ? <ScheduleList bookings={upcomingTeacherBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => { selectBookingRecord(booking); setActive("schedule"); }} /> : <EmptyState title={english ? "No upcoming lessons" : "暂无未来排课"} detail={english ? "Use New booking to schedule a future lesson for one of your students." : "点击“新建约课”为自己的学生安排未来课程。"} />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> {english ? "Manage online classrooms" : "管理在线教室"}</button></article>
+        <article className="panel today-panel"><div className="panel-header"><div><h2>{english ? "Upcoming lessons" : "接下来课程"}</h2></div><IconButton label={english ? "Open schedule" : "打开排课"} onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div>{upcomingTeacherBookings.length ? <ScheduleList bookings={upcomingTeacherBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={(booking) => { selectBookingRecord(booking); setActive("schedule"); }} /> : <EmptyState title={english ? "No upcoming lessons" : "暂无未来排课"} detail={english ? "Use New booking to schedule a future lesson for one of your students." : "点击“新建约课”为自己的学生安排未来课程。"} />}<button className="text-button" type="button" onClick={() => setActive("classroom")}><Video size={16} /> {english ? "Manage online classrooms" : "管理在线教室"}</button></article>
       </section>
     </>;
   };
@@ -8030,10 +8031,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const operatorStudents = scopedStudents;
     const operatorStudentIds = new Set(operatorStudents.map((student) => student.id));
     const operatorBookings = currentOperator === "Nixon" ? bookings : bookings.filter((booking) => operatorStudentIds.has(booking.studentId));
-    const todayDate = isoDateInTimezone(new Date(), "Australia/Melbourne");
-    const operatorTodayBookings = operatorBookings
-      .flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate(todayDate, -1), shiftIsoDate(todayDate, 1)))
-      .filter((booking) => isoDateInTimezone(bookingInstant(booking), "Australia/Melbourne") === todayDate);
+    const todayDate = isoDateInTimezone(new Date(), displayPreferences.timezone);
+    const operatorTodayBookings = dashboardLessonsForDay(
+      operatorBookings.flatMap((booking) => bookingOccurrencesWithinRange(booking, shiftIsoDate(todayDate, -1), shiftIsoDate(todayDate, 1))),
+      bookingInstant,
+      displayPreferences.timezone,
+      todayDate,
+    );
     const operatorExamStudents = examReminderStudents;
     const operatorDstBookings = dstRiskBookings.filter((booking) => operatorStudentIds.has(booking.studentId));
     const nearestExam = operatorExamStudents[0];
@@ -8054,12 +8058,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       + operatorExamStudents.length
       + operatorDstBookings.length
       + authoritativeAvaIssueCount;
-    const todayLabel = dateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Australia/Melbourne" }).format(new Date());
+    const todayLabel = dateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
         <div><ToDoList tasks={visibleTasks} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
-        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
+        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={(booking) => goToStudent(booking.studentId, "schedule")} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
             <div><h2>风险与缺口</h2></div>
@@ -14975,7 +14979,18 @@ function ViewHeading({ eyebrow, showContext = false, title, actions }: { eyebrow
   return <section className="view-heading"><div>{showEyebrow ? <p className="eyebrow">{eyebrow}</p> : null}<h1>{title}</h1></div>{actions ? <div className="heading-actions">{actions}</div> : null}</section>;
 }
 function Metric({ tone, icon, value, label, onClick }: { tone: Tone; icon: ReactNode; value: string; label: string; detail?: string; onClick?: () => void }) { return <button className={`metric-card ${tone}`} type="button" onClick={onClick}><span className="metric-icon">{icon}</span><span><strong>{value}</strong><b>{label}</b></span><ArrowRight size={17} /></button>; }
-function ScheduleList({ bookings, studentById, teacherById, onOpen }: { bookings: Booking[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; onOpen: (booking: Booking) => void }) { if (!bookings.length) return <div className="empty-inline"><CalendarDays size={20} /> 今天没有课程</div>; return <div className="schedule-list">{bookings.slice(0, 6).map((booking) => <button className="schedule-row" type="button" key={`${booking.id}-${booking.date}`} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{booking.start}</strong><small>{booking.date.slice(5).replace("-", "/")}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {booking.kind} · {booking.status}</small></span><ChevronRight size={16} /></button>)}</div>; }
+function ScheduleList({ bookings, studentById, teacherById, preferences, onOpen, onViewAll }: { bookings: BookingOccurrence[]; studentById: (id: string) => Student | undefined; teacherById: (id: string) => Teacher | undefined; preferences: DisplayPreferences; onOpen: (booking: BookingOccurrence) => void; onViewAll: () => void }) {
+  const english = preferences.language === "en-AU";
+  if (!bookings.length) return <div className="empty-inline"><CalendarDays size={20} /> {english ? "No lessons today" : "今天没有课程"}</div>;
+  return <>
+    <p className="panel-foot">{english ? "Time zone: " : "时区："}{timezoneLabel(preferences.timezone, preferences.language)}</p>
+    <div className="schedule-list">{bookings.slice(0, 6).map((booking) => {
+      const instant = bookingInstant(booking);
+      return <button className="schedule-row" type="button" key={booking.occurrenceKey} onClick={() => onOpen(booking)}><span className="schedule-time"><strong>{formatClock(instant, preferences.timezone, preferences)}</strong><small>{formatDisplayDate(instant, preferences.timezone, preferences)}</small></span><span className={`schedule-line ${booking.status === "待确认" ? "amber" : booking.kind === "试听" ? "blue" : "green"}`} /><span className="schedule-copy"><strong>{studentById(booking.studentId)?.name}</strong><small>{teacherById(booking.teacherId)?.name} · {displayTerm(booking.kind, preferences.language)} · {displayTerm(booking.status, preferences.language)}</small></span><ChevronRight size={16} /></button>;
+    })}</div>
+    {bookings.length > 6 ? <button className="text-button panel-foot" type="button" onClick={onViewAll}>{english ? `View all ${bookings.length} lessons` : `查看全部 ${bookings.length} 节课程`}</button> : null}
+  </>;
+}
 function RiskRow({ tone, title, detail, action }: { tone: Tone; title: string; detail: string; action?: () => void }) {
   const content = <><span className={`risk-icon ${tone}`}><CircleAlert size={16} /></span><span><strong>{title}</strong><small>{detail}</small></span></>;
   return action
