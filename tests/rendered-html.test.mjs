@@ -436,6 +436,8 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /occurrenceId: booking\.occurrenceKey/);
   assert.doesNotMatch(client, /meetingId: `yinling-\$\{bookingId\}`/);
   assert.match(client, /const poller = createSharedStatePoller\(\{/);
+  assert.match(client, /await classroomFetch\(`\/api\/classroom\?bookingId=/);
+  assert.match(client, /cache: "no-store",\s*signal,/);
   assert.match(client, /signal,\s*\}\);/);
   assert.match(client, /poller\.stop\(\)/);
   assert.match(client, /title="BiggerBlueButton"/);

@@ -7958,12 +7958,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
         const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
         if (!booking) return;
-        const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
+        const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
           cache: "no-store",
           signal,
         });
         if (signal.aborted) return;
-        const result = await response.json().catch(() => ({}));
+        const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
         if (!response.ok || signal.aborted) return;
         const recordings = Array.isArray(result.recordings) ? result.recordings : [];
         const runtime: ClassroomRuntime = { ...result.status, recordings };
