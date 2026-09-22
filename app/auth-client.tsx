@@ -3,14 +3,35 @@
 import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { fetchJsonWithTimeout, type SharedStateFetch } from "@/lib/shared-state-recovery";
 
-type InitialSession = Readonly<{
+export type InitialSession = Readonly<{
   user: string;
   role: DemoSessionRole | "";
   mustChangePassword: boolean;
 }>;
 
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
+export const AUTH_SESSION_TIMEOUT_MS = 10_000;
+
+export async function readInitialSession(
+  fetchImpl: SharedStateFetch,
+  signal: AbortSignal,
+  timeoutMs = AUTH_SESSION_TIMEOUT_MS,
+): Promise<InitialSession | null> {
+  const { response, body } = await fetchJsonWithTimeout<{
+    ok?: unknown;
+    user?: unknown;
+    role?: unknown;
+    mustChangePassword?: unknown;
+  }>(fetchImpl, "/api/demo-session", { cache: "no-store", signal }, timeoutMs);
+  if (!response.ok || body?.ok !== true) return null;
+  return {
+    user: typeof body.user === "string" ? body.user : "",
+    role: typeof body.role === "string" ? body.role as DemoSessionRole : "",
+    mustChangePassword: body.mustChangePassword === true,
+  };
+}
 
 function AuthStatusScreen({ title, detail }: { title: string; detail: string }) {
   return (
@@ -124,15 +145,10 @@ export default function AuthClient() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/demo-session", { cache: "no-store", signal: controller.signal })
-      .then((response) => response.json())
-      .then((body) => {
+    readInitialSession(fetch, controller.signal)
+      .then((nextSession) => {
         if (controller.signal.aborted) return;
-        setSession(body.ok ? {
-          user: typeof body.user === "string" ? body.user : "",
-          role: typeof body.role === "string" ? body.role as DemoSessionRole : "",
-          mustChangePassword: body.mustChangePassword === true,
-        } : null);
+        setSession(nextSession);
       })
       .catch(() => {
         if (!controller.signal.aborted) setSession(null);
