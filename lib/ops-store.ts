@@ -1805,6 +1805,16 @@ export function readWecomArchiveInbox(limit = 100) {
   });
 }
 
+/** Case-first inbox: older unresolved identities must not age out behind messages. */
+export function readWecomHandoverCases(input: {
+  filter: import("./wecom-handover-review").WecomHandoverFilter;
+  cursor: string | null;
+}) {
+  return rpc<import("./wecom-handover-review").WecomHandoverCasePage>("read_wecom_handover_cases", {
+    p_secret: configuration().secret, p_filter: input.filter, p_cursor: input.cursor, p_limit: 30,
+  });
+}
+
 /** Full-admin review action for records that could not be uniquely matched. */
 export function linkWecomArchiveMessage(input: { messageId: string; studentId: string; actor: string }) {
   const { secret } = configuration();
