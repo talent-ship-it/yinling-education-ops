@@ -2,7 +2,8 @@
 
 import { splitAvailability, type CalendarOccupation } from "../lib/availability-occupancy";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
+import { MobileDetailBackButton } from "./mobile-detail-back-button";
 
 import {
   expandTeacherAvailability,
@@ -250,6 +251,8 @@ export function TeacherAvailabilityPanel({
   const [view, setView] = useState<"day" | "week" | "month">("month");
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const detailOpener = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState(referenceDate);
   const range = viewRange(view, selectedMonth, anchor);
   const teacherWindows = windows.filter((window) => window.teacherId === teacherId);
@@ -340,7 +343,7 @@ export function TeacherAvailabilityPanel({
             type="button"
             aria-pressed={selectedOccurrence?.id === occurrence.id}
             key={occurrence.id}
-            onClick={() => { setSelectedOccurrenceId(occurrence.id); setEditing(false); }}
+            onClick={(event) => { detailOpener.current = event.currentTarget; setSelectedOccurrenceId(occurrence.id); setEditing(false); setMobileOpen(true); }}
           >
             <strong>{occurrenceDateLabel(occurrence)}</strong>
             <span>{occurrenceTimeLabel(occurrence)}</span>
@@ -348,7 +351,8 @@ export function TeacherAvailabilityPanel({
           </button>)}
         </div>
       </div>
-      {selectedOccurrence ? <aside className="record-preview">
+      {selectedOccurrence ? <aside className={`record-preview ${mobileOpen ? "mobile-detail-open" : ""}`} aria-label="AVA 时段详情" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setMobileOpen(false); } }}>
+        <MobileDetailBackButton open={mobileOpen} opener={detailOpener} onClose={() => setMobileOpen(false)}>返回 AVA 列表</MobileDetailBackButton>
         <div className="preview-header">
           <div><p className="eyebrow">{selectedOccurrence.sourceTimezone}</p><h2>{occurrenceDateLabel(selectedOccurrence)}</h2></div>
         </div>

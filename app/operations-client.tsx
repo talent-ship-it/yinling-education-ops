@@ -12,6 +12,7 @@ import { LessonDurationInput } from "./lesson-duration-input";
 import { useWorkspaceLocation } from "./use-workspace-location";
 import { TeacherLeavePanel } from "./teacher-leave-panel";
 import { RecordPicker } from "./record-picker";
+import { MobileDetailBackButton } from "./mobile-detail-back-button";
 
 import {
   ArrowUpDown,
@@ -495,7 +496,7 @@ const STUDENT_BOUND_MODAL_KINDS = new Set<StudentBoundModalKind>([
   "lessonPackage",
   "exam",
 ]);
-type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | null;
+type MobilePreview = "student" | "teacher" | "booking" | "operation" | "message" | "classroom" | "course" | null;
 
 type OperatorProfile = { role: string; scope: string; tone: Tone };
 type AccountPasswordResetTarget = Readonly<{
@@ -3522,6 +3523,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [operatorMenuOpen, setOperatorMenuOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [mobilePreview, setMobilePreview] = useState<MobilePreview>(null);
+  const courseDetailOpener = useRef<HTMLButtonElement>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -8263,14 +8265,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               type="button"
               title={course.name}
               key={course.id}
-              onClick={() => setSelectedCourseId(course.id)}
+              onClick={(event) => { courseDetailOpener.current = event.currentTarget; setSelectedCourseId(course.id); setMobilePreview("course"); }}
             >
               <span><strong>{course.name}</strong></span>
               <strong>{course.bookingCount} 节</strong>
             </button>)}</div>
             <Pagination page={safePage} total={filteredCourses.length} pageSize={pageSize} onPage={setCoursePage} />
           </article>
-          {selectedCourse ? <aside className="record-preview course-preview">
+          {selectedCourse ? <aside className={`record-preview course-preview ${mobilePreview === "course" ? "mobile-detail-open" : ""}`} aria-label="课程与课包详情">
+            <MobileDetailBackButton open={mobilePreview === "course"} opener={courseDetailOpener} onClose={() => setMobilePreview(null)}>返回课程列表</MobileDetailBackButton>
             <div className="preview-header"><div><h2>{selectedCourse.name}</h2></div></div>
             <CoursePackageSummary course={selectedCourse} onOpenStudentPackage={openCourseStudentPackage} />
             {selectedCourse.bookingCount > 0
