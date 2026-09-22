@@ -117,9 +117,80 @@ async function postBatch({ endpoint, token, records, fetchImpl, requestTimeoutMs
   }
 }
 
+function healthEndpointFor(ingestUrl, explicit) {
+  if (explicit) return explicit;
+  const url = new URL(ingestUrl);
+  if (!url.pathname.endsWith("/bot-inbox")) throw new Error("missing_wecom_receiver_health_url");
+  url.pathname = `${url.pathname.slice(0, -"/bot-inbox".length)}/receiver-health`;
+  return url.toString();
+}
+
+function optionalInstant(value) {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isFinite(date.valueOf()) && date.toISOString() === value ? value : null;
+}
+
+function boundedCount(value) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000 ? value : 0;
+}
+
+function boundedCode(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/u.test(value) ? value : null;
+}
+
+async function readReceiverHealth(dataDirectory) {
+  let status;
+  try { status = JSON.parse(await fs.readFile(path.join(dataDirectory, "status.json"), "utf8")); }
+  catch (error) { if (error?.code === "ENOENT") return null; throw error; }
+  const startedAt = optionalInstant(status?.started_at);
+  const updatedAt = optionalInstant(status?.updated_at);
+  if (!startedAt || !updatedAt || typeof status?.state !== "string") throw new Error("invalid_receiver_health");
+  return {
+    state: status.state,
+    connected: status.connected === true,
+    startedAt,
+    updatedAt,
+    authenticatedAt: optionalInstant(status.authenticated_at),
+    lastMessageAt: optionalInstant(status.last_message_at),
+    receivedThisRun: boundedCount(status.received_this_run),
+    initialRepliesThisRun: boundedCount(status.initial_replies_this_run),
+    initialStreamRepliesThisRun: boundedCount(status.initial_stream_replies_this_run),
+    initialStreamFailuresThisRun: boundedCount(status.initial_stream_failures_this_run),
+    initialReplyFallbacksThisRun: boundedCount(status.initial_reply_fallbacks_this_run),
+    initialReplyFailuresThisRun: boundedCount(status.initial_reply_failures_this_run),
+    acknowledgementsThisRun: boundedCount(status.acknowledgements_this_run),
+    acknowledgementFailuresThisRun: boundedCount(status.acknowledgement_failures_this_run),
+    lastInitialReplyAt: optionalInstant(status.last_initial_reply_at),
+    lastInitialStreamError: boundedCode(status.last_initial_stream_error),
+    lastInitialStreamErrorAt: optionalInstant(status.last_initial_stream_error_at),
+    lastInitialReplyError: boundedCode(status.last_initial_reply_error),
+    lastInitialReplyErrorAt: optionalInstant(status.last_initial_reply_error_at),
+    lastAcknowledgementAt: optionalInstant(status.last_acknowledgement_at),
+    lastAcknowledgementError: boundedCode(status.last_acknowledgement_error),
+  };
+}
+
+async function postHealth({ endpoint, token, health, fetchImpl, requestTimeoutMs }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ health }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (controller.signal.aborted) throw new Error("health_request_timeout");
+    if (!response.ok || payload?.outcome !== "committed") throw new Error(`health_http_${response.status}`);
+  } finally { clearTimeout(timeout); }
+}
+
 export async function syncReceiverMessages({
   dataDirectory = process.env.WECOM_RECEIVER_DATA || DEFAULT_DATA,
   endpoint = process.env.WECOM_BOT_INGEST_URL,
+  healthEndpoint = process.env.WECOM_RECEIVER_HEALTH_URL,
   token = process.env.WECOM_ARCHIVE_BRIDGE_TOKEN,
   startedAt = process.env.WECOM_ARCHIVE_STARTED_AT,
   fetchImpl = fetch,
@@ -158,6 +229,8 @@ export async function syncReceiverMessages({
     projectedFiles: 0,
     acknowledged: 0,
     acknowledgementFailed: 0,
+    healthReported: 0,
+    healthFailed: 0,
     failed: 0,
   };
 
@@ -232,6 +305,22 @@ export async function syncReceiverMessages({
     }
   }
 
+  try {
+    const health = await readReceiverHealth(dataDirectory);
+    if (health) {
+      await postHealth({
+        endpoint: healthEndpointFor(ingestUrl, healthEndpoint),
+        token: bridgeToken,
+        health,
+        fetchImpl,
+        requestTimeoutMs,
+      });
+      summary.healthReported = 1;
+    }
+  } catch {
+    summary.healthFailed = 1;
+    console.error("receiver_health_upload_failed");
+  }
   await atomicJson(stateFile, { version: 1, entries });
   return summary;
 }

@@ -2,23 +2,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import AiBot,{generateReqId} from '@wecom/aibot-node-sdk';
 import {readBot,atomicJson,saveMessage,restrictSending,botMessageId,replyTarget} from './core.mjs';
+import {ACTIVE_FINAL_REPLY,FINAL_REPLY,providerErrorCode,sendInitialAcknowledgement} from './acknowledgement.mjs';
 process.umask(0o077);
 const data=process.env.WECOM_RECEIVER_DATA || '/home/codex/.local/share/wecom-receiver';
 fs.mkdirSync(data,{recursive:true,mode:0o700});
 const messagesDirectory=path.join(data,'messages');
 const acknowledgementsDirectory=path.join(data,'acknowledgements');
+fs.mkdirSync(messagesDirectory,{recursive:true,mode:0o700});
 fs.mkdirSync(acknowledgementsDirectory,{recursive:true,mode:0o700});
-const status={state:'starting',started_at:new Date().toISOString(),received_this_run:0,initial_replies_this_run:0,acknowledgements_this_run:0,acknowledgement_failures_this_run:0};
+const status={state:'starting',started_at:new Date().toISOString(),received_this_run:0,initial_replies_this_run:0,initial_stream_replies_this_run:0,initial_stream_failures_this_run:0,initial_reply_fallbacks_this_run:0,initial_reply_failures_this_run:0,acknowledgements_this_run:0,acknowledgement_failures_this_run:0};
 function update(state){status.state=state;status.updated_at=new Date().toISOString();atomicJson(path.join(data,'status.json'),status);}
-const INITIAL_REPLY='正在收录，请稍候…';
-const FINAL_REPLY='已收录到系统审核队列。';
-const ACTIVE_REPLY={msgtype:'markdown',markdown:{content:FINAL_REPLY}};
 const STREAM_REPLY_TTL_MS=5*60*1000;
 const ACK_FILE_TTL_MS=15*60*1000;
 const pendingReplies=new Map();
 const acknowledgementAttempts=new Map();
 let acknowledgementLoopBusy=false;
-function errorCode(error){return String(error?.code || 'reply_failed').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80) || 'reply_failed';}
 function idFromAckName(name){const match=/^([a-f0-9]{64})\.json$/.exec(name);return match ? `bot:${match[1]}` : '';}
 function sourceTarget(id){
   const file=path.join(messagesDirectory,`${id.slice(4)}.json`);
@@ -33,14 +31,7 @@ function queueReply(frame){
   } catch { return []; }
 }
 async function sendInitialReply(pending){
-  try {
-    await client.replyStream(pending.frame,pending.streamId,INITIAL_REPLY,false);
-    pending.initialSentAt=Date.now();
-    status.initial_replies_this_run+=1;
-  } catch(error) {
-    pending.initialReplyError=errorCode(error);
-    status.initial_reply_failures_this_run=(status.initial_reply_failures_this_run || 0)+1;
-  }
+  await sendInitialAcknowledgement({client,pending,status});
   update('authenticated');
 }
 function removeAcknowledgement(file,id){
@@ -76,11 +67,11 @@ async function flushAcknowledgements(){
       if(attempt.nextAt>Date.now()) continue;
       const target=pending?.target || sourceTarget(id);
       try {
-        if(pending && !pending.initialReplyError && Date.now()-pending.receivedAt<STREAM_REPLY_TTL_MS){
+        if(pending?.initialReplyMode==='stream' && Date.now()-pending.receivedAt<STREAM_REPLY_TTL_MS){
           await client.replyStream(pending.frame,pending.streamId,FINAL_REPLY,true);
         } else {
           if(!target) { if(age>ACK_FILE_TTL_MS) removeAcknowledgement(file,id); continue; }
-          await client.sendMessage(target,ACTIVE_REPLY);
+          await client.sendMessage(target,ACTIVE_FINAL_REPLY);
         }
         removeAcknowledgement(file,id);
         status.acknowledgements_this_run+=1;
@@ -89,7 +80,7 @@ async function flushAcknowledgements(){
         const count=attempt.count+1;
         acknowledgementAttempts.set(id,{count,nextAt:Date.now()+Math.min(60000,1000*2**Math.min(count,5))});
         status.acknowledgement_failures_this_run+=1;
-        status.last_acknowledgement_error=errorCode(error);
+        status.last_acknowledgement_error=providerErrorCode(error);
       }
       update('authenticated');
     }

@@ -30,6 +30,10 @@ committed Supabase write. The receiver then replaces the same stream with
 `已收录到系统审核队列。` and removes the file. If the receiver restarted or the stream
 window has expired, it uses the callback's originating group/user as a controlled
 active-message fallback. Temporary `response_url` values are never written to disk.
+If WeCom rejects the initial stream reply, the receiver immediately sends the same
+fixed placeholder to the originating group/user as a controlled active-message
+fallback. `status.json` records only bounded provider error codes and delivery counts;
+it never stores reply frames, provider messages, chat content, or credentials.
 
 ## Supabase review-queue sync
 
@@ -51,6 +55,8 @@ VPS secret environment (never in GitHub, Vercel client variables, or chat):
 ```bash
 WECOM_RECEIVER_DATA=/home/codex/.local/share/wecom-receiver
 WECOM_BOT_INGEST_URL="https://<production-site>/api/integrations/wecom/bot-inbox"
+# Optional override; otherwise derived from WECOM_BOT_INGEST_URL.
+WECOM_RECEIVER_HEALTH_URL="https://<production-site>/api/integrations/wecom/receiver-health"
 WECOM_ARCHIVE_BRIDGE_TOKEN="<same-private-worker-token-used-by-the-server>"
 WECOM_ARCHIVE_STARTED_AT="2026-09-09T00:00:00.000Z"
 ```
@@ -71,6 +77,10 @@ Run it after the database migration and application route are live:
 The receiver's Bot ID/Secret is not a Supabase credential. The sync worker only
 uses the independent archive bridge token to reach the private application route;
 the website keeps `OPS_API_SECRET` server-side for the database RPC.
+Each sync also publishes a sanitized heartbeat to the private receiver-health
+route. The full-admin integration status can therefore show connection freshness,
+delivery counters, stream fallback use, and bounded provider error codes without
+exposing callbacks, chat identifiers, provider messages, or credentials.
 
 Test: `npm test`. Stop: create the data directory's `paused` file and terminate the
 identified worker PID. No credentials or received data belong in Git.

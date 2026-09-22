@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {readBot,saveMessage,disableSending,restrictSending,botMessageId,acknowledgementFilePath,replyTarget} from './core.mjs';
+import {ACTIVE_INITIAL_REPLY,sendInitialAcknowledgement} from './acknowledgement.mjs';
 test('encrypted CLI credentials are read without changing their files',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));
  try{const key=crypto.randomBytes(32),nonce=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,nonce);
@@ -54,4 +55,30 @@ test('storage limits preserve existing messages and reject oversized callbacks',
  assert.throws(()=>saveMessage(dir,{msgid:'large',text:{content:'x'.repeat(1024*1024)}}),/payload_limit/);
  assert.equal(fs.readdirSync(dir).length,1);
  }finally{fs.rmSync(dir,{recursive:true});}
+});
+
+test('initial acknowledgement uses the callback stream when it is healthy',async()=>{
+ const calls=[];const status={};const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1'};
+ const client={replyStream:async(...args)=>calls.push(['stream',...args]),sendMessage:async(...args)=>calls.push(['active',...args])};
+ const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:00.000Z')});
+ assert.equal(outcome,'stream');assert.equal(pending.initialReplyMode,'stream');
+ assert.equal(status.initial_replies_this_run,1);assert.equal(status.initial_stream_replies_this_run,1);
+ assert.equal(status.initial_reply_fallbacks_this_run,undefined);assert.equal(calls.length,1);assert.equal(calls[0][0],'stream');
+});
+
+test('initial acknowledgement falls back to the originating target and records only a provider code',async()=>{
+ const calls=[];const status={};const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1'};
+ const client={replyStream:async()=>{throw {errcode:93000,errmsg:'private provider detail'};},sendMessage:async(...args)=>calls.push(args)};
+ const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:00.000Z')});
+ assert.equal(outcome,'active');assert.equal(pending.initialReplyMode,'active');
+ assert.equal(status.initial_replies_this_run,1);assert.equal(status.initial_stream_failures_this_run,1);assert.equal(status.initial_reply_fallbacks_this_run,1);
+ assert.equal(status.initial_reply_failures_this_run,undefined);assert.equal(status.last_initial_stream_error,'93000');
+ assert.deepEqual(calls,[['chat-1',ACTIVE_INITIAL_REPLY]]);assert.doesNotMatch(JSON.stringify(status),/private provider detail/);
+});
+
+test('initial acknowledgement reports one terminal failure only when both delivery paths fail',async()=>{
+ const status={};const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1'};
+ const client={replyStream:async()=>{throw {errcode:93000};},sendMessage:async()=>{throw {code:'ECONNRESET'};}};
+ const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:00.000Z')});
+ assert.equal(outcome,'failed');assert.equal(status.initial_reply_failures_this_run,1);assert.equal(status.last_initial_reply_error,'ECONNRESET');
 });

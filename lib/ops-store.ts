@@ -152,6 +152,7 @@ export type WecomArchiveStatus = Readonly<{
   trialIdentityAmbiguous: number;
   latestSentAt: string | null;
   latestIngestedAt: string | null;
+  receiver: (import("./wecom-receiver-health").WecomReceiverHealth & Readonly<{ recordedAt: string }>) | null;
 }>;
 
 export type WecomArchiveMedia = Readonly<{
@@ -978,6 +979,7 @@ export const WECOM_ARCHIVE_LINK_RPC = "link_wecom_archive_message";
 export const WECOM_ARCHIVE_MEDIA_RPC = "get_wecom_archive_media";
 export const WECOM_ARCHIVE_STATUS_RPC = "get_wecom_archive_status";
 export const WECOM_BOT_INGEST_RPC = "ingest_wecom_bot_batch";
+export const WECOM_RECEIVER_HEALTH_RECORD_RPC = "record_wecom_receiver_health";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -1875,6 +1877,16 @@ export function getWecomArchiveMedia(id: string) {
 export function getWecomArchiveStatus() {
   const { secret } = configuration();
   return rpc<WecomArchiveStatus>(WECOM_ARCHIVE_STATUS_RPC, { p_secret: secret });
+}
+
+export function recordWecomReceiverHealth(
+  health: import("./wecom-receiver-health").WecomReceiverHealth,
+) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ outcome: "committed"; recordedAt: string }>>(
+    WECOM_RECEIVER_HEALTH_RECORD_RPC,
+    { p_secret: secret, p_health: health },
+  );
 }
 
 /** Server-only source snapshot writer; callers are cron/management code, never browser code. */
