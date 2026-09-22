@@ -11,6 +11,11 @@ test("undo follows a stable row ID after reordering and preserves unrelated rows
   assert.deepEqual(undoPayrollLocks([unrelated, after], [receipt]), [unrelated, before]);
 });
 
+test("an unchanged JSONB round trip remains undoable despite reordered object keys", () => {
+  const stored = Object.fromEntries(Object.entries(after).reverse()) as typeof after;
+  assert.deepEqual(undoPayrollLocks([stored], [receipt]), [before]);
+});
+
 test("a stale undo cannot overwrite financial or review changes", () => {
   for (const change of [{ amount: 200 }, { rate: 100 }, { note: "new review" }, { lockedBy: "Another admin" }]) {
     const current = [{ ...after, ...change }];
