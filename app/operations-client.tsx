@@ -7967,39 +7967,45 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   useEffect(() => {
     if (active !== "classroom" || !selectedClassroomBookingId || !selectedClassroomOccurrenceKey || !selectedClassroomSourceDate || !selectedClassroomMeetingId) return;
-    let stopped = false;
-    const poll = async () => {
-      const occurrenceKey = selectedClassroomOccurrenceKey;
-      if (!selectedClassroomSourceDate) return;
-      const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
-      const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
-      if (!booking) return;
-      const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, { cache: "no-store" }).catch(() => null);
-      if (!response || stopped) return;
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || stopped) return;
-      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-      const runtime: ClassroomRuntime = { ...result.status, recordings };
-      const currentClassroom = booking.classroom;
-      const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
-        ? "running"
-        : currentClassroom?.status === "running" || recordings.length
-          ? "ended"
-          : "ready";
-      // Polling is also a persistence path. Keep the exact command in the
-      // shared pending envelope when the response is unknown, and do not
-      // manufacture a local createdAt/status before the atomic receipt.
-      try {
+    let selected = true;
+    const poller = createSharedStatePoller({
+      canRun: () => selected,
+      errorDelayMs: 15_000,
+      onError: () => {
+        // A transient classroom read is retried without replacing the last runtime.
+      },
+      run: async (signal) => {
+        const occurrenceKey = selectedClassroomOccurrenceKey;
+        const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
+        const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
+        if (!booking) return;
+        const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
+          cache: "no-store",
+          signal,
+        });
+        if (signal.aborted) return;
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || signal.aborted) return;
+        const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+        const runtime: ClassroomRuntime = { ...result.status, recordings };
+        const currentClassroom = booking.classroom;
+        const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
+          ? "running"
+          : currentClassroom?.status === "running" || recordings.length
+            ? "ended"
+            : "ready";
+        // Polling is also a persistence path. Keep the exact command in the
+        // shared pending envelope when the response is unknown, and do not
+        // manufacture a local createdAt/status before the atomic receipt.
         await persistClassroom(booking, runtime.meetingId, nextStatus);
-      } catch {
-        // The next poll/recovery pass retries the actor-scoped command.
-        return;
-      }
-      setClassroomRuntime(runtime);
+        if (!signal.aborted) setClassroomRuntime(runtime);
+      },
+    });
+    void poller.wake();
+    return () => {
+      selected = false;
+      poller.stop();
     };
-    void poll();
-    const interval = window.setInterval(poll, 15000);
-    return () => { stopped = true; window.clearInterval(interval); };
   }, [active, persistClassroom, scopedBookings, selectedClassroomBookingId, selectedClassroomOccurrenceKey, selectedClassroomMeetingId, selectedClassroomSourceDate]);
 
   const openDashboardLesson = (booking: BookingOccurrence) => {

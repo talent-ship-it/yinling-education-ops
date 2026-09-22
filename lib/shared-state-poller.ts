@@ -2,6 +2,8 @@ export function createSharedStatePoller(input: {
   run: (signal: AbortSignal) => Promise<void>;
   canRun: () => boolean;
   onError: (error: unknown) => void;
+  successDelayMs?: number;
+  errorDelayMs?: number;
   schedule?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
 }) {
@@ -16,11 +18,11 @@ export function createSharedStatePoller(input: {
     if (timer !== undefined) { cancel(timer); timer = undefined; }
     pending = true;
     controller = new AbortController();
-    let delay = 15_000;
+    let delay = input.successDelayMs ?? 15_000;
     try {
       await input.run(controller.signal);
     } catch (error) {
-      delay = 60_000;
+      delay = input.errorDelayMs ?? 60_000;
       if (!stopped) input.onError(error);
     } finally {
       pending = false;

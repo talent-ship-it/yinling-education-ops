@@ -435,7 +435,9 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /occurrenceId: occurrence\.occurrenceKey/);
   assert.match(client, /occurrenceId: booking\.occurrenceKey/);
   assert.doesNotMatch(client, /meetingId: `yinling-\$\{bookingId\}`/);
-  assert.match(client, /window\.setInterval\(poll, 15000\)/);
+  assert.match(client, /const poller = createSharedStatePoller\(\{/);
+  assert.match(client, /signal,\s*\}\);/);
+  assert.match(client, /poller\.stop\(\)/);
   assert.match(client, /title="BiggerBlueButton"/);
   assert.match(client, /录播/);
   assert.match(client, /正在连接网上教室/);

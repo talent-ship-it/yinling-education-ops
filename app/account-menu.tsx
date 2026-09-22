@@ -2,6 +2,7 @@
 
 import { ChevronDown, LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createSharedStatePoller } from "@/lib/shared-state-poller";
 import styles from "./account-menu.module.css";
 
 type ViewOption = { label: string; value: string };
@@ -16,22 +17,26 @@ export default function AccountMenu() {
 
   useEffect(() => {
     let resolved = false;
-    const loadSession = async () => {
-      if (resolved) return;
-      try {
-        const response = await fetch("/api/demo-session", { cache: "no-store" });
+    const poller = createSharedStatePoller({
+      canRun: () => !resolved,
+      successDelayMs: 1_000,
+      errorDelayMs: 1_000,
+      onError: () => {
+        // The login screen remains usable while the session endpoint is unavailable.
+      },
+      run: async (signal) => {
+        const response = await fetch("/api/demo-session", { cache: "no-store", signal });
+        if (signal.aborted) return;
         const body = await response.json();
+        if (signal.aborted) return;
         if (body.ok && typeof body.user === "string") {
           resolved = true;
           setSessionUser(body.user);
         }
-      } catch {
-        // The login screen remains usable while the session endpoint is unavailable.
-      }
-    };
-    void loadSession();
-    const timer = window.setInterval(loadSession, 1000);
-    return () => window.clearInterval(timer);
+      },
+    });
+    void poller.wake();
+    return () => poller.stop();
   }, []);
 
   useEffect(() => {
