@@ -1,0 +1,6771 @@
+{
+  "finding_counts": {
+    "app/account-admin-lifecycle.tsx": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/account-lifecycle-workspace.tsx": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "app/account-menu.tsx": {
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/account-security-panel.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/mfa/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/account/password/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/sessions/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/accounts/issued-password/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/mfa-reset/route.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/password-reset/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/status/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/app-snapshot/route.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/app-state/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "app/api/audit/route.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/bookings/mutate/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/analytics/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/student-entry/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/temporary/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "app/api/cron/classroom-provision/route.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-completed-lessons/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/cron/lp-parent-progress/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/tencent-trial-ledger/route.ts": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/trial-payment/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/demo-login/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/demo-logout/route.ts": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/exams/follow-up/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/exams/submit/reconcile/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/exams/submit/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/files/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/fu-attachments/[id]/route.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/fu-attachments/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/integrations/wecom/archive/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/bot-inbox/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/callback/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/media/[id]/route.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/mirror-review/route.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/operations-readiness/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/priority/route.ts": {
+      "crap_high": {
+        "count": 4
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 5
+      }
+    },
+    "app/api/jiaowubao-direct-import/students/[studentId]/history/route.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 4
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts": {
+      "complexity_critical": {
+        "count": 5
+      },
+      "crap_critical": {
+        "count": 8
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 5
+      }
+    },
+    "app/api/lesson-occurrences/complete/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "app/api/nixon-session/route.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/confirm/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/candidates/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/create/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/direct-enrollment/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/jiaowubao-trial-sync/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/legacy/create/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/operations/lp/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/operations/permanent-replacement/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/operations/students/create/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/operations/teacher-absence/create/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/trial-ledger/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/renewals/follow-up/route.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/student-import/identity-links/annotation/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "app/api/student-import/identity-links/bulk-create/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "app/api/student-import/identity-links/bulk/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "app/api/student-import/identity-links/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/master-resolutions/route.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/route.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/source-rows/route.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/students/lesson-package/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/legacy-deadline/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/trial-payment/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/teacher-availability/completion/route.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/review/route.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/submit/route.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/identity-links/route.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/route.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/source/route.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-leave-requests/route.ts": {
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "app/chatgpt-auth.ts": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/course-package-summary.tsx": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/handover-review/page.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-completed-month-evidence.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-student-history.tsx": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-operations-readiness.tsx": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-priority-review.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-review.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/lesson-package-purchase-form.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/lp-workflow-fields.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx": {
+      "complexity_critical": {
+        "count": 51
+      },
+      "complexity_high": {
+        "count": 9
+      },
+      "complexity_moderate": {
+        "count": 5
+      },
+      "crap_critical": {
+        "count": 52
+      },
+      "crap_high": {
+        "count": 30
+      },
+      "crap_moderate": {
+        "count": 39
+      }
+    },
+    "app/schedule-month-view.tsx": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/student-record-forms.tsx": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/student-records-panel.tsx": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/teacher-availability-completion.tsx": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "app/teacher-availability-panel.tsx": {
+      "complexity_critical": {
+        "count": 1
+      }
+    },
+    "app/to-do-list.tsx": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/account-directory.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "lib/account-mfa.ts": {
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "lib/account-rate-limit.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/account-request-context.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/audit-view.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/bbb-analytics-service.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts": {
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/booking-capacity-service.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_high": {
+        "count": 2
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/booking-projection-pending.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/booking-recurrence.ts": {
+      "complexity_moderate": {
+        "count": 2
+      }
+    },
+    "lib/course-package-catalog.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/demo-auth.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/demo-session-token.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-pending.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/exam-follow-up-service.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/exam-submission-service.ts": {
+      "complexity_moderate": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-authority-status.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-projection.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/jiaowubao-completed-lesson-reconciliation.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts": {
+      "complexity_critical": {
+        "count": 4
+      },
+      "crap_critical": {
+        "count": 4
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-completed-lesson-safe-failure.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-sync.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/jiaowubao-completed-month-evidence.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 6
+      },
+      "crap_high": {
+        "count": 7
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "lib/jiaowubao-direct-import-batch-gate.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-failure.ts": {
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 5
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-open-api-node.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-reader.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-snapshot.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/jiaowubao-static-import-service.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-static-import.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/jiaowubao-static-xlsx-parser.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-student-source-staging.ts": {
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/jiaowubao-trial-auto-sync-core.ts": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-source-window.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-sync-projection.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-sync.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/legacy-operation-task-pending.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/legacy-operation-task-service.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrence-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrences.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/lesson-package-purchase-service.ts": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-pending.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-service.ts": {
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lp-parent-progress-service.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lp-workflows.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/managed-exam-refresh.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/managed-trial-payment.ts": {
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "lib/openxml-xlsx.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/operation-occurrence-service.ts": {
+      "complexity_high": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 3
+      }
+    },
+    "lib/ops-access.ts": {
+      "complexity_critical": {
+        "count": 4
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 4
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/ops-state-transition.ts": {
+      "complexity_critical": {
+        "count": 8
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 8
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 5
+      }
+    },
+    "lib/ops-store.ts": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/ops-tasks.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "lib/renewal-follow-up-service.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/renewal-tasks.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-attachment-validation.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-creation-pending.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-creation-service.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts": {
+      "complexity_critical": {
+        "count": 8
+      },
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 8
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts": {
+      "complexity_critical": {
+        "count": 5
+      },
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 5
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 6
+      }
+    },
+    "lib/student-records.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-absence-creation-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-absence-pending.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-completion-service.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-review-service.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-submission-service.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-departure-creation-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "lib/teacher-departure-occurrences.ts": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "lib/teacher-import.ts": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 3
+      }
+    },
+    "lib/temporary-classroom-request.ts": {
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-docs-smartsheet.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-mirror.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-sync-plan.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-system-sync.ts": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/trial-ledger-view.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/trial-ledger.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-operations.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-payment-pending.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/trial-payment-task-service.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "lib/xlsx-reader.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/check-api-write-boundaries.mjs": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/jiaowubao-authoritative-teacher-course-read.mjs": {
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts": {
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 5
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 6
+      },
+      "crap_high": {
+        "count": 10
+      },
+      "crap_moderate": {
+        "count": 8
+      }
+    },
+    "scripts/jiaowubao-direct-import-preflight.ts": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-export.ts": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "scripts/jiaowubao-source-directory-crosswalk.mjs": {
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 4
+      },
+      "crap_high": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "scripts/jiaowubao-static-small-batch-plan.mjs": {
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts": {
+      "complexity_critical": {
+        "count": 4
+      },
+      "crap_critical": {
+        "count": 6
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "scripts/run-sql-runtime-fixtures.mjs": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 2
+      }
+    },
+    "scripts/student-import-identity-management.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/student-import-management.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 3
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "scripts/wecom-receiver/core.mjs": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/wecom-receiver/receiver.mjs": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/sync.mjs": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "tests/classroom-create-end-race.test.mjs": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/direct-enrollment-atomic-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/generic-booking-scope-lock-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-completed-lesson-member-collection-contract.test.mjs": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-completed-lesson-projection.test.mjs": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "tests/jiaowubao-direct-import-projection-schema.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-direct-import-projection.test.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-direct-import-resume.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/legacy-task-deadline-atomic-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/operational-atomic-contracts.test.mjs": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/ops-tasks.test.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/payroll-duplicate-id-ui.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/renewal-follow-up-atomic-contract.test.mjs": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/renewal-follow-up-create-if-missing-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/shared-state-commit-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-import-bulk-create-identity-review-contract.test.mjs": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "tests/student-import-bulk-identity-review-contract.test.mjs": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/student-import-identity-review-migration.test.mjs": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "tests/student-import-migration-forward-safe.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-import-service.test.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-operation-atomic-concurrency-contract.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/teacher-credential-enforcement.test.mjs": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/teacher-import.test.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/trial-payment-reminders-contract.test.mjs": {
+      "crap_critical": {
+        "count": 1
+      }
+    }
+  },
+  "identity_finding_counts": {
+    "app/account-admin-lifecycle.tsx\u0000AccountAdminLifecycle": {
+      "complexity_critical": {
+        "count": 1
+      }
+    },
+    "app/account-admin-lifecycle.tsx\u0000AccountEditor": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/account-lifecycle-workspace.tsx\u0000AccountLifecycleWorkspace": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "app/account-lifecycle-workspace.tsx\u0000loadDirectory": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/account-lifecycle-workspace.tsx\u0000loadSelectedAccount": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/account-lifecycle-workspace.tsx\u0000revealIssuedPassword": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/account-menu.tsx\u0000AccountMenu": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/account-menu.tsx\u0000loadSession": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/account-menu.tsx\u0000logout": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/account-security-panel.tsx\u0000AccountSecurityPanel": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/mfa/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/account/mfa/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/password/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/sessions/route.ts\u0000DELETE": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/account/sessions/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts\u0000parsePermissionOverrides": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts\u0000parseScopeMembers": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/access/route.ts\u0000validateScopeMembers": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/issued-password/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/mfa-reset/route.ts\u0000POST": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/password-reset/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/accounts/status/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/app-snapshot/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/app-state/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/app-state/route.ts\u0000PUT": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/audit/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/bookings/mutate/route.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/bookings/mutate/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/bookings/mutate/route.ts\u0000serviceError": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/analytics/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/route.ts\u0000authorizedBooking": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/route.ts\u0000bookingStartsAt": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/student-entry/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/temporary/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/classroom/temporary/route.ts\u0000errorResponse": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/classroom-provision/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-completed-lessons/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-completed-lessons/route.ts\u0000hasCronSecret": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000hasCronSecret": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000projectAuthority": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000queryScheduleWithGlobalRateGate": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000validConfirmation": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/lp-parent-progress/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/lp-parent-progress/route.ts\u0000rowFor": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/tencent-trial-ledger/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/cron/tencent-trial-ledger/route.ts\u0000hasCronSecret": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/cron/trial-payment/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/cron/trial-payment/route.ts\u0000rowFor": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/demo-login/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/demo-login/route.ts\u0000resolveLoginIdentity": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/demo-login/route.ts\u0000resolveNamedIdentity": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/demo-logout/route.ts\u0000POST": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/demo-logout/route.ts\u0000revokeServerSession": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/exams/follow-up/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/exams/follow-up/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/exams/submit/reconcile/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/exams/submit/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/exams/submit/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/files/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/files/route.ts\u0000cleanHttpsSource": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/files/route.ts\u0000expectedVersions": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/fu-attachments/[id]/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/fu-attachments/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts\u0000hasBridgeToken": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/tencent-trial-ledger/route.ts\u0000stateRow": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/archive/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/archive/route.ts\u0000PATCH": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/archive/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/archive/route.ts\u0000fullAdminSession": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/bot-inbox/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/callback/route.ts\u0000GET": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/callback/route.ts\u0000POST": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/callback/route.ts\u0000boundedBody": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/media/[id]/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/integrations/wecom/mirror-review/route.ts\u0000GET": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/operations-readiness/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/operations-readiness/route.ts\u0000readInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/priority/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/priority/route.ts\u0000parseCanonicalMidnight": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/priority/route.ts\u0000requestWindow": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/priority/route.ts\u0000requireHighTierAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000cursorFromRequest": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000parseCommand": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000readBoundedRequestBody": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000requireHighTierAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts\u0000text": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000getPublicSchedulePage": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000readCursorInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000readCursorToken": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000readId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000readInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/schedule/route.ts\u0000verifyCursor": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-direct-import/students/[studentId]/history/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000currentProjectionPage": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000entries": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000exactPageIndex": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000pageRowCount": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000records": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000requireFullAdmin": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts\u0000safeSyncFailure": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000consumePreviewRequest": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000dateParameter": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000decimal": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000flag": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000integer": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000optionalEnumFilter": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts\u0000text": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000GET": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000events": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 2
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000labelsForTeacherIds": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000publicPage": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000readCursorInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000readCursorToken": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000readId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000readInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000safeSourceKey": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000studentLookup": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000teacherLookup": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000trialCourseStudentIds": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000validRawPage": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/jiaowubao-open-api/schedule/route.ts\u0000verifyCursor": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/lesson-occurrences/complete/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/lesson-occurrences/complete/route.ts\u0000serviceError": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/nixon-session/route.ts\u0000GET": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/confirm/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/confirm/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/candidates/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/create/route.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/create/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/departure/create/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/direct-enrollment/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/jiaowubao-trial-sync/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/legacy/create/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/legacy/create/route.ts\u0000renderLegacyReplay": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/operations/legacy/create/route.ts\u0000replayVisible": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/lp/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/lp/route.ts\u0000committedRows": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/lp/route.ts\u0000rowsPayload": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/permanent-replacement/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/permanent-replacement/route.ts\u0000committedRows": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/permanent-replacement/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/students/create/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/students/create/route.ts\u0000renderStudentReplay": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/operations/students/create/route.ts\u0000replayVisible": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/teacher-absence/create/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/teacher-absence/create/route.ts\u0000serviceError": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/trial-ledger/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/operations/trial-ledger/route.ts\u0000authorize": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/operations/trial-ledger/route.ts\u0000targetStudentId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/renewals/follow-up/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/renewals/follow-up/route.ts\u0000commandBody": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/renewals/follow-up/route.ts\u0000committedRows": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/renewals/follow-up/route.ts\u0000visibleRows": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/annotation/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/annotation/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/annotation/route.ts\u0000requireAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk-create/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk-create/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk-create/route.ts\u0000requireAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk/route.ts\u0000GET": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/bulk/route.ts\u0000requireAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/identity-links/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/master-resolutions/route.ts\u0000POST": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/route.ts\u0000POST": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/student-import/source-rows/route.ts\u0000POST": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/students/lesson-package/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/legacy-deadline/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/legacy-deadline/route.ts\u0000readBoundedRequestBody": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/legacy-deadline/route.ts\u0000requireHighTierAdmin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/trial-payment/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/trial-payment/route.ts\u0000paymentStateFromResult": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/tasks/trial-payment/route.ts\u0000readCommandReceipt": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/completion/route.ts\u0000GET": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/completion/route.ts\u0000currentMonthInMelbourne": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/review/route.ts\u0000POST": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-availability/submit/route.ts\u0000POST": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/identity-links/route.ts\u0000POST": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/route.ts\u0000POST": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-import/source/route.ts\u0000POST": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-leave-requests/route.ts\u0000POST": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/api/teacher-leave-requests/route.ts\u0000context": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/chatgpt-auth.ts\u0000getChatGPTUser": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/chatgpt-auth.ts\u0000safeRelativeReturnPath": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/course-package-summary.tsx\u0000CoursePackageSummary": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/handover-review/page.tsx\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/handover-review/page.tsx\u0000Page": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-completed-month-evidence.ts\u0000completeSourcePages": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-completed-month-evidence.ts\u0000lessonItem": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-completed-month-evidence.ts\u0000parseJiaowubaoCompletedMonthEvidencePage": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-completed-month-evidence.ts\u0000parsedTeacher": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx\u0000JiaowubaoImportedSchedulePanel": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx\u0000completeJiaowubaoImportedSchedulePages": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx\u0000events": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-schedule.tsx\u0000parseJiaowubaoImportedSchedulePage": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-imported-student-history.tsx\u0000JiaowubaoImportedStudentHistoryPanel": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-operations-readiness.tsx\u0000ScheduleQueue": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-priority-review.tsx\u0000JiaowubaoScheduleMappingPriorityReviewPanel": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-priority-review.tsx\u0000candidates": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-priority-review.tsx\u0000parseJiaowubaoScheduleMappingPriorityReview": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-review.tsx\u0000JiaowubaoScheduleMappingReviewPanel": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-review.tsx\u0000MappingCandidateRow": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/jiaowubao-schedule-mapping-review.tsx\u0000candidates": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/lesson-package-purchase-form.tsx\u0000LessonPackagePurchaseForm": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "app/lesson-package-purchase-form.tsx\u0000submit": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/lp-workflow-fields.tsx\u0000LpWorkflowFields": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/lp-workflow-fields.tsx\u0000parseTrialFields": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "complexity_high": {
+        "count": 4
+      },
+      "crap_critical": {
+        "count": 4
+      },
+      "crap_high": {
+        "count": 9
+      },
+      "crap_moderate": {
+        "count": 10
+      }
+    },
+    "app/operations-client.tsx\u0000AccountPasswordForm": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000OperationsApp": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000OperationsWorkspace": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000StudentDetail": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000addStudentRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000automaticJiaowubaoPayrollRows": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000bookingOccurrenceByStableKey": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000buildRuntimeDefaults": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000clearStudentIdentityLinks": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000completeTask": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000confirmStudentIdentityAnnotationReview": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000confirmStudentIdentityManualPair": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000examRecordsForStudent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000exportCurrentPayroll": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000exportRows": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000filteredBookings": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000filteredTeachers": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000joinTeacherClassroom": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000ledgerSchedulePartCell": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000ledgerTextCell": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000loadAllJiaowubaoCompletedLessonPages": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000loadAllJiaowubaoSchedulePages": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000loadMoreJiaowubaoScheduleMappingPriority": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000loadMoreJiaowubaoScheduleMappings": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000lockPayrollRow": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000mutateManagedExamFollowUp": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000mutateManagedTrialPayment": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000onConfirm": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000onKeyDown": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000openBookingEditor": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000openNewBooking": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000persisted": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000poll": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000previewTeacherAbsence": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000promoteLegacyTeacherAvailability": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000provisionClassroom": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000queued": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000readPendingExamFollowUp": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000reconcilePendingExamSubmission": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000recordMessage": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000refreshClassroom": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000refreshStudentIdentityAnnotationReview": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000refreshStudentIdentityReview": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderClassroom": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderDashboard": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderLp": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderMessages": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderOperations": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderPayroll": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderReports": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderSchedule": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderStudents": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderSync": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderTeacherDashboard": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderTeachers": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renderView": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000renewalEmptyState": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000reopenTask": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000run": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000saveJiaowubaoScheduleMapping": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000saveJiaowubaoScheduleMappingPriority": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000saveLegacyTaskDeadline": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000saveTrialLedgerFieldAtomic": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000scheduleProjection": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000structuredRows": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submit": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitAccountPasswordReset": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitAva": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitBooking": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitBookingOccurrence": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitExam": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitFile": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitLegacyOperationTaskCommand": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitLessonSettlement": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitLp": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitLpRevision": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitNewPayroll": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitOperation": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitPayrollEdit": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitRenewalFollowUp": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudent": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudentCommand": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudentEdit": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudentEvidence": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudentImportSource": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitStudentReport": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitTask": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitTeacherAvailability": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitTeacherImportSource": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitTemplate": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000submitTemporaryClassroom": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000switchOperator": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000syncJiaowubaoCompletedLessons": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000syncTrialSchedulesFromJiaowubao": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000trapFocus": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000trialIntakeDetails": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000trialLedgerEntries": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000useSharedState": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000value": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000visibleLp": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "app/operations-client.tsx\u0000writeBookingCapacityMutation": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "app/schedule-month-view.tsx\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/student-record-forms.tsx\u0000parseLocalDateTime": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/student-records-panel.tsx\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "app/student-records-panel.tsx\u0000normalizePanelFile": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "app/student-records-panel.tsx\u0000studentJwbPackageNotice": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "app/teacher-availability-completion.tsx\u0000TeacherAvailabilityCompletionPanel": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "app/teacher-availability-panel.tsx\u0000TeacherAvailabilityPanel": {
+      "complexity_critical": {
+        "count": 1
+      }
+    },
+    "app/to-do-list.tsx\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "app/to-do-list.tsx\u0000ToDoList": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/account-directory.ts\u0000materializeManagedAccountDirectory": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/account-directory.ts\u0000resolveAccountDirectoryIdentity": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/account-mfa.ts\u0000decryptMfaSecret": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/account-mfa.ts\u0000matchTotpCounter": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/account-rate-limit.ts\u0000requestAddress": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/account-request-context.ts\u0000resolveAccountRequestContext": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/audit-view.ts\u0000buildAuditView": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/bbb-analytics-service.ts\u0000prepareCurrent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/bbb-analytics-service.ts\u0000processBbbAnalyticsCallback": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts\u0000call": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts\u0000callbackOrigin": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts\u0000configuration": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/bigbluebutton.ts\u0000meetingStatus": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000assertNoConflict": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000assertPackageAndSubject": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000bookingOccurrences": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000futureReservedPackageHours": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000parseBookingCapacityCommand": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000prepareBookingCapacityMutation": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/booking-capacity-service.ts\u0000reconcileTeacherStudentCapacity": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/booking-projection-pending.ts\u0000parseEntry": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/booking-recurrence.ts\u0000normalizeBookingRecurrence": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/booking-recurrence.ts\u0000recurrenceIntervalForFrequency": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/course-package-catalog.ts\u0000buildCoursePackageCatalog": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/course-package-catalog.ts\u0000inspectLessonPackage": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/course-package-catalog.ts\u0000observe": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/demo-auth.ts\u0000currentServerSession": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/demo-auth.ts\u0000getCurrentDemoSession": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/demo-session-token.ts\u0000parseDemoSessionToken": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-pending.ts\u0000parseStoredEntry": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-pending.ts\u0000validCommandIntent": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-pending.ts\u0000validDraftIntent": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/direct-enrollment-service.ts\u0000parseFields": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/exam-follow-up-service.ts\u0000assertTaskProjection": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/exam-follow-up-service.ts\u0000followUpState": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/exam-follow-up-service.ts\u0000prepareExamFollowUp": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/exam-follow-up-service.ts\u0000taskIdentity": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/exam-submission-service.ts\u0000parseExamSubmissionCommand": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/exam-submission-service.ts\u0000prepareExamSubmission": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-authority-status.ts\u0000parseJiaowubaoAuthorityStatus": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-projection.ts\u0000id": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-projection.ts\u0000resolveEntity": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-projection.ts\u0000resolveStudent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-projection.ts\u0000sourceIds": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000plannedEvents": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000reconcileJiaowubaoCompletedLessonEvidence": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000scheduleMatchesGroup": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000confirmPublishedSnapshot": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000deterministicMemberSourceFailure": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000exactInteger": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000publishSnapshot": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000readCollection": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000readReadyLessonRecords": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000reserveScheduleRequest": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000reserveSourceRequest": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts\u0000syncJiaowubaoCompletedLessonMonth": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-safe-failure.ts\u0000safeJiaowubaoCompletedLessonSyncFailure": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lesson-sync.ts\u0000syncJiaowubaoCompletedLessonMonth": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000assertJiaowubaoCompletedLessonSnapshotIntegrity": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000collectJiaowubaoCompletedLessonMemberPage": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000collectJiaowubaoCompletedLessonSnapshot": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000optionalInteger": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000pages": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000readCollectionProof": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-lessons.ts\u0000sourceComponentKind": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-month-evidence.ts\u0000assertJiaowubaoCompletedMonthEvidenceSnapshotIntegrity": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000assertJiaowubaoCompletedScheduleSnapshotIntegrity": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000collectJiaowubaoCompletedScheduleSnapshotInternal": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000exactDate": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000optionalDecimal": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000optionalInteger": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000pages": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000readJiaowubaoCompletedScheduleSnapshotRecord": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000snapshotText": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000sourceId": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeacherId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeamTitle": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeamTitleKind": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000text": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-completed-schedule.ts\u0000timeTitle": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-batch-gate.ts\u0000assertJiaowubao20260818CompiledBatch": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-failure.ts\u0000feedSqlstate": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-failure.ts\u0000feedVerboseSqlstate": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts\u0000canonicalize": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts\u0000chunkRecords": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts\u0000collectRecords": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts\u0000reconcileHourRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-preflight.ts\u0000scheduleTemporal": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000assertAuthoritySnapshot": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000assertPreflight": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000assertScheduleTemporal": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000assertWorkbookManifest": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000compileJiaowubaoDirectImportProjection": {
+      "complexity_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000compileSupplementalCandidates": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-direct-import-projection.ts\u0000resolveCurrentTencentStudent": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts\u0000normalizeContract": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts\u0000normalizeCourseBalances": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts\u0000normalizeVisibleContracts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-import.ts\u0000packagesForStudent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-node.ts\u0000normalizeCompletedLessonQuery": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-node.ts\u0000normalizeMemberSimpleQuery": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-node.ts\u0000normalizeScheduleQuery": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-node.ts\u0000requestGatewayList": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-reader.ts\u0000mapJiaowubaoSnapshotParticipant": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-snapshot.ts\u0000cloneSourceJson": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-snapshot.ts\u0000collectJiaowubaoScheduleSnapshot": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-open-api-schedule-snapshot.ts\u0000projectJiaowubaoScheduleSnapshotRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import-service.ts\u0000attachmentResolver": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import-service.ts\u0000buildRecordSets": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import-service.ts\u0000chunkRecordSets": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import.ts\u0000aggregateFor": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import.ts\u0000buildJiaowubaoStaticExportPlan": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import.ts\u0000matchJiaowubaoStaticFactsToMaster": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-import.ts\u0000mergeProfile": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-xlsx-parser.ts\u0000parseJiaowubaoStaticClassMembershipWorkbook": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-static-xlsx-parser.ts\u0000parseJiaowubaoStaticScheduleWorkbook": {
+      "complexity_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-student-source-staging.ts\u0000assertOptions": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-student-source-staging.ts\u0000canonicalize": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-student-source-staging.ts\u0000sourceRevisions": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-auto-sync-core.ts\u0000runJiaowubaoTrialAutoSyncCore": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-source-window.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-source-window.ts\u0000normalizeJiaowubaoTrialSourceEvent": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-source-window.ts\u0000readJiaowubaoTrialSourceWindow": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-sync-projection.ts\u0000buildStudentLookup": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-sync-projection.ts\u0000prepareJiaowubaoTrialSyncProjection": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-trial-sync.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/legacy-operation-task-pending.ts\u0000validIntentObject": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/legacy-operation-task-service.ts\u0000parseLegacyOperationTaskCommand": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrence-service.ts\u0000bookingSeries": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrence-service.ts\u0000parseCompleteLessonOccurrenceRequest": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrence-service.ts\u0000prepareLessonOccurrenceSettlement": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrences.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrences.ts\u0000completeLessonOccurrence": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lesson-occurrences.ts\u0000expandLessonOccurrences": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/lesson-package-purchase-service.ts\u0000commitLessonPackagePurchase": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-pending.ts\u0000parseEntry": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-service.ts\u0000parseFields": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-service.ts\u0000parseLpAtomicCommand": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-atomic-service.ts\u0000prepareLpAtomicCommand": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-parent-progress-service.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lp-parent-progress-service.ts\u0000credibleBooking": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-parent-progress-service.ts\u0000reconcileLpParentProgressTasks": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/lp-parent-progress-service.ts\u0000terminalLp": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/lp-workflows.ts\u0000validateLpWorkflowFields": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/managed-exam-refresh.ts\u0000parseStudent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/managed-trial-payment.ts\u0000managedTrialPaymentTaskLifecycleChange": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/managed-trial-payment.ts\u0000parseManagedTrialPaymentLifecycleReceipt": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/openxml-xlsx.ts\u0000createStoredOpenXmlZip": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/operation-occurrence-service.ts\u0000assertSubstitute": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/operation-occurrence-service.ts\u0000prepareOperationConfirmation": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/operation-occurrence-service.ts\u0000preparePermanentTeacherReplacement": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000buildOpsAccessContext": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000canModifyRecord": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000canReadOpsEntity": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000canReadRecord": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000canWriteOpsEntity": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000managedExamTaskMatchesStudent": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000managedTrialPaymentTaskIdentity": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000managedTrialPaymentTaskMatchesStudent": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000mergeScopedPayload": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-access.ts\u0000merged": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertBookingsTransition": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertLessonPackageSubjectBindings": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertLpItemsTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertNoOccurrenceConflict": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertOccurrenceEdit": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertOperationsTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertPackageReservationGrowth": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertPayrollSummary": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertPayrollTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertPurchaseBreakdown": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertStudentsTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertTaskDeadline": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertTasksTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000assertTeachersTransition": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/ops-state-transition.ts\u0000bookingSeries": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-store.ts\u0000putRenewalFollowUpAtomic": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-store.ts\u0000putRenewalFollowUpCreateIfMissingAtomic": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-tasks.ts\u0000linkTrialRequestTasksToBooking": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/ops-tasks.ts\u0000reconcileGeneratedTrialTasks": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000aggregateStudents": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000assertWorkbook": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000payrollReviewSheet": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000safeText": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000scheduleEvidenceSheet": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000sourceSheet": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/renewal-follow-up-service.ts\u0000prepareRenewalFollowUp": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/renewal-tasks.ts\u0000projectionState": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-attachment-validation.ts\u0000hasStudentAttachmentMagicBytes": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-creation-pending.ts\u0000validStudentFields": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-creation-service.ts\u0000parseStudentCreationCommand": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 3
+      },
+      "crap_critical": {
+        "count": 3
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000assertCurrentJwbAggregate": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000assertCurrentLessonPackages": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000assertHistoricalJwbFacts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000buildStudentIdentityReviewCandidates": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000internalJwbAttributes": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000parseRawJiaowubaoSourceIngestRequest": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import-service.ts\u0000referencedStudentIds": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000<arrow>": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000activeJwbFactsFromExisting": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000applyMasterStudentDuplicateResolutions": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000archiveReferencedStudent": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000assignStudentNumbers": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000buildStudentImportPlan": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000copyHistoricalJwbFacts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000copyHistoricalJwbSnapshot": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000currentJwbAggregateFacts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000importedStudentTimezone": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000optionalMasterJwbMemberKey": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000pending": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-import.ts\u0000purchaseRecords": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/student-records.ts\u0000validateExam": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-absence-creation-service.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-absence-creation-service.ts\u0000prepareTeacherAbsenceCreation": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/teacher-absence-pending.ts\u0000validIntent": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-completion-service.ts\u0000parsePendingTeacherIds": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-review-service.ts\u0000parseSubmissionRow": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-submission-service.ts\u0000parseTeacherAvailabilitySubmitRequest": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability-submission-service.ts\u0000slots": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability.ts\u0000occurrenceFor": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-availability.ts\u0000projectTeacherSchedulingReadiness": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-departure-creation-service.ts\u0000<arrow>": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-departure-creation-service.ts\u0000historicalDepartureOccurrences": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-departure-creation-service.ts\u0000prepareTeacherDepartureCreation": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/teacher-departure-occurrences.ts\u0000projectTeacherDepartureOccurrences": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts\u0000identityLinks": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts\u0000parseRosterRow": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts\u0000parseTeacherHardResolution": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts\u0000parseWorkbook": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import-service.ts\u0000teachers": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import.ts\u0000activeTeacherOperationalProjection": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import.ts\u0000buildTeacherImportPlan": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/teacher-import.ts\u0000preservedExistingTeacher": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/temporary-classroom-request.ts\u0000normalizeRecordedPayload": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/temporary-classroom-request.ts\u0000parseTemporaryClassroomPending": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/temporary-classroom-request.ts\u0000parseTemporaryClassroomPendingLedger": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-docs-smartsheet.ts\u0000callTool": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/tencent-docs-smartsheet.ts\u0000listPage": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/tencent-docs-smartsheet.ts\u0000listTencentTrialLedgerRecordsById": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-docs-smartsheet.ts\u0000records": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-mirror.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-sync-plan.ts\u0000targetRecordValues": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-system-sync.ts\u0000bridgeJson": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/tencent-trial-ledger-system-sync.ts\u0000runTencentTrialLedgerSystemSync": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/trial-ledger-view.ts\u0000<arrow>": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/trial-ledger-view.ts\u0000parseTrialLedgerViewState": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-ledger.ts\u0000normalizeTrialLedgerFieldValue": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-operations.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/trial-operations.ts\u0000candidates": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-operations.ts\u0000matchTrialScheduleEvents": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "lib/trial-operations.ts\u0000studentNameFromCourseTitle": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/trial-payment-pending.ts\u0000parseEntry": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/trial-payment-task-service.ts\u0000authorizeTrialPaymentTaskLifecycle": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts\u0000canonicalInstant": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts\u0000classify": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts\u0000detectedContentType": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts\u0000media": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/wecom-archive.ts\u0000normaliseRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/xlsx-reader.ts\u0000parseCell": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/xlsx-reader.ts\u0000readArchive": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/xlsx-reader.ts\u0000readEntry": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "lib/xlsx-reader.ts\u0000readWorksheetTargets": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/check-api-write-boundaries.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/check-api-write-boundaries.mjs\u0000assertApiWriteBoundaries": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/check-api-write-boundaries.mjs\u0000routeFiles": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs\u0000collectSourceHints": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs\u0000hints": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs\u0000main": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs\u0000stat": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-teacher-course-read.mjs\u0000candidates": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-authoritative-teacher-course-read.mjs\u0000main": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000assertCompletedLessonRetirementCredentialEnvironment": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000ownerOnlyFile": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000ownerOnlyStateDirectory": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000parseCompletedLessonRetirementManagementArguments": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000parseCompletedLessonRetirementState": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000parseManagementResult": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000runCompletedLessonRetirementManagement": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000validateCompletedLessonRetirementCommitReceipt": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts\u0000validateCompletedLessonRetirementPreviewReceipt": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000abortIfCurrentMasterDiffersSql": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000abortStagingIfCurrentMasterDiffers": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000activeStagingRunId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000assertEnvelopeAccepted": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000assertManagementProject": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000assertRequiredRemoteMigration": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000consumeProgressLine": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000consumeStdout": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000directDatabaseTarget": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000main": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000mintTemporaryLoginRole": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000parseArguments": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000parseAuthority": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000parseImportStatus": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000parsePsqlProgressEvent": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000readSupabaseAccessToken": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000receiptMatches": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000runManagementQuery": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000staleStagingRunId": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000verifyPsqlBinary": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000verifyReleaseStage": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-apply.ts\u0000waitForTemporaryLogin": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-preflight.ts\u0000assertNewOutputDirectory": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-preflight.ts\u0000parseArguments": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-direct-import-preflight.ts\u0000readWorkbook": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-export.ts\u0000parseArguments": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000currentRevision": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000nonNegativeInteger": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000ownerOnlyFile": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000parseManagementArguments": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000parseManagementResult": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts\u0000runManagementStaging": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000currentRevisionFromPreflight": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000databaseEnvironment": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000ownerOnlyDirectory": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000parseArguments": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000readScheduleSnapshotExport": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000runScheduleSnapshotStaging": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000safeRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-open-api-schedule-staging.ts\u0000stableSourceKey": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-source-directory-crosswalk.mjs\u0000assertNewOutput": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-source-directory-crosswalk.mjs\u0000directoryIndex": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-source-directory-crosswalk.mjs\u0000main": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-source-directory-crosswalk.mjs\u0000options": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000assertNewOutput": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000candidates": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000loadChunks": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000makeEvidenceSummary": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000makeLeaveMakeupCandidates": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000makeMappingCandidates": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000parseArgs": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-candidate-report.mjs\u0000sourceOf": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-small-batch-plan.mjs\u0000loadRecords": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-small-batch-plan.mjs\u0000newOutput": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-static-small-batch-plan.mjs\u0000parseArgs": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000assertCandidateMatchesManifest": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000callSupabaseRpc": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000main": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000parseArguments": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000parseManifest": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000parseSourceInput": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000parseSupabaseApiKey": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000parseSupabaseUrl": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000readBoundedResponse": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000readResumeReceipt": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000receiptFromServerStatus": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000regularOwnerOnlyFile": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/jiaowubao-student-source-staging.ts\u0000text": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/run-sql-runtime-fixtures.mjs\u0000assertManifestComplete": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/run-sql-runtime-fixtures.mjs\u0000localDatabaseEnvironment": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/run-sql-runtime-fixtures.mjs\u0000run": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000ownerOnlyFile": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000parseIdentityManagementArguments": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000parseManagementResult": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000runIdentityManagement": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-identity-management.ts\u0000validateCommitReceipt": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000assertCommitReceipt": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000assertReplayReceipt": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000ownerOnlyFile": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000parseManagementArguments": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000parseManagementResult": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000runManagement": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/student-import-management.ts\u0000validateManagementSnapshot": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/core.mjs\u0000replyTarget": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/core.mjs\u0000saveMessage": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/receiver.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/receiver.mjs\u0000flushAcknowledgements": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/sync.mjs\u0000canonicalRecord": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/sync.mjs\u0000readState": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/wecom-receiver/sync.mjs\u0000syncReceiverMessages": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "tests/classroom-create-end-race.test.mjs\u0000require": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/direct-enrollment-atomic-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/generic-booking-scope-lock-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-completed-lesson-member-collection-contract.test.mjs\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-completed-lesson-projection.test.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "tests/jiaowubao-direct-import-projection-schema.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-direct-import-projection.test.ts\u0000refFor": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "tests/jiaowubao-direct-import-resume.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/legacy-task-deadline-atomic-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/operational-atomic-contracts.test.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/ops-tasks.test.ts\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/payroll-duplicate-id-ui.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/renewal-follow-up-atomic-contract.test.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/renewal-follow-up-create-if-missing-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/shared-state-commit-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-import-bulk-create-identity-review-contract.test.mjs\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "tests/student-import-bulk-identity-review-contract.test.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/student-import-identity-review-migration.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "tests/student-import-migration-forward-safe.test.mjs\u0000hasEquivalentLookupMaps": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-import-service.test.ts\u0000sourceSnapshot": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/student-operation-atomic-concurrency-contract.test.mjs\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/teacher-credential-enforcement.test.mjs\u0000require": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/teacher-import.test.ts\u0000<arrow>": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/trial-payment-reminders-contract.test.mjs\u0000<arrow>": {
+      "crap_critical": {
+        "count": 1
+      }
+    }
+  },
+  "runtime_coverage_findings": [],
+  "target_keys": [
+    "lib/account-tokens.ts:dead code",
+    "app/api/integrations/wecom/bot-inbox/route.ts:complexity",
+    "app/handover-review/page.tsx:untested risk",
+    "lib/jiaowubao-trial-source-window.ts:untested risk",
+    "app/api/teacher-leave-requests/route.ts:untested risk",
+    "lib/jiaowubao-trial-sync-projection.ts:high impact",
+    "app/to-do-list.tsx:high impact",
+    "lib/legacy-operation-task-service.ts:high impact",
+    "lib/jiaowubao-completed-lesson-sync.ts:complexity",
+    "app/operations-client.tsx:high impact",
+    "lib/lesson-occurrence-service.ts:high impact",
+    "app/api/app-state/route.ts:high impact",
+    "lib/account-directory.ts:dead code",
+    "lib/classroom-provision-plan.ts:high impact",
+    "app/account-menu.tsx:untested risk",
+    "scripts/jiaowubao-authoritative-student-hints-read.mjs:untested risk",
+    "app/course-package-summary.tsx:dead code",
+    "scripts/jiaowubao-static-small-batch-plan.mjs:untested risk",
+    "scripts/jiaowubao-source-directory-crosswalk.mjs:untested risk",
+    "lib/lesson-package-purchase-service.ts:high impact",
+    "scripts/jiaowubao-static-candidate-report.mjs:complexity",
+    "lib/lp-atomic-pending.ts:dead code",
+    "lib/student-attachment-validation.ts:high impact",
+    "lib/jiaowubao-trial-auto-sync-core.ts:complexity",
+    "lib/demo-auth.ts:dead code",
+    "lib/ops-access.ts:high impact",
+    "app/chatgpt-auth.ts:dead code",
+    "app/account-lifecycle-workspace.tsx:complexity",
+    "app/api/operations/teacher-absence/create/route.ts:complexity",
+    "lib/ops-state-transition.ts:high impact",
+    "lib/wecom-bot-receiver.ts:high impact",
+    "app/api/bookings/mutate/route.ts:high impact",
+    "lib/managed-trial-payment.ts:high impact",
+    "app/api/operations/lp/route.ts:complexity",
+    "scripts/wecom-receiver/core.mjs:high impact",
+    "lib/temporary-classroom-request.ts:untested risk",
+    "scripts/jiaowubao-open-api-schedule-management-staging.ts:complexity",
+    "lib/booking-capacity-service.ts:high impact",
+    "lib/wecom-archive.ts:high impact",
+    "scripts/jiaowubao-open-api-schedule-staging.ts:complexity",
+    "lib/teacher-absence-creation-service.ts:high impact",
+    "app/jiaowubao-schedule-mapping-priority-review.tsx:complexity",
+    "app/jiaowubao-schedule-mapping-review.tsx:high impact",
+    "scripts/student-import-management.ts:untested risk",
+    "lib/jiaowubao-completed-schedule.ts:high impact",
+    "app/jiaowubao-completed-month-evidence.ts:high impact",
+    "app/jiaowubao-imported-schedule.tsx:complexity",
+    "lib/lp-atomic-service.ts:high impact",
+    "app/account-security-panel.tsx:complexity",
+    "app/api/jiaowubao-open-api/completed-lessons/route.ts:untested risk",
+    "app/lesson-package-purchase-form.tsx:high impact",
+    "lib/exam-follow-up-service.ts:high impact",
+    "lib/renewal-tasks.ts:high impact",
+    "app/api/classroom/route.ts:complexity",
+    "lib/jiaowubao-completed-month-evidence.ts:dead code",
+    "lib/booking-recurrence.ts:high impact",
+    "app/teacher-availability-completion.tsx:high impact",
+    "lib/tencent-trial-ledger-sync-plan.ts:high impact",
+    "app/api/accounts/access/route.ts:untested risk",
+    "lib/student-import-service.ts:high impact",
+    "lib/jiaowubao-authority-status.ts:high impact",
+    "lib/renewal-follow-up-service.ts:complexity",
+    "scripts/student-import-identity-management.ts:untested risk",
+    "lib/jiaowubao-completed-lessons.ts:high impact",
+    "lib/booking-projection-pending.ts:high impact",
+    "app/api/operations/legacy/create/route.ts:complexity",
+    "lib/wecom-archive-bridge.ts:high impact",
+    "lib/jiaowubao-trial-sync.ts:high impact",
+    "lib/teacher-import-service.ts:high impact",
+    "app/api/operations/confirm/route.ts:untested risk",
+    "app/api/integrations/wecom/archive/route.ts:complexity",
+    "app/api/cron/jiaowubao-schedule/route.ts:untested risk",
+    "lib/account-issued-password.ts:dead code",
+    "lib/student-import.ts:high impact",
+    "app/api/operations/students/create/route.ts:untested risk",
+    "lib/teacher-availability-submission-service.ts:high impact",
+    "lib/lesson-package-purchase-command.ts:high impact",
+    "lib/jiaowubao-static-xlsx-parser.ts:complexity",
+    "lib/jiaowubao-direct-import-preflight.ts:dead code",
+    "lib/account-credentials.ts:high impact",
+    "lib/teacher-departure-creation-service.ts:complexity",
+    "lib/managed-exam-refresh.ts:high impact",
+    "app/api/fu-attachments/route.ts:complexity",
+    "app/api/operations/jiaowubao-trial-sync/route.ts:complexity",
+    "lib/booking-teacher-scope.ts:high impact",
+    "lib/jiaowubao-direct-import-projection.ts:complexity",
+    "app/api/tasks/trial-payment/route.ts:complexity",
+    "lib/operations-report-export.ts:dead code",
+    "lib/teacher-absence-pending.ts:high impact",
+    "app/api/jiaowubao-open-api/schedule-preview/route.ts:complexity",
+    "app/api/operations/departure/create/route.ts:complexity",
+    "app/api/demo-login/route.ts:complexity",
+    "app/api/tasks/legacy-deadline/route.ts:complexity",
+    "app/api/files/route.ts:untested risk",
+    "lib/operation-occurrence-service.ts:complexity",
+    "app/api/jiaowubao-direct-import/schedule-mappings/route.ts:untested risk",
+    "lib/jiaowubao-static-import-service.ts:dead code",
+    "app/api/accounts/password-reset/route.ts:complexity",
+    "lib/demo-session-token.ts:high impact",
+    "app/api/operations/permanent-replacement/route.ts:untested risk",
+    "lib/direct-enrollment-pending.ts:untested risk",
+    "lib/jiaowubao-student-source-staging.ts:dead code",
+    "app/api/operations/trial-ledger/route.ts:complexity",
+    "app/api/jiaowubao-direct-import/schedule/route.ts:complexity",
+    "lib/jiaowubao-open-api-schedule-reader.ts:high impact",
+    "lib/teacher-departure-occurrences.ts:complexity",
+    "app/api/operations/direct-enrollment/route.ts:complexity",
+    "app/api/account/password/route.ts:complexity",
+    "app/api/account/mfa/route.ts:complexity",
+    "app/account-admin-lifecycle.tsx:complexity",
+    "lib/demo-users.ts:high impact",
+    "lib/jiaowubao-import.ts:dead code",
+    "lib/teacher-import.ts:high impact",
+    "lib/course-package-catalog.ts:complexity",
+    "lib/trial-payment-task-service.ts:complexity",
+    "app/api/jiaowubao-open-api/schedule/route.ts:complexity",
+    "app/teacher-availability-panel.tsx:complexity",
+    "scripts/check-api-write-boundaries.mjs:untested risk",
+    "scripts/wecom-receiver/sync.mjs:complexity",
+    "app/api/classroom/temporary/route.ts:complexity",
+    "lib/lp-workflows.ts:complexity",
+    "app/api/lesson-occurrences/complete/route.ts:untested risk",
+    "scripts/jiaowubao-completed-lesson-retirement-management.ts:untested risk",
+    "lib/jiaowubao-completed-lesson-resumable-sync.ts:complexity",
+    "scripts/run-sql-runtime-fixtures.mjs:untested risk",
+    "app/api/integrations/tencent-trial-ledger/route.ts:complexity",
+    "lib/jiaowubao-static-import.ts:complexity",
+    "app/api/cron/trial-payment/route.ts:untested risk",
+    "lib/payroll-export.ts:complexity",
+    "lib/xlsx-reader.ts:complexity",
+    "app/api/account/sessions/route.ts:untested risk",
+    "scripts/wecom-receiver/receiver.mjs:complexity",
+    "scripts/jiaowubao-student-source-staging.ts:complexity",
+    "app/api/integrations/wecom/callback/route.ts:untested risk",
+    "lib/jiaowubao-direct-import-batch-gate.ts:complexity",
+    "app/lp-workflow-fields.tsx:complexity"
+  ]
+}

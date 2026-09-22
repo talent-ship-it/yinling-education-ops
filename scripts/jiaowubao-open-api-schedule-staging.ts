@@ -51,7 +51,7 @@ const LEGACY_EVIDENCE_FIELDS = new Set([
   "over_state", "over_time",
 ]);
 const SNAPSHOT_FIELDS = new Set(JIAOWUBAO_SCHEDULE_SNAPSHOT_FIELDS);
-const STUDENT_FIELDS = new Set(JIAOWUBAO_SCHEDULE_STUDENT_FIELDS);
+const STUDENT_FIELDS = new Set<string>(JIAOWUBAO_SCHEDULE_STUDENT_FIELDS);
 
 type JsonRecord = Record<string, unknown>;
 type Manifest = Readonly<{
@@ -165,7 +165,8 @@ export async function readScheduleSnapshotExport(input: string): Promise<Schedul
   const seen = new Set<string>();
   for (let index = 0; index < manifest.pages.length; index += 1) {
     const page = record(manifest.pages[index], `manifest page ${index}`);
-    if (page.page !== index + 1 || !Number.isSafeInteger(page.recordCount) || page.recordCount < 1 || page.recordCount > 100 || (index < manifest.pages.length - 1 && page.recordCount !== 100) || typeof page.file !== "string" || !/^page-\d{4}\.json$/u.test(page.file) || typeof page.sha256 !== "string" || !SHA256.test(page.sha256)) fail("manifest 页清单无效。");
+    const pageRecordCount = page.recordCount;
+    if (page.page !== index + 1 || typeof pageRecordCount !== "number" || !Number.isSafeInteger(pageRecordCount) || pageRecordCount < 1 || pageRecordCount > 100 || (index < manifest.pages.length - 1 && pageRecordCount !== 100) || typeof page.file !== "string" || !/^page-\d{4}\.json$/u.test(page.file) || typeof page.sha256 !== "string" || !SHA256.test(page.sha256)) fail("manifest 页清单无效。");
     if (!files.delete(page.file)) fail("manifest 引用的页文件缺失或重复。");
     const pagePath = join(input, page.file);
     await ownerOnlyFile(pagePath, page.file, MAX_PAGE_BYTES);
@@ -173,7 +174,7 @@ export async function readScheduleSnapshotExport(input: string): Promise<Schedul
     if (!bytes.toString("utf8").endsWith("\n") || `sha256:${digest(bytes.subarray(0, bytes.length - 1))}` !== page.sha256) fail(`页 ${page.page} 摘要不匹配。`);
     let pageValue: unknown;
     try { pageValue = JSON.parse(bytes.toString("utf8")); } catch { fail(`页 ${page.page} 不是合法 JSON。`); }
-    if (!Array.isArray(pageValue) || pageValue.length !== page.recordCount || pageValue.length < 1) fail(`页 ${page.page} 行数不匹配。`);
+    if (!Array.isArray(pageValue) || pageValue.length !== pageRecordCount || pageValue.length < 1) fail(`页 ${page.page} 行数不匹配。`);
     for (const raw of pageValue) {
       const safe = safeRecord(raw, manifest.format);
       const sourceKey = stableSourceKey(safe);

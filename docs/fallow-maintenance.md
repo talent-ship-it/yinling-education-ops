@@ -1,12 +1,18 @@
 # Fallow maintenance
 
-Run the pinned analyzer after installing the lockfile dependencies:
+Run the pinned analyzer and committed no-regression baselines after installing
+the lockfile dependencies:
 
 ```sh
 npm ci --ignore-scripts
-npx --yes fallow@3.26.0 --no-cache
-npx --yes fallow@3.26.0 --production --no-cache
+npm run check:fallow
 ```
+
+The project pins Fallow 3.26.0 in `devDependencies`; CI never downloads an
+unreviewed latest version. The dead-code, health, and duplication baselines in
+`fallow-baselines/` quarantine the existing backlog while failing on new
+findings. Regenerate a baseline only in a dedicated review that explains the
+accepted delta.
 
 The config declares dynamically discovered Node tests and the shell-launched
 WeCom receiver as entry points. It does not suppress unused exports or exclude

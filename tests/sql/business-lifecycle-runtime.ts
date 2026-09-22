@@ -10,11 +10,13 @@ import type { OpsStateRow } from "../../lib/ops-store";
 
 const database = process.argv[2];
 const socket = process.env.PGHOST;
-if (!database?.match(/^il_fixture_business_[a-z0-9_]+$/) || !socket?.startsWith("/private/tmp/")) throw new Error("Disposable business database and local Unix socket required");
-const env = { PATH: process.env.PATH, PGHOST: socket, PGPORT: process.env.PGPORT ?? "65432", PGUSER: process.env.PGUSER ?? "nixon", PGDATABASE: database };
+const localDatabaseHost = socket === "localhost" || socket === "127.0.0.1" || socket === "::1" || socket?.startsWith("/");
+if (!database?.match(/^il_fixture_[a-z0-9_]+$/) || !localDatabaseHost) throw new Error("Disposable business database and local PostgreSQL host required");
+const env = { ...process.env, PGHOST: socket, PGPORT: process.env.PGPORT ?? "5432", PGUSER: process.env.PGUSER ?? "postgres", PGDATABASE: database };
+const psql = process.env.PSQL || "psql";
 const guard = `do $$ begin if coalesce((select shobj_description(oid,'pg_database') from pg_database where datname=current_database()),'') <> 'insiderleads-disposable-fixture' then raise exception 'disposable marker required'; end if; end $$;`;
 function sql(statement: string) {
-  const result = spawnSync("/opt/homebrew/opt/postgresql@17/bin/psql", ["-X", "-qAt", "-v", "ON_ERROR_STOP=1"], { env, input: `${guard}\n${statement}`, encoding: "utf8", maxBuffer: 8_000_000 });
+  const result = spawnSync(psql, ["-X", "-qAt", "-v", "ON_ERROR_STOP=1"], { env, input: `${guard}\n${statement}`, encoding: "utf8", maxBuffer: 8_000_000 });
   if (result.status !== 0) throw new Error(result.stderr || result.error?.message || "SQL fixture failed");
   return result.stdout.trim();
 }
