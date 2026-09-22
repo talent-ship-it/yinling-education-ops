@@ -2272,47 +2272,6 @@ function AuthStatusScreen({ title, detail }: { title: string; detail: string }) 
   );
 }
 
-function AuthLoginScreen({ onSubmit, loading, error, mfaRequired }: { onSubmit: (credentials: { username: string; password: string; mfaCode: string }) => void; loading: boolean; error: string; mfaRequired: boolean }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
-  const usernameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (window.matchMedia("(min-width: 761px) and (pointer: fine)").matches) usernameInputRef.current?.focus();
-  }, []);
-
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
-        <h1>吟领教务</h1>
-        <p className="login-copy">使用账号或姓名与密码进入对应工作视图。</p>
-        <form
-          className="login-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit({ username, password, mfaCode });
-          }}
-        >
-          <label htmlFor="username">账号 / 姓名</label>
-          <input ref={usernameInputRef} id="username" name="username" value={username} type="text" autoComplete="username" placeholder="例如 Nixon、Abby 教务或老师姓名" maxLength={160} onChange={(event) => setUsername(event.target.value)} />
-          <label htmlFor="password">登录密码</label>
-          <input id="password" name="password" value={password} type="password" autoComplete="current-password" maxLength={256} aria-invalid={Boolean(error)} aria-describedby={error ? "login-error" : undefined} onChange={(event) => setPassword(event.target.value)} required />
-          {mfaRequired ? <>
-            <label htmlFor="mfa-code">验证器验证码</label>
-            <input id="mfa-code" name="mfaCode" value={mfaCode} type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setMfaCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required />
-          </> : null}
-          <small className="login-hint">老师账号须先由管理员设置独立密码；无法登录时请联系管理员。</small>
-          {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
-          <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 function PasswordUsernameContext({ login }: { login: string }) {
   return <input
     aria-label="登录账号"
@@ -2657,85 +2616,19 @@ export type OperationsInitialSession = Readonly<{
   mustChangePassword: boolean;
 }>;
 
-export default function OperationsApp({ initialSession }: { initialSession?: OperationsInitialSession } = {}) {
-  const [authenticated, setAuthenticated] = useState(Boolean(initialSession));
-  const [authLoading, setAuthLoading] = useState(!initialSession);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState("");
+function workspaceSessionRole(role: DemoSessionRole | ""): DemoSessionRole {
+  return role === "" ? "staff" : role;
+}
+
+export default function OperationsApp({ initialSession }: { initialSession: OperationsInitialSession }) {
   const [initialData, setInitialData] = useState<ImportPayload | null>(null);
   const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
-  const [sessionUser, setSessionUser] = useState(initialSession?.user ?? "");
-  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">(initialSession?.role ?? "");
-  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(initialSession?.mustChangePassword ?? false);
-  const [loginMfaRequired, setLoginMfaRequired] = useState(false);
+  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(initialSession.mustChangePassword);
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
-    if (initialSession) return;
-    const pendingNotice = window.sessionStorage.getItem(LOGOUT_RETRY_NOTICE_KEY);
-    let cancelled = false;
-    let timer: number | undefined;
-    const noticeTimer = pendingNotice
-      ? window.setTimeout(() => {
-        if (!cancelled) setLoginError(pendingNotice);
-      }, 0)
-      : undefined;
-    const retry = async () => {
-      try {
-        const response = await fetch("/api/demo-logout", {
-          method: "POST",
-          headers: { "x-yinling-logout-retry": "1" },
-        });
-        const body = await response.json().catch(() => ({}));
-        if (response.ok && body.serverSessionRevoked === true) {
-          window.sessionStorage.removeItem(LOGOUT_RETRY_NOTICE_KEY);
-          if (!cancelled && pendingNotice) setLoginError("");
-          return;
-        }
-        if (!cancelled && typeof body.error === "string") setLoginError(body.error);
-      } catch {
-        // Keep the browser signed out while the path-scoped proof retries revocation.
-      }
-      if (!cancelled) timer = window.setTimeout(() => void retry(), 5_000);
-    };
-    // This request uses only the path-scoped retry cookie, so it is safe on
-    // every app load and never revokes a newly-created primary session.
-    void retry();
-    return () => {
-      cancelled = true;
-      if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [initialSession]);
-
-  useEffect(() => {
-    if (initialSession) return;
-    let active = true;
-    fetch("/api/demo-session", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((body) => {
-        if (!active) return;
-        setAuthenticated(Boolean(body.ok));
-        setSessionUser(typeof body.user === "string" ? body.user : "");
-        setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
-        setSessionMustChangePassword(body.mustChangePassword === true);
-      })
-      .catch(() => {
-        if (active) setAuthenticated(false);
-      })
-      .finally(() => {
-        if (active) setAuthLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [initialSession]);
-
-  useEffect(() => {
-    if (!authenticated) return;
     if (sessionMustChangePassword) return;
 
     let active = true;
@@ -2758,30 +2651,7 @@ export default function OperationsApp({ initialSession }: { initialSession?: Ope
     return () => {
       active = false;
     };
-  }, [authenticated, sessionMustChangePassword]);
-
-  const submitPassword = async ({ username, password, mfaCode }: { username: string; password: string; mfaCode: string }) => {
-    setLoginLoading(true);
-    setLoginError("");
-    const response = await fetch("/api/demo-login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, ...(mfaCode ? { mfaCode } : {}) }),
-    });
-    const body = await response.json().catch(() => ({}));
-
-    setLoginLoading(false);
-    if (!response.ok) {
-      setLoginMfaRequired(body.mfaRequired === true);
-      setLoginError(body.error || "密码不正确。");
-      return;
-    }
-    setLoginMfaRequired(false);
-    setAuthenticated(true);
-    setSessionUser(typeof body.user === "string" ? body.user : "");
-    setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
-    setSessionMustChangePassword(body.mustChangePassword === true);
-  };
+  }, [sessionMustChangePassword]);
 
   const logoutFromPasswordChange = async () => {
     if (passwordLogoutBusy) return;
@@ -2809,13 +2679,11 @@ export default function OperationsApp({ initialSession }: { initialSession?: Ope
     }
   };
 
-  if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
-  if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} mfaRequired={loginMfaRequired} />;
-  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={sessionUser} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
+  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={initialSession.user} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={sessionUser} initialRole={sessionRole || "staff"} />;
+  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
 }
 
 function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
@@ -7947,38 +7815,39 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   useEffect(() => {
     if (active !== "classroom" || !selectedClassroomBookingId || !selectedClassroomOccurrenceKey || !selectedClassroomSourceDate || !selectedClassroomMeetingId) return;
     let selected = true;
+    const poll = async (signal: AbortSignal) => {
+      const occurrenceKey = selectedClassroomOccurrenceKey;
+      const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
+      const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
+      if (!booking) return;
+      const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (signal.aborted) return;
+      const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
+      if (!response.ok || signal.aborted) return;
+      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+      const runtime: ClassroomRuntime = { ...result.status, recordings };
+      const currentClassroom = booking.classroom;
+      const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
+        ? "running"
+        : currentClassroom?.status === "running" || recordings.length
+          ? "ended"
+          : "ready";
+      // Polling is also a persistence path. Keep the exact command in the
+      // shared pending envelope when the response is unknown, and do not
+      // manufacture a local createdAt/status before the atomic receipt.
+      await persistClassroom(booking, runtime.meetingId, nextStatus);
+      if (!signal.aborted) setClassroomRuntime(runtime);
+    };
     const poller = createSharedStatePoller({
       canRun: () => selected,
       errorDelayMs: 15_000,
       onError: () => {
         // A transient classroom read is retried without replacing the last runtime.
       },
-      run: async (signal) => {
-        const occurrenceKey = selectedClassroomOccurrenceKey;
-        const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
-        const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
-        if (!booking) return;
-        const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
-          cache: "no-store",
-          signal,
-        });
-        if (signal.aborted) return;
-        const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
-        if (!response.ok || signal.aborted) return;
-        const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-        const runtime: ClassroomRuntime = { ...result.status, recordings };
-        const currentClassroom = booking.classroom;
-        const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
-          ? "running"
-          : currentClassroom?.status === "running" || recordings.length
-            ? "ended"
-            : "ready";
-        // Polling is also a persistence path. Keep the exact command in the
-        // shared pending envelope when the response is unknown, and do not
-        // manufacture a local createdAt/status before the atomic receipt.
-        await persistClassroom(booking, runtime.meetingId, nextStatus);
-        if (!signal.aborted) setClassroomRuntime(runtime);
-      },
+      run: poll,
     });
     void poller.wake();
     return () => {

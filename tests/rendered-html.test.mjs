@@ -114,8 +114,9 @@ test("shares the To Do UI across operations roles and leaves the teacher workspa
 });
 
 test("binds demo identities to profiles and protects Admin payroll access", async () => {
-  const [client, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, auditRoute, nixonAuth, nixonAuthToken] = await Promise.all([
+  const [client, authClient, accountMenu, demoLogin, demoSession, demoLogout, snapshotRoute, stateRoute, auditRoute, nixonAuth, nixonAuthToken] = await Promise.all([
     read("../app/operations-client.tsx"),
+    read("../app/auth-client.tsx"),
     read("../app/account-menu.tsx"),
     read("../app/api/demo-login/route.ts"),
     read("../app/api/demo-session/route.ts"),
@@ -148,7 +149,7 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(accountMenu, /body\.localLogout === true/);
   assert.match(accountMenu, /LOGOUT_RETRY_NOTICE_KEY/);
   assert.match(client, /response\.ok && body\.serverSessionRevoked === true/);
-  assert.match(client, /x-yinling-logout-retry/);
+  assert.match(authClient, /x-yinling-logout-retry/);
   assert.match(client, /window\.sessionStorage\.setItem/);
   assert.match(accountMenu, /\.operator select/);
   assert.match(client, /\/api\/account\/password/);
@@ -557,8 +558,9 @@ test("records renewal outcomes through one atomic receipt and archives FU screen
 });
 
 test("covers current scheduling, LP, AVA and student record changes", async () => {
-  const [client, css, lpWorkflows, lpFields, studentSubjects] = await Promise.all([
+  const [client, authClient, css, lpWorkflows, lpFields, studentSubjects] = await Promise.all([
     read("../app/operations-client.tsx"),
+    read("../app/auth-client.tsx"),
     read("../app/globals.css"),
     read("../lib/lp-workflows.ts"),
     read("../app/lp-workflow-fields.tsx"),
@@ -676,7 +678,7 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /window\.matchMedia\("\(min-width: 761px\) and \(pointer: fine\)"\)/);
   assert.doesNotMatch(client, /id="password"[^>]*autoFocus/);
   assert.doesNotMatch(client, /正在(?:进入|上传|保存|登记)\.\.\./);
-  assert.match(client, /正在进入…/);
+  assert.match(authClient, /正在进入…/);
   assert.match(client, /正在上传…/);
   assert.match(client, /正在保存…/);
   assert.match(client, /正在重置…/);

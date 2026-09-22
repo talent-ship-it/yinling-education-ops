@@ -17,6 +17,16 @@ export default function AccountMenu() {
 
   useEffect(() => {
     let resolved = false;
+    const loadSession = async (signal: AbortSignal) => {
+      const response = await fetch("/api/demo-session", { cache: "no-store", signal });
+      if (signal.aborted) return;
+      const body = await response.json();
+      if (signal.aborted) return;
+      if (body.ok && typeof body.user === "string") {
+        resolved = true;
+        setSessionUser(body.user);
+      }
+    };
     const poller = createSharedStatePoller({
       canRun: () => !resolved,
       successDelayMs: 1_000,
@@ -24,16 +34,7 @@ export default function AccountMenu() {
       onError: () => {
         // The login screen remains usable while the session endpoint is unavailable.
       },
-      run: async (signal) => {
-        const response = await fetch("/api/demo-session", { cache: "no-store", signal });
-        if (signal.aborted) return;
-        const body = await response.json();
-        if (signal.aborted) return;
-        if (body.ok && typeof body.user === "string") {
-          resolved = true;
-          setSessionUser(body.user);
-        }
-      },
+      run: loadSession,
     });
     void poller.wake();
     return () => poller.stop();
