@@ -1,5 +1,5 @@
-export const INITIAL_REPLY = '正在收录，请稍候…';
-export const FINAL_REPLY = '已收录到系统审核队列。';
+const INITIAL_REPLY = '正在收录，请稍候…';
+const FINAL_REPLY = '已收录到系统审核队列。';
 export const ACTIVE_INITIAL_REPLY = Object.freeze({msgtype:'markdown',markdown:{content:INITIAL_REPLY}});
 export const ACTIVE_FINAL_REPLY = Object.freeze({msgtype:'markdown',markdown:{content:FINAL_REPLY}});
 const STREAM_REPLY_TTL_MS=5*60*1000;

@@ -979,7 +979,7 @@ export const WECOM_ARCHIVE_LINK_RPC = "link_wecom_archive_message";
 export const WECOM_ARCHIVE_MEDIA_RPC = "get_wecom_archive_media";
 export const WECOM_ARCHIVE_STATUS_RPC = "get_wecom_archive_status";
 export const WECOM_BOT_INGEST_RPC = "ingest_wecom_bot_batch";
-export const WECOM_RECEIVER_HEALTH_RECORD_RPC = "record_wecom_receiver_health";
+const WECOM_RECEIVER_HEALTH_RECORD_RPC = "record_wecom_receiver_health";
 
 export class OpsStoreError extends Error {
   constructor(

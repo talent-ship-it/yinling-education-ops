@@ -12,7 +12,7 @@ export type InitialSession = Readonly<{
 }>;
 
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
-export const AUTH_SESSION_TIMEOUT_MS = 10_000;
+const AUTH_SESSION_TIMEOUT_MS = 10_000;
 
 export async function readInitialSession(
   fetchImpl: SharedStateFetch,
