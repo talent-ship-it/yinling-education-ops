@@ -2651,22 +2651,29 @@ async function readJiaowubaoScheduleMappingPriorityReview(
   return review;
 }
 
-export default function OperationsApp() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
+export type OperationsInitialSession = Readonly<{
+  user: string;
+  role: DemoSessionRole | "";
+  mustChangePassword: boolean;
+}>;
+
+export default function OperationsApp({ initialSession }: { initialSession?: OperationsInitialSession } = {}) {
+  const [authenticated, setAuthenticated] = useState(Boolean(initialSession));
+  const [authLoading, setAuthLoading] = useState(!initialSession);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [initialData, setInitialData] = useState<ImportPayload | null>(null);
   const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
-  const [sessionUser, setSessionUser] = useState("");
-  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
-  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(false);
+  const [sessionUser, setSessionUser] = useState(initialSession?.user ?? "");
+  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">(initialSession?.role ?? "");
+  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(initialSession?.mustChangePassword ?? false);
   const [loginMfaRequired, setLoginMfaRequired] = useState(false);
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
+    if (initialSession) return;
     const pendingNotice = window.sessionStorage.getItem(LOGOUT_RETRY_NOTICE_KEY);
     let cancelled = false;
     let timer: number | undefined;
@@ -2701,9 +2708,10 @@ export default function OperationsApp() {
       if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, []);
+  }, [initialSession]);
 
   useEffect(() => {
+    if (initialSession) return;
     let active = true;
     fetch("/api/demo-session", { cache: "no-store" })
       .then((response) => response.json())
@@ -2724,7 +2732,7 @@ export default function OperationsApp() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [initialSession]);
 
   useEffect(() => {
     if (!authenticated) return;

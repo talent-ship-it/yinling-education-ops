@@ -1,5 +1,5 @@
-import OperationsApp from "./operations-client";
+import AuthClient from "./auth-client";
 
 export default function Home() {
-  return <OperationsApp />;
+  return <AuthClient />;
 }
