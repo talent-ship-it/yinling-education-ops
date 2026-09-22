@@ -169,10 +169,7 @@ import {
   RENEWAL_STATUS_LABELS,
   FU_ATTACHMENT_CATEGORIES,
   FU_ATTACHMENT_CATEGORY_LABELS,
-  addLessonPackageHours,
   appendStudentFollowUp,
-  bindSubjectToLessonPackage,
-  createStudentLessonPackage,
   getLatestStudentFollowUp,
   getLessonPackageBalance,
   mapLessonPackageDepletionEstimates,
@@ -229,7 +226,8 @@ import {
   type TeacherAvailabilityCompletionInbox,
 } from "@/app/teacher-availability-completion";
 import { buildJiaowubaoOperationsReadinessWindow } from "@/lib/jiaowubao-operations-readiness-window";
-import { ExamForm, FollowUpForm, LessonPackageForm, parseExamFormData, parseFollowUpFormData, parseLessonPackageFormData } from "@/app/student-record-forms";
+import { ExamForm, FollowUpForm, parseExamFormData, parseFollowUpFormData } from "@/app/student-record-forms";
+import { LessonPackagePurchaseForm } from "@/app/lesson-package-purchase-form";
 import { resolveStudentDisplayName } from "@/lib/student-intake";
 import { getStudentSubjectOptions } from "@/lib/student-subject-options";
 import {
@@ -3176,6 +3174,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [examDraft, setExamDraft] = useState<StudentExamRecord | null>(null);
   const [examFormResetToken, setExamFormResetToken] = useState(0);
   const [examSubmissionBusy, setExamSubmissionBusy] = useState(false);
+  const [lessonPackageBusy, setLessonPackageBusy] = useState(false);
   const examSubmissionRef = useRef<PendingExamSubmission | null>(null);
   const examFollowUpCommandRef = useRef(new Map<string, PendingExamFollowUp>());
   const examCompletionCommandKeysRef = useRef(new Map<string, string>());
@@ -5718,7 +5717,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         if (displayPreferencesOpen) { setDisplayPreferencesOpen(false); return; }
         if (mobileMenuOpen) { setMobileMenuOpen(false); return; }
         if (modal) {
-          if ((modal === "exam" && examSubmissionBusy) || (modal === "legacyTaskDeadline" && legacyTaskDeadlineBusy)) return;
+          if ((modal === "exam" && examSubmissionBusy) || (modal === "lessonPackage" && lessonPackageBusy) || (modal === "legacyTaskDeadline" && legacyTaskDeadlineBusy)) return;
           setModal(null);
           return;
         }
@@ -5728,7 +5727,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeGlobalSearch, confirmBusy, confirmRequest, displayPreferencesOpen, examSubmissionBusy, globalSearchOpen, legacyTaskDeadlineBusy, mobileMenuOpen, mobilePreview, modal, openGlobalSearch]);
+  }, [closeGlobalSearch, confirmBusy, confirmRequest, displayPreferencesOpen, examSubmissionBusy, lessonPackageBusy, globalSearchOpen, legacyTaskDeadlineBusy, mobileMenuOpen, mobilePreview, modal, openGlobalSearch]);
 
   useLayoutEffect(() => {
     const overlayOpen = Boolean(modal || confirmRequest || globalSearchOpen || displayPreferencesOpen || mobileMenuOpen);
@@ -12674,53 +12673,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     }
   };
 
-  const submitLessonPackage = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const target = requireStudentModalTarget(true);
-    if (!target) return;
-    try {
-      const parsed = parseLessonPackageFormData(new FormData(event.currentTarget));
-      const purchasedAt = new Date().toISOString();
-      await studentsShared.mutateAndCommit((current) => current.map((student) => {
-        if (student.id !== target.id) return student;
-        let packages = [...(student.lessonPackages ?? [])];
-        if (parsed.packageMode === "new") {
-          const packageId = id("PKG");
-          packages.push(createStudentLessonPackage({
-            id: packageId,
-            name: parsed.newPackageName,
-            subjectIds: parsed.subjectIds,
-            initialPurchase: {
-              id: id("PUR"),
-              purchasedAt,
-              hours: parsed.totalHours,
-              purchasedHours: parsed.purchasedHours,
-              bonusHours: parsed.bonusHours,
-              note: parsed.purchaseNote,
-            },
-          }));
-          for (const subjectId of parsed.subjectIds) packages = bindSubjectToLessonPackage(packages, packageId, subjectId);
-        } else {
-          packages = packages.map((lessonPackage) => lessonPackage.id === parsed.packageId ? addLessonPackageHours(lessonPackage, {
-            id: id("PUR"),
-            purchasedAt,
-            hours: parsed.totalHours,
-            purchasedHours: parsed.purchasedHours,
-            bonusHours: parsed.bonusHours,
-            note: parsed.purchaseNote,
-          }) : lessonPackage);
-          for (const subjectId of parsed.subjectIds) packages = bindSubjectToLessonPackage(packages, parsed.packageId, subjectId);
-        }
-        return { ...student, lessonPackages: packages };
-      }));
-      addAudit("录入学生课包", `${target.name} · ${parsed.packageMode === "new" ? parsed.newPackageName : parsed.packageId} · +${parsed.totalHours} 课时`, "green");
-      setModal(null);
-      notify("课包与购买记录已保存");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "课包保存失败");
-    }
-  };
-
   const reconcilePendingExamSubmission = async (pending: PendingExamSubmission) => {
     const recovery = pendingExamRecoveryCommand(pending);
     if (!recovery) throw new Error("上一次考试提交记录已损坏，不能安全覆盖");
@@ -14682,8 +14634,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitStudentFollowUp}><FollowUpForm initialFollowedUpAt={new Date().toISOString()} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存跟进</button></footer></form>
       </Dialog>}
 
-      {modal === "lessonPackage" && studentModalTargetStudent && studentModalTargetIsValid && <Dialog title="录入课包与课时" onClose={() => setModal(null)}>
-        <form className="form-grid" onSubmit={submitLessonPackage}><LessonPackageForm existingPackages={(studentModalTargetStudent.lessonPackages ?? []).map((lessonPackage) => ({ value: lessonPackage.id, label: lessonPackage.name }))} subjectOptions={getStudentSubjectOptions({ studentId: studentModalTargetStudent.id, course: studentModalTargetStudent.course, lessonPackages: studentModalTargetStudent.lessonPackages, bookings: readableScopedBookings }).map((value) => ({ value }))} initialSubjectIds={[studentModalTargetStudent.course]} /><footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存课包</button></footer></form>
+      {modal === "lessonPackage" && studentModalTargetStudent && studentModalTargetIsValid && <Dialog title="录入课包与课时" onClose={() => { if (!lessonPackageBusy) setModal(null); }}>
+        <LessonPackagePurchaseForm key={`${sessionOperator}:${studentModalTargetStudent.id}`} actor={sessionOperator} studentId={studentModalTargetStudent.id} packages={studentModalTargetStudent.lessonPackages ?? []} existingPackages={(studentModalTargetStudent.lessonPackages ?? []).map((lessonPackage) => ({ value: lessonPackage.id, label: lessonPackage.name }))} subjectOptions={getStudentSubjectOptions({ studentId: studentModalTargetStudent.id, course: studentModalTargetStudent.course, lessonPackages: studentModalTargetStudent.lessonPackages, bookings: readableScopedBookings }).map((value) => ({ value }))} initialSubjectIds={[studentModalTargetStudent.course]} onBusyChange={setLessonPackageBusy} onClose={() => setModal(null)} onSaved={(studentRow) => { if (studentRow) studentsShared.applyRemote(studentRow as RemoteStateRow<Student[]>); setModal(null); notify("课包与购买记录已确认保存"); }} />
       </Dialog>}
 
       {modal === "exam" && studentModalTargetStudent && studentModalTargetIsValid && <Dialog title={examDraft ? "编辑学生考试" : "记录学生考试"} onClose={() => { if (examSubmissionBusy) return; setExamDraft(null); setModal(null); }}>

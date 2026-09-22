@@ -17,6 +17,7 @@ import {
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { OpsRulesValidationError, parseRulesWrite } from "@/lib/ops-rules";
 import { assertOpsStateTransition, OpsStateTransitionError } from "@/lib/ops-state-transition";
+import { hasAppendedLessonPackagePurchase } from "@/lib/lesson-package-purchase-command";
 import {
   getOpsSources,
   getOpsState,
@@ -166,6 +167,9 @@ export async function PUT(request: NextRequest) {
       submittedPayload,
       context: access,
     });
+    if (body.entity === "students" && hasAppendedLessonPackagePurchase(currentRow.payload, payload)) {
+      return noStore({ error: "课包购买必须使用可重试的购买命令，请刷新页面后重新录入。", code: "purchase_command_required" }, 409);
+    }
     assertOpsStateTransition({
       entity: body.entity,
       currentPayload: currentRow.payload,

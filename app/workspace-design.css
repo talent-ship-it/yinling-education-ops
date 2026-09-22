@@ -324,6 +324,8 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
   .app-shell :is(.primary-button,.new-button):hover { color:#102e29; }
 }
 
+.lesson-package-purchase-fields { border:0; padding:0; margin:0; min-width:0; }
+
 /* Operational metadata and editable ledgers share the semantic day/night palette. */
 .app-shell :is(.task-copy span,.task-copy small,.task-copy .task-title-details,.detail-section p,.risk-row small,.panel-foot,.settings-list small,.integration-list small) { color:var(--muted); }
 .app-shell .panel-foot { background:var(--surface-muted); }
