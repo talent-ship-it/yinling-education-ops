@@ -21,15 +21,34 @@ function routeFiles(directory) {
 
 function importsPutOpsState(file) {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  return source.statements.some((statement) => {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return false;
-    const moduleName = statement.moduleSpecifier.text;
-    if (!(moduleName === "@/lib/ops-store" || /(?:^|\/)lib\/ops-store(?:\.ts)?$/u.test(moduleName))) return false;
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings) return false;
-    if (ts.isNamespaceImport(bindings)) return true;
-    return bindings.elements.some((element) => (element.propertyName ?? element.name).text === "putOpsState");
-  });
+  const isOpsStoreModule = (moduleName) =>
+    moduleName === "@/lib/ops-store" || /(?:^|\/)lib\/ops-store(?:\.ts)?$/u.test(moduleName);
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const moduleName = node.moduleSpecifier.text;
+      if (!isOpsStoreModule(moduleName)) return;
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && (ts.isNamespaceImport(bindings)
+        || bindings.elements.some((element) => (element.propertyName ?? element.name).text === "putOpsState"))) {
+        found = true;
+      }
+      return;
+    }
+    if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
+      const moduleName = node.arguments[0].text;
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (isOpsStoreModule(moduleName) && (isDynamicImport || isRequire)) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 export function directPutOpsStateRouteImports(root) {
