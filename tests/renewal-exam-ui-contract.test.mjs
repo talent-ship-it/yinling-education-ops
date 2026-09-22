@@ -27,7 +27,7 @@ test("renewal UI keeps automatic depletion evidence read-only and preserves manu
   assert.match(rows, /automaticRenewalDateNote: automaticRenewalDateNote \|\| undefined/);
   assert.match(rows, /自动提示：\{renewal\.automaticRenewalDateNote\}/);
   assert.match(rows, /人工备注：\{renewal\.renewalDateNote\}/);
-  assert.match(rows, /renewalTaskAnchor\(renewal\.studentId, renewal\.packageId\)/);
+  assert.match(rows, /renewalCycleTaskAnchor\(\{ studentId: renewal\.studentId, packageId: renewal\.packageId/);
   assert.match(rows, /还没有可跟进的活跃学生/);
   assert.match(rows, /先新建学生/);
   assert.match(rows, /去同步与导入/);
@@ -100,7 +100,7 @@ test("exam collection aggregates structured history with Melbourne month orderin
 
 test("renewal and To Do timestamps use the configured or Melbourne timezone", async () => {
   const client = await readFile(clientUrl, "utf8");
-  assert.match(client, /dateTimeFormat\("zh-CN", \{ year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: "Australia\/Melbourne" \}\)/);
+  assert.match(client, /dateTimeFormat\(localeFor\(displayPreferences\.language\), \{ year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences\.timezone \}\)/);
   assert.match(client, /attemptedAtInput = String\(data\.get\("attemptedAt"\) \?\? currentDateTimeValueInTimezone\(displayPreferences\.timezone\)\)/);
   assert.match(client, /zonedDateTimeToUtc\(attemptedAtParts\[1\], attemptedAtParts\[2\], displayPreferences\.timezone\)/);
   assert.match(client, /defaultValue=\{currentDateTimeValueInTimezone\(displayPreferences\.timezone\)\}/);

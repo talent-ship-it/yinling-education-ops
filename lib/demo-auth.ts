@@ -116,6 +116,11 @@ async function currentServerSession(value: string | undefined, options: CurrentD
 
   let identity = serverSessionIdentity(current);
   if (identity.role === "teacher") {
+    // Existing v5 sessions created with the old name-only flow must also stop
+    // working; blocking new logins alone would leave those sessions usable.
+    if (identity.credentialVersion === undefined) {
+      return { error: "老师登录状态已失效，请联系管理员设置独立密码后重新登录。", status: 401 } as const;
+    }
     try {
       const rows = await getOpsState(["teachers"]);
       const teacherRow = rows.find((row) => row.entity === "teachers");
@@ -149,6 +154,9 @@ export async function getCurrentDemoSession(
 
   const session = getDemoSession(value);
   if (!session) return { error: "请先输入访问密码。", status: 401 };
+  if (session.role === "teacher" && session.credentialVersion === undefined) {
+    return { error: "老师登录状态已失效，请联系管理员设置独立密码后重新登录。", status: 401 };
+  }
 
   let mustChangePassword = false;
   let directory: AccountDirectoryRow | null = null;

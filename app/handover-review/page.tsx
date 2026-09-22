@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { readWecomArchiveInbox, readWecomMirrorReview } from "@/lib/ops-store";
+import { readWecomHandoverCases, readWecomMirrorReview } from "@/lib/ops-store";
+import { wecomHandoverFilter, wecomHandoverCursor, type WecomHandoverCasePage } from "@/lib/wecom-handover-review";
 import { mirrorReviewFilters, reviewText, type MirrorReview } from "@/lib/wecom-mirror-review";
 import styles from "./review.module.css";
 export const dynamic = "force-dynamic";
@@ -24,25 +25,29 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
  const filter = mirrorReviewFilters(params);
  let data: MirrorReview;
  try { data = await readWecomMirrorReview(filter); } catch { return <main className={styles.page}><h1>群交接核对</h1><p role="alert">记录暂时无法读取，请刷新重试。</p><Link href="/">返回工作台</Link></main>; }
- const archiveInbox = await readWecomArchiveInbox(100).catch(() => []);
- const seenTrialHandoverIds = new Set<string>();
- const trialHandovers = archiveInbox.filter((row) => {
-  if (!row.trial_handover_id || seenTrialHandoverIds.has(row.trial_handover_id)) return false;
-  seenTrialHandoverIds.add(row.trial_handover_id);
-  return true;
- });
+ const caseFilter = wecomHandoverFilter(raw.caseStatus);
+ const caseCursor = wecomHandoverCursor(raw.caseAfter);
+ let casePage: WecomHandoverCasePage | null = null;
+ try { casePage = await readWecomHandoverCases({ filter: caseFilter, cursor: caseCursor }); } catch { /* Render an error, never an empty successful inbox. */ }
  const selectedBatch = data.batch?.id || filter.batch;
  const href = (kind: string, page = 1) => `/handover-review?${new URLSearchParams({ kind, page: String(page), q: filter.query, batch: selectedBatch })}`;
+ const caseHref = (status = caseFilter, cursor: string | null = null) => {
+  const query = new URLSearchParams({ kind: filter.kind, page: String(filter.page), q: filter.query, batch: selectedBatch, caseStatus: status });
+  if (cursor) query.set("caseAfter", cursor);
+  return `/handover-review?${query}`;
+ };
  return <main className={styles.page}>
   <header className={styles.header}><div><p className={styles.eyebrow}>试听与 LP · 来源核对</p><h1>群交接核对</h1><p>{data.batch?.groupName || "等待导入群交接记录"}</p></div><Link href="/">返回工作台</Link></header>
   <div className={styles.notice}><strong>保留原文，先核对再进入正式流程</strong><p>这里保存镜像采集的交接资料和核对结果。导入不会自动标记 LP、收费或排课已完成；时间冲突和身份不明确的记录需继续核实。OCR 可能存在错字，以原始截图为准。</p>{data.batch && <small>采集截至 {new Date(data.batch.capturedAt).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}（墨尔本） · 对照为该次核对快照，不代表当前完成状态</small>}</div>
   <section className={styles.botTrialIntake} aria-labelledby="wecom-trial-intake-heading">
-   <div className={styles.botTrialHeading}><div><p className={styles.eyebrow}>企业微信机器人 · 试听身份确认</p><h2 id="wecom-trial-intake-heading">待补学生姓名的试听交接</h2></div><span>{trialHandovers.length} 条</span></div>
+   <div className={styles.botTrialHeading}><div><p className={styles.eyebrow}>企业微信机器人 · 试听身份确认</p><h2 id="wecom-trial-intake-heading">试听身份交接</h2></div>{casePage && <span>当前筛选 {casePage.total} 条 · 待处理 {casePage.pendingCount} 条</span>}</div>
    <p>首条交接按群内微信名收录；后续补学生姓名时，微信名可有空格、标点或简短角色后缀等轻微差异，但必须在同群中只有一个明显候选。系统只会确认身份并保留原始资料，不会自动创建正式学生、LP、排课或付款。</p>
-   {trialHandovers.length ? <div className={styles.botTrialRecords}>{trialHandovers.map((row) => <article className={styles.botTrialRecord} key={row.trial_handover_id ?? row.message_id}>
-    <div><h3>{row.trial_identity_student_name || row.guardian_wechat_hint || "微信名待补"}</h3><p>微信名：{row.guardian_wechat_hint || "待填写"} · 收录于 {new Date(row.sent_at).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}</p><p>教务：{row.operations_owner_hint || "待填写"} · 课程规划老师：{row.course_planner_hint || "待填写"}</p></div>
-    <span className={styles.botTrialStatus}>{trialIdentityStatus(row.trial_identity_status)}</span>
-   </article>)}</div> : <p className={styles.botTrialEmpty}>目前没有机器人收录的试听身份记录。</p>}
+   <nav className={styles.tabs} aria-label="试听身份状态">{(["pending", "identified", "all"] as const).map((status) => <Link key={status} href={caseHref(status)} aria-current={caseFilter === status ? "page" : undefined}>{status === "pending" ? "待处理" : status === "identified" ? "已确认" : "全部"}</Link>)}</nav>
+   {!casePage ? <p role="alert">试听身份记录暂时无法读取。<a href={caseHref(caseFilter, caseCursor)}>重新加载</a></p> : casePage.rows.length ? <div className={styles.botTrialRecords}>{casePage.rows.map((row) => <article className={styles.botTrialRecord} key={row.id}>
+    <div><h3>{row.studentName || row.wechatName || "微信名待补"}</h3><p>微信名：{row.wechatName || "待填写"} · 收录于 {new Date(row.createdAt).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}</p><p>教务：{row.operationsOwner || "待填写"} · 课程规划老师：{row.coursePlanner || "待填写"}</p></div>
+    <span className={styles.botTrialStatus}>{trialIdentityStatus(row.status)}</span>
+   </article>)}</div> : <p className={styles.botTrialEmpty}>当前筛选没有试听身份记录。</p>}
+   {casePage && <nav className={styles.pagination} aria-label="试听身份分页">{caseCursor && <Link href={caseHref()}>返回第一页</Link>}{casePage.nextCursor && <Link href={caseHref(caseFilter, casePage.nextCursor)}>下一页</Link>}</nav>}
   </section>
   <nav className={styles.tabs} aria-label="记录类型">{Object.entries(labels).map(([kind, label]) => <Link key={kind} href={href(kind)} aria-current={filter.kind === kind ? "page" : undefined}>{label}<span>{data.counts[kind as keyof typeof labels] || 0}</span></Link>)}</nav>
   <form className={styles.search}><input type="hidden" name="kind" value={filter.kind}/><label htmlFor="review-batch">群与采集批次</label><select id="review-batch" name="batch" defaultValue={selectedBatch}>{!data.batch && <option value="">选择已导入资料</option>}{data.batches.map(batch => <option key={batch.id} value={batch.id}>{batch.groupName} · {new Date(batch.capturedAt).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}</option>)}</select><label htmlFor="review-query">查找学生或任务</label><input id="review-query" name="q" type="search" maxLength={100} defaultValue={filter.query} placeholder="姓名、LP、备课、续费…"/><button type="submit">查看</button></form>

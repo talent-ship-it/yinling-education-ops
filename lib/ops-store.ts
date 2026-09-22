@@ -1329,6 +1329,38 @@ export function getOpsState(entities?: string[], options: OpsRpcOptions = {}) {
   }, options);
 }
 
+export type ClassroomEndRequest = Readonly<{
+  occurrence_id: string;
+  meeting_id: string;
+  status: "closing" | "ended";
+}>;
+
+export function claimClassroomCreation(occurrenceId: string, meetingId: string, leaseId: string, temporaryRequestIdentity?: string) {
+  const { secret } = configuration();
+  if (temporaryRequestIdentity) return rpc<boolean>("claim_temporary_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_meeting_id: meetingId, p_lease_id: leaseId, p_request_identity: temporaryRequestIdentity });
+  return rpc<boolean>("claim_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_meeting_id: meetingId, p_lease_id: leaseId });
+}
+
+export function releaseClassroomCreation(occurrenceId: string, leaseId: string) {
+  const { secret } = configuration();
+  return rpc<boolean>("release_classroom_creation", { p_secret: secret, p_occurrence_id: occurrenceId, p_lease_id: leaseId });
+}
+
+export function readClassroomEndRequests(occurrenceId?: string) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest[]>("read_classroom_end_requests", { p_secret: secret, p_occurrence_id: occurrenceId ?? null });
+}
+
+export function beginClassroomEnd(input: { occurrenceId: string; meetingId: string; expectedVersion: number; actor: string }) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest>("begin_classroom_end", { p_secret: secret, p_occurrence_id: input.occurrenceId, p_meeting_id: input.meetingId, p_expected_version: input.expectedVersion, p_actor: input.actor });
+}
+
+export function finishClassroomEnd(occurrenceId: string, providerStopped: boolean) {
+  const { secret } = configuration();
+  return rpc<ClassroomEndRequest>("finish_classroom_end", { p_secret: secret, p_occurrence_id: occurrenceId, p_provider_stopped: providerStopped });
+}
+
 export function getOperationalAudit(limit = 500) {
   const { secret } = configuration();
   return rpc<OperationalAuditRecord[]>("read_operational_contract_audit", {
@@ -1802,6 +1834,16 @@ export function readWecomArchiveInbox(limit = 100) {
   return rpc<WecomArchiveInboxRow[]>(WECOM_ARCHIVE_INBOX_RPC, {
     p_secret: secret,
     p_limit: limit,
+  });
+}
+
+/** Case-first inbox: older unresolved identities must not age out behind messages. */
+export function readWecomHandoverCases(input: {
+  filter: import("./wecom-handover-review").WecomHandoverFilter;
+  cursor: string | null;
+}) {
+  return rpc<import("./wecom-handover-review").WecomHandoverCasePage>("read_wecom_handover_cases", {
+    p_secret: configuration().secret, p_filter: input.filter, p_cursor: input.cursor, p_limit: 30,
   });
 }
 
@@ -3415,6 +3457,19 @@ export function confirmPermanentTeacherReplacementAtomic(input: {
     p_affected_occurrence_ids: input.affectedOccurrenceIds,
     p_changed_teacher_ids: input.changedTeacherIds,
     p_actor: input.actor,
+  });
+}
+
+/** Refreshes verified departure candidates without changing lesson assignments. */
+export function refreshTeacherDepartureCandidatesAtomic(input: {
+  operationId: string;
+  expectedVersions: Readonly<{ bookings: number; operations: number; students: number; teachers: number }>;
+  actor: string;
+}) {
+  const { secret } = configuration();
+  return rpc<OpsStateRow[]>("refresh_teacher_departure_candidates_atomic", {
+    p_secret: secret, p_operation_id: input.operationId,
+    p_expected_versions: input.expectedVersions, p_actor: input.actor,
   });
 }
 

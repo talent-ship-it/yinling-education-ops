@@ -172,7 +172,9 @@ test("LP due date uses a future source occurrence moved into the 730-day history
   const prepared = prepareTeacherAbsenceCreation({ command: parseTeacherAbsenceCreationCommand(command), rows: current, actor: "Nixon", role: "admin", fullAdmin: true, now: new Date("2026-09-10T00:00:00.000Z") });
   const lpTask = prepared.tasks.find((task) => task.ruleKey?.endsWith(":lp-handover"));
   assert.equal(lpTask?.due, "2026-09-16 18:00");
-  assert.equal(lpTask?.owner, "原老师");
+  assert.equal(lpTask?.owner, "Abby", "the student's operations owner must obtain the teacher's LP");
+  assert.deepEqual(lpTask?.assignees, ["Abby"]);
+  assert.deepEqual(lpTask?.watchers, ["Ops Admin"]);
 });
 
 test("substitute lessons are affected, define LP history, and block a busy candidate", () => {

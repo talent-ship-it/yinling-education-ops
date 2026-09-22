@@ -44,8 +44,7 @@ test("user-visible generic saves wait for the commit receipt", () => {
     ["const completeTask", "const recordTrialParentReply", /tasksShared\.mutateAndCommit/],
     ["const recordTrialParentReply", "const visibleTasks", /tasksShared\.mutateAndCommit/],
     ["const submitStudentEdit", "const submitStudentFollowUp", /await studentsShared\.mutateAndCommit/],
-    ["const submitStudentFollowUp", "const submitLessonPackage", /await studentsShared\.mutateAndCommit/],
-    ["const submitLessonPackage", "const submitLp", /await studentsShared\.mutateAndCommit/],
+    ["const submitStudentFollowUp", "const reconcilePendingExamSubmission", /await studentsShared\.mutateAndCommit/],
     ["const toggleTeacherAvailability", "const submitTeacherCapacity", /await teachersShared\.mutateAndCommit/],
     ["const submitTeacherCapacity", "const setLpStage", /await teachersShared\.mutateAndCommit/],
     ["const setLpStage", "const setLpResult", /await lpShared\.mutateAndCommit/],
@@ -61,6 +60,35 @@ test("user-visible generic saves wait for the commit receipt", () => {
   for (const [start, end, expected] of paths) {
     assert.match(sliceFrom(start, end), expected, `${start} must await its authoritative shared commit`);
   }
+});
+
+test("package purchase success waits for its matching authoritative command receipt", async () => {
+  const [form, service, route, genericRoute] = await Promise.all([
+    readFile(new URL("../app/lesson-package-purchase-form.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/lesson-package-purchase-service.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/students/lesson-package/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/app-state/route.ts", import.meta.url), "utf8"),
+  ]);
+  const requestIndex = form.indexOf('const response = await fetch("/api/students/lesson-package"');
+  const receiptIndex = form.indexOf("if (!response.ok || body?.committed !== true || body.commandKey !== command.commandKey)");
+  const savedIndex = form.indexOf("onSaved(body.studentRow)");
+  const catchIndex = form.indexOf("} catch (reason)", savedIndex);
+  assert.ok(requestIndex >= 0 && receiptIndex > requestIndex && savedIndex > receiptIndex && catchIndex > savedIndex);
+  assert.match(form.slice(receiptIndex, savedIndex), /throw new Error\(body\?\.error/);
+  assert.doesNotMatch(form.slice(catchIndex), /onSaved\(/);
+  assert.match(form, /if \(inFlight\.current \|\| !ready\) return/);
+  const pendingIndex = form.indexOf("window.localStorage.setItem(storageKey, serialized)");
+  assert.ok(pendingIndex >= 0 && pendingIndex < requestIndex, "persist the exact retry intent before sending");
+  assert.match(route, /return reply\(await commitLessonPackagePurchase\(/);
+  assert.match(service, /const saved = await store\.write\(\{[^\n]*expectedVersion: current\.version[^\n]*scopeVersions: getAccessScopeVersions\(rows, access\)/);
+  assert.match(service, /if \(!saved\[0\]\) throw new Error/);
+  assert.match(service, /committed: true, applied: true, commandKey: command\.commandKey, studentRow: filterOpsStateRows\(saved, access\)\[0\]/);
+  const dialog = sliceFrom('{modal === "lessonPackage"', '{modal === "exam"');
+  assert.match(dialog, /onBusyChange=\{setLessonPackageBusy\}/);
+  assert.match(dialog, /onClose=\{\(\) => \{ if \(!lessonPackageBusy\) setModal\(null\); \}\}/);
+  assert.match(dialog, /onSaved=\{\(studentRow\) => \{ if \(studentRow\) studentsShared\.applyRemote\(studentRow as RemoteStateRow<Student\[\]>\); setModal\(null\); notify\("课包与购买记录已确认保存"\)/);
+  assert.match(genericRoute, /hasAppendedLessonPackagePurchase/);
+  assert.match(genericRoute, /purchase_command_required/);
 });
 
 test("ordinary file registration uses one replay-safe atomic route", () => {

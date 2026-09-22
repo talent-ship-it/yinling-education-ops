@@ -151,7 +151,10 @@ export async function runJiaowubaoTrialAutoSyncCore(
     window: input.window,
     matchedAt: dependencies.now(),
   });
-  const references = discovered.references;
+  // The source can include the entire pinned horizon so competitors and moved
+  // event identities remain visible. Only this bounded window selects writes.
+  const references = discovered.references.filter((reference) =>
+    reference.startsAt >= input.window.startsAt && reference.startsAt < input.window.endsAt);
   const changes = [...references.map((reference) => ({ reference, revoke: false })),
     ...discovered.revocations.map((reference) => ({ reference, revoke: true }))];
   if (!changes.length) return { outcome: "no_match", matchedCount: 0, appliedCount: 0, batchCount: 0 };
@@ -222,5 +225,63 @@ export async function runJiaowubaoTrialAutoSyncCore(
     matchedCount: references.length,
     appliedCount,
     batchCount,
+  };
+}
+
+/**
+ * Read every adjacent source window before committing any trial changes. All
+ * windows share the same immutable evidence for uniqueness and absence proofs;
+ * writes remain bounded, independently committed commands. A later failure is
+ * propagated, and retrying the same revision converges by skipping saved work.
+ */
+export async function runJiaowubaoTrialAutoSyncHorizonCore(
+  input: Readonly<{
+    snapshotRevision: string;
+    windows: readonly JiaowubaoTrialSyncWindow[];
+    actor?: "Ops Admin";
+  }>,
+  dependencies: JiaowubaoTrialAutoSyncDependencies,
+): Promise<JiaowubaoTrialAutoSyncResult> {
+  const day = 86_400_000;
+  if (input.windows.length < 1 || input.windows.length > 3
+    || input.windows.some((window, index) => {
+      const start = Date.parse(window.startsAt);
+      const end = Date.parse(window.endsAt);
+      return !Number.isFinite(start) || !Number.isFinite(end)
+        || new Date(start).toISOString() !== window.startsAt
+        || new Date(end).toISOString() !== window.endsAt
+        || end <= start || end - start > 32 * day
+        || index > 0 && input.windows[index - 1].endsAt !== window.startsAt;
+    })
+    // 93 Melbourne calendar days may include the autumn DST extra hour.
+    || Date.parse(input.windows.at(-1)!.endsAt) - Date.parse(input.windows[0].startsAt) > 93 * day + 3_600_000) {
+    throw new JiaowubaoTrialAutoSyncError("trial horizon windows invalid", "invalid_source_window");
+  }
+
+  const rawEvents: RawScheduleEvent[] = [];
+  const eventIds = new Set<string>();
+  for (const window of input.windows) {
+    const events = await dependencies.readSource(input.snapshotRevision, window);
+    for (const event of events) {
+      if (eventIds.has(event.eventId) || event.startsAt < window.startsAt || event.startsAt >= window.endsAt) {
+        throw new JiaowubaoTrialAutoSyncError("trial horizon source identity invalid", "source_changed");
+      }
+      eventIds.add(event.eventId);
+      rawEvents.push(event);
+    }
+  }
+
+  const results: JiaowubaoTrialAutoSyncResult[] = [];
+  for (const window of input.windows) {
+    results.push(await runJiaowubaoTrialAutoSyncCore({
+      snapshotRevision: input.snapshotRevision, window, actor: input.actor,
+    }, { ...dependencies, readSource: async () => rawEvents }));
+  }
+  return {
+    outcome: results.some((result) => result.outcome === "applied") ? "applied"
+      : results.some((result) => result.outcome === "no_change") ? "no_change" : "no_match",
+    matchedCount: results.reduce((sum, result) => sum + result.matchedCount, 0),
+    appliedCount: results.reduce((sum, result) => sum + result.appliedCount, 0),
+    batchCount: results.reduce((sum, result) => sum + result.batchCount, 0),
   };
 }

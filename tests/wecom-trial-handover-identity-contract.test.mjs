@@ -63,9 +63,11 @@ test("identity intake cannot create operational business state", () => {
 });
 
 test("the existing full-admin handover review page surfaces trial identity state", () => {
-  assert.match(reviewPage, /readWecomArchiveInbox/i);
-  assert.match(reviewPage, /待补学生姓名的试听交接/u);
-  assert.match(reviewPage, /trial_identity_status/i);
+  assert.match(reviewPage, /readWecomHandoverCases\(\{ filter: caseFilter, cursor: caseCursor \}\)/);
+  assert.match(reviewPage, /试听身份交接/u);
+  assert.match(reviewPage, /trialIdentityStatus\(row\.status\)/);
+  assert.match(reviewPage, /casePage\.nextCursor/);
+  assert.match(reviewPage, /试听身份记录暂时无法读取/u);
   assert.match(reviewPage, /微信名候选不唯一/u);
   assert.match(reviewPage, /轻微差异/u);
   assert.match(reviewPage, /hasFullAdminAccess/i);

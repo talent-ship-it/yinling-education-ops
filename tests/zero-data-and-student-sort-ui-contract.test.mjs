@@ -63,9 +63,22 @@ test("messages and files expose prerequisites instead of dead unassociated forms
   assert.match(client, /modal === "template" && hasScopedActiveStudentRecords/);
   assert.match(recordMessage, /scopedActiveStudentIds\.has\(message\.studentId\)/);
 
-  const lessonPackage = between(client, "  const submitLessonPackage", "  const reconcilePendingExamSubmission");
-  assert.match(lessonPackage, /const target = requireStudentModalTarget\(true\)/);
-  assert.match(lessonPackage, /student\.id !== target\.id/);
+  const lessonPackage = between(client, '{modal === "lessonPackage"', '{modal === "exam"');
+  const [form, service] = await Promise.all([
+    readFile(new URL("../app/lesson-package-purchase-form.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/lesson-package-purchase-service.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(lessonPackage, /studentModalTargetStudent && studentModalTargetIsValid/);
+  assert.match(lessonPackage, /<LessonPackagePurchaseForm key=\{`\$\{sessionOperator\}:\$\{studentModalTargetStudent\.id\}`\} actor=\{sessionOperator\} studentId=\{studentModalTargetStudent\.id\}/);
+  assert.match(form, /if \(command\.studentId !== studentId\) throw new Error/);
+  assert.match(service, /!access\.teacher && canWriteOpsEntity\(access, "students"\) && canOperateStudent\(access, command\.studentId\)/);
+  assert.match(service, /students\.filter\(\(student\) => student\.id === command\.studentId\)/);
+  assert.match(service, /if \(matches\.length !== 1\) throw new LessonPackageCommandError/);
+  const commit = service.slice(service.indexOf("export async function commitLessonPackagePurchase"));
+  const authorizeIndex = commit.indexOf("if (!mayWrite)");
+  const prepareIndex = commit.indexOf("prepared = prepareLessonPackagePurchase");
+  assert.ok(authorizeIndex >= 0 && prepareIndex > authorizeIndex, "authorization must precede target validation");
+  assert.match(commit.slice(authorizeIndex, prepareIndex), /if \(purchaseReceipt\(current\.payload, command, actor\) === "match"\) return \{\s*committed: true, applied: false, commandKey: command\.commandKey, studentRow: undefined,[\s\S]*throw new LessonPackageCommandError\([^\n]*"scope_forbidden"\)/);
 });
 
 test("global search restores focus to the exact trigger after every close path", async () => {

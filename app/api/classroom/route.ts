@@ -6,7 +6,6 @@ import {
   BigBlueButtonError,
   createJoinUrl,
   createMeeting,
-  endMeeting,
   getRecordings,
   meetingIdForOccurrence,
   meetingStatus,
@@ -14,7 +13,8 @@ import {
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsEntity, filterOpsStateRows } from "@/lib/ops-access";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { getOpsState } from "@/lib/ops-store";
+import { beginClassroomEnd, getOpsState, readClassroomEndRequests } from "@/lib/ops-store";
+import { reconcileStoredClassroomEnd } from "@/lib/classroom-end-service";
 import { expandLessonOccurrences, type LegacyLessonSeries, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
 import { cleanTimezone } from "@/lib/timezone";
 
@@ -134,6 +134,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
     sessionRole: session.role,
     teacherIds: access.teacherIds,
     booking: occurrence,
+    bookingsVersion: stateRows.find((row) => row.entity === "bookings")!.version,
     student,
     teacher,
     operable: canOperateStudent(access, studentId),
@@ -199,8 +200,8 @@ export async function GET(request: NextRequest) {
     if (!context) return noStore({ error: "请先输入访问密码。" }, 401);
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
     const meetingId = meetingIdForOccurrence(occurrenceId);
-    const [status, recordings] = await Promise.all([meetingStatus(meetingId), getRecordings(meetingId)]);
-    return noStore({ status, recordings });
+    const [status, recordings, ending] = await Promise.all([meetingStatus(meetingId), getRecordings(meetingId), readClassroomEndRequests(occurrenceId)]);
+    return noStore({ status, recordings, closing: ending[0]?.status === "closing", ended: ending[0]?.status === "ended" });
   } catch (error) {
     return handleError(error);
   }
@@ -271,19 +272,22 @@ export async function POST(request: NextRequest) {
       if (unavailable) return noStore({ error: "当前课次状态不能生成学生进入链接。" }, 409);
       if (historical) return noStore({ error: "历史课程不能生成新的学生进入链接。" }, 409);
       if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
+      if ((await readClassroomEndRequests(occurrenceId)).length) return noStore({ error: "这节课正在结束或已经结束。" }, 409);
       const url = new URL("/api/classroom/student-entry", request.nextUrl.origin);
       url.searchParams.set("token", signClassroomEntry({ occurrenceId, studentId, teacherId, date: String(context.booking.date), start: String(context.booking.start), duration: Number(context.booking.duration), timezone: cleanTimezone(context.booking.timezone) }));
       return noStore({ meetingId, role: "VIEWER", url: url.toString() });
     }
 
     if (body.action === "end") {
-      if (unavailable) return noStore({ error: "当前课次状态不能结束在线教室。" }, 409);
-      if (historical) return noStore({ error: "历史课程不能结束在线教室。" }, 409);
-      if (classroom.meetingId !== meetingId) return noStore({ error: "这节课没有可结束的在线教室。" }, 409);
-      if (classroom.status === "ended") return noStore({ error: "这节课已经结课，请为新课程创建新的排课。" }, 409);
-      const runtime = await meetingStatus(meetingId);
-      if (!runtime.running) return noStore({ error: "在线教室当前未在运行。" }, 409);
-      return noStore(await endMeeting(meetingId));
+      let intent = (await readClassroomEndRequests(occurrenceId))[0];
+      if (!intent) {
+        if (unavailable) return noStore({ error: "当前课次状态不能结束在线教室。" }, 409);
+        if (historical) return noStore({ error: "历史课程不能结束在线教室。" }, 409);
+        if (classroom.meetingId !== meetingId) return noStore({ error: "这节课没有可结束的在线教室。" }, 409);
+        intent = await beginClassroomEnd({ occurrenceId, meetingId, expectedVersion: context.bookingsVersion, actor: context.actor });
+      }
+      const result = await reconcileStoredClassroomEnd(intent);
+      return noStore({ meetingId, ended: result.status === "ended", closing: result.status === "closing" }, result.status === "ended" ? 200 : 202);
     }
     return noStore({ error: "不支持的在线教室动作。" }, 400);
   } catch (error) {

@@ -29,6 +29,7 @@ function sharedRows(owner = "Abby"): OpsStateRow[] {
       id: "BOOK-A",
       date: "2026-09-07",
       start: "10:00",
+      timezone: "UTC",
       duration: 60,
       studentId: "STUDENT-A",
       teacherId: "TEACHER-A",
@@ -54,9 +55,10 @@ function sharedRows(owner = "Abby"): OpsStateRow[] {
 }
 
 function attendance(studentSeconds = 3_600, teacherSeconds = 3_600): LessonAttendanceEvidence {
+  const span = (seconds: number) => [{ joinedAt: "2026-09-07T10:00:00.000Z", leftAt: new Date(Date.parse("2026-09-07T10:00:00.000Z") + seconds * 1000).toISOString() }];
   return {
-    student: { userId: "STUDENT-A", accumulatedSeconds: studentSeconds },
-    teacher: { userId: "TEACHER-A", accumulatedSeconds: teacherSeconds },
+    student: { userId: "STUDENT-A", joinLeave: span(studentSeconds) },
+    teacher: { userId: "TEACHER-A", joinLeave: span(teacherSeconds) },
   };
 }
 

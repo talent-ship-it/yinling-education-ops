@@ -539,7 +539,7 @@ function tasksForStudent(input: {
       ...input,
       rule: "lp-to-new-teacher",
       title: "写 LP 给新老师",
-      owner: input.sourceTeacherName,
+      owner: input.owner,
       dueDate: lpFollowUpDate,
       futureTone: "blue",
       trigger: "老师离职：写 LP 给新老师",
@@ -654,12 +654,9 @@ export function prepareTeacherDepartureCreation(input: Readonly<{
       bookings: bookingRow.payload,
       teachers: teacherRow.payload,
     });
-    if (!candidates.length) {
-      fail(
-        "replacement_candidate_not_found",
-        `No fully verified replacement candidate is available for ${studentId}. Update AVA/capacity and retry; no departure workflow was created.`,
-      );
-    }
+    // Register the departure even while replacement matching is unresolved.
+    // Confirmation independently revalidates the selected teacher and every
+    // affected occurrence before changing bookings or capacity.
     generatedOperations.push({
       id: operationId,
       studentId,

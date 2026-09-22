@@ -59,10 +59,12 @@ test("strictly parses Learning Analytics and binds provider IDs to attendance", 
     student: {
       userId: "STUDENT-A",
       accumulatedSeconds: 3_600,
+      joinLeave: [{ joinedAt: "2026-09-07T10:00:00.000Z", leftAt: "2026-09-07T11:00:00.000Z" }],
     },
     teacher: {
       userId: "TEACHER-A",
       accumulatedSeconds: 3_600,
+      joinLeave: [{ joinedAt: "2026-09-07T10:00:00.000Z", leftAt: "2026-09-07T11:00:00.000Z" }],
     },
   });
   assert.match(bbbEvidenceReference(payload.internalMeetingId), /^bbb:[a-f0-9]{64}$/);

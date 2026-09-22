@@ -6,6 +6,7 @@ import type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-to
 import {
   completeLessonOccurrence,
   expandLessonOccurrences,
+  lessonAttendanceWindow,
   type LegacyLessonSeries,
   type LessonAttendanceEvidence,
   type ManualLessonAdjustment,
@@ -178,6 +179,7 @@ function bookingSeries(value: RecordValue): LegacyLessonSeries {
     id: requiredText(value.id, "booking id"),
     date: requiredText(value.date, "booking date"),
     start: requiredText(value.start, "booking start"),
+    ...(optionalText(value.timezone) ? { timezone: optionalText(value.timezone) } : {}),
     duration: numberValue(duration, "booking duration"),
     ...(value.recurring === true ? { recurring: true } : {}),
     ...(typeof value.repeatCount === "number" ? { repeatCount: value.repeatCount } : {}),
@@ -351,10 +353,15 @@ export function prepareLessonOccurrenceSettlement(input: {
     throw new LessonOccurrenceServiceError("package_not_found", "Occurrence lesson package was not found on the student.");
   }
   if (input.request.manualAdjustment && (!input.request.overrideReason || input.trustedProvider)) throw new LessonOccurrenceServiceError("override_admin_required", "Only an authorized manual settlement may adjust hours.");
+  // Explicit administrator overrides keep the nominal validation path separate
+  // from provider evidence. Actual/debit/payroll minutes remain in the audited
+  // manualAdjustment; these spans are never stored as provider observations.
+  const manualWindow = input.request.overrideReason ? lessonAttendanceWindow(occurrence) : null;
+  const manualSpans = manualWindow ? [{ joinedAt: new Date(manualWindow.start).toISOString(), leftAt: new Date(manualWindow.end).toISOString() }] : undefined;
   const effectiveAttendance: LessonAttendanceEvidence = input.request.overrideReason
     ? {
-        student: { userId: requiredText(occurrence.studentId, "occurrence student"), accumulatedSeconds: occurrence.scheduledDurationMinutes * 60 },
-        teacher: { userId: requiredText(occurrence.teacherId, "occurrence teacher"), accumulatedSeconds: occurrence.scheduledDurationMinutes * 60 },
+        student: { userId: requiredText(occurrence.studentId, "occurrence student"), joinLeave: manualSpans },
+        teacher: { userId: requiredText(occurrence.teacherId, "occurrence teacher"), joinLeave: manualSpans },
       }
     : input.attendance ?? (() => { throw new LessonOccurrenceServiceError("attendance_not_found", "Attendance evidence was not found."); })();
 

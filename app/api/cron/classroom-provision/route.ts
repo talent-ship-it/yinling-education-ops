@@ -3,11 +3,14 @@ import { hasReminderCronSecret } from "@/lib/reminder-cron-auth";
 import { getOpsState } from "@/lib/ops-store";
 import { classroomProvisionPlan, type ProvisionBooking } from "@/lib/classroom-provision-plan";
 import { createMeeting, meetingIdForOccurrence } from "@/lib/bigbluebutton";
+import { recoverPendingClassroomEnds } from "@/lib/classroom-end-service";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 export async function GET(request: Request) {
   if (!hasReminderCronSecret(request)) return NextResponse.json({ error: "Not found" }, { status: 404 });
   try {
+    // Recovery is independent of any browser and runs before new provisioning.
+    const endings = await recoverPendingClassroomEnds();
     const rows = await getOpsState(["bookings", "students", "teachers"]);
     const bookings = rows.find((row) => row.entity === "bookings")?.payload;
     const students = rows.find((row) => row.entity === "students")?.payload;
@@ -30,6 +33,6 @@ export async function GET(request: Request) {
         } catch { failed += 1; }
       }));
     }
-    return NextResponse.json({ processed: batch.length, created, existing, failed, deferred: Math.max(0, plan.length - batch.length) }, { status: failed || plan.length > batch.length ? 503 : 200, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ processed: batch.length, created, existing, failed, endings, deferred: Math.max(0, plan.length - batch.length) }, { status: failed || endings.pending || plan.length > batch.length ? 503 : 200, headers: { "Cache-Control": "no-store" } });
   } catch { return NextResponse.json({ error: "Classroom provisioning unavailable" }, { status: 503 }); }
 }

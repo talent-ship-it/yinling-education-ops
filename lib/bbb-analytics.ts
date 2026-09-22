@@ -201,6 +201,7 @@ function partyEvidence(payload: BbbAnalyticsPayload, userId: string) {
     // The provider's duration is accepted only after it agrees with the
     // validated, non-overlapping join/leave timeline above.
     accumulatedSeconds: match.durationSeconds,
+    joinLeave: match.joins.map((joinedAt, index) => ({ joinedAt, leftAt: match.leaves[index] })),
   };
 }
 

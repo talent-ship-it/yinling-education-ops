@@ -181,8 +181,9 @@ test("departure adds LP handover task after the actual penultimate historical le
   const lpTask = prepared.tasks.find((task) => task.studentId === "S-1"
     && task.ruleKey === `teacher-departure:${prepared.operationIds[0]}:lp-to-new-teacher`);
   assert.equal(lpTask?.title, "写 LP 给新老师");
-  assert.equal(lpTask?.owner, "Source Teacher");
-  assert.deepEqual(lpTask?.assignees, ["Source Teacher"]);
+  assert.equal(lpTask?.owner, "Abby", "the student's operations owner must follow up with the source teacher");
+  assert.deepEqual(lpTask?.assignees, ["Abby"]);
+  assert.deepEqual(lpTask?.watchers, ["Ops Admin"]);
   assert.equal(lpTask?.due, "2026-08-19 18:00");
   assert.equal(lpTask?.dueAt, "2026-08-19T08:00:00.000Z");
   assert.equal(prepared.tasks.filter((task) => task.studentId === "S-1").length, 7);
@@ -278,26 +279,26 @@ test("departure timeline follows moved historical overrides and excludes cancell
   assert.equal(clearedIdentityPrepared.tasks.some((task) => task.title === "写 LP 给新老师"), false);
 });
 
-test("a zero-candidate student aborts the entire workflow and AVA correction permits a clean retry", () => {
-  assert.throws(() => prepareTeacherDepartureCreation({
+test("zero candidates still registers every departure and its follow-up tasks without changing lessons", () => {
+  const sourceRows = rows({ includeConflict: true });
+  const before = structuredClone(sourceRows);
+  const prepared = prepareTeacherDepartureCreation({
     command: parseTeacherDepartureCreationCommand(command()),
-    rows: rows({ includeConflict: true }),
-    actor: "Nixon",
-    role: "admin",
-    fullAdmin: true,
-    now: new Date("2026-08-15T00:00:00.000Z"),
-  }), (error: unknown) => error instanceof TeacherDepartureCreationError
-    && error.code === "replacement_candidate_not_found");
-
-  const retried = prepareTeacherDepartureCreation({
-    command: parseTeacherDepartureCreationCommand(command()),
-    rows: rows(),
+    rows: sourceRows,
     actor: "Nixon",
     role: "admin",
     fullAdmin: true,
     now: new Date("2026-08-15T00:00:00.000Z"),
   });
-  assert.deepEqual(retried.affectedGroups.map((group) => group.candidateTeacherIds), [["T-GOOD"], ["T-GOOD"]]);
+  assert.deepEqual(prepared.affectedGroups.map((group) => group.candidateTeacherIds), [[], []]);
+  assert.equal(prepared.generatedTaskCount, 10);
+  for (const operationId of prepared.operationIds) {
+    const operation = prepared.operations.find((entry) => entry.id === operationId)!;
+    assert.equal(operation.status, "待处理");
+    assert.deepEqual(operation.recommendedTeacherIds, []);
+    assert.equal(prepared.tasks.filter((task) => task.anchorBookingId === operationId).length, 5);
+  }
+  assert.deepEqual(sourceRows, before, "registration must not reassign or cancel any lesson");
 });
 
 test("conflict closure compares absolute instants across different local dates", () => {

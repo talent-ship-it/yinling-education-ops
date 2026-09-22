@@ -568,7 +568,7 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /const proposedDates = Array\.from\(\{ length: validationCount \}/);
   assert.match(client, /const weekOccurrences = scheduleMode === "month" \? \[\] : scopedBookings/);
   assert.match(client, /bookingOccurrencesWithinRange\(booking, shiftIsoDate\(weekDays\[0\]\.date, -1\)/);
-  assert.match(client, /isoDateInTimezone\(bookingInstant\(booking\), "Australia\/Melbourne"\) === todayDate/);
+  assert.match(client, /const operatorTodayBookings = dashboardLessonsForDay\([\s\S]*?bookingInstant,\s*displayPreferences\.timezone,\s*todayDate/);
   assert.match(client, /const displayedBooking = \(selectedBookingOccurrenceKey[\s\S]*?currentScheduleScope\.find\(\(booking\) => booking\.occurrenceKey === selectedBookingOccurrenceKey\)/);
   assert.match(client, /bookingHasDstRisk\(displayedBookingSeries/);
   assert.match(client, /const conflictDate = proposedDates\.find/);

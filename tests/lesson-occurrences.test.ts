@@ -25,6 +25,7 @@ function occurrence(overrides: Partial<LessonOccurrence> = {}): LessonOccurrence
     sourceDate: "2026-09-07",
     date: "2026-09-07",
     start: "10:00",
+    timezone: "UTC",
     scheduledDurationMinutes: 60,
     status: "confirmed",
     studentId: "STUDENT-A",
@@ -59,9 +60,10 @@ function state(overrides: Partial<LessonOccurrenceSettlementState> = {}): Lesson
 }
 
 function attendance(studentSeconds = 3_600, teacherSeconds = 3_600): LessonAttendanceEvidence {
+  const span = (seconds: number) => [{ joinedAt: "2026-09-07T10:00:00.000Z", leftAt: new Date(Date.parse("2026-09-07T10:00:00.000Z") + seconds * 1000).toISOString() }];
   return {
-    student: { userId: "STUDENT-A", accumulatedSeconds: studentSeconds },
-    teacher: { userId: "TEACHER-A", accumulatedSeconds: teacherSeconds },
+    student: { userId: "STUDENT-A", joinLeave: span(studentSeconds) },
+    teacher: { userId: "TEACHER-A", joinLeave: span(teacherSeconds) },
   };
 }
 
@@ -238,7 +240,7 @@ test("accumulates overlapping join/leave spans once and applies the attendance t
         { joinedAt: "2026-09-07T10:30:00.000Z", leftAt: "2026-09-07T11:00:00.000Z" },
       ],
     },
-    teacher: { userId: "TEACHER-A", accumulatedSeconds: 3_300 },
+    teacher: attendance(3_600, 3_300).teacher,
   }, 300);
 
   assert.equal(result.studentSeconds, 3_600);
@@ -359,7 +361,7 @@ test("insufficient package balance throws atomically without changing any input"
 
 test("a manual adjustment is idempotent and cannot be replayed with a different debit", () => {
  const state = { occurrence: occurrence(), packages: packages(), studentHoursLedger: [], teacherPayrollLedger: [] };
- const command = { completedAt, attendance: { student: { userId: "STUDENT-A", accumulatedSeconds: 3600 }, teacher: { userId: "TEACHER-A", accumulatedSeconds: 3600 } }, manualAdjustment: { actualMinutes: 40, studentMinutes: 40, teacherMinutes: 50 } };
+ const command = { completedAt, attendance: attendance(), manualAdjustment: { actualMinutes: 40, studentMinutes: 40, teacherMinutes: 50 } };
  const first = completeLessonOccurrence(state, command);
  assert.equal(completeLessonOccurrence(first, command).applied, false);
  assert.throws(() => completeLessonOccurrence(first, { ...command, manualAdjustment: { ...command.manualAdjustment, studentMinutes: 60 } }), /different student deduction/);

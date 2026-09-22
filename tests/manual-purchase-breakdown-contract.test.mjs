@@ -7,10 +7,18 @@ const root = path.resolve(import.meta.dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
 test("manual package writes persist a structured purchased/bonus breakdown", () => {
-  const client = read("app/operations-client.tsx");
-  assert.match(client, /purchasedHours: parsed\.purchasedHours/);
-  assert.match(client, /bonusHours: parsed\.bonusHours/);
-  assert.match(client, /purchasedHours,\s*\n\s*bonusHours,/);
+  const form = read("app/lesson-package-purchase-form.tsx");
+  const command = read("lib/lesson-package-purchase-command.ts");
+  const service = read("lib/lesson-package-purchase-service.ts");
+  assert.match(form, /\.\.\.parseLessonPackageFormData\(new FormData\(event\.currentTarget\)\)/);
+  assert.match(command, /const purchasedHours = hours\(value\.purchasedHours\)/);
+  assert.match(command, /const bonusHours = hours\(value\.bonusHours\)/);
+  assert.match(command, /subjectIds, purchasedHours, bonusHours, purchaseNote/);
+  assert.match(service, /purchasedHours: command\.purchasedHours/);
+  assert.match(service, /bonusHours: command\.bonusHours/);
+  assert.match(service, /hours: Number\(\(command\.purchasedHours \+ command\.bonusHours\)\.toFixed\(6\)\)/);
+  assert.match(service, /createStudentLessonPackage\(\{[^\n]*initialPurchase: purchase/);
+  assert.match(service, /addLessonPackageHours\(pkg, purchase\)/);
   assert.match(read("app/student-records-panel.tsx"), /购买 \$\{purchase\.purchasedHours\} \+ 赠送 \$\{purchase\.bonusHours\}/);
 });
 

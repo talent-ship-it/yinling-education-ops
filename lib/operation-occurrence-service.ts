@@ -670,9 +670,10 @@ export function preparePermanentTeacherReplacement(input: {
   }
   const currentTeacherName = optionalText(student.teacher);
   const sourceTeacherName = stateText(sourceTeacher, "name", "teacher");
-  if (currentTeacherName && ![sourceTeacherName, "待匹配", "待确认"].includes(currentTeacherName)) {
-    fail("student_assignment_conflict", "学生档案中的当前老师与离职记录不一致，必须先人工复核。");
-  }
+  // The legacy display field represents at most one of a student's teachers.
+  // The exact future occurrence relationship below authorizes this change.
+  const replaceDisplayTeacher = !currentTeacherName
+    || [sourceTeacherName, "待匹配", "待确认"].includes(currentTeacherName);
 
   const affected = activeFutureOccurrences({
     bookings: bookingRow.payload,
@@ -730,7 +731,7 @@ export function preparePermanentTeacherReplacement(input: {
   }
 
   const replacementTeacherName = stateText(replacementTeacher, "name", "teacher");
-  const nextStudents = studentRow.payload.map((candidate) => candidate.id === studentId
+  const nextStudents = studentRow.payload.map((candidate) => candidate.id === studentId && replaceDisplayTeacher
     ? { ...candidate, teacher: replacementTeacherName }
     : candidate);
   const affectedOccurrenceIds = affected.map((occurrence) => occurrence.occurrenceId).sort();

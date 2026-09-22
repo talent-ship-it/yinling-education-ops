@@ -1,8 +1,9 @@
 import "server-only";
 
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import { classroomMeetingDurationMinutes } from "./classroom-duration";
+import { claimClassroomCreation, releaseClassroomCreation } from "@/lib/ops-store";
 
 import {
   bbbCallbackNonce,
@@ -189,8 +190,16 @@ export async function createMeeting(input: {
   bookingId: string;
   studentId: string;
   teacherId: string;
+  /** Server-owned immutable claim from the recorded temporary-classroom saga. */
+  temporaryRequestIdentity?: string;
 }) {
   const meetingId = normalizeMeetingId(input.meetingId);
+  const leaseId = randomUUID();
+  if (!await claimClassroomCreation(input.occurrenceId, meetingId, leaseId, input.temporaryRequestIdentity)) {
+    throw new BigBlueButtonError("这节课正在结束或已经结束，不能重新开课。", "classroom_closing", 409);
+  }
+  // A timeout retains the short-lived lease: the provider may still complete
+  // the request. End recovery cannot declare success while that lease is live.
   const result = await call("create", {
     name: input.name.slice(0, 180),
     meetingID: meetingId,
@@ -212,6 +221,12 @@ export async function createMeeting(input: {
     "meta_teacher-id": input.teacherId,
     "meta_course-source": "yinling-education-ops",
   });
+  if (!await releaseClassroomCreation(input.occurrenceId, leaseId)) {
+    // An end intent won the race while BBB was creating the room. Never issue
+    // a join URL; the persisted intent also lets cron retry a failed close.
+    await endMeeting(meetingId).catch(() => undefined);
+    throw new BigBlueButtonError("这节课正在结束或已经结束，不能重新开课。", "classroom_closing", 409);
+  }
   return {
     meetingId: text(result.meetingID) || meetingId,
     internalMeetingId: text(result.internalMeetingID),

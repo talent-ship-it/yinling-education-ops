@@ -135,8 +135,12 @@ async function resolveLoginIdentity(
       return { error: "账号登录暂时不可用，请稍后重试。", status: 503 };
     }
 
-    // Before an account adopts its own password, its existing review login is
-    // still accepted only when it resolves back to the explicitly named user.
+    // A roster name is an identifier, never a teacher credential. Newly
+    // imported teachers must receive an independent password before login.
+    if (requested.identity.role === "teacher") {
+      return { error: "账号或密码不正确。", status: 401 };
+    }
+    // Preserve explicitly configured legacy access for non-teacher accounts.
     const legacy = await resolveLegacyIdentity(password, teachersPayload);
     if ("identity" in legacy && sameIdentity(legacy.identity, requested.identity)) {
       return { identity: requested.identity, mustChangePassword: false, legacyAuthentication: true };
@@ -146,6 +150,9 @@ async function resolveLoginIdentity(
 
   const legacy = await resolveLegacyIdentity(password, teachersPayload);
   if (!("identity" in legacy)) return legacy;
+  if (legacy.identity.role === "teacher") {
+    return { error: "账号或密码不正确。", status: 401 };
+  }
   try {
     const credential = await getAppAccountCredential(accountIdentityKey(legacy.identity.user, legacy.identity.role));
     if (credential) {
