@@ -78,6 +78,9 @@ export const sqlRuntimeFixtures = Object.freeze([
   { id: "wecom-case-pagination", source: "tests/sql/wecom-case-pagination-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-case-pagination-runtime.sql" },
   ] },
+  { id: "wecom-receiver-health", source: "tests/sql/wecom-receiver-health-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-receiver-health-runtime.sql" },
+  ] },
   { id: "wecom-trial-handover-identity", source: "tests/sql/wecom-trial-handover-identity-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-trial-handover-identity-runtime.sql" },
   ] },
