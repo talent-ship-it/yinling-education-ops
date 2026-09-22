@@ -5,18 +5,31 @@ import type { OpsStateRow } from "./ops-store";
 import { assertManualLessonPackageTarget, LessonPackageCommandError, type LessonPackagePurchaseCommand } from "./lesson-package-purchase-command";
 import { addLessonPackageHours, bindSubjectToLessonPackage, createStudentLessonPackage, type StudentLessonPackage } from "./student-records";
 
+function purchaseIdentity(command: LessonPackagePurchaseCommand, actor: string) {
+  const purchasePrefix = `PUR-${command.commandKey}:`;
+  const purchaseId = purchasePrefix + createHash("sha256").update(JSON.stringify({ actor, ...command })).digest("hex");
+  return { purchasePrefix, purchaseId };
+}
+
+function purchaseReceipt(payload: unknown, command: LessonPackagePurchaseCommand, actor: string) {
+  const { purchasePrefix, purchaseId } = purchaseIdentity(command, actor);
+  const receipts = (Array.isArray(payload) ? payload : []).flatMap((student) => Array.isArray(student?.lessonPackages)
+    ? student.lessonPackages.flatMap((pkg: StudentLessonPackage) => (Array.isArray(pkg?.purchaseRecords) ? pkg.purchaseRecords : [])
+      .filter((purchase) => typeof purchase?.id === "string" && purchase.id.startsWith(purchasePrefix))) : []);
+  if (receipts.length) {
+    return receipts.length === 1 && receipts[0].id === purchaseId ? "match" : "conflict";
+  }
+  return "missing";
+}
+
 /** Keep the deployed purchase shape: the immutable ID carries UUID + SHA-256 intent. */
 export function prepareLessonPackagePurchase(payload: unknown, command: LessonPackagePurchaseCommand, actor: string) {
   if (!Array.isArray(payload) || payload.some((student) => !student || typeof student !== "object" || Array.isArray(student))) throw new LessonPackageCommandError("学生资料尚未就绪");
   const students = payload as Record<string, unknown>[];
-  const purchasePrefix = `PUR-${command.commandKey}:`;
-  const purchaseId = purchasePrefix + createHash("sha256").update(JSON.stringify({ actor, ...command })).digest("hex");
-  const receipts = students.flatMap((student) => Array.isArray(student.lessonPackages)
-    ? student.lessonPackages.flatMap((pkg: StudentLessonPackage) => (pkg.purchaseRecords ?? []).filter((purchase) => purchase.id.startsWith(purchasePrefix))) : []);
-  if (receipts.length) {
-    if (receipts.length !== 1 || receipts[0].id !== purchaseId) throw new LessonPackageCommandError("此购买编号已用于不同内容，请核对原购买记录", "idempotency_conflict");
-    return { payload: students, applied: false };
-  }
+  const receipt = purchaseReceipt(payload, command, actor);
+  if (receipt === "match") return { payload: students, applied: false };
+  if (receipt === "conflict") throw new LessonPackageCommandError("此购买编号已用于不同内容，请核对原购买记录", "idempotency_conflict");
+  const { purchaseId } = purchaseIdentity(command, actor);
   const matches = students.filter((student) => student.id === command.studentId);
   if (matches.length !== 1) throw new LessonPackageCommandError("学生资料已变化，请刷新后重试", "invalid_target");
   const target = matches[0];
@@ -53,6 +66,15 @@ export async function commitLessonPackagePurchase(input: {
     const current = rows.find((row) => row.entity === "students");
     if (!current) throw new Error("学生资料尚未就绪");
     const access = buildOpsAccessContext(rows, actor, fullAdmin, identity);
+    const mayWrite = !access.teacher && canWriteOpsEntity(access, "students") && canOperateStudent(access, command.studentId);
+    if (!mayWrite) {
+      // Only an exact actor-owned receipt is readable after scope drift. Do
+      // not inspect target/package validity or reveal another student's data.
+      if (purchaseReceipt(current.payload, command, actor) === "match") return {
+        committed: true, applied: false, commandKey: command.commandKey, studentRow: undefined,
+      };
+      throw new LessonPackageCommandError("当前账号不能为该学生录入课包购买", "scope_forbidden");
+    }
     let prepared: ReturnType<typeof prepareLessonPackagePurchase>;
     try {
       prepared = prepareLessonPackagePurchase(current.payload, command, actor);
@@ -62,14 +84,12 @@ export async function commitLessonPackagePurchase(input: {
       // credit) runs before the store is called and can safely return to edit.
       throw new LessonPackageCommandError(error instanceof Error ? error.message : "课包资料无效");
     }
-    const mayWrite = !access.teacher && canWriteOpsEntity(access, "students") && canOperateStudent(access, command.studentId);
     // The immutable receipt can acknowledge an old success after scope drift,
     // while returning no historic state to an actor who lost that permission.
     if (!prepared.applied) return {
       committed: true, applied: false, commandKey: command.commandKey,
-      studentRow: mayWrite ? filterOpsStateRows([current], access)[0] : undefined,
+      studentRow: filterOpsStateRows([current], access)[0],
     };
-    if (!mayWrite) throw new LessonPackageCommandError("当前账号不能为该学生录入课包购买", "scope_forbidden");
     assertOpsStateTransition({ entity: "students", currentPayload: current.payload, nextPayload: prepared.payload, rows, context: access });
     try {
       const saved = await store.write({ entity: "students", payload: prepared.payload, expectedVersion: current.version, actor, scopeVersions: getAccessScopeVersions(rows, access) });

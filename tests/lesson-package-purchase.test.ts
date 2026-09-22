@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasAppendedLessonPackagePurchase, parseLessonPackagePurchaseCommand } from "../lib/lesson-package-purchase-command";
+import { hasAppendedLessonPackagePurchase, LessonPackageCommandError, parseLessonPackagePurchaseCommand } from "../lib/lesson-package-purchase-command";
 import { commitLessonPackagePurchase, prepareLessonPackagePurchase } from "../lib/lesson-package-purchase-service";
 import { getLessonPackageBalance, type StudentLessonPackage } from "../lib/student-records";
 import type { OpsStateRow } from "../lib/ops-store";
@@ -107,6 +107,22 @@ test("source-owned packages and parallel manual replacements cannot receive a lo
   for (const next of [command, parseLessonPackagePurchaseCommand({ ...command, packageMode: "existing", packageId: "PKG-JWB-source" })]) {
     assert.throws(() => prepareLessonPackagePurchase(managed, next, "Nixon"), /请在教务宝充值后同步/);
   }
+});
+
+test("unauthorized requests cannot distinguish missing, invalid, or source-owned targets", async () => {
+  const payloads = [[], initial, [{ ...initial[0], lessonPackages: [{ id: "PKG-JWB-source", subjectIds: ["English"], purchaseRecords: [] }] }]];
+  for (const payload of payloads) for (const identity of ["teacher", "staff"] as const) {
+    const store = {
+      read: async () => [{ entity: "students", payload, version: 1, updated_at: command.purchasedAt, updated_by: "Nixon" }],
+      write: async () => { assert.fail("unauthorized purchase reached persistence"); },
+    };
+    await assert.rejects(commitLessonPackagePurchase({ command, actor: "Unassigned", fullAdmin: false, identity, store }),
+      (error: unknown) => error instanceof LessonPackageCommandError && error.code === "scope_forbidden");
+  }
+  const db = fixture();
+  await db.run();
+  await assert.rejects(commitLessonPackagePurchase({ command: parseLessonPackagePurchaseCommand({ ...command, purchasedHours: 99 }), actor: "Nixon", fullAdmin: false, identity: "teacher", store: db.store }),
+    (error: unknown) => error instanceof LessonPackageCommandError && error.code === "scope_forbidden");
 });
 
 test("JWB refresh preserves a manual purchase receipt so response-loss replay cannot recharge it", () => {
