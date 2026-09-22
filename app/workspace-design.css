@@ -324,6 +324,30 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
   .app-shell :is(.primary-button,.new-button):hover { color:#102e29; }
 }
 
+/* Operational metadata and editable ledgers share the semantic day/night palette. */
+.app-shell :is(.task-copy span,.task-copy small,.task-copy .task-title-details,.detail-section p,.risk-row small,.panel-foot,.settings-list small,.integration-list small) { color:var(--muted); }
+.app-shell .panel-foot { background:var(--surface-muted); }
+.app-shell :is(.trial-ledger-tools,.trial-ledger-table th,.trial-ledger-stats > span) { background:var(--surface-muted); color:var(--muted); }
+.app-shell :is(.trial-ledger-stats,.trial-ledger-table td) { background:var(--surface-raised); color:var(--ink); border-color:var(--line); }
+.app-shell .trial-ledger-table tbody tr:hover td { background:var(--surface-muted); }
+.app-shell .trial-ledger-table td:first-child { box-shadow:1px 0 0 var(--line); }
+.app-shell :is(.trial-ledger-filter-grid label,.trial-ledger-tool-footer > span,.trial-ledger-stats small,.trial-ledger-stats em,.ledger-cell-meta small,.lp-inline-options legend,.trial-intake-details dt) { color:var(--muted); }
+.app-shell :is(.trial-ledger-stats strong,.trial-intake-details dd) { color:var(--ink); }
+.app-shell :is(.trial-ledger-stat-total,.trial-ledger-success-rate) { background:var(--brand-soft); }
+.app-shell :is(.trial-ledger-stat-total strong,.trial-ledger-success-rate strong,.table-link,.trial-intake-details summary,.ledger-cell-meta button,.ledger-edit-cell.manual .ledger-cell-meta small) { color:var(--brand-ink); }
+.app-shell .ledger-edit-cell.manual .ledger-cell-input { background:var(--surface-tint); border-color:var(--brand-line); box-shadow:inset 2px 0 0 var(--brand-deep); }
+.app-shell .trial-ledger-filter-grid label > :is(input,select) { background:var(--surface-raised); color:var(--ink); border-color:var(--line); }
+.app-shell :is(.trial-ledger-filter-grid label > :is(input,select),.ledger-cell-input):focus-visible { outline:3px solid var(--brand-deep); outline-offset:3px; box-shadow:none; border-color:var(--brand-deep); }
+.app-shell :is(.trial-ledger-filter-grid label > :is(input,select),.ledger-cell-input):disabled { background:var(--surface-muted); color:var(--muted); }
+.app-shell .ledger-cell-meta small { font-size:11px; }
+.app-shell .ledger-cell-meta button { font-size:11px; }
+.app-shell .ledger-cell-meta button:hover { background:var(--brand-soft); color:var(--brand-ink); }
+.app-shell :is(.lp-inline-options,.trial-intake-details) { border-color:var(--line); }
+@media (max-width:760px) {
+  .app-shell .mobile-detail-open { background:var(--surface-raised); }
+  .app-shell .mobile-preview-close { background:var(--surface-raised); color:var(--brand-ink); }
+}
+
 /* Keep action columns stable when a task deliberately omits completion. */
 .app-shell .to-do-row { grid-template-columns:7px minmax(0,1fr) 120px; }
 .app-shell .to-do-row .task-row-actions { display:flex; flex-direction:column; align-items:stretch; width:120px; gap:6px; justify-self:end; }
