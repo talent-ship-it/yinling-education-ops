@@ -6,7 +6,9 @@ import {
   JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,
   assertJiaowubaoScheduleSnapshotPageBytes,
   buildJiaowubaoScheduleSnapshotEnvelope,
-  collectJiaowubaoScheduleSnapshot,
+  collectJiaowubaoScheduleHorizon,
+  jiaowubaoScheduleCollectionWindows,
+  JIAOWUBAO_SCHEDULE_HORIZON_DAYS,
   jiaowubaoScheduleSnapshotRows,
 } from "@/lib/jiaowubao-open-api-schedule-snapshot";
 import { queryJiaowubaoScheduleList } from "@/lib/jiaowubao-open-api-node";
@@ -33,7 +35,7 @@ export const maxDuration = 300;
 
 const ACTOR = "Ops Admin" as const;
 const TIME_ZONE = "Australia/Melbourne";
-const DAYS = 31;
+const DAYS = JIAOWUBAO_SCHEDULE_HORIZON_DAYS;
 const RUN_INTERVAL_MS = 30 * 60 * 1_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -146,6 +148,20 @@ async function projectAuthority(revision: string, rowCount: number) {
   return receipt;
 }
 
+async function projectTrialHorizon(snapshotRevision: string, window: { start: string; end: string }) {
+  const results = [];
+  for (const part of jiaowubaoScheduleCollectionWindows(window)) {
+    results.push(await runJiaowubaoTrialAutoSync({ snapshotRevision, window: jiaowubaoTrialProjectionWindow(part) }));
+  }
+  return {
+    outcome: results.some((result) => result.outcome === "applied") ? "applied"
+      : results.some((result) => result.outcome === "no_change") ? "no_change" : "no_match",
+    matchedCount: results.reduce((sum, result) => sum + result.matchedCount, 0),
+    appliedCount: results.reduce((sum, result) => sum + result.appliedCount, 0),
+    batchCount: results.reduce((sum, result) => sum + result.batchCount, 0),
+  };
+}
+
 /**
  * Supabase pg_cron invokes this Vercel route every 30 minutes. It only replaces
  * the completed, immutable JWB source snapshot after every upstream page has
@@ -174,7 +190,7 @@ export async function GET(request: Request) {
 
     phase = "collect_source";
     const window = fixedWindow();
-    const snapshot = await collectJiaowubaoScheduleSnapshot(window, queryScheduleWithGlobalRateGate);
+    const snapshot = await collectJiaowubaoScheduleHorizon(window, queryScheduleWithGlobalRateGate);
     phase = "read_preflight";
     const preflight = await getJiaowubaoOpenApiScheduleSnapshotPreflight({
       apiSourceKey: JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,
@@ -197,10 +213,7 @@ export async function GET(request: Request) {
       phase = "project_authority";
       const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
       phase = "project_trials";
-      const trialProjection = await runJiaowubaoTrialAutoSync({
-        snapshotRevision: snapshot.manifest.revision,
-        window: jiaowubaoTrialProjectionWindow(window),
-      });
+      const trialProjection = await projectTrialHorizon(snapshot.manifest.revision, window);
       return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, authorityProjection, trialProjection });
     }
 
@@ -213,10 +226,7 @@ export async function GET(request: Request) {
       phase = "project_authority";
       const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
       phase = "project_trials";
-      const trialProjection = await runJiaowubaoTrialAutoSync({
-        snapshotRevision: snapshot.manifest.revision,
-        window: jiaowubaoTrialProjectionWindow(window),
-      });
+      const trialProjection = await projectTrialHorizon(snapshot.manifest.revision, window);
       return noStore({ outcome: "no_change", window, pageCount: snapshot.manifest.pageCount, rowCount: snapshot.manifest.recordCount, authorityProjection, trialProjection });
     }
     if (begin.state !== "staging") throw new Error("begin_receipt_invalid");
@@ -246,10 +256,7 @@ export async function GET(request: Request) {
     phase = "project_authority";
     const authorityProjection = await projectAuthority(snapshot.manifest.revision, snapshot.manifest.recordCount);
     phase = "project_trials";
-    const trialProjection = await runJiaowubaoTrialAutoSync({
-      snapshotRevision: snapshot.manifest.revision,
-      window: jiaowubaoTrialProjectionWindow(window),
-    });
+    const trialProjection = await projectTrialHorizon(snapshot.manifest.revision, window);
     return noStore({
       outcome: completed.replayed ? "no_change" : "applied",
       window,

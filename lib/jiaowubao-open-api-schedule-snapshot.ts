@@ -16,6 +16,7 @@ export const JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE = 100;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES = 60;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS = 6_000;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_WINDOW_DAYS = 31;
+export const JIAOWUBAO_SCHEDULE_HORIZON_DAYS = 93;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_STUDENTS_PER_RECORD = 1_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -230,6 +231,15 @@ export async function collectJiaowubaoScheduleSnapshot(
     if (page === JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("教务宝导出超过最大页数，已停止导出。");
   }
 
+  return assembleScheduleSnapshot(window, pages, pageManifests, recordCount);
+}
+
+function assembleScheduleSnapshot(
+  window: Readonly<{ start: string; end: string }>,
+  pages: readonly JiaowubaoScheduleSnapshotPage[],
+  pageManifests: readonly { page: number; recordCount: number; sha256: string; file: string }[],
+  recordCount: number,
+): JiaowubaoScheduleSnapshot {
   const recordsSha256 = sha256Tag(canonicalJson(pageManifests.map(({ page, recordCount: count, sha256 }) => ({
     page,
     recordCount: count,
@@ -250,6 +260,52 @@ export async function collectJiaowubaoScheduleSnapshot(
     manifest: Object.freeze({ ...manifestPayload, manifestSha256, revision: manifestSha256 }),
     pages: Object.freeze(pages),
   });
+}
+
+/** Supplier requests stay within 31 days; the published snapshot covers the full horizon. */
+export function jiaowubaoScheduleCollectionWindows(window: Readonly<{ start: string; end: string }>) {
+  const start = parseDate(window.start, "start").valueOf();
+  const end = parseDate(window.end, "end").valueOf();
+  const day = 86_400_000;
+  if (end < start || end - start >= JIAOWUBAO_SCHEDULE_HORIZON_DAYS * day) fail("排课采集范围无效。");
+  const windows: { start: string; end: string }[] = [];
+  for (let cursor = start; cursor <= end; cursor += JIAOWUBAO_SCHEDULE_SNAPSHOT_WINDOW_DAYS * day) {
+    windows.push({ start: new Date(cursor).toISOString().slice(0, 10),
+      end: new Date(Math.min(end, cursor + (JIAOWUBAO_SCHEDULE_SNAPSHOT_WINDOW_DAYS - 1) * day)).toISOString().slice(0, 10) });
+  }
+  return windows;
+}
+
+export async function collectJiaowubaoScheduleHorizon(
+  window: Readonly<{ start: string; end: string }>,
+  fetchPage: PageFetcher = queryJiaowubaoScheduleList,
+): Promise<JiaowubaoScheduleSnapshot> {
+  const records: JiaowubaoScheduleSnapshotRecord[] = [];
+  const seen = new Set<string>();
+  let calls = 0;
+  for (const part of jiaowubaoScheduleCollectionWindows(window)) {
+    const snapshot = await collectJiaowubaoScheduleSnapshot(part, async (query) => {
+      // One shared budget, including empty terminal pages, preserves the cron's
+      // runtime and supplier quota bounds across all three source windows.
+      if (++calls > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("排课采集超过本轮请求上限，保留上次完整快照。");
+      return fetchPage(query);
+    });
+    for (const item of snapshot.pages.flatMap((page) => page.records)) {
+      const key = String(item.cal_id);
+      if (seen.has(key)) fail("教务宝跨日期窗口返回重复排课，已停止发布。");
+      seen.add(key);
+      records.push(item);
+    }
+  }
+  // Repack short boundary pages before staging: the database receives exactly
+  // the declared number of 100-row chunks, never a partially covered horizon.
+  const pages: JiaowubaoScheduleSnapshotPage[] = [];
+  for (let start = 0; start < records.length; start += JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE) {
+    const items = records.slice(start, start + JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE);
+    const page = pages.length + 1;
+    pages.push(Object.freeze({ page, records: Object.freeze(items), sha256: sha256Tag(canonicalJson(items)), file: `page-${String(page).padStart(4, "0")}.json` }));
+  }
+  return assembleScheduleSnapshot(window, pages, pages.map((page) => ({ page: page.page, recordCount: page.records.length, sha256: page.sha256, file: page.file })), records.length);
 }
 
 export function jiaowubaoScheduleSnapshotRows(snapshot: JiaowubaoScheduleSnapshot): readonly JiaowubaoScheduleSnapshotRow[] {
