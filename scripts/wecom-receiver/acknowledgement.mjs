@@ -29,6 +29,84 @@ export function providerErrorCode(error){
   return cleaned || 'reply_failed';
 }
 
+function providerAckRejected(error){
+  const cause=objectField(error,'cause');
+  return [objectField(error,'errcode'),objectField(cause,'errcode')].some(defined);
+}
+
+function providerErrorMessage(error){
+  const value=objectField(error,'message');
+  return typeof value==='string' ? value : '';
+}
+
+/** Missing acknowledgements occur after the SDK has sent bytes. Redelivery is
+ * safe only when the provider explicitly rejected the frame or the pinned SDK
+ * proves it never reached the socket. */
+export function providerDeliveryDisposition(error){
+  if(providerAckRejected(error)) return 'rejected';
+  const message=providerErrorMessage(error);
+  if(message==='WebSocket not connected, unable to send data'
+    || /^Reply queue for reqId .+ exceeds max size \([0-9]+\)$/u.test(message)) return 'definitely_unsent';
+  return 'uncertain';
+}
+
+function recordUncertainInitial(pending,status,mode,now){
+  pending.initialReplyMode=mode;
+  pending.initialSentAt=now();
+  pending.initialReplyError='reply_delivery_uncertain';
+  increment(status,'initial_reply_uncertain_this_run');
+  status.last_initial_reply_error='reply_delivery_uncertain';
+  status.last_initial_reply_error_at=new Date(pending.initialSentAt).toISOString();
+  return 'uncertain';
+}
+
+function recordInitialSuccess(pending,status,mode,now){
+  pending.initialReplyMode=mode;
+  pending.initialSentAt=now();
+  increment(status,'initial_replies_this_run');
+  increment(status,mode==='stream' ? 'initial_stream_replies_this_run' : 'initial_reply_fallbacks_this_run');
+  status.last_initial_reply_at=new Date(pending.initialSentAt).toISOString();
+  return mode;
+}
+
+function recordInitialFailure(pending,status,now){
+  increment(status,'initial_reply_failures_this_run');
+  status.last_initial_reply_error=pending.initialReplyError;
+  status.last_initial_reply_error_at=new Date(now()).toISOString();
+  return 'failed';
+}
+
+async function attemptInitialStream(client,pending,status,now){
+  try {
+    await client.replyStream(pending.frame,pending.streamId,INITIAL_REPLY,false);
+    return recordInitialSuccess(pending,status,'stream',now);
+  } catch(error) {
+    increment(status,'initial_stream_failures_this_run');
+    status.last_initial_stream_error=providerErrorCode(error);
+    status.last_initial_stream_error_at=new Date(now()).toISOString();
+    return providerDeliveryDisposition(error)==='uncertain'
+      ? recordUncertainInitial(pending,status,'stream_uncertain',now)
+      : 'fallback';
+  }
+}
+
+async function attemptInitialActive(client,pending,status,now){
+  if(!pending.target){
+    pending.initialReplyError='missing_reply_target';
+    return recordInitialFailure(pending,status,now);
+  }
+  try {
+    await client.sendMessage(pending.target,ACTIVE_INITIAL_REPLY);
+    return recordInitialSuccess(pending,status,'active',now);
+  } catch(error) {
+    if(providerDeliveryDisposition(error)==='uncertain'){
+      return recordUncertainInitial(pending,status,'active_uncertain',now);
+    }
+    pending.initialReplyError=providerErrorCode(error);
+    return recordInitialFailure(pending,status,now);
+  }
+}
+
 /**
  * A callback reply is preferred because its final acknowledgement can replace
  * the placeholder. Some WeCom tenants reject that path even while controlled
@@ -38,38 +116,10 @@ export function providerErrorCode(error){
 export async function sendInitialAcknowledgement({client,pending,status,now=Date.now}){
   pending.initialReplyState='pending';
   try {
-    try {
-      await client.replyStream(pending.frame,pending.streamId,INITIAL_REPLY,false);
-      pending.initialReplyMode='stream';
-      pending.initialSentAt=now();
-      increment(status,'initial_replies_this_run');
-      increment(status,'initial_stream_replies_this_run');
-      status.last_initial_reply_at=new Date(pending.initialSentAt).toISOString();
-      return 'stream';
-    } catch(error) {
-      increment(status,'initial_stream_failures_this_run');
-      status.last_initial_stream_error=providerErrorCode(error);
-      status.last_initial_stream_error_at=new Date(now()).toISOString();
-    }
-
-    if(pending.target){
-      try {
-        await client.sendMessage(pending.target,ACTIVE_INITIAL_REPLY);
-        pending.initialReplyMode='active';
-        pending.initialSentAt=now();
-        increment(status,'initial_replies_this_run');
-        increment(status,'initial_reply_fallbacks_this_run');
-        status.last_initial_reply_at=new Date(pending.initialSentAt).toISOString();
-        return 'active';
-      } catch(error) {
-        pending.initialReplyError=providerErrorCode(error);
-      }
-    } else pending.initialReplyError='missing_reply_target';
-
-    increment(status,'initial_reply_failures_this_run');
-    status.last_initial_reply_error=pending.initialReplyError;
-    status.last_initial_reply_error_at=new Date(now()).toISOString();
-    return 'failed';
+    const streamOutcome=await attemptInitialStream(client,pending,status,now);
+    return streamOutcome==='fallback'
+      ? attemptInitialActive(client,pending,status,now)
+      : streamOutcome;
   } finally {
     pending.initialReplyState='settled';
   }
@@ -103,6 +153,13 @@ const FINAL_ACKNOWLEDGEMENT_DELIVERY=Object.freeze({
 });
 
 /** The committed receipt must never overtake an unresolved initial receipt. */
-export function sendFinalAcknowledgement({client,pending,target,now=Date.now}){
-  return FINAL_ACKNOWLEDGEMENT_DELIVERY[finalAcknowledgementPlan(pending,target,now())]({client,pending,target});
+export async function sendFinalAcknowledgement({client,pending,target,now=Date.now}){
+  try {
+    return await FINAL_ACKNOWLEDGEMENT_DELIVERY[finalAcknowledgementPlan(pending,target,now())]({
+      client,pending,target,
+    });
+  } catch(error) {
+    if(providerDeliveryDisposition(error)==='uncertain') return 'uncertain';
+    throw error;
+  }
 }

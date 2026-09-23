@@ -10,7 +10,7 @@ const messagesDirectory=path.join(data,'messages');
 const acknowledgementsDirectory=path.join(data,'acknowledgements');
 fs.mkdirSync(messagesDirectory,{recursive:true,mode:0o700});
 fs.mkdirSync(acknowledgementsDirectory,{recursive:true,mode:0o700});
-const status={state:'starting',started_at:new Date().toISOString(),received_this_run:0,initial_replies_this_run:0,initial_stream_replies_this_run:0,initial_stream_failures_this_run:0,initial_reply_fallbacks_this_run:0,initial_reply_failures_this_run:0,acknowledgements_this_run:0,acknowledgement_failures_this_run:0};
+const status={state:'starting',started_at:new Date().toISOString(),received_this_run:0,initial_replies_this_run:0,initial_stream_replies_this_run:0,initial_stream_failures_this_run:0,initial_reply_fallbacks_this_run:0,initial_reply_failures_this_run:0,initial_reply_uncertain_this_run:0,acknowledgements_this_run:0,acknowledgement_failures_this_run:0,acknowledgement_uncertain_this_run:0};
 function update(state){status.state=state;status.updated_at=new Date().toISOString();atomicJson(path.join(data,'status.json'),status);}
 const ACK_FILE_TTL_MS=15*60*1000;
 const pendingReplies=new Map();
@@ -69,6 +69,14 @@ async function flushAcknowledgements(){
         const outcome=await sendFinalAcknowledgement({client,pending,target});
         if(outcome==='deferred') continue;
         if(outcome==='missing_target') { if(age>ACK_FILE_TTL_MS) removeAcknowledgement(file,id); continue; }
+        if(outcome==='uncertain'){
+          removeAcknowledgement(file,id);
+          status.acknowledgement_uncertain_this_run+=1;
+          status.last_acknowledgement_error='reply_delivery_uncertain';
+          status.last_acknowledgement_error_at=new Date().toISOString();
+          update('authenticated');
+          continue;
+        }
         removeAcknowledgement(file,id);
         status.acknowledgements_this_run+=1;
         status.last_acknowledgement_at=new Date().toISOString();

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {readBot,saveMessage,disableSending,restrictSending,botMessageId,acknowledgementFilePath,replyTarget} from './core.mjs';
-import {ACTIVE_FINAL_REPLY,ACTIVE_INITIAL_REPLY,sendFinalAcknowledgement,sendInitialAcknowledgement} from './acknowledgement.mjs';
+import {ACTIVE_FINAL_REPLY,ACTIVE_INITIAL_REPLY,providerDeliveryDisposition,sendFinalAcknowledgement,sendInitialAcknowledgement} from './acknowledgement.mjs';
 import {providerErrorCode} from './acknowledgement.mjs';
 test('encrypted CLI credentials are read without changing their files',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wecom-test-'));
@@ -77,11 +77,38 @@ test('initial acknowledgement falls back to the originating target and records o
  assert.deepEqual(calls,[['chat-1',ACTIVE_INITIAL_REPLY]]);assert.doesNotMatch(JSON.stringify(status),/private provider detail/);
 });
 
-test('initial acknowledgement reports one terminal failure only when both delivery paths fail',async()=>{
+test('initial acknowledgement reports one terminal failure only when both delivery paths are definitely rejected or unsent',async()=>{
  const status={};const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1'};
- const client={replyStream:async()=>{throw {errcode:93000};},sendMessage:async()=>{throw {code:'ECONNRESET'};}};
+ const client={replyStream:async()=>{throw {errcode:93000};},sendMessage:async()=>{throw new Error('WebSocket not connected, unable to send data');}};
  const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>Date.parse('2026-09-22T00:00:00.000Z')});
- assert.equal(outcome,'failed');assert.equal(status.initial_reply_failures_this_run,1);assert.equal(status.last_initial_reply_error,'ECONNRESET');
+ assert.equal(outcome,'failed');assert.equal(status.initial_reply_failures_this_run,1);assert.equal(status.last_initial_reply_error,'reply_failed');
+});
+
+test('an unacknowledged stream is terminally uncertain and never triggers a duplicate fallback',async()=>{
+ const calls=[];const status={};
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1',receivedAt:1000};
+ const client={
+  replyStream:async(...args)=>{calls.push(['stream',...args]);throw new Error('Reply ack timeout (5000ms) for reqId: callback');},
+  sendMessage:async(...args)=>{calls.push(['active',...args]);},
+ };
+ const outcome=await sendInitialAcknowledgement({client,pending,status,now:()=>2000});
+ assert.equal(outcome,'uncertain');assert.equal(pending.initialReplyState,'settled');
+ assert.equal(pending.initialReplyMode,'stream_uncertain');
+ assert.equal(status.initial_reply_uncertain_this_run,1);
+ assert.equal(status.last_initial_reply_error,'reply_delivery_uncertain');
+ assert.deepEqual(calls.map(call=>call[0]),['stream']);
+});
+
+test('an unknown active-send error is uncertain and is never retried in the initial path',async()=>{
+ const status={};let activeCalls=0;
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1'};
+ const client={
+  replyStream:async()=>{throw {errcode:93000};},
+  sendMessage:async()=>{activeCalls+=1;throw {code:'ECONNRESET'};},
+ };
+ assert.equal(await sendInitialAcknowledgement({client,pending,status,now:()=>2000}),'uncertain');
+ assert.equal(activeCalls,1);assert.equal(status.initial_reply_failures_this_run,undefined);
+ assert.equal(status.initial_reply_uncertain_this_run,1);
 });
 
 test('provider error codes use bounded categories from direct and nested errors',()=>{
@@ -91,6 +118,15 @@ test('provider error codes use bounded categories from direct and nested errors'
  assert.equal(providerErrorCode({cause:{code:'nested_fallback',message:'private'}}),'nested_fallback');
  assert.equal(providerErrorCode({errcode:'!'.repeat(100),errmsg:'private'}),'reply_failed');
  assert.equal(providerErrorCode(null),'reply_failed');
+});
+
+test('delivery disposition retries only explicit rejections and proven pre-send failures',()=>{
+ assert.equal(providerDeliveryDisposition({errcode:93000}),'rejected');
+ assert.equal(providerDeliveryDisposition({cause:{errcode:93000}}),'rejected');
+ assert.equal(providerDeliveryDisposition(new Error('WebSocket not connected, unable to send data')),'definitely_unsent');
+ assert.equal(providerDeliveryDisposition(new Error('Reply queue for reqId callback exceeds max size (500)')),'definitely_unsent');
+ assert.equal(providerDeliveryDisposition(new Error('Reply ack timeout (5000ms) for reqId: callback')),'uncertain');
+ assert.equal(providerDeliveryDisposition({code:'ECONNRESET'}),'uncertain');
 });
 
 test('final acknowledgement waits until a stalled initial reply settles',async()=>{
@@ -131,4 +167,24 @@ test('final acknowledgement finishes a live stream and defers missing targets',a
  assert.equal(await sendFinalAcknowledgement({client,pending,target:pending.target,now:()=>2000}),'sent');
  assert.equal(await sendFinalAcknowledgement({client,pending:undefined,target:'',now:()=>2000}),'missing_target');
  assert.deepEqual(calls,[['stream',pending.frame,'stream-1','已收录到系统审核队列。',true]]);
+});
+
+test('an unacknowledged final delivery is terminally uncertain so the queue must not retry',async()=>{
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1',receivedAt:1000,initialReplyState:'settled',initialReplyMode:'stream'};
+ assert.equal(await sendFinalAcknowledgement({
+  client:{replyStream:async()=>{throw new Error('Reply ack timeout (5000ms) for reqId: callback');}},
+  pending,
+  target:pending.target,
+  now:()=>2000,
+ }),'uncertain');
+});
+
+test('an explicitly rejected final acknowledgement remains retryable',async()=>{
+ const pending={frame:{headers:{req_id:'callback'}},streamId:'stream-1',target:'chat-1',receivedAt:1000,initialReplyState:'settled',initialReplyMode:'stream'};
+ await assert.rejects(sendFinalAcknowledgement({
+  client:{replyStream:async()=>{throw {errcode:93000};}},
+  pending,
+  target:pending.target,
+  now:()=>2000,
+ }),error=>providerErrorCode(error)==='93000');
 });
