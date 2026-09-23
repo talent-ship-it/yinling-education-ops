@@ -212,13 +212,13 @@ function parseManifest(bytes: Uint8Array): SafeManifest {
   const payloadSha256 = text(payload.sha256, "The aggregate manifest payload hash", 80);
   if (!REVISION.test(payloadSha256)) throw new Error("The aggregate manifest payload hash is invalid.");
   const bytesCount = payload.bytes;
-  if (!Number.isSafeInteger(bytesCount) || bytesCount < 1) throw new Error("The aggregate manifest payload byte count is invalid.");
+  if (typeof bytesCount !== "number" || !Number.isSafeInteger(bytesCount) || bytesCount < 1) throw new Error("The aggregate manifest payload byte count is invalid.");
   const policy = text(input.negativeAdjustmentPolicy, "The aggregate manifest policy", 32);
   if (policy !== "aggregate-only") throw new Error("The aggregate manifest policy is not aggregate-only.");
   const rawAggregates = object(input.aggregates, "The aggregate manifest aggregates");
   const aggregates: Record<string, number> = {};
   for (const [key, value] of Object.entries(rawAggregates)) {
-    if (!Number.isSafeInteger(value) || value < 0) continue;
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) continue;
     aggregates[key] = value;
   }
   if (input.schemaVersion !== 1) throw new Error("The aggregate manifest schema version is unsupported.");

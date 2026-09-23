@@ -235,3 +235,68 @@ test("syncs callback files once and treats non-text callbacks as pending other r
   assert.equal(imageRecord?.chatId, "bot:unknown-chat");
   assert.doesNotMatch(JSON.stringify(calls), /must-not-forward/);
 });
+
+test("sync reports only sanitized receiver health to the derived private endpoint", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-health-sync-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, "messages"));
+  await fs.writeFile(path.join(root, "status.json"), JSON.stringify({
+    state: "authenticated",
+    connected: true,
+    started_at: "2026-09-22T00:00:00.000Z",
+    updated_at: "2026-09-22T00:01:00.000Z",
+    received_this_run: 2,
+    initial_replies_this_run: 2,
+    initial_stream_failures_this_run: 2,
+    initial_reply_fallbacks_this_run: 2,
+    initial_reply_failures_this_run: 0,
+    acknowledgements_this_run: 2,
+    acknowledgement_failures_this_run: 0,
+    last_initial_stream_error: "93000",
+    private_provider_message: "must-not-forward",
+  }));
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const result = await syncReceiverMessages({
+    dataDirectory: root,
+    endpoint: "https://example.test/api/integrations/wecom/bot-inbox",
+    token: "secure-bridge-token",
+    startedAt: "2026-09-08T00:00:00.000Z",
+    fetchImpl: async (url: string, options: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(options.body)) });
+      return new Response('{"outcome":"committed"}');
+    },
+  });
+  assert.equal(result.healthReported, 1);
+  assert.equal(result.healthFailed, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, "https://example.test/api/integrations/wecom/receiver-health");
+  assert.equal((calls[0]?.body as { health: { initialReplyFallbacksThisRun: number } }).health.initialReplyFallbacksThisRun, 2);
+  assert.doesNotMatch(JSON.stringify(calls), /must-not-forward|private_provider_message/);
+});
+
+test("sync rejects malformed receiver status without publishing partial health", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "wecom-health-invalid-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, "messages"));
+  await fs.writeFile(path.join(root, "status.json"), JSON.stringify({
+    state: "authenticated",
+    started_at: "not-an-instant",
+    updated_at: "2026-09-22T00:01:00.000Z",
+    private_provider_message: "must-not-forward",
+  }));
+  let requests = 0;
+  t.mock.method(console, "error", () => {});
+  const result = await syncReceiverMessages({
+    dataDirectory: root,
+    endpoint: "https://example.test/api/integrations/wecom/bot-inbox",
+    token: "secure-bridge-token",
+    startedAt: "2026-09-08T00:00:00.000Z",
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response('{"outcome":"committed"}');
+    },
+  });
+  assert.equal(result.healthReported, 0);
+  assert.equal(result.healthFailed, 1);
+  assert.equal(requests, 0);
+});

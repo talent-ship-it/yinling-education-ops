@@ -1,22 +1,12 @@
-import { NextResponse } from "next/server";
-
-import {
-  hasWecomArchiveBridgeToken,
-  readBoundedWecomArchiveJson,
-  wecomArchiveBridgeConfiguration,
-} from "@/lib/wecom-archive-bridge";
 import { WecomArchiveParseError } from "@/lib/wecom-archive";
 import { WecomBotRecordError, normalizeWecomBotBatch } from "@/lib/wecom-bot-receiver";
 import { enrichWecomBotRecords } from "@/lib/wecom-bot-routing";
 import { ingestWecomBotBatch, OpsStoreError } from "@/lib/ops-store";
+import { readTrustedWecomJsonRequest, wecomNoStoreJson as noStore } from "@/lib/wecom-private-http";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-function noStore(payload: unknown, status = 200) {
-  return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
-}
 
 /**
  * Private receiver boundary. Text callbacks share the archive classifier so
@@ -25,16 +15,10 @@ function noStore(payload: unknown, status = 200) {
  * unclassified text remain pending evidence without changing business state.
  */
 export async function POST(request: Request) {
-  const configuration = wecomArchiveBridgeConfiguration();
-  if (!hasWecomArchiveBridgeToken(request.headers.get("authorization"), configuration)) {
-    return noStore({ error: "Not found" }, 404);
-  }
-  if (!/^application\/json(?:\s*;|\s*$)/iu.test(request.headers.get("content-type") ?? "")) {
-    return noStore({ error: "Unsupported media type" }, 415);
-  }
-
   try {
-    const payload = await readBoundedWecomArchiveJson(request);
+    const prepared = await readTrustedWecomJsonRequest(request);
+    if ("rejection" in prepared) return prepared.rejection;
+    const { configuration, payload } = prepared;
     const records = normalizeWecomBotBatch(payload);
     if (!configuration.startedAt) return noStore({ error: "Not found" }, 404);
     const enrichedRecords = enrichWecomBotRecords(records);

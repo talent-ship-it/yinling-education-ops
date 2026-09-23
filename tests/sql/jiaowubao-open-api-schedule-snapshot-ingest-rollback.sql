@@ -25,6 +25,22 @@ begin
 end;
 $$;
 
+create or replace function pg_temp.finish_schedule_projection_fixture()
+returns void language plpgsql set search_path = '' as $$
+begin
+  if pg_catalog.to_regclass('internal.jiaowubao_open_api_schedule_projection_jobs') is not null then
+    execute $update_projection$
+      update internal.jiaowubao_open_api_schedule_projection_jobs
+      set state = 'complete',
+        authority_completed_at = coalesce(authority_completed_at, pg_catalog.clock_timestamp()),
+        completed_at = coalesce(completed_at, pg_catalog.clock_timestamp()),
+        updated_at = pg_catalog.clock_timestamp()
+      where api_source_key = 'jwb-open-api-schedule'
+    $update_projection$;
+  end if;
+end;
+$$;
+
 do $$
 declare
   run_id uuid;
@@ -35,8 +51,9 @@ declare
   begin_result jsonb;
   stage_result jsonb;
   complete_result jsonb;
+  identity_result jsonb;
   envelope jsonb := jsonb_build_object(
-    'apiSourceKey', 'fixture:jwb-schedule',
+    'apiSourceKey', 'jwb-open-api-schedule',
     'revision', 'sha256:' || repeat('0', 64),
     'query', jsonb_build_object('start', '2026-08-21', 'end', '2026-08-21', 'limit', 100, 'order', 'asc'),
     'expectedPageCount', 1,
@@ -76,7 +93,7 @@ begin
   end;
   stage_result := public.stage_jiaowubao_open_api_schedule_snapshot_page(
     'jiaowubao-snapshot-fixture-secret', run_id, 0,
-    '[{"sourceKey":"jwb-open-api:schedule:cal-1","record":{"cal_id":"cal-1"}}]'::jsonb,
+    '[{"sourceKey":"jwb-open-api:schedule:cal-1","record":{"cal_id":"cal-1","dated":"2026-08-21"}}]'::jsonb,
     'Ops Admin'
   );
   if stage_result ->> 'replayed' <> 'false' then
@@ -84,7 +101,7 @@ begin
   end if;
   stage_result := public.stage_jiaowubao_open_api_schedule_snapshot_page(
     'jiaowubao-snapshot-fixture-secret', run_id, 0,
-    '[{"sourceKey":"jwb-open-api:schedule:cal-1","record":{"cal_id":"cal-1"}}]'::jsonb,
+    '[{"sourceKey":"jwb-open-api:schedule:cal-1","record":{"cal_id":"cal-1","dated":"2026-08-21"}}]'::jsonb,
     'Ops Admin'
   );
   if stage_result ->> 'replayed' <> 'true' then
@@ -104,6 +121,26 @@ begin
   if complete_result ->> 'replayed' <> 'true' then
     raise exception 'snapshot_completion_replay_not_idempotent';
   end if;
+  identity_result := public.get_jiaowubao_open_api_schedule_snapshot_identity_page(
+    'jiaowubao-snapshot-fixture-secret', 'jwb-open-api-schedule',
+    'sha256:' || repeat('0', 64), 500, null
+  );
+  if identity_result ->> 'state' <> 'complete'
+     or (identity_result ->> 'rowCount')::integer <> 1
+     or identity_result -> 'items' -> 0 ->> 'sourceKey' <> 'jwb-open-api:schedule:cal-1'
+     or identity_result -> 'items' -> 0 ->> 'sourceDate' <> '2026-08-21'
+     or (identity_result ->> 'hasMore')::boolean
+     or identity_result -> 'nextCursor' <> 'null'::jsonb then
+    raise exception 'snapshot_identity_page_invalid';
+  end if;
+  identity_result := public.get_jiaowubao_open_api_schedule_snapshot_identity_page(
+    'jiaowubao-snapshot-fixture-secret', 'jwb-open-api-schedule',
+    'sha256:' || repeat('9', 64), 500, null
+  );
+  if identity_result ->> 'state' <> 'reset' then
+    raise exception 'snapshot_identity_revision_reset_missing';
+  end if;
+  perform pg_temp.finish_schedule_projection_fixture();
 
   -- A run captures the pointer it observed at begin. Another explicit
   -- replacement may win, but the stale run must then refuse to publish.
@@ -134,6 +171,7 @@ begin
   perform public.complete_jiaowubao_open_api_schedule_snapshot_ingest(
     'jiaowubao-snapshot-fixture-secret', replacement_run_id, 'Ops Admin'
   );
+  perform pg_temp.finish_schedule_projection_fixture();
   begin
     perform public.complete_jiaowubao_open_api_schedule_snapshot_ingest(
       'jiaowubao-snapshot-fixture-secret', stale_run_id, 'Ops Admin'
@@ -142,7 +180,7 @@ begin
   exception when sqlstate '55000' then
     null;
   end;
-  if (select revision from internal.jiaowubao_open_api_schedule_snapshot_current where api_source_key = 'fixture:jwb-schedule') <> ('sha256:' || repeat('2', 64)) then
+  if (select revision from internal.jiaowubao_open_api_schedule_snapshot_current where api_source_key = 'jwb-open-api-schedule') <> ('sha256:' || repeat('2', 64)) then
     raise exception 'snapshot_current_pointer_changed_after_stale_completion';
   end if;
 

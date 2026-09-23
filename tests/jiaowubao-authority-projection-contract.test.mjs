@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [migration, timeoutMigration, guardMigration, cronRoute, store, appSnapshot, browserParser] = await Promise.all([
+const [migration, timeoutMigration, guardMigration, cronRoute, projectionRunner, store, appSnapshot, browserParser] = await Promise.all([
   readFile(new URL("../supabase/migrations/20260831000500_jiaowubao_authoritative_source_projection.sql", import.meta.url), "utf8"),
   readFile(new URL("../supabase/migrations/20260831000600_bound_jiaowubao_authority_projection_timeout.sql", import.meta.url), "utf8"),
   readFile(new URL("../supabase/migrations/20260831000700_fix_jiaowubao_authority_projection_guard.sql", import.meta.url), "utf8"),
   readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../lib/jiaowubao-schedule-projection-runner.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/ops-store.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/app-snapshot/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../lib/jiaowubao-authority-status.ts", import.meta.url), "utf8"),
@@ -71,15 +72,20 @@ test("projection is immutable, idempotent, multi-authority and never overwrites 
   assert.match(migration, /grant execute on function public\.project_jiaowubao_open_api_authority\(text,text,text\) to anon, authenticated/);
 });
 
-test("every successful 30-minute path projects authority before narrow trial automation", () => {
+test("the durable projection runner orders authority before narrow trial automation", () => {
   assert.match(store, /JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC/);
   assert.match(store, /projectJiaowubaoOpenApiAuthority/);
-  assert.equal((cronRoute.match(/phase = "project_authority"/g) ?? []).length, 3);
-  assert.equal((cronRoute.match(/await projectAuthority\(/g) ?? []).length, 3);
-  for (const match of cronRoute.matchAll(/phase = "project_authority"/g)) {
-    const trialOffset = cronRoute.indexOf('phase = "project_trials"', match.index);
-    assert.ok(trialOffset > match.index, "trial projection must follow authority projection");
-  }
+  const authorityOffset = projectionRunner.indexOf('setPhase("project_authority")');
+  const trialOffset = projectionRunner.indexOf('setPhase("project_trials")');
+  assert.ok(authorityOffset >= 0 && trialOffset > authorityOffset);
+  assert.match(projectionRunner, /state === "pending"/);
+  assert.match(projectionRunner, /nextState: "authority_done"/);
+  assert.match(projectionRunner, /state === "authority_done"/);
+  assert.match(projectionRunner, /nextState: "complete"/);
+  assert.match(projectionRunner, /expectedState: "complete"[\s\S]*nextState: "pending"/);
+  const recoveryOffset = cronRoute.indexOf('currentTarget.projectionState !== "complete"');
+  const collectionOffset = cronRoute.indexOf('phase = "collect_source"');
+  assert.ok(recoveryOffset >= 0 && collectionOffset > recoveryOffset);
   assert.match(cronRoute, /coverage\.matchedEntityRows \+ coverage\.sourceOnlyEntityRows !== coverage\.normalizedEntityRows/);
 });
 

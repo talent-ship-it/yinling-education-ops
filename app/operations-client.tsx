@@ -3,8 +3,7 @@
 import { dateTimeFormat } from "@/lib/date-time-format";
 import { dashboardLessonsForDay } from "@/lib/dashboard-schedule";
 import { buildAuditView } from "@/lib/audit-view";
-
-
+import { mergeConcurrentPayload } from "@/lib/concurrent-payload-merge";
 import { createSharedStatePoller } from "@/lib/shared-state-poller";
 
 import { isLessonDuration } from "../lib/lesson-duration";
@@ -66,6 +65,7 @@ import {
 
 import { cleanTimezone } from "@/lib/timezone";
 import { AccountLifecycleWorkspace } from "@/app/account-lifecycle-workspace";
+import { AuthStatusScreen } from "@/app/auth-status-screen";
 import { JiaowubaoAuthorityStatusPanel } from "@/app/jiaowubao-authority-status";
 import type { AccountDirectoryRecord } from "@/app/account-admin-lifecycle";
 import { bookingHasEffectiveTeacher } from "@/lib/booking-teacher-scope";
@@ -1293,34 +1293,6 @@ const initialAudit: AuditEntry[] = [];
 
 const lpStages: LpItem["stage"][] = [...LP_STAGES];
 
-function mergeConcurrentPayload<T>(committed: T, local: T, remote: T) {
-  if (!Array.isArray(committed) || !Array.isArray(local) || !Array.isArray(remote)) return { value: remote, conflicts: 0 };
-  const isItem = (value: unknown): value is { id: string } => Boolean(value) && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string";
-  if (![...committed, ...local, ...remote].every(isItem)) return { value: remote, conflicts: 0 };
-
-  const baseline = new Map(committed.map((item) => [item.id, item]));
-  const localItems = new Map(local.map((item) => [item.id, item]));
-  const remoteItems = new Map(remote.map((item) => [item.id, item]));
-  const orderedIds = [...new Set([...remote.map((item) => item.id), ...local.map((item) => item.id)])];
-  let conflicts = 0;
-  const value = orderedIds.flatMap((itemId) => {
-    const base = baseline.get(itemId);
-    const localItem = localItems.get(itemId);
-    const remoteItem = remoteItems.get(itemId);
-    if (!base) return [localItem ?? remoteItem].filter(Boolean);
-    if (!localItem) return remoteItem ? [remoteItem] : [];
-    if (!remoteItem) return [localItem];
-    const localChanged = JSON.stringify(localItem) !== JSON.stringify(base);
-    const remoteChanged = JSON.stringify(remoteItem) !== JSON.stringify(base);
-    if (localChanged && remoteChanged && JSON.stringify(localItem) !== JSON.stringify(remoteItem)) {
-      conflicts += 1;
-      return [remoteItem];
-    }
-    return [localChanged ? localItem : remoteItem];
-  });
-  return { value: value as T, conflicts };
-}
-
 type PendingExamFollowUp = Readonly<{
   action: "complete" | "undo";
   taskId: string;
@@ -2288,60 +2260,6 @@ function EmptyState({ title, detail, action }: { title: string; detail?: string;
   return <div className="collection-empty" role="status" aria-live="polite"><Search size={22} aria-hidden="true" /><strong>{title}</strong>{detail ? <span>{detail}</span> : null}{action ? <div className="collection-empty-action">{action}</div> : null}</div>;
 }
 
-function AuthStatusScreen({ title, detail }: { title: string; detail: string }) {
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
-        <h1>{title}</h1>
-        <p className="login-copy">{detail}</p>
-      </section>
-    </main>
-  );
-}
-
-function AuthLoginScreen({ onSubmit, loading, error, mfaRequired }: { onSubmit: (credentials: { username: string; password: string; mfaCode: string }) => void; loading: boolean; error: string; mfaRequired: boolean }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
-  const usernameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (window.matchMedia("(min-width: 761px) and (pointer: fine)").matches) usernameInputRef.current?.focus();
-  }, []);
-
-  return (
-    <main className="login-shell">
-      <section className="login-panel">
-        <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
-        <h1>吟领教务</h1>
-        <p className="login-copy">使用账号或姓名与密码进入对应工作视图。</p>
-        <form
-          className="login-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit({ username, password, mfaCode });
-          }}
-        >
-          <label htmlFor="username">账号 / 姓名</label>
-          <input ref={usernameInputRef} id="username" name="username" value={username} type="text" autoComplete="username" placeholder="例如 Nixon、Abby 教务或老师姓名" maxLength={160} onChange={(event) => setUsername(event.target.value)} />
-          <label htmlFor="password">登录密码</label>
-          <input id="password" name="password" value={password} type="password" autoComplete="current-password" maxLength={256} aria-invalid={Boolean(error)} aria-describedby={error ? "login-error" : undefined} onChange={(event) => setPassword(event.target.value)} required />
-          {mfaRequired ? <>
-            <label htmlFor="mfa-code">验证器验证码</label>
-            <input id="mfa-code" name="mfaCode" value={mfaCode} type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setMfaCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required />
-          </> : null}
-          <small className="login-hint">老师账号须先由管理员设置独立密码；无法登录时请联系管理员。</small>
-          {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
-          <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 function PasswordUsernameContext({ login }: { login: string }) {
   return <input
     aria-label="登录账号"
@@ -2680,83 +2598,25 @@ async function readJiaowubaoScheduleMappingPriorityReview(
   return review;
 }
 
-export default function OperationsApp() {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState("");
+export type OperationsInitialSession = Readonly<{
+  user: string;
+  role: DemoSessionRole | "";
+  mustChangePassword: boolean;
+}>;
+
+function workspaceSessionRole(role: DemoSessionRole | ""): DemoSessionRole {
+  return role === "" ? "staff" : role;
+}
+
+export default function OperationsApp({ initialSession }: { initialSession: OperationsInitialSession }) {
   const [initialData, setInitialData] = useState<ImportPayload | null>(null);
   const [nixonAuthenticated, setNixonAuthenticated] = useState(false);
-  const [sessionUser, setSessionUser] = useState("");
-  const [sessionRole, setSessionRole] = useState<DemoSessionRole | "">("");
-  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(false);
-  const [loginMfaRequired, setLoginMfaRequired] = useState(false);
+  const [sessionMustChangePassword, setSessionMustChangePassword] = useState(initialSession.mustChangePassword);
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
 
   useEffect(() => {
-    const pendingNotice = window.sessionStorage.getItem(LOGOUT_RETRY_NOTICE_KEY);
-    let cancelled = false;
-    let timer: number | undefined;
-    const noticeTimer = pendingNotice
-      ? window.setTimeout(() => {
-        if (!cancelled) setLoginError(pendingNotice);
-      }, 0)
-      : undefined;
-    const retry = async () => {
-      try {
-        const response = await fetch("/api/demo-logout", {
-          method: "POST",
-          headers: { "x-yinling-logout-retry": "1" },
-        });
-        const body = await response.json().catch(() => ({}));
-        if (response.ok && body.serverSessionRevoked === true) {
-          window.sessionStorage.removeItem(LOGOUT_RETRY_NOTICE_KEY);
-          if (!cancelled && pendingNotice) setLoginError("");
-          return;
-        }
-        if (!cancelled && typeof body.error === "string") setLoginError(body.error);
-      } catch {
-        // Keep the browser signed out while the path-scoped proof retries revocation.
-      }
-      if (!cancelled) timer = window.setTimeout(() => void retry(), 5_000);
-    };
-    // This request uses only the path-scoped retry cookie, so it is safe on
-    // every app load and never revokes a newly-created primary session.
-    void retry();
-    return () => {
-      cancelled = true;
-      if (noticeTimer !== undefined) window.clearTimeout(noticeTimer);
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    fetch("/api/demo-session", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((body) => {
-        if (!active) return;
-        setAuthenticated(Boolean(body.ok));
-        setSessionUser(typeof body.user === "string" ? body.user : "");
-        setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
-        setSessionMustChangePassword(body.mustChangePassword === true);
-      })
-      .catch(() => {
-        if (active) setAuthenticated(false);
-      })
-      .finally(() => {
-        if (active) setAuthLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!authenticated) return;
     if (sessionMustChangePassword) return;
 
     let active = true;
@@ -2779,30 +2639,7 @@ export default function OperationsApp() {
     return () => {
       active = false;
     };
-  }, [authenticated, sessionMustChangePassword]);
-
-  const submitPassword = async ({ username, password, mfaCode }: { username: string; password: string; mfaCode: string }) => {
-    setLoginLoading(true);
-    setLoginError("");
-    const response = await fetch("/api/demo-login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, ...(mfaCode ? { mfaCode } : {}) }),
-    });
-    const body = await response.json().catch(() => ({}));
-
-    setLoginLoading(false);
-    if (!response.ok) {
-      setLoginMfaRequired(body.mfaRequired === true);
-      setLoginError(body.error || "密码不正确。");
-      return;
-    }
-    setLoginMfaRequired(false);
-    setAuthenticated(true);
-    setSessionUser(typeof body.user === "string" ? body.user : "");
-    setSessionRole(typeof body.role === "string" ? body.role as DemoSessionRole : "");
-    setSessionMustChangePassword(body.mustChangePassword === true);
-  };
+  }, [sessionMustChangePassword]);
 
   const logoutFromPasswordChange = async () => {
     if (passwordLogoutBusy) return;
@@ -2830,13 +2667,11 @@ export default function OperationsApp() {
     }
   };
 
-  if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
-  if (!authenticated) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} mfaRequired={loginMfaRequired} />;
-  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={sessionUser} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
+  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={initialSession.user} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={sessionUser} initialRole={sessionRole || "staff"} />;
+  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
 }
 
 function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
@@ -3648,8 +3483,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, []);
 
   useEffect(() => {
-    const intervalId = window.setInterval(() => setTaskRefreshKey(new Date().getTime()), 60_000);
-    return () => window.clearInterval(intervalId);
+    let timer = 0;
+    const refresh = () => {
+      setTaskRefreshKey(Date.now());
+      timer = window.setTimeout(refresh, 60_000);
+    };
+    timer = window.setTimeout(refresh, 60_000);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -7967,17 +7807,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
   useEffect(() => {
     if (active !== "classroom" || !selectedClassroomBookingId || !selectedClassroomOccurrenceKey || !selectedClassroomSourceDate || !selectedClassroomMeetingId) return;
-    let stopped = false;
-    const poll = async () => {
+    let selected = true;
+    const poll = async (signal: AbortSignal) => {
       const occurrenceKey = selectedClassroomOccurrenceKey;
-      if (!selectedClassroomSourceDate) return;
       const series = scopedBookings.find((candidate) => candidate.id === selectedClassroomBookingId);
       const booking = series ? bookingOccurrenceByStableKey(series, occurrenceKey, selectedClassroomSourceDate) : undefined;
       if (!booking) return;
-      const response = await fetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, { cache: "no-store" }).catch(() => null);
-      if (!response || stopped) return;
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || stopped) return;
+      const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(selectedClassroomBookingId)}&occurrenceId=${encodeURIComponent(occurrenceKey)}&sourceDate=${encodeURIComponent(selectedClassroomSourceDate)}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (signal.aborted) return;
+      const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
+      if (!response.ok || signal.aborted) return;
       const recordings = Array.isArray(result.recordings) ? result.recordings : [];
       const runtime: ClassroomRuntime = { ...result.status, recordings };
       const currentClassroom = booking.classroom;
@@ -7989,17 +7831,22 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       // Polling is also a persistence path. Keep the exact command in the
       // shared pending envelope when the response is unknown, and do not
       // manufacture a local createdAt/status before the atomic receipt.
-      try {
-        await persistClassroom(booking, runtime.meetingId, nextStatus);
-      } catch {
-        // The next poll/recovery pass retries the actor-scoped command.
-        return;
-      }
-      setClassroomRuntime(runtime);
+      await persistClassroom(booking, runtime.meetingId, nextStatus);
+      if (!signal.aborted) setClassroomRuntime(runtime);
     };
-    void poll();
-    const interval = window.setInterval(poll, 15000);
-    return () => { stopped = true; window.clearInterval(interval); };
+    const poller = createSharedStatePoller({
+      canRun: () => selected,
+      errorDelayMs: 15_000,
+      onError: () => {
+        // A transient classroom read is retried without replacing the last runtime.
+      },
+      run: poll,
+    });
+    void poller.wake();
+    return () => {
+      selected = false;
+      poller.stop();
+    };
   }, [active, persistClassroom, scopedBookings, selectedClassroomBookingId, selectedClassroomOccurrenceKey, selectedClassroomMeetingId, selectedClassroomSourceDate]);
 
   const openDashboardLesson = (booking: BookingOccurrence) => {
@@ -8301,9 +8148,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [scheduleMinute, setScheduleMinute] = useState(() => Math.floor(Date.now() / 60_000));
   useEffect(() => {
     if (active !== "schedule" && active !== "classroom") return;
-    const tick = () => setScheduleMinute(Math.floor(Date.now() / 60_000));
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    const tick = () => {
+      const now = Date.now();
+      setScheduleMinute(Math.floor(now / 60_000));
+      timer = window.setTimeout(tick, 60_000 - now % 60_000 + 25);
+    };
+    timer = window.setTimeout(tick, 60_000 - Date.now() % 60_000 + 25);
+    return () => window.clearTimeout(timer);
   }, [active]);
   const scheduleProjection = useMemo(() => {
     if (active !== "schedule") return null;

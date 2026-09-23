@@ -40,6 +40,11 @@ export type JiaowubaoScheduleListResponse = Readonly<{
   [key: string]: unknown;
 }>;
 
+export type JiaowubaoScheduleRequestOptions = Readonly<{
+  deadlineAt?: number;
+  rateGate?: "local" | "database";
+}>;
+
 /**
  * The completed-lesson reader deliberately exposes no `over` parameter: the
  * integration is an evidence feed for completed lessons only, so every
@@ -427,86 +432,161 @@ function readRequiredTotal(data: JsonRecord, label: string) {
   return parsed;
 }
 
+const GATEWAY_SUCCESS_VALUES = new Set<unknown>(["1", 1]);
+const GATEWAY_AUTH_FAILURE_STATUSES = new Set([401, 403]);
+
+async function applyGatewayRateGate(
+  tool: JiaowubaoOpenApiTool,
+  options: JiaowubaoScheduleRequestOptions,
+) {
+  if (options.rateGate === "database") {
+    if (typeof options.deadlineAt !== "number" || !Number.isFinite(options.deadlineAt)) {
+      throw new JiaowubaoOpenApiError("invalid_request", "教务宝数据库限流请求缺少截止时间。");
+    }
+    if (options.deadlineAt <= Date.now()) {
+      throw new JiaowubaoOpenApiError("request_timeout", "教务宝请求超时。");
+    }
+  }
+  // The durable reservation coordinates Vercel instances. Keep the local
+  // queue as well so cron traffic cannot race an interactive request that is
+  // already in flight in this process.
+  await reserveRequestStart(tool);
+}
+
+function gatewayRequestTimeoutMs(deadlineAt: number | undefined, label: string) {
+  const remainingMs = deadlineAt === undefined
+    ? REQUEST_TIMEOUT_MS
+    : Math.floor(deadlineAt - Date.now());
+  const timeoutMs = Math.min(REQUEST_TIMEOUT_MS, remainingMs);
+  if (![Number.isFinite(remainingMs), timeoutMs > 0].every(Boolean)) {
+    throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
+  }
+  return timeoutMs;
+}
+
+type GatewayFetchInput = Readonly<{
+  secret: string;
+  tool: JiaowubaoOpenApiTool;
+  params: Record<string, unknown>;
+  label: string;
+}>;
+
+async function fetchGatewayResponse(input: GatewayFetchInput, controller: AbortController) {
+  try {
+    return await fetch(JIAOWUBAO_OPEN_API_GATEWAY, {
+      method: "POST",
+      // The request body contains the server-only sk. Never follow an
+      // upstream redirect, because it could send that body to another host.
+      redirect: "error",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        sk: input.secret,
+        tool: input.tool,
+        params: input.params,
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    if (controller.signal.aborted) {
+      throw new JiaowubaoOpenApiError("request_timeout", `教务宝${input.label}请求超时。`);
+    }
+    throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${input.label}服务暂时不可用。`);
+  }
+}
+
+async function assertGatewayHttpSuccess(response: Response, label: string) {
+  if (response.ok) return;
+  const retryAfter = response.status === 429 ? retryAfterSeconds(response) : undefined;
+  await discard(response);
+  if (response.status === 429) {
+    throw new JiaowubaoOpenApiError("rate_limited", `教务宝${label}读取正被限流，请稍后再试。`, retryAfter);
+  }
+  if (GATEWAY_AUTH_FAILURE_STATUSES.has(response.status)) {
+    throw new JiaowubaoOpenApiError("not_authorized", "教务宝开放 API 授权不可用。");
+  }
+  throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
+}
+
+async function parseGatewayEnvelope(response: Response, controller: AbortController, label: string) {
+  try {
+    return JSON.parse(await readTextWithinLimit(response)) as unknown;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
+    }
+    if (error instanceof JiaowubaoOpenApiError) throw error;
+    throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
+  }
+}
+
+function requiredGatewayRecord(value: unknown): JsonRecord {
+  if (!isRecord(value)) {
+    throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
+  }
+  return value;
+}
+
+async function readGatewayData(
+  response: Response,
+  controller: AbortController,
+  label: string,
+  tool: JiaowubaoOpenApiTool,
+) {
+  const envelope = requiredGatewayRecord(await parseGatewayEnvelope(response, controller, label));
+  if (!GATEWAY_SUCCESS_VALUES.has(envelope.ret)) {
+    throw new JiaowubaoOpenApiError(
+      "upstream_rejected",
+      `教务宝未接受${label}读取请求。`,
+      undefined,
+      tool,
+    );
+  }
+  return requiredGatewayRecord(envelope.data);
+}
+
+function gatewayListPage(
+  data: JsonRecord,
+  field: GatewayListField,
+  label: string,
+  requireTotal: boolean,
+): GatewayListPage {
+  return Object.freeze({
+    records: readList(data, field, label),
+    total: requireTotal ? readRequiredTotal(data, label) : null,
+  });
+}
+
 async function requestGatewayList(
   tool: JiaowubaoOpenApiTool,
   params: Record<string, unknown>,
   field: GatewayListField,
   label: string,
   requireTotal = false,
+  options: JiaowubaoScheduleRequestOptions = {},
 ): Promise<GatewayListPage> {
   const secret = apiSecret();
-  await reserveRequestStart(tool);
+  await applyGatewayRateGate(tool, options);
+  const requestTimeoutMs = gatewayRequestTimeoutMs(options.deadlineAt, label);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response: Response;
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
-    try {
-      response = await fetch(JIAOWUBAO_OPEN_API_GATEWAY, {
-        method: "POST",
-        // The request body contains the server-only sk. Never follow an
-        // upstream redirect, because it could send that body to another host.
-        redirect: "error",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        cache: "no-store",
-        body: JSON.stringify({
-          sk: secret,
-          tool,
-          params,
-        }),
-        signal: controller.signal,
-      });
-    } catch {
-      if (controller.signal.aborted) {
-        throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
-      }
-      throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
-    }
-
-    if (response.status === 429) {
-      const retryAfter = retryAfterSeconds(response);
-      await discard(response);
-      throw new JiaowubaoOpenApiError("rate_limited", `教务宝${label}读取正被限流，请稍后再试。`, retryAfter);
-    }
-    if (response.status === 401 || response.status === 403) {
-      await discard(response);
-      throw new JiaowubaoOpenApiError("not_authorized", "教务宝开放 API 授权不可用。");
-    }
-    if (!response.ok) {
-      await discard(response);
-      throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
-    }
-
-    let envelope: unknown;
-    try {
-      envelope = JSON.parse(await readTextWithinLimit(response));
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new JiaowubaoOpenApiError("request_timeout", `教务宝${label}请求超时。`);
-      }
-      if (error instanceof JiaowubaoOpenApiError) throw error;
-      throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
-    }
-    if (!isRecord(envelope)) {
-      throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
-    }
-    if (envelope.ret !== "1" && envelope.ret !== 1) {
-      throw new JiaowubaoOpenApiError(
-        "upstream_rejected",
-        `教务宝未接受${label}读取请求。`,
-        undefined,
-        tool,
-      );
-    }
-    if (!isRecord(envelope.data)) {
-      throw new JiaowubaoOpenApiError("invalid_response", "教务宝返回无法识别的内容。");
-    }
-    return Object.freeze({
-      records: readList(envelope.data, field, label),
-      total: requireTotal ? readRequiredTotal(envelope.data, label) : null,
-    });
+    const response = await fetchGatewayResponse({
+      secret,
+      tool,
+      params,
+      label,
+    }, controller);
+    await assertGatewayHttpSuccess(response, label);
+    return gatewayListPage(
+      await readGatewayData(response, controller, label, tool),
+      field,
+      label,
+      requireTotal,
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -517,12 +597,15 @@ async function requestGatewayList(
  * bookings, students, packages, tasks, or AVA; a separate reviewed import
  * pipeline is required before live data can affect operations.
  */
-export async function queryJiaowubaoScheduleList(input: JiaowubaoScheduleListQuery) {
+export async function queryJiaowubaoScheduleList(
+  input: JiaowubaoScheduleListQuery,
+  options: JiaowubaoScheduleRequestOptions = {},
+) {
   const params = normalizeScheduleQuery(input);
-  const key = `query_schedule_list:${JSON.stringify(params)}`;
+  const key = `query_schedule_list:${options.rateGate ?? "local"}:${JSON.stringify(params)}`;
   const existing = inFlightListRequests.get(key);
   if (existing) return Object.freeze({ lists: (await existing).records });
-  const request = requestGatewayList("query_schedule_list", params, "lists", "排课");
+  const request = requestGatewayList("query_schedule_list", params, "lists", "排课", false, options);
   inFlightListRequests.set(key, request);
   try {
     return Object.freeze({ lists: (await request).records });

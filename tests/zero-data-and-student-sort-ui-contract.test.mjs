@@ -15,7 +15,7 @@ function between(source, startMarker, endMarker) {
 test("an authoritative empty snapshot never falls back to sample students or teachers", async () => {
   const client = await readFile(clientUrl, "utf8");
   const defaults = between(client, "function buildRuntimeDefaults", "const initialTasks");
-  const loader = between(client, "  useEffect(() => {\n    if (!authenticated) return;", "  const submitPassword");
+  const loader = between(client, "  useEffect(() => {\n    if (sessionMustChangePassword) return;", "  const logoutFromPasswordChange");
 
   assert.match(defaults, /const hasImportedPayload = importPayload !== undefined/);
   assert.doesNotMatch(defaults, /hasRealData|Boolean\(realStudents\.length \|\| realTeachers\.length\)/);

@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  resolveOpsRpcTiming,
+  type OpsRpcBudgetOptions,
+} from "@/lib/ops-rpc-budget";
+
 import type {
   ImportedStudentRecord,
   JwbStudentImportRow,
@@ -152,6 +157,7 @@ export type WecomArchiveStatus = Readonly<{
   trialIdentityAmbiguous: number;
   latestSentAt: string | null;
   latestIngestedAt: string | null;
+  receiver: (import("./wecom-receiver-health").WecomReceiverHealth & Readonly<{ recordedAt: string }>) | null;
 }>;
 
 export type WecomArchiveMedia = Readonly<{
@@ -938,16 +944,18 @@ export const JIAOWUBAO_TRIAL_PAYMENT_COMPLETE_RPC = "complete_jiaowubao_trial_pa
 export const TRIAL_PAYMENT_COMPLETION_COMMAND_RESULT_RPC = "get_trial_payment_completion_command_result";
 export const TRIAL_PAYMENT_LIFECYCLE_RPC = "mutate_trial_payment_task_lifecycle_tx";
 export const TRIAL_PAYMENT_LIFECYCLE_COMMAND_RESULT_RPC = "get_trial_payment_lifecycle_command_result";
-export const JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC = "get_jiaowubao_open_api_schedule_snapshot_preflight";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_CONFIRM_RPC = "confirm_jiaowubao_open_api_schedule_snapshot_current";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC = "begin_jiaowubao_open_api_schedule_snapshot_ingest";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC = "stage_jiaowubao_open_api_schedule_snapshot_page";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC = "complete_jiaowubao_open_api_schedule_snapshot_ingest";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_STATUS_RPC = "get_jiaowubao_open_api_schedule_snapshot_ingest_status";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_ABORT_RPC = "abort_jiaowubao_open_api_schedule_snapshot_ingest";
-export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease";
-export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease_v2";
+export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease_v2";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
+const JIAOWUBAO_OPEN_API_SCHEDULE_IDENTITY_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_identity_page";
+const JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_TARGET_RPC = "get_jiaowubao_open_api_schedule_projection_target";
+const JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_ADVANCE_RPC = "advance_jiaowubao_open_api_schedule_projection";
 export const JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC = "project_jiaowubao_open_api_authority";
 export const JIAOWUBAO_COMPLETED_LESSON_PREFLIGHT_RPC = "get_jiaowubao_completed_lesson_snapshot_preflight";
 export const JIAOWUBAO_COMPLETED_LESSON_BEGIN_RPC = "begin_jiaowubao_completed_lesson_snapshot_ingest";
@@ -978,6 +986,7 @@ export const WECOM_ARCHIVE_LINK_RPC = "link_wecom_archive_message";
 export const WECOM_ARCHIVE_MEDIA_RPC = "get_wecom_archive_media";
 export const WECOM_ARCHIVE_STATUS_RPC = "get_wecom_archive_status";
 export const WECOM_BOT_INGEST_RPC = "ingest_wecom_bot_batch";
+const WECOM_RECEIVER_HEALTH_RECORD_RPC = "record_wecom_receiver_health";
 
 export class OpsStoreError extends Error {
   constructor(
@@ -993,9 +1002,7 @@ export class OpsStoreError extends Error {
 export const OPS_RPC_TIMEOUT_MS = 15_000;
 
 /** Optional per-call bound used by routes with a shorter end-to-end budget. */
-export type OpsRpcOptions = Readonly<{
-  timeoutMs?: number;
-}>;
+export type OpsRpcOptions = OpsRpcBudgetOptions;
 
 export type DirectEnrollmentCommitResult = Readonly<{
   command_key: string;
@@ -1118,23 +1125,57 @@ export type TrialPaymentLifecycleCommandResult = Readonly<{
   audit_entry_id: string;
 }>;
 
-export type JiaowubaoOpenApiScheduleSnapshotReceipt = Readonly<{
+type JiaowubaoOpenApiScheduleSnapshotBeginReceipt = Readonly<{
   runId: string;
-  state: "staging" | "complete" | "aborted";
-  revision?: string;
-  pageIndex?: number;
-  rowCount?: number;
-  scheduleRowCount?: number;
-  pageCount?: number;
-  rowsSha256?: string;
-  payloadSha256?: string;
-  replayed?: boolean;
+  state: "staging" | "complete";
+  revision: string;
+  expectedPageCount: number;
+  expectedRowCount: number;
+  replayed: boolean;
 }>;
 
-export type JiaowubaoOpenApiScheduleSnapshotPreflight = Readonly<{
-  apiSourceKey: string;
-  current: Readonly<{ revision: string }> | null;
+type JiaowubaoOpenApiScheduleSnapshotPageReceipt = Readonly<{
+  runId: string;
+  pageIndex: number;
+  pageSha256: string;
+  rowCount: number;
+  replayed: boolean;
 }>;
+
+type JiaowubaoOpenApiScheduleSnapshotCompleteReceipt = Readonly<{
+  runId: string;
+  state: "complete";
+  revision: string;
+  rowCount: number;
+  pageCount?: number;
+  rowsSha256: string;
+  payloadSha256: string;
+  replayed: boolean;
+}>;
+
+export type JiaowubaoOpenApiScheduleSnapshotIdentityPage = Readonly<{
+  state: "absent" | "complete" | "reset";
+  revision: string | null;
+  rowCount: number;
+  items: readonly Readonly<{ sourceKey: string; sourceDate: string | null }>[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}>;
+
+export type JiaowubaoOpenApiScheduleProjectionTarget =
+  | Readonly<{ state: "absent" }>
+  | Readonly<{
+    state: "ready";
+    revision: string;
+    rowCount: number;
+    projectionState: "pending" | "authority_done" | "complete";
+    window: Readonly<{ start: string; end: string }>;
+    publishedAt: string;
+  }>;
+
+type JiaowubaoOpenApiScheduleProjectionTransition =
+  | Readonly<{ state: "absent"; replayed: false }>
+  | Readonly<{ state: "reset" | "authority_done" | "complete"; revision: string; replayed: boolean }>;
 
 export type JiaowubaoOpenApiAuthorityProjectionReceipt = Readonly<{
   schemaVersion: 1;
@@ -1284,41 +1325,70 @@ function configuration() {
   return { url: url.replace(/\/$/, ""), publishableKey, secret };
 }
 
+async function parseRpcPayload(response: Response, controller: AbortController) {
+  try {
+    return await response.json() as unknown;
+  } catch (error) {
+    if (controller.signal.aborted) throw error;
+    throw new OpsStoreError("Supabase 返回了无效响应。", "invalid_response");
+  }
+}
+
+async function requestRpc(
+  url: string,
+  publishableKey: string,
+  name: string,
+  body: Record<string, unknown>,
+  controller: AbortController,
+) {
+  const response = await fetch(`${url}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: {
+      apikey: publishableKey,
+      Authorization: `Bearer ${publishableKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal: controller.signal,
+  });
+  return Object.freeze({
+    response,
+    payload: await parseRpcPayload(response, controller),
+  });
+}
+
+function unwrapRpcResponse<T>(response: Response, payload: unknown) {
+  if (!response.ok) {
+    const error = payload as { message?: string; code?: string; details?: string } | null;
+    throw new OpsStoreError(error?.message || "Supabase 请求失败。", error?.code, error?.details);
+  }
+  return payload as T;
+}
+
 async function rpc<T>(name: string, body: Record<string, unknown>, options: OpsRpcOptions = {}) {
   const { url, publishableKey } = configuration();
   const controller = new AbortController();
-  const timeoutMs = options.timeoutMs ?? OPS_RPC_TIMEOUT_MS;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
-  let payload: unknown;
+  const timing = resolveOpsRpcTiming(options, OPS_RPC_TIMEOUT_MS);
+  if (timing === null) {
+    throw new OpsStoreError("本轮数据库请求预算已用尽；系统会安全重试。", "deadline");
+  }
+  const timeout = setTimeout(() => controller.abort(), timing.timeoutMs);
+  let result: Awaited<ReturnType<typeof requestRpc>>;
   try {
-    response = await fetch(`${url}/rest/v1/rpc/${name}`, {
-      method: "POST",
-      headers: {
-        apikey: publishableKey,
-        Authorization: `Bearer ${publishableKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    payload = await response.json().catch(() => null);
+    result = await requestRpc(url, publishableKey, name, body, controller);
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new OpsStoreError("数据库请求超时，请稍后用同一命令重试。", "timeout");
+      throw new OpsStoreError(
+        "数据库请求超时，请稍后用同一命令重试。",
+        timing.timeoutCode,
+      );
     }
     throw error;
   } finally {
     clearTimeout(timeout);
   }
-
-  if (!response.ok) {
-    const error = payload as { message?: string; code?: string; details?: string } | null;
-    throw new OpsStoreError(error?.message || "Supabase 请求失败。", error?.code, error?.details);
-  }
-
-  return payload as T;
+  return unwrapRpcResponse<T>(result.response, result.payload);
 }
 
 export function getOpsState(entities?: string[], options: OpsRpcOptions = {}) {
@@ -1877,52 +1947,50 @@ export function getWecomArchiveStatus() {
   return rpc<WecomArchiveStatus>(WECOM_ARCHIVE_STATUS_RPC, { p_secret: secret });
 }
 
+export function recordWecomReceiverHealth(
+  health: import("./wecom-receiver-health").WecomReceiverHealth,
+) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ outcome: "committed"; recordedAt: string }>>(
+    WECOM_RECEIVER_HEALTH_RECORD_RPC,
+    { p_secret: secret, p_health: health },
+  );
+}
+
 /** Server-only source snapshot writer; callers are cron/management code, never browser code. */
 export function claimJiaowubaoOpenApiScheduleSyncLease(input: {
   apiSourceKey: string;
   runKey: string;
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<JiaowubaoOpenApiScheduleSyncLease>(JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC, {
     p_secret: secret,
     p_api_source_key: input.apiSourceKey,
     p_run_key: input.runKey,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 export function releaseJiaowubaoOpenApiScheduleSyncLease(input: {
   apiSourceKey: string;
   runKey: string;
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<Readonly<{ released: boolean }>>(JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC, {
     p_secret: secret,
     p_api_source_key: input.apiSourceKey,
     p_run_key: input.runKey,
     p_actor: input.actor,
-  });
-}
-
-export function getJiaowubaoOpenApiScheduleSnapshotPreflight(input: {
-  apiSourceKey: string;
-  actor: "Ops Admin";
-}) {
-  const { secret } = configuration();
-  return rpc<JiaowubaoOpenApiScheduleSnapshotPreflight>(JIAOWUBAO_OPEN_API_SCHEDULE_PREFLIGHT_RPC, {
-    p_secret: secret,
-    p_api_source_key: input.apiSourceKey,
-    p_actor: input.actor,
-  });
+  }, options);
 }
 
 export function confirmJiaowubaoOpenApiScheduleSnapshotCurrent(input: {
   apiSourceKey: string;
   revision: string;
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<Readonly<{
     confirmed: boolean;
@@ -1934,19 +2002,19 @@ export function confirmJiaowubaoOpenApiScheduleSnapshotCurrent(input: {
     p_api_source_key: input.apiSourceKey,
     p_revision: input.revision,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 export function beginJiaowubaoOpenApiScheduleSnapshot(input: {
   envelope: Readonly<Record<string, unknown>>;
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
-  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC, {
+  return rpc<JiaowubaoOpenApiScheduleSnapshotBeginReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_BEGIN_RPC, {
     p_secret: secret,
     p_envelope: input.envelope,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 export function stageJiaowubaoOpenApiScheduleSnapshotPage(input: {
@@ -1954,24 +2022,27 @@ export function stageJiaowubaoOpenApiScheduleSnapshotPage(input: {
   pageIndex: number;
   rows: readonly Readonly<Record<string, unknown>>[];
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
-  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC, {
+  return rpc<JiaowubaoOpenApiScheduleSnapshotPageReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_STAGE_RPC, {
     p_secret: secret,
     p_run_id: input.runId,
     p_page_index: input.pageIndex,
     p_rows: input.rows,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
-export function completeJiaowubaoOpenApiScheduleSnapshot(input: { runId: string; actor: "Ops Admin" }) {
+export function completeJiaowubaoOpenApiScheduleSnapshot(
+  input: { runId: string; actor: "Ops Admin" },
+  options: OpsRpcOptions = {},
+) {
   const { secret } = configuration();
-  return rpc<JiaowubaoOpenApiScheduleSnapshotReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC, {
+  return rpc<JiaowubaoOpenApiScheduleSnapshotCompleteReceipt>(JIAOWUBAO_OPEN_API_SCHEDULE_COMPLETE_RPC, {
     p_secret: secret,
     p_run_id: input.runId,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 /** Server-only completed-lesson evidence writer; it never changes ops_state. */
@@ -2186,11 +2257,15 @@ export function reserveJiaowubaoCompletedLessonApiRequest(input: {
 }
 
 /** Cross-instance supplier start gate shared by both scheduled schedule readers. */
-export function reserveJiaowubaoOpenApiScheduleRequest(input: { actor: "Ops Admin" }) {
+export function reserveJiaowubaoOpenApiScheduleRequest(
+  input: { actor: "Ops Admin" },
+  options: OpsRpcOptions = {},
+) {
   const { secret } = configuration();
   return rpc<Readonly<{ tool: "query_schedule_list"; notBefore: string }>>(
     JIAOWUBAO_OPEN_API_SCHEDULE_RESERVE_RPC,
     { p_secret: secret, p_tool: "query_schedule_list", p_actor: input.actor },
+    options,
   );
 }
 
@@ -2277,13 +2352,13 @@ export function abortJiaowubaoCompletedLessonMemberCollection(input: {
 export function projectJiaowubaoOpenApiAuthority(input: {
   revision: string;
   actor: "Ops Admin";
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<JiaowubaoOpenApiAuthorityProjectionReceipt>(JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC, {
     p_secret: secret,
     p_revision: input.revision,
     p_actor: input.actor,
-  }, { timeoutMs: 260_000 });
+  }, { ...options, timeoutMs: options.timeoutMs ?? 115_000 });
 }
 
 export function getJiaowubaoOpenApiScheduleSnapshotStatus(input: { runId: string; actor: "Ops Admin" }) {
@@ -2309,7 +2384,7 @@ export function getJiaowubaoOpenApiScheduleSnapshotWindow(input: {
   limit: number;
   cursor: Readonly<{ startsAt: string; eventId: string }> | null;
   revision: string | null;
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<JiaowubaoOpenApiScheduleSnapshotWindow>(JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC, {
     p_secret: secret,
@@ -2323,7 +2398,55 @@ export function getJiaowubaoOpenApiScheduleSnapshotWindow(input: {
     p_cursor_start: input.cursor?.startsAt ?? null,
     p_cursor_event_id: input.cursor?.eventId ?? null,
     p_snapshot_revision: input.revision,
-  });
+  }, options);
+}
+
+export function getJiaowubaoOpenApiScheduleSnapshotIdentityPage(input: {
+  apiSourceKey: string;
+  revision: string;
+  limit: number;
+  cursorSourceKey: string | null;
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleSnapshotIdentityPage>(JIAOWUBAO_OPEN_API_SCHEDULE_IDENTITY_READER_RPC, {
+    p_secret: secret,
+    p_api_source_key: input.apiSourceKey,
+    p_snapshot_revision: input.revision,
+    p_limit: input.limit,
+    p_cursor_source_key: input.cursorSourceKey,
+  }, options);
+}
+
+export function getJiaowubaoOpenApiScheduleProjectionTarget(
+  input: { actor: "Ops Admin" },
+  options: OpsRpcOptions = {},
+) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleProjectionTarget>(
+    JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_TARGET_RPC,
+    { p_secret: secret, p_actor: input.actor },
+    options,
+  );
+}
+
+export function advanceJiaowubaoOpenApiScheduleProjection(input: {
+  revision: string;
+  expectedState: "pending" | "authority_done" | "complete";
+  nextState: "pending" | "authority_done" | "complete";
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoOpenApiScheduleProjectionTransition>(
+    JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_ADVANCE_RPC,
+    {
+      p_secret: secret,
+      p_revision: input.revision,
+      p_expected_state: input.expectedState,
+      p_next_state: input.nextState,
+      p_actor: input.actor,
+    },
+    options,
+  );
 }
 
 /** Commits the server-derived LP/task projection as one OCC transaction. */
@@ -2337,7 +2460,7 @@ export function syncJiaowubaoTrialMatchesAtomic(input: {
   nextLpItems: readonly unknown[];
   nextTasks: readonly unknown[];
   actor: string;
-}) {
+}, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   return rpc<JiaowubaoTrialSyncCommitResult[]>(JIAOWUBAO_TRIAL_SYNC_ATOMIC_RPC, {
     p_secret: secret,
@@ -2350,7 +2473,7 @@ export function syncJiaowubaoTrialMatchesAtomic(input: {
     p_next_lp_items: input.nextLpItems,
     p_next_tasks: input.nextTasks,
     p_actor: input.actor,
-  });
+  }, options);
 }
 
 /** Reads an already committed command before any source/OCC revalidation. */

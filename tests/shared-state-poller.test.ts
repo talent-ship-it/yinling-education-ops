@@ -3,6 +3,42 @@ import test from "node:test";
 import { createSharedStatePoller } from "@/lib/shared-state-poller";
 import { fetchJsonWithTimeout, type SharedStateFetch } from "@/lib/shared-state-recovery";
 
+test("coalesces wake requests while one poll is still running", async () => {
+  let calls = 0;
+  let concurrent = 0;
+  let maximumConcurrent = 0;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const scheduled: Array<{ callback: () => void; delay: number }> = [];
+  const poller = createSharedStatePoller({
+    canRun: () => true,
+    onError: () => {},
+    schedule: (callback, delay) => {
+      scheduled.push({ callback, delay });
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancel: () => {},
+    run: async () => {
+      calls += 1;
+      concurrent += 1;
+      maximumConcurrent = Math.max(maximumConcurrent, concurrent);
+      await gate;
+      concurrent -= 1;
+    },
+  });
+
+  const first = poller.wake();
+  await Promise.resolve();
+  await Promise.all([poller.wake(), poller.wake()]);
+  assert.equal(calls, 1);
+  assert.equal(maximumConcurrent, 1);
+  release?.();
+  await first;
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delay, 15_000);
+  poller.stop();
+});
+
 test("a stalled JSON body releases the poller and the scheduled retry refreshes state", async () => {
   const scheduled: Array<{ callback: () => void; delay: number }> = [];
   let calls = 0;
@@ -33,6 +69,35 @@ test("a stalled JSON body releases the poller and the scheduled retry refreshes 
   await poller.wake();
   assert.equal(calls, 2);
   assert.equal(refreshed, true);
+  assert.equal(scheduled[1].delay, 15_000);
+  poller.stop();
+});
+
+test("a throwing error handler cannot leave the poller wedged", async () => {
+  let calls = 0;
+  let resolveRecovery: (() => void) | undefined;
+  const recoveryScheduled = new Promise<void>((resolve) => { resolveRecovery = resolve; });
+  const scheduled: Array<{ callback: () => void; delay: number }> = [];
+  const poller = createSharedStatePoller({
+    canRun: () => true,
+    onError: () => { throw new Error("error_handler_failed"); },
+    schedule: (callback, delay) => {
+      scheduled.push({ callback, delay });
+      if (delay === 15_000) resolveRecovery?.();
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancel: () => {},
+    run: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("poll_failed");
+    },
+  });
+
+  await assert.rejects(poller.wake(), /error_handler_failed/);
+  assert.equal(scheduled[0].delay, 60_000);
+  scheduled[0].callback();
+  await recoveryScheduled;
+  assert.equal(calls, 2);
   assert.equal(scheduled[1].delay, 15_000);
   poller.stop();
 });

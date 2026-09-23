@@ -1,10 +1,8 @@
 \set ON_ERROR_STOP on
 \ir assert-disposable-database.sql
 
--- Compile 191020 against the real 191019 migration seam, then exercise all
--- payment reminder writes in a dedicated disposable PostgreSQL database (commits fixture state).
-\ir booking-projection-atomic-runtime.sql
-\ir ../../supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql
+-- The SQL runtime manifest loads the production completion function after the
+-- payment-reminder setup, then this file exercises its ACL and behavior.
 
 do $acl_contract$
 begin
@@ -327,10 +325,18 @@ begin
   );
   if not completion_receipt.applied or (completion_receipt.tasks_row).version <> 102
      or (select count(*) from jsonb_array_elements((completion_receipt.tasks_row).payload) item(value)
-         where item.value ->> 'anchorBookingId' = 'BOOK-U1'
-           and item.value ->> 'ruleKey' in ('trial.payment-n2','trial.payment-urgent')
+         where item.value ->> 'id' = urgent_task_id
+           and item.value ->> 'anchorBookingId' = 'BOOK-U1'
+           and item.value ->> 'ruleKey' = 'trial.payment-urgent'
            and item.value ->> 'status' = 'done'
-           and item.value ->> 'result' = '已由规划老师确认试听付款') <> 2 then
+           and item.value ->> 'result' = '已由规划老师确认试听付款') <> 1
+     or exists (
+       select 1 from jsonb_array_elements((completion_receipt.tasks_row).payload) item(value)
+       where item.value ->> 'anchorBookingId' = 'BOOK-U1'
+         and item.value ->> 'ruleKey' = 'trial.payment-n2'
+         and item.value ->> 'status' = 'done'
+         and item.value ->> 'result' = '已由规划老师确认试听付款'
+     ) then
     raise exception 'trial_payment_planner_completion_failed';
   end if;
   completion_audit_id := completion_receipt.audit_entry_id;

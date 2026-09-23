@@ -169,6 +169,7 @@ input::placeholder,textarea::placeholder { color:var(--muted); opacity:1; }
   .classroom-grid-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 64px; gap:8px; }
   .collection-row.classroom-grid-row strong,.collection-row.classroom-grid-row small { white-space:normal; overflow-wrap:anywhere; }
   .login-panel { padding:28px 22px; }
+  .login-panel .login-form input { min-height:44px; }
 }
 /* Detail and form surfaces use the same tokens as their enclosing workspace. */
 .student-collection .master-detail-layout > .student-detail,

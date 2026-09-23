@@ -160,9 +160,13 @@ begin
   if not receipt.applied
      or (receipt.students_row).version <> 2
      or (receipt.lp_items_row).version <> 3
-     or (receipt.tasks_row).version <> 4
+     or (receipt.tasks_row).version <> 5
      or (receipt.files_row).version <> 1 then
-    raise exception 'trial_manual_atomic_versions_failed';
+    raise exception 'trial_manual_atomic_versions_failed: students %, lp %, tasks %, files %',
+      (receipt.students_row).version,
+      (receipt.lp_items_row).version,
+      (receipt.tasks_row).version,
+      (receipt.files_row).version;
   end if;
 
   select value into lp

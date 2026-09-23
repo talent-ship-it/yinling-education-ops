@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { WECOM_ARCHIVE_MAX_RECORDS } from "./wecom-archive-bridge";
+import { isWecomRecord } from "./wecom-validation";
 
 const MAX_TEXT_LENGTH = 12_000;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,239}$/u;
@@ -20,10 +21,6 @@ export class WecomBotRecordError extends Error {
     super(message);
     this.name = "WecomBotRecordError";
   }
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function fail(code: string, message: string): never {
@@ -64,7 +61,7 @@ export function botMessageId(aibotId: string, msgid: string) {
 }
 
 function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecord {
-  if (!record(value)) fail("invalid_record", `record ${index} must be an object.`);
+  if (!isWecomRecord(value)) fail("invalid_record", `record ${index} must be an object.`);
   exactKeys(value, new Set(["messageId", "chatId", "senderId", "sentAt", "messageType", "text"]), `record ${index}`);
 
   const messageId = cleanText(value.messageId, `record ${index}.messageId`);
@@ -90,7 +87,7 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecor
 }
 
 export function normalizeWecomBotBatch(input: unknown): readonly NormalizedWecomBotRecord[] {
-  if (!record(input) || Object.keys(input).some((key) => key !== "records") || !Array.isArray(input.records)) {
+  if (!isWecomRecord(input) || Object.keys(input).some((key) => key !== "records") || !Array.isArray(input.records)) {
     fail("invalid_batch", "records must be an array.");
   }
   if (input.records.length < 1 || input.records.length > WECOM_ARCHIVE_MAX_RECORDS) {

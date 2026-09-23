@@ -531,19 +531,21 @@ function parsePsqlProgressEvent(value: unknown): {
   }
   if (event.event === "chunkCommitted") {
     const stageReceipt = asPlainRecord(event.stageReceipt);
+    const chunkIndex = event.chunkIndex;
+    const chunkCount = event.chunkCount;
     if (typeof event.runId !== "string" || !UUID.test(event.runId)
-      || !Number.isSafeInteger(event.chunkIndex) || event.chunkIndex < 0 || event.chunkIndex > 511
-      || !Number.isSafeInteger(event.chunkCount) || event.chunkCount < 1 || event.chunkCount > 512
-      || event.chunkIndex >= event.chunkCount
+      || typeof chunkIndex !== "number" || !Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex > 511
+      || typeof chunkCount !== "number" || !Number.isSafeInteger(chunkCount) || chunkCount < 1 || chunkCount > 512
+      || chunkIndex >= chunkCount
       || !stageReceipt || stageReceipt.state !== "staging"
-      || stageReceipt.chunkIndex !== event.chunkIndex
+      || stageReceipt.chunkIndex !== chunkIndex
       || typeof stageReceipt.replayed !== "boolean") return null;
     return {
       progress: Object.freeze({
         status: "staging",
         phase: "chunk",
-        completedChunks: event.chunkIndex + 1,
-        chunkCount: event.chunkCount,
+        completedChunks: chunkIndex + 1,
+        chunkCount,
         replayed: stageReceipt.replayed,
       }),
     };

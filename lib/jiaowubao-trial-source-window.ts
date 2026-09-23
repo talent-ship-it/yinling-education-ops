@@ -1,7 +1,12 @@
-import { getJiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
+import {
+  getJiaowubaoOpenApiScheduleSnapshotWindow,
+  type OpsRpcOptions,
+} from "./ops-store";
+import { acceptsJiaowubaoTrialSourcePage } from "./jiaowubao-trial-source-contract";
 import { JiaowubaoTrialSyncProjectionError } from "./jiaowubao-trial-sync-projection";
 
 type RecordValue = Record<string, unknown>;
+type PinnedSourceWindow = Readonly<{ start: string; end: string }>;
 
 function record(value: unknown): value is RecordValue {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -53,6 +58,8 @@ export function normalizeJiaowubaoTrialSourceEvent(value: unknown) {
 export async function readJiaowubaoTrialSourceWindow(
   snapshotRevision: string,
   window: Readonly<{ startsAt: string; endsAt: string }>,
+  rpcOptions: OpsRpcOptions | (() => OpsRpcOptions) = {},
+  stalePinnedSourceWindow: PinnedSourceWindow | null = null,
 ) {
   const events: NonNullable<ReturnType<typeof normalizeJiaowubaoTrialSourceEvent>>[] = [];
   const seenCursors = new Set<string>();
@@ -68,8 +75,13 @@ export async function readJiaowubaoTrialSourceWindow(
       limit: 250,
       cursor,
       revision: snapshotRevision,
-    });
-    if (page.state !== "complete" || page.freshness !== "fresh" || page.revision !== snapshotRevision) {
+    }, typeof rpcOptions === "function" ? rpcOptions() : rpcOptions);
+    if (!acceptsJiaowubaoTrialSourcePage(
+      page,
+      snapshotRevision,
+      window,
+      stalePinnedSourceWindow,
+    )) {
       throw new JiaowubaoTrialSyncProjectionError("source_changed", "教务宝课表快照已变化或过期，请刷新后重试。");
     }
     const normalized = Array.isArray(page.events) ? page.events.map(normalizeJiaowubaoTrialSourceEvent) : [];

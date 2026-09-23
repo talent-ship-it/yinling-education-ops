@@ -2,6 +2,8 @@ export function createSharedStatePoller(input: {
   run: (signal: AbortSignal) => Promise<void>;
   canRun: () => boolean;
   onError: (error: unknown) => void;
+  successDelayMs?: number;
+  errorDelayMs?: number;
   schedule?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
 }) {
@@ -11,28 +13,49 @@ export function createSharedStatePoller(input: {
   let pending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
-  const wake = async () => {
-    if (stopped || pending || !input.canRun()) return;
-    if (timer !== undefined) { cancel(timer); timer = undefined; }
-    pending = true;
-    controller = new AbortController();
-    let delay = 15_000;
+
+  const canWake = () => !stopped && !pending && input.canRun();
+  const clearScheduledWake = () => {
+    if (timer === undefined) return;
+    cancel(timer);
+    timer = undefined;
+  };
+  const runOnce = async (signal: AbortSignal) => {
     try {
-      await input.run(controller.signal);
+      await input.run(signal);
+      return input.successDelayMs ?? 15_000;
     } catch (error) {
-      delay = 60_000;
       if (!stopped) input.onError(error);
+      return input.errorDelayMs ?? 60_000;
+    }
+  };
+  const scheduleNextWake = (delay: number) => {
+    if (stopped || !input.canRun()) return;
+    timer = schedule(() => {
+      timer = undefined;
+      void wake();
+    }, delay);
+  };
+  const wake = async () => {
+    if (!canWake()) return;
+    clearScheduledWake();
+    pending = true;
+    const activeController = new AbortController();
+    controller = activeController;
+    let delay = input.errorDelayMs ?? 60_000;
+    try {
+      delay = await runOnce(activeController.signal);
     } finally {
       pending = false;
-      controller = undefined;
-      if (!stopped && input.canRun()) timer = schedule(() => { timer = undefined; void wake(); }, delay);
+      if (controller === activeController) controller = undefined;
+      scheduleNextWake(delay);
     }
   };
   return {
     wake,
     stop() {
       stopped = true;
-      if (timer !== undefined) cancel(timer);
+      clearScheduledWake();
       controller?.abort();
     },
   };
