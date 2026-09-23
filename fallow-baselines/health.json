@@ -203,9 +203,6 @@
       "crap_critical": {
         "count": 2
       },
-      "crap_high": {
-        "count": 1
-      },
       "crap_moderate": {
         "count": 2
       }
@@ -1219,14 +1216,11 @@
       "complexity_critical": {
         "count": 2
       },
-      "complexity_high": {
-        "count": 1
-      },
       "crap_critical": {
         "count": 2
       },
       "crap_high": {
-        "count": 2
+        "count": 1
       }
     },
     "lib/jiaowubao-open-api-schedule-reader.ts": {
@@ -1754,9 +1748,6 @@
       }
     },
     "scripts/check-api-write-boundaries.mjs": {
-      "crap_high": {
-        "count": 1
-      },
       "crap_moderate": {
         "count": 2
       }
@@ -2371,11 +2362,6 @@
         "count": 1
       },
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "app/api/cron/jiaowubao-schedule/route.ts\u0000queryScheduleWithGlobalRateGate": {
-      "crap_high": {
         "count": 1
       }
     },
@@ -4831,14 +4817,6 @@
         "count": 1
       }
     },
-    "lib/jiaowubao-open-api-node.ts\u0000requestGatewayList": {
-      "complexity_high": {
-        "count": 1
-      },
-      "crap_high": {
-        "count": 1
-      }
-    },
     "lib/jiaowubao-open-api-schedule-reader.ts\u0000mapJiaowubaoSnapshotParticipant": {
       "complexity_moderate": {
         "count": 1
@@ -5851,11 +5829,6 @@
         "count": 1
       }
     },
-    "scripts/check-api-write-boundaries.mjs\u0000<arrow>": {
-      "crap_high": {
-        "count": 1
-      }
-    },
     "scripts/check-api-write-boundaries.mjs\u0000assertApiWriteBoundaries": {
       "crap_moderate": {
         "count": 1
@@ -6624,12 +6597,12 @@
     "app/api/integrations/wecom/bot-inbox/route.ts:complexity",
     "lib/account-tokens.ts:dead code",
     "app/handover-review/page.tsx:untested risk",
-    "lib/jiaowubao-trial-source-window.ts:untested risk",
     "app/api/teacher-leave-requests/route.ts:untested risk",
     "lib/jiaowubao-trial-sync-projection.ts:high impact",
     "app/to-do-list.tsx:high impact",
     "lib/legacy-operation-task-service.ts:high impact",
     "lib/jiaowubao-completed-lesson-sync.ts:complexity",
+    "lib/jiaowubao-trial-source-window.ts:untested risk",
     "app/account-menu.tsx:untested risk",
     "app/operations-client.tsx:high impact",
     "lib/lesson-occurrence-service.ts:high impact",
@@ -6650,8 +6623,8 @@
     "app/chatgpt-auth.ts:dead code",
     "lib/wecom-bot-receiver.ts:high impact",
     "app/account-lifecycle-workspace.tsx:complexity",
-    "lib/ops-state-transition.ts:high impact",
     "app/api/operations/teacher-absence/create/route.ts:complexity",
+    "lib/ops-state-transition.ts:high impact",
     "app/api/bookings/mutate/route.ts:high impact",
     "lib/managed-trial-payment.ts:high impact",
     "app/api/operations/lp/route.ts:complexity",
@@ -6696,7 +6669,6 @@
     "lib/account-issued-password.ts:dead code",
     "lib/student-import.ts:high impact",
     "app/api/operations/students/create/route.ts:untested risk",
-    "app/api/cron/jiaowubao-schedule/route.ts:untested risk",
     "lib/teacher-availability-submission-service.ts:high impact",
     "lib/lesson-package-purchase-command.ts:high impact",
     "lib/jiaowubao-static-xlsx-parser.ts:complexity",
@@ -6738,15 +6710,16 @@
     "lib/teacher-import.ts:high impact",
     "lib/course-package-catalog.ts:complexity",
     "lib/trial-payment-task-service.ts:complexity",
+    "scripts/check-api-write-boundaries.mjs:untested risk",
     "app/api/jiaowubao-open-api/schedule/route.ts:complexity",
     "app/teacher-availability-panel.tsx:complexity",
-    "scripts/check-api-write-boundaries.mjs:untested risk",
     "app/api/classroom/temporary/route.ts:complexity",
     "lib/lp-workflows.ts:complexity",
     "scripts/jiaowubao-completed-lesson-retirement-management.ts:untested risk",
     "app/api/lesson-occurrences/complete/route.ts:untested risk",
     "scripts/wecom-receiver/sync.mjs:complexity",
     "lib/jiaowubao-completed-lesson-resumable-sync.ts:complexity",
+    "app/api/cron/jiaowubao-schedule/route.ts:complexity",
     "scripts/run-sql-runtime-fixtures.mjs:untested risk",
     "app/api/integrations/tencent-trial-ledger/route.ts:complexity",
     "scripts/wecom-receiver/receiver.mjs:complexity",
