@@ -45,7 +45,7 @@ test("one 30-minute RPC applies native data and returns a post-write projection"
   assert.equal((migration.match(/final_projection := public\.project_jiaowubao_open_api_authority_read_model/g) ?? []).length, 1);
   assert.match(migration, /'\{coverage,nativeRecordsSynchronized\}'/);
   assert.match(migration, /grant execute on function public\.project_jiaowubao_open_api_authority\(text,text,text\)/);
-  assert.match(store, /timeoutMs: 260_000/);
+  assert.match(store, /timeoutMs: options\.timeoutMs \?\? 115_000/);
 });
 
 test("the verified one-student schedule shape becomes a normal native booking", () => {

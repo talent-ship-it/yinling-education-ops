@@ -146,6 +146,9 @@ test("SQL fixture covers stage replay, completion replay, empty completion, and 
   assert.match(fixture, /stage_jiaowubao_open_api_schedule_snapshot_page/);
   assert.match(fixture, /snapshot_stage_replay_not_idempotent/);
   assert.match(fixture, /snapshot_completion_replay_not_idempotent/);
+  assert.match(fixture, /get_jiaowubao_open_api_schedule_snapshot_identity_page/);
+  assert.match(fixture, /snapshot_identity_page_invalid/);
+  assert.match(fixture, /snapshot_identity_revision_reset_missing/);
   assert.match(fixture, /snapshot_empty_completion_failed/);
   assert.match(fixture, /snapshot_missing_required_envelope_key_was_accepted/);
   assert.match(fixture, /snapshot_missing_required_record_key_was_accepted/);

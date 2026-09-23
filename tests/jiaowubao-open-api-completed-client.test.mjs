@@ -102,3 +102,61 @@ test("gateway rejections expose only the fixed tool discriminator", async () => 
     else process.env.JIAOWUBAO_OPEN_API_SK = previousSecret;
   }
 });
+
+test("database-gated schedule reads are bounded by the route deadline", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousSecret = process.env.JIAOWUBAO_OPEN_API_SK;
+  let fetchCount = 0;
+  process.env.JIAOWUBAO_OPEN_API_SK = "test-only-jwb-secret";
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return new Response(JSON.stringify({ ret: 1, data: { lists: [] } }), { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      queryJiaowubaoScheduleList(
+        { start: "2026-07-02", end: "2026-07-02" },
+        { rateGate: "database", deadlineAt: Date.now() - 1 },
+      ),
+      (error) => error instanceof JiaowubaoOpenApiError && error.code === "request_timeout",
+    );
+    assert.equal(fetchCount, 0);
+
+    const result = await queryJiaowubaoScheduleList(
+      { start: "2026-07-03", end: "2026-07-03" },
+      { rateGate: "database", deadlineAt: Date.now() + 1_000 },
+    );
+    assert.deepEqual(result.lists, []);
+    assert.equal(fetchCount, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecret === undefined) delete process.env.JIAOWUBAO_OPEN_API_SK;
+    else process.env.JIAOWUBAO_OPEN_API_SK = previousSecret;
+  }
+});
+
+test("database and interactive schedule reads share the per-process start queue", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousSecret = process.env.JIAOWUBAO_OPEN_API_SK;
+  const starts = [];
+  process.env.JIAOWUBAO_OPEN_API_SK = "test-only-jwb-secret";
+  globalThis.fetch = async () => {
+    starts.push(Date.now());
+    return new Response(JSON.stringify({ ret: 1, data: { lists: [] } }), { status: 200 });
+  };
+  try {
+    await Promise.all([
+      queryJiaowubaoScheduleList({ start: "2026-07-04", end: "2026-07-04" }),
+      queryJiaowubaoScheduleList(
+        { start: "2026-07-05", end: "2026-07-05" },
+        { rateGate: "database", deadlineAt: Date.now() + 10_000 },
+      ),
+    ]);
+    assert.equal(starts.length, 2);
+    assert.ok(starts[1] - starts[0] >= 3_000, `request starts were only ${starts[1] - starts[0]}ms apart`);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecret === undefined) delete process.env.JIAOWUBAO_OPEN_API_SK;
+    else process.env.JIAOWUBAO_OPEN_API_SK = previousSecret;
+  }
+});

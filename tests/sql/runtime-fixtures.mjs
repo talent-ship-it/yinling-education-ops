@@ -11,6 +11,16 @@ export const sqlRuntimeFixtures = Object.freeze([
   { id: "jiaowubao-live-teacher-subject-observations", source: "tests/sql/jiaowubao-live-teacher-subject-observations-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/jiaowubao-live-teacher-subject-observations-runtime.sql" },
   ] },
+  { id: "jiaowubao-schedule-identity-reader", source: "tests/sql/jiaowubao-schedule-identity-reader-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-identity-reader-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20260923000100_read_jiaowubao_schedule_snapshot_identities.sql" },
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-identity-reader-runtime.sql" },
+  ] },
+  { id: "jiaowubao-schedule-projection-jobs", source: "tests/sql/jiaowubao-schedule-projection-jobs-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-projection-jobs-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20260923000200_jiaowubao_schedule_projection_jobs.sql" },
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-projection-jobs-runtime.sql" },
+  ] },
   { id: "jiaowubao-trial-lifecycle", source: "tests/sql/jiaowubao-trial-lifecycle-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/jiaowubao-trial-lifecycle-runtime.sql" },
   ] },

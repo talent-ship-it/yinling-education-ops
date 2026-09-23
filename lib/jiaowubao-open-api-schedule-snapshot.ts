@@ -9,14 +9,15 @@ import {
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_FORMAT = "jiaowubao-schedule-export/v3";
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY = "jwb-open-api-schedule";
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE = 100;
-// The cron runs within Vercel's five-minute function budget while deliberately
-// leaving the supplier's 20 calls/minute quota headroom. At 3.2 seconds per
-// upstream page, 60 pages remains below that budget. A larger source fails
-// closed and the prior complete snapshot stays current.
+// A standalone 31-day export may read up to 60 pages. The rolling production
+// horizon has separate record/request limits below because it spans three
+// windows and may require a second destructive-absence confirmation scan.
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES = 60;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS = 6_000;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_WINDOW_DAYS = 31;
 export const JIAOWUBAO_SCHEDULE_HORIZON_DAYS = 93;
+const JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS = 3_000;
+const JIAOWUBAO_SCHEDULE_HORIZON_MAX_SOURCE_CALLS = 66;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_STUDENTS_PER_RECORD = 1_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -63,6 +64,10 @@ export type JiaowubaoScheduleSnapshot = Readonly<{
 export type JiaowubaoScheduleSnapshotRow = Readonly<{
   sourceKey: string;
   record: JiaowubaoScheduleSnapshotRecord;
+}>;
+export type JiaowubaoScheduleCurrentIdentity = Readonly<{
+  sourceKey: string;
+  sourceDate: string | null;
 }>;
 
 type PageFetcher = (query: JiaowubaoScheduleListQuery) => Promise<JiaowubaoScheduleListResponse>;
@@ -278,26 +283,38 @@ export function jiaowubaoScheduleCollectionWindows(window: Readonly<{ start: str
 
 export async function collectJiaowubaoScheduleHorizon(
   window: Readonly<{ start: string; end: string }>,
-  fetchPage: PageFetcher = queryJiaowubaoScheduleList,
+  fetchPage: PageFetcher,
+  currentIdentities: readonly JiaowubaoScheduleCurrentIdentity[] | null,
 ): Promise<JiaowubaoScheduleSnapshot> {
   let calls = 0;
   const fetchWithinSharedBudget: PageFetcher = async (query) => {
-    // Both independent scans share one budget, including empty terminal pages.
-    // If either scan cannot finish, the caller fails closed and keeps the
-    // prior immutable snapshot instead of publishing partial evidence.
-    if (++calls > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES) fail("排课采集超过本轮请求上限，保留上次完整快照。");
+    if (++calls > JIAOWUBAO_SCHEDULE_HORIZON_MAX_SOURCE_CALLS) {
+      fail("排课采集超过本轮请求上限，保留上次完整快照。");
+    }
     return fetchPage(query);
   };
   const candidate = await collectJiaowubaoScheduleHorizonScan(window, fetchWithinSharedBudget);
-  const confirmation = await collectJiaowubaoScheduleHorizonScan(window, fetchWithinSharedBudget);
+  if (candidate.length > JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS) {
+    fail("教务宝滚动排课记录超过安全上限。");
+  }
+  const candidateKeys = new Set(candidate.map(jiaowubaoScheduleSnapshotSourceKey));
+  // A lesson whose old date is outside the new horizon can move into an
+  // already-read window while the scan is paging. Every missing current key
+  // therefore needs a second complete observation, regardless of its old date.
+  const requiresConfirmation = currentIdentities !== null
+    && currentIdentities.some((identity) => !candidateKeys.has(identity.sourceKey));
+  const confirmation = requiresConfirmation
+    ? await collectJiaowubaoScheduleHorizonScan(window, fetchWithinSharedBudget)
+    : [];
   const recordsByCalId = new Map<string, JiaowubaoScheduleSnapshotRecord>();
   for (const record of candidate) recordsByCalId.set(String(record.cal_id), record);
-  // The second scan wins for additions and updates. Candidate-only rows remain
-  // for this publication because their absence has not been observed by two
-  // independent complete scans. Rows absent from both scans stay absent.
+  // When a current in-horizon identity disappears, a full independent scan is
+  // required because records can move into an already-read date window. The
+  // second scan wins for additions/updates, while candidate-only rows remain;
+  // only rows absent from both complete scans can disappear.
   for (const record of confirmation) recordsByCalId.set(String(record.cal_id), record);
   const records = [...recordsByCalId.values()];
-  if (records.length > JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS) fail("教务宝导出记录超过安全上限。");
+  if (records.length > JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS) fail("教务宝滚动排课记录超过安全上限。");
   return repackScheduleHorizon(window, records);
 }
 

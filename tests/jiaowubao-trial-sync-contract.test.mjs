@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const route = fs.readFileSync(path.join(root, "app/api/operations/jiaowubao-trial-sync/route.ts"), "utf8");
 const sourceReader = fs.readFileSync(path.join(root, "lib/jiaowubao-trial-source-window.ts"), "utf8");
+const sourceContract = fs.readFileSync(path.join(root, "lib/jiaowubao-trial-source-contract.ts"), "utf8");
 const client = fs.readFileSync(path.join(root, "app/operations-client.tsx"), "utf8");
 const migration = fs.readFileSync(path.join(root, "supabase/migrations/20260828000500_jiaowubao_trial_sync_atomic.sql"), "utf8");
 
@@ -18,7 +19,9 @@ test("trial sync replays first and re-reads the complete immutable source window
   const commit = post.indexOf("const saved = await syncJiaowubaoTrialMatchesAtomic");
   assert.ok(replay >= 0 && sourceRead > replay && projection > sourceRead && commit > projection);
   assert.match(sourceReader, /scope: "all"/);
-  assert.match(sourceReader, /page\.revision !== snapshotRevision/);
+  assert.match(sourceReader, /acceptsJiaowubaoTrialSourcePage/);
+  assert.match(sourceContract, /page\.revision !== snapshotRevision/);
+  assert.match(sourceContract, /page\.state === "complete" && page\.freshness === "fresh"/);
   assert.match(sourceReader, /page\.hasMore/);
   assert.doesNotMatch(route, /mutateAndCommit/);
 });

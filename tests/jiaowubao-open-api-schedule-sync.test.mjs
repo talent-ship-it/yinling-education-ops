@@ -77,27 +77,42 @@ test("schedule snapshot fails closed on oversized student evidence rather than d
 });
 
 test("production uses a private 30-minute database schedule and projects the completed source as one authority", async () => {
-  const [vercel, route, migration, rpcGrantMigration, completionFix, unchangedConfirmation, authorityMigration] = await Promise.all([
+  const [vercel, route, projectionRunner, migration, rpcGrantMigration, completionFix, unchangedConfirmation, authorityMigration, identityMigration, projectionMigration, runtimeBudget] = await Promise.all([
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/jiaowubao-schedule-projection-runner.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000100_jiaowubao_open_api_schedule_v2_and_sync_lease.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000300_grant_server_jiaowubao_schedule_snapshot_rpc.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260822000400_fix_jiaowubao_schedule_snapshot_completion_hash.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260828000100_confirm_unchanged_jiaowubao_schedule_snapshot.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260831000500_jiaowubao_authoritative_source_projection.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260923000100_read_jiaowubao_schedule_snapshot_identities.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260923000200_jiaowubao_schedule_projection_jobs.sql", import.meta.url), "utf8"),
+    readFile(new URL("../lib/jiaowubao-schedule-runtime-budget.ts", import.meta.url), "utf8"),
   ]);
   const scheduleMigration = await readFile(new URL("../supabase/migrations/20260822000200_schedule_jiaowubao_open_api_sync_every_30_minutes.sql", import.meta.url), "utf8");
   assert.deepEqual(JSON.parse(vercel).crons, []);
   assert.match(route, /hasCronSecret/);
   assert.match(route, /JIAOWUBAO_SCHEDULE_SYNC_TOKEN/);
   assert.match(route, /claimJiaowubaoOpenApiScheduleSyncLease/);
+  assert.match(route, /scheduledRunKey\(now = Date\.now\(\), attemptId = randomUUID\(\)\)/);
   assert.match(route, /completeJiaowubaoOpenApiScheduleSnapshot/);
   assert.match(route, /confirmJiaowubaoOpenApiScheduleSnapshotCurrent/);
   assert.match(route, /runJiaowubaoTrialAutoSync/);
   assert.match(route, /projectJiaowubaoOpenApiAuthority/);
-  assert.match(route, /phase = "project_authority"/);
-  assert.match(route, /phase = "project_trials"/);
+  assert.match(projectionRunner, /setPhase\("project_authority"\)/);
+  assert.match(projectionRunner, /setPhase\("project_trials"\)/);
   assert.match(route, /phase = "confirm_current"/);
+  assert.match(route, /readJiaowubaoScheduleSnapshotIdentities/);
+  assert.match(route, /const deadlineAt = jiaowubaoScheduleWorkDeadline\(\)/);
+  assert.match(route, /currentTarget\.projectionState !== "complete"/);
+  assert.ok(
+    route.indexOf('currentTarget.projectionState !== "complete"') < route.indexOf('phase = "collect_source"'),
+    "durable projection recovery must precede every new source collection",
+  );
+  assert.match(route, /JIAOWUBAO_SCHEDULE_RELEASE_TIMEOUT_MS/);
+  assert.match(runtimeBudget, /JIAOWUBAO_SCHEDULE_ROUTE_WORK_MS = 280_000/);
+  assert.match(runtimeBudget, /JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS = 115_000/);
   assert.match(route, /下一次计划任务重试/);
   assert.match(route, /value\.runId === runId && value\.pageIndex === pageIndex/);
   assert.doesNotMatch(route, /value\.state === "staging"/);
@@ -143,4 +158,19 @@ test("production uses a private 30-minute database schedule and projects the com
   assert.match(authorityMigration, /record \? 'price'/);
   assert.match(authorityMigration, /nativeRecordsOverwritten', false/);
   assert.match(authorityMigration, /grant execute on function public\.project_jiaowubao_open_api_authority/);
+  assert.match(identityMigration, /get_jiaowubao_open_api_schedule_snapshot_identity_page/);
+  assert.match(identityMigration, /internal\.verify_ops_secret/);
+  assert.match(identityMigration, /current_row\.revision <> p_snapshot_revision/);
+  assert.match(identityMigration, /snapshot_item\.run_id = current_row\.run_id/);
+  assert.doesNotMatch(identityMigration, /create\s+(?:unique\s+)?index/i);
+  assert.match(identityMigration, /revoke all on function public\.get_jiaowubao_open_api_schedule_snapshot_identity_page[\s\S]*from public, anon, authenticated/);
+  assert.match(identityMigration, /grant execute on function public\.get_jiaowubao_open_api_schedule_snapshot_identity_page[\s\S]*to anon, authenticated/);
+  assert.match(projectionMigration, /jiaowubao_open_api_schedule_projection_jobs/);
+  assert.match(projectionMigration, /existing_job\.state <> 'complete'/);
+  assert.match(projectionMigration, /state in \('pending','authority_done','complete'\)/);
+  assert.match(projectionMigration, /p_expected_state = 'complete' and p_next_state = 'pending'/);
+  assert.match(projectionMigration, /jiaowubao_schedule_projection_allows_stale_trial\(p_snapshot_revision,p_actor\)/);
+  assert.match(projectionMigration, /claim_jiaowubao_open_api_schedule_sync_lease_v2/);
+  assert.match(projectionMigration, /release_jiaowubao_open_api_schedule_sync_lease_v2/);
+  assert.match(projectionMigration, /set statement_timeout = '110s'/);
 });

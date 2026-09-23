@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   getOpsState,
   syncJiaowubaoTrialMatchesAtomic,
+  type OpsRpcOptions,
 } from "./ops-store";
 import {
   runJiaowubaoTrialAutoSyncCore,
@@ -13,13 +14,29 @@ import {
 import { readJiaowubaoTrialSourceWindow } from "./jiaowubao-trial-source-window";
 import type { JiaowubaoTrialSyncWindow } from "./jiaowubao-trial-sync";
 
-const DEFAULT_DEPENDENCIES: JiaowubaoTrialAutoSyncDependencies = {
-  getRows: (entities) => getOpsState(entities),
-  readSource: readJiaowubaoTrialSourceWindow,
-  commit: syncJiaowubaoTrialMatchesAtomic,
-  uuid: randomUUID,
-  now: () => new Date(),
-};
+type RpcOptionsProvider = OpsRpcOptions | (() => OpsRpcOptions);
+
+function currentRpcOptions(provider: RpcOptionsProvider) {
+  return typeof provider === "function" ? provider() : provider;
+}
+
+function dependencies(
+  rpcOptions: RpcOptionsProvider,
+  stalePinnedSourceWindow: Readonly<{ start: string; end: string }> | null = null,
+): JiaowubaoTrialAutoSyncDependencies {
+  return {
+    getRows: (entities) => getOpsState(entities, currentRpcOptions(rpcOptions)),
+    readSource: (revision, window) => readJiaowubaoTrialSourceWindow(
+      revision,
+      window,
+      rpcOptions,
+      stalePinnedSourceWindow,
+    ),
+    commit: (input) => syncJiaowubaoTrialMatchesAtomic(input, currentRpcOptions(rpcOptions)),
+    uuid: randomUUID,
+    now: () => new Date(),
+  };
+}
 
 export { jiaowubaoTrialProjectionWindow } from "./jiaowubao-trial-auto-sync-core";
 export type { JiaowubaoTrialAutoSyncResult } from "./jiaowubao-trial-auto-sync-core";
@@ -35,8 +52,9 @@ export async function runJiaowubaoTrialAutoSync(
     window: JiaowubaoTrialSyncWindow;
     actor?: "Ops Admin";
   }>,
+  rpcOptions: RpcOptionsProvider = {},
 ): Promise<JiaowubaoTrialAutoSyncResult> {
-  return runJiaowubaoTrialAutoSyncCore(input, DEFAULT_DEPENDENCIES);
+  return runJiaowubaoTrialAutoSyncCore(input, dependencies(rpcOptions));
 }
 
 export async function runJiaowubaoTrialAutoSyncHorizon(
@@ -45,6 +63,11 @@ export async function runJiaowubaoTrialAutoSyncHorizon(
     windows: readonly JiaowubaoTrialSyncWindow[];
     actor?: "Ops Admin";
   }>,
+  rpcOptions: RpcOptionsProvider = {},
+  stalePinnedSourceWindow: Readonly<{ start: string; end: string }> | null = null,
 ): Promise<JiaowubaoTrialAutoSyncResult> {
-  return runJiaowubaoTrialAutoSyncHorizonCore(input, DEFAULT_DEPENDENCIES);
+  return runJiaowubaoTrialAutoSyncHorizonCore(
+    input,
+    dependencies(rpcOptions, stalePinnedSourceWindow),
+  );
 }

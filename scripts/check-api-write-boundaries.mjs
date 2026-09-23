@@ -19,31 +19,52 @@ function routeFiles(directory) {
   return files;
 }
 
+function isOpsStoreModule(moduleName) {
+  return moduleName === "@/lib/ops-store" || /(?:^|\/)lib\/ops-store(?:\.ts)?$/u.test(moduleName);
+}
+
+function importBindingsUseGenericWriter(bindings) {
+  if (!bindings) return false;
+  if (ts.isNamespaceImport(bindings)) return true;
+  return bindings.elements.some((element) => (element.propertyName ?? element.name).text === "putOpsState");
+}
+
+function staticImportModule(node) {
+  if (!ts.isImportDeclaration(node)) return null;
+  return ts.isStringLiteral(node.moduleSpecifier) ? node.moduleSpecifier.text : null;
+}
+
+function staticImportUsesGenericWriter(node) {
+  const moduleName = staticImportModule(node);
+  if (moduleName === null || !isOpsStoreModule(moduleName)) return false;
+  return importBindingsUseGenericWriter(node.importClause?.namedBindings);
+}
+
+function singleLiteralCallArgument(node) {
+  if (!ts.isCallExpression(node)) return null;
+  if (node.arguments.length !== 1) return null;
+  return ts.isStringLiteral(node.arguments[0]) ? node.arguments[0].text : null;
+}
+
+function isRuntimeModuleLoader(expression) {
+  if (expression.kind === ts.SyntaxKind.ImportKeyword) return true;
+  return ts.isIdentifier(expression) && expression.text === "require";
+}
+
+function dynamicImportUsesOpsStore(node) {
+  const moduleName = singleLiteralCallArgument(node);
+  if (moduleName === null || !isOpsStoreModule(moduleName)) return false;
+  return isRuntimeModuleLoader(node.expression);
+}
+
 function importsPutOpsState(file) {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const isOpsStoreModule = (moduleName) =>
-    moduleName === "@/lib/ops-store" || /(?:^|\/)lib\/ops-store(?:\.ts)?$/u.test(moduleName);
   let found = false;
   const visit = (node) => {
     if (found) return;
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      const moduleName = node.moduleSpecifier.text;
-      if (!isOpsStoreModule(moduleName)) return;
-      const bindings = node.importClause?.namedBindings;
-      if (bindings && (ts.isNamespaceImport(bindings)
-        || bindings.elements.some((element) => (element.propertyName ?? element.name).text === "putOpsState"))) {
-        found = true;
-      }
+    if (staticImportUsesGenericWriter(node) || dynamicImportUsesOpsStore(node)) {
+      found = true;
       return;
-    }
-    if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
-      const moduleName = node.arguments[0].text;
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
-      if (isOpsStoreModule(moduleName) && (isDynamicImport || isRequire)) {
-        found = true;
-        return;
-      }
     }
     ts.forEachChild(node, visit);
   };
