@@ -333,6 +333,142 @@ test("builds a deterministic real XLSX with approved A:H layout and six evidence
   assert.doesNotMatch(allXml, /MUST NOT EXPORT/u);
 });
 
+test("hours-only export follows the 13/9-column template and excludes every payment field", () => {
+  const input = { ...sampleWorkbook(), exportMode: "hours_only" as const };
+  const bytes = buildPayrollXlsx(input);
+  const workbook = readXlsx(bytes);
+  const [main, students, review, lessons, schedules, source] = workbook.worksheets;
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [
+    "Sheet1", "学生明细", "薪资审核", "消课证据", "排课课时", "数据来源",
+  ]);
+  assert.equal(cell(main!, "A1"), "2026年08月教务宝课时表");
+  assert.equal(cell(main!, "M3"), "试听员名单");
+  assert.equal(cell(main!, "D4"), 3);
+  assert.equal(cell(main!, "G4"), 3);
+  assert.equal(cell(main!, "I4"), "已到达 2");
+  assert.equal(cell(main!, "H4"), null);
+  assert.equal(cell(main!, "E4"), null);
+  assert.equal(cell(main!, "F4"), null);
+  assert.equal(cell(main!, "K4"), null);
+  assert.equal(cell(main!, "L4"), null);
+  assert.match(String(cell(main!, "M5")), /课程标题候选，待核对/u);
+  assert.equal(cell(main!, "G7"), 9);
+  assert.equal(cell(main!, "D8"), 4.5);
+  assert.equal(cell(main!, "G8"), 12);
+  assert.equal(cell(main!, "A10"), "教务宝多教师记录（课时暂未拆分）");
+  assert.equal(cell(main!, "I12"), "本月逐课次老师已明确，课时已在上表按老师归属");
+  assert.equal(cell(students!, "I3"), "备注");
+  assert.equal(cell(students!, "C4"), "Olivia & Co");
+  assert.equal(cell(students!, "H4"), "Year 11 English");
+  assert.equal(cell(students!, "D4"), 1);
+  assert.equal(cell(students!, "C5"), "Olivia & Co");
+  assert.equal(cell(students!, "H5"), "Year 12 English");
+  assert.equal(cell(students!, "D5"), 2);
+  assert.equal(cell(students!, "E4"), null);
+  assert.equal(cell(students!, "F4"), null);
+  assert.equal(cell(review!, "F2"), null);
+  assert.equal(cell(review!, "G2"), 3);
+  for (const reference of ["H2", "I2", "J2", "K2", "L2", "M2", "N2"]) assert.equal(cell(review!, reference), null);
+  assert.equal(cell(lessons!, "L2"), 1);
+  assert.equal(cell(schedules!, "M2"), 1);
+  assert.equal(cell(source!, "B3"), input.generatedAt);
+
+  const parts = storedParts(bytes);
+  const mainXml = parts.get("xl/worksheets/sheet1.xml")!;
+  const detailXml = parts.get("xl/worksheets/sheet2.xml")!;
+  assert.match(mainXml, /<dimension ref="A1:M12"\/>/u);
+  assert.match(detailXml, /<dimension ref="A1:I7"\/>/u);
+  for (const merge of ["A1:I1", "A2:I2", "A4:A6", "B4:B6", "G4:G6", "H4:H6", "K4:K6", "L4:L6", "A10:I10"]) {
+    assert.ok(mainXml.includes(`<mergeCell ref="${merge}"/>`), merge);
+  }
+  assert.match(mainXml, /<col min="13" max="13" width="112\.5625" customWidth="1"\/>/u);
+  assert.match(detailXml, /<col min="9" max="9" width="31\.3125" customWidth="1"\/>/u);
+  const allXml = [...parts.values()].join("");
+  assert.doesNotMatch(allXml, /MUST NOT EXPORT|Example Bank|1234|157\.5|99999|<f(?:\s|>)/u);
+  assert.match(allXml, /=HYPERLINK\(/u);
+  assert.match(allXml, /&lt;Tutor&gt;/u);
+});
+
+test("hours-only export keeps role hours separate, leaves missing role hours unknown, and never doubles student hours", () => {
+  const sample = sampleWorkbook();
+  const assistant = sample.evidence!.schedules[0]!.teachers[1]!;
+  const assistantRow = {
+    ...sample.rows[1]!,
+    teacherKey: "internal:teacher-2",
+    teacherId: "teacher-2",
+    sourceTeacherId: "assistant-1",
+    teacherName: "Assistant",
+    sourceHours: 0.5,
+    lines: [sample.rows[0]!.lines[0]!],
+  };
+  const input: PayrollWorkbookExport = {
+    ...sample,
+    exportMode: "hours_only",
+    rows: [sample.rows[0]!, assistantRow, { ...sample.rows[1]!, sourceHours: null }],
+    evidence: {
+      ...sample.evidence!,
+      teacherLessonSourceKeys: [...sample.evidence!.teacherLessonSourceKeys, {
+        teacherKey: assistantRow.teacherKey,
+        sourceKeys: [sample.rows[0]!.lines[0]!.sourceKey!],
+      }],
+      lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+        ? { ...lesson, teachers: [primary, assistant] }
+        : lesson),
+    },
+  };
+  const [main, detail] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "D7"), null);
+  assert.equal(cell(main!, "G7"), 0.5);
+  assert.equal(cell(main!, "D9"), 4.5);
+  assert.equal(cell(main!, "G9"), null);
+  assert.equal(cell(main!, "J8"), "老师课时待核对");
+  assert.equal(cell(detail!, "D8"), null);
+});
+
+test("hours-only export retains ambiguous multi-teacher student hours once in both template sheets", () => {
+  const sample = sampleWorkbook();
+  const sourceLine = sample.rows[0]!.lines[0]!;
+  const assistant = sample.evidence!.schedules[0]!.teachers[1]!;
+  const third = sample.evidence!.schedules[0]!.teachers[2]!;
+  const input: PayrollWorkbookExport = {
+    ...sample,
+    exportMode: "hours_only",
+    rows: [
+      { ...sample.rows[0]!, lines: sample.rows[0]!.lines.slice(1) },
+      { ...sample.rows[1]!, teacherKey: "internal:teacher-2", teacherName: "Assistant", sourceHours: 0.5, lines: [sourceLine] },
+      { ...sample.rows[1]!, teacherKey: "source:third-1", teacherName: "Third teacher", sourceHours: 0.25, lines: [sourceLine] },
+      sample.rows[1]!,
+    ],
+    evidence: {
+      ...sample.evidence!,
+      teacherLessonSourceKeys: [
+        { ...sample.evidence!.teacherLessonSourceKeys[0]!, sourceKeys: sample.evidence!.teacherLessonSourceKeys[0]!.sourceKeys.filter((key) => key !== sourceLine.sourceKey) },
+        { teacherKey: "internal:teacher-2", sourceKeys: [sourceLine.sourceKey!] },
+        { teacherKey: "source:third-1", sourceKeys: [sourceLine.sourceKey!] },
+        sample.evidence!.teacherLessonSourceKeys[1]!,
+      ],
+      lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+        ? { ...lesson, teachers: [assistant, third] }
+        : lesson),
+    },
+  };
+  const [main, detail] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "D7"), null);
+  assert.equal(cell(main!, "G7"), 0.5);
+  assert.equal(cell(main!, "D8"), null);
+  assert.equal(cell(main!, "G8"), 0.25);
+  assert.equal(cell(main!, "D10"), 3.5);
+  assert.equal(cell(main!, "D14"), 1);
+  assert.equal(cell(main!, "D15"), 1);
+  assert.equal(cell(detail!, "D7"), null);
+  assert.equal(cell(detail!, "D8"), null);
+  assert.equal(cell(detail!, "D9"), 1);
+  const detailHours = detail!.rows.flatMap((row) => row.cells)
+    .filter((entry) => /^D[4-9]$/u.test(entry.reference) && typeof entry.value === "number")
+    .reduce((total, entry) => total + Number(entry.value), 0);
+  assert.equal(detailHours, 4.5);
+});
+
 test("fails closed for malformed workbook text, numbers, months and evidence counts", () => {
   const sample = sampleWorkbook();
   assert.throws(() => buildPayrollXlsx({ ...sample, month: "2026-13" }), /月份/);
@@ -340,6 +476,8 @@ test("fails closed for malformed workbook text, numbers, months and evidence cou
   assert.throws(() => buildPayrollXlsx({ ...sample, rows: [{ ...sample.rows[0]!, teacherName: "\ud800" }] }), /无效字符/);
   assert.throws(() => buildPayrollXlsx({ ...sample, rows: [{ ...sample.rows[0]!, teacherName: "x".repeat(32_768) }] }), /过长/);
   assert.throws(() => buildPayrollXlsx({ ...sample, evidence: { ...sample.evidence!, lessonRowCount: 1 } }), /行数/);
+  assert.throws(() => buildPayrollXlsx({ ...sample, exportMode: "hours_only", evidence: undefined }), /双源快照/);
+  assert.throws(() => buildPayrollXlsx({ ...sample, exportMode: "payable" as "hours_only" }), /模式/);
 });
 
 test("review-only output cannot expose stale rates, subtotals, approval state, variance or payment details", () => {

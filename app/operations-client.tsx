@@ -103,6 +103,7 @@ import { opsSourceIsStale, partitionOpsSources } from "@/lib/ops-source-lifecycl
 import { findJiaowubaoAuthorityStatus } from "@/lib/jiaowubao-authority-status";
 import { observeInterfaceLocalization, translateInterfaceText } from "@/lib/interface-localization";
 import { downloadPayrollExcel, type PayrollExportRow } from "@/lib/payroll-export";
+import { canPollAbsentPayrollMonth, createPayrollAbsentMonthWake, PAYROLL_ABSENT_ERROR_DELAY_MS, PAYROLL_ABSENT_POLL_DELAY_MS, previousMelbournePayrollMonth } from "@/lib/payroll-month";
 import { undoPayrollLocks, type PayrollLockReceipt } from "@/lib/payroll-lock-undo";
 import {
   currentJiaowubaoPayrollExportEvidence,
@@ -3324,15 +3325,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
     return [...persisted, ...automatic];
   }, [automaticPayrollRows, jiaowubaoCompletedLessonEvidenceByTeacherMonth, jiaowubaoCompletedLessonFeed, payroll]);
-  const availablePayrollMonths = useMemo(
-    () => Array.from(new Set(payrollDisplayRows.map((row) => row.month).filter((month): month is string => Boolean(month)))).sort().reverse(),
-    [payrollDisplayRows],
-  );
-  const activePayrollMonth = payrollMonthSelection || availablePayrollMonths[0] || new Date().toISOString().slice(0, 7);
+  const activePayrollMonth = payrollMonthSelection || previousMelbournePayrollMonth(new Date());
   const monthPayroll = useMemo(
     () => payrollDisplayRows.filter((row) => row.month === activePayrollMonth),
     [activePayrollMonth, payrollDisplayRows],
   );
+  const sourceOnlyPayrollTeachers = useMemo(() => {
+    if (jiaowubaoCompletedLessonFeed?.state !== "complete" || jiaowubaoCompletedLessonFeed.month !== activePayrollMonth) return [];
+    return jiaowubaoCompletedLessonFeed.teachers.filter((summary) => (
+      !jiaowubaoCompletedLessonCanGeneratePayroll(summary)
+      || !summary.teacherId
+      || !teachers.some((teacher) => teacher.id === summary.teacherId)
+    ));
+  }, [activePayrollMonth, jiaowubaoCompletedLessonFeed, teachers]);
   const [messageFilter, setMessageFilter] = useState("open");
   const [messageQuery, setMessageQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
@@ -3726,6 +3731,47 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       });
     return () => controller.abort();
   }, [jiaowubaoCompletedLessonReadMonth]);
+
+  useEffect(() => {
+    if (!canPollAbsentPayrollMonth({
+      canView: canViewPayroll, active, month: activePayrollMonth, currentMonth: melbourneExamMonth,
+      feed: jiaowubaoCompletedLessonFeed, loading: jiaowubaoCompletedLessonLoading,
+      syncing: jiaowubaoCompletedLessonSyncing, exporting: jiaowubaoCompletedLessonExporting,
+    })) return;
+    const poller = createSharedStatePoller({
+      canRun: () => !document.hidden,
+      successDelayMs: PAYROLL_ABSENT_POLL_DELAY_MS,
+      errorDelayMs: PAYROLL_ABSENT_ERROR_DELAY_MS,
+      onError: () => {
+        wakeClock.markError();
+        setJiaowubaoCompletedLessonError(true);
+      },
+      run: async (signal) => {
+        wakeClock.markStarted();
+        const feed = await loadAllJiaowubaoCompletedLessonPages({ month: activePayrollMonth, signal });
+        if (signal.aborted) return;
+        setJiaowubaoCompletedLessonError(false);
+        setJiaowubaoCompletedLessonFeed(feed);
+      },
+    });
+    const wakeClock = createPayrollAbsentMonthWake({
+      wake: () => void poller.wake(),
+      isHidden: () => document.hidden,
+      now: () => Date.now(),
+      schedule: (callback, delay) => window.setTimeout(callback, delay),
+      cancel: (timer) => window.clearTimeout(timer),
+    });
+    const initialWake = window.setTimeout(() => void poller.wake(), PAYROLL_ABSENT_POLL_DELAY_MS);
+    document.addEventListener("visibilitychange", wakeClock.resume);
+    window.addEventListener("focus", wakeClock.resume);
+    return () => {
+      window.clearTimeout(initialWake);
+      document.removeEventListener("visibilitychange", wakeClock.resume);
+      window.removeEventListener("focus", wakeClock.resume);
+      wakeClock.stop();
+      poller.stop();
+    };
+  }, [active, activePayrollMonth, canViewPayroll, jiaowubaoCompletedLessonExporting, jiaowubaoCompletedLessonFeed, jiaowubaoCompletedLessonLoading, jiaowubaoCompletedLessonSyncing, melbourneExamMonth]);
 
   useEffect(() => {
     if (!canUseAdminScope || !isAdminView || active !== "dashboard") return;
@@ -10025,6 +10071,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           downloadPayrollExcel({
             month,
             generatedAt: new Date().toISOString(),
+            exportMode: "hours_only",
             rows: exportRows,
             evidence: {
               revision: freshFeed.revision,
@@ -10107,6 +10154,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <div className="form-notice" role="status"><Database size={16} /> 已接入 {jiaowubaoCompletedLessonFeed.rowCount} 条学生已消课明细和 {jiaowubaoCompletedLessonFeed.scheduleRowCount} 条已消课排课角色资料（均为 over=1）。学生明细补齐姓名；老师课时只取排课角色字段。{jiaowubaoCompletedLessonFeed.unmatchedStudentCount + jiaowubaoCompletedLessonFeed.ambiguousStudentCount} 条学生待核对，{jiaowubaoCompletedLessonFeed.teachers.reduce((count, teacher) => count + teacher.unresolvedLessonCount + teacher.unresolvedTrialLessonCount, 0)} 个老师来源项目待核对；待核对项目会作为只读来源明细附在 Excel 中，不写入薪资或付款资料。</div>
         ) : jiaowubaoCompletedLessonFeed?.state === "absent" ? (
           <div className="form-notice" role="status"><CircleAlert size={16} /> {activePayrollMonth} 尚未同步已发布的教务宝已消课快照；点击“同步教务宝已消课”开始。</div>
+        ) : null}
+        {sourceOnlyPayrollTeachers.length > 0 ? (
+          <section className="panel" aria-label="教务宝待核对老师">
+            <div className="panel-header"><div><h2>教务宝待核对老师</h2></div></div>
+            <div className="payroll-line-list">
+              {sourceOnlyPayrollTeachers.map((summary) => (
+                <div className="payroll-line" key={summary.identityKey}>
+                  <span><strong>{summary.sourceTeacherName ?? summary.teacherName ?? "未命名老师"}</strong></span>
+                  <span>{summary.sourceHours === null ? "课时待核对" : formatHours(summary.sourceHours)}</span>
+                  <span>{summary.sourceLessonCount} 节课</span>
+                  <span>{jiaowubaoCompletedLessonSourceReviewLabel(summary)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
         ) : null}
         <section className="metric-grid payroll-metrics">
           <Metric
