@@ -16,8 +16,8 @@ export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES = 60;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS = 6_000;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_WINDOW_DAYS = 31;
 export const JIAOWUBAO_SCHEDULE_HORIZON_DAYS = 93;
-const JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS = 3_000;
-const JIAOWUBAO_SCHEDULE_HORIZON_MAX_SOURCE_CALLS = 66;
+const JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS = JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS;
+const JIAOWUBAO_SCHEDULE_HORIZON_MAX_SOURCE_CALLS = 126;
 export const JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_STUDENTS_PER_RECORD = 1_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -68,6 +68,12 @@ export type JiaowubaoScheduleSnapshotRow = Readonly<{
 export type JiaowubaoScheduleCurrentIdentity = Readonly<{
   sourceKey: string;
   sourceDate: string | null;
+}>;
+export type JiaowubaoScheduleHorizonCollectedPage = Readonly<{
+  passNumber: number;
+  windowIndex: number;
+  pageNumber: number;
+  rows: readonly JiaowubaoScheduleSnapshotRow[];
 }>;
 
 type PageFetcher = (query: JiaowubaoScheduleListQuery) => Promise<JiaowubaoScheduleListResponse>;
@@ -191,6 +197,17 @@ export function jiaowubaoScheduleSnapshotSourceKey(value: unknown) {
 function pageRecords(response: JiaowubaoScheduleListResponse) {
   if (!Array.isArray(response.lists)) fail("教务宝返回的 lists 无效。");
   return response.lists as readonly JsonRecord[];
+}
+
+export function jiaowubaoScheduleSourcePageRows(response: JiaowubaoScheduleListResponse) {
+  const raw = pageRecords(response);
+  if (raw.length > JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE) fail("教务宝返回的单页数据超过上限。");
+  const rows = raw.map((item) => {
+    const record = projectJiaowubaoScheduleSnapshotRecord(item);
+    return Object.freeze({ sourceKey: jiaowubaoScheduleSnapshotSourceKey(record), record });
+  });
+  if (rows.length > 0) assertJiaowubaoScheduleSnapshotPageBytes(rows);
+  return Object.freeze(rows);
 }
 
 export async function collectJiaowubaoScheduleSnapshot(
@@ -349,6 +366,107 @@ function repackScheduleHorizon(
     pages.push(Object.freeze({ page, records: Object.freeze(items), sha256: sha256Tag(canonicalJson(items)), file: `page-${String(page).padStart(4, "0")}.json` }));
   }
   return assembleScheduleSnapshot(window, pages, pages.map((page) => ({ page: page.page, recordCount: page.records.length, sha256: page.sha256, file: page.file })), records.length);
+}
+
+type HorizonPageAssembly = {
+  pass: number;
+  window: number;
+  nextPage: number;
+  terminalWindows: number;
+  previousHash: string | null;
+  seenInPass: Set<string>;
+};
+
+function integerBetween(value: unknown, minimum: number, maximum: number) {
+  return Number.isInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+function validateCollectedPage(page: JiaowubaoScheduleHorizonCollectedPage, windowCount: number) {
+  if (!integerBetween(page.passNumber, 0, 1)
+    || !integerBetween(page.windowIndex, 0, windowCount - 1)
+    || !integerBetween(page.pageNumber, 1, JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES + 1)
+    || !Array.isArray(page.rows) || page.rows.length > JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE) {
+    fail("排课采集页无效。");
+  }
+  if (page.pageNumber === JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_PAGES + 1 && page.rows.length !== 0) {
+    fail("教务宝导出超过最大页数，已停止导出。");
+  }
+}
+
+function startsNextCollectedPass(
+  state: HorizonPageAssembly,
+  page: JiaowubaoScheduleHorizonCollectedPage,
+  windowCount: number,
+) {
+  return [page.passNumber === state.pass + 1, state.window === windowCount - 1,
+    page.windowIndex === 0, state.terminalWindows === windowCount].every(Boolean);
+}
+
+function startsNextCollectedWindow(state: HorizonPageAssembly, page: JiaowubaoScheduleHorizonCollectedPage) {
+  return [page.passNumber === state.pass, page.windowIndex === state.window + 1,
+    state.terminalWindows === state.window + 1].every(Boolean);
+}
+
+function advanceCollectedPageCursor(
+  state: HorizonPageAssembly,
+  page: JiaowubaoScheduleHorizonCollectedPage,
+  windowCount: number,
+) {
+  if (page.passNumber !== state.pass || page.windowIndex !== state.window) {
+    if (startsNextCollectedPass(state, page, windowCount)) {
+      state.pass = page.passNumber;
+      state.window = 0;
+      state.terminalWindows = 0;
+      state.seenInPass.clear();
+    } else if (startsNextCollectedWindow(state, page)) {
+      state.window = page.windowIndex;
+    } else fail("排课采集页顺序或覆盖范围无效。");
+    state.nextPage = 1;
+    state.previousHash = null;
+  }
+  if (page.pageNumber !== state.nextPage) fail("排课采集页不连续。");
+  if (state.terminalWindows > state.window) fail("排课采集结束后又出现页面。");
+  state.nextPage += 1;
+}
+
+function appendCollectedPageRows(
+  state: HorizonPageAssembly,
+  page: JiaowubaoScheduleHorizonCollectedPage,
+  recordsByCalId: Map<string, JiaowubaoScheduleSnapshotRecord>,
+) {
+  const hash = sha256Tag(canonicalJson(page.rows));
+  if (state.previousHash === hash) fail("教务宝返回了重复页面，已停止导出。");
+  state.previousHash = hash;
+  for (const row of page.rows) {
+    const record = projectJiaowubaoScheduleSnapshotRecord(row.record);
+    const key = jiaowubaoScheduleSnapshotSourceKey(record);
+    if (row.sourceKey !== key || state.seenInPass.has(key)) fail("教务宝跨日期窗口返回重复排课，已停止发布。");
+    state.seenInPass.add(key);
+    if (state.seenInPass.size > JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS) fail("教务宝滚动排课记录超过安全上限。");
+    recordsByCalId.set(String(record.cal_id), record);
+  }
+  if (page.rows.length < JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE) state.terminalWindows += 1;
+}
+
+export function buildJiaowubaoScheduleHorizonFromCollectedPages(
+  window: Readonly<{ start: string; end: string }>,
+  collectedPages: readonly JiaowubaoScheduleHorizonCollectedPage[],
+): JiaowubaoScheduleSnapshot {
+  const windowCount = jiaowubaoScheduleCollectionWindows(window).length;
+  const recordsByCalId = new Map<string, JiaowubaoScheduleSnapshotRecord>();
+  const state: HorizonPageAssembly = {
+    pass: 0, window: 0, nextPage: 1, terminalWindows: 0, previousHash: null, seenInPass: new Set(),
+  };
+  for (const page of collectedPages) {
+    validateCollectedPage(page, windowCount);
+    advanceCollectedPageCursor(state, page, windowCount);
+    appendCollectedPageRows(state, page, recordsByCalId);
+  }
+  if (collectedPages.length === 0 || state.terminalWindows !== windowCount || state.window !== windowCount - 1) {
+    fail("排课采集尚未覆盖完整时间范围。");
+  }
+  if (recordsByCalId.size > JIAOWUBAO_SCHEDULE_HORIZON_MAX_RECORDS) fail("教务宝滚动排课记录超过安全上限。");
+  return repackScheduleHorizon(window, [...recordsByCalId.values()]);
 }
 
 export function jiaowubaoScheduleSnapshotRows(snapshot: JiaowubaoScheduleSnapshot): readonly JiaowubaoScheduleSnapshotRow[] {

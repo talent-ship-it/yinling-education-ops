@@ -953,7 +953,6 @@ export const JIAOWUBAO_OPEN_API_SCHEDULE_ABORT_RPC = "abort_jiaowubao_open_api_s
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_CLAIM_RPC = "claim_jiaowubao_open_api_schedule_sync_lease_v2";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_LEASE_RELEASE_RPC = "release_jiaowubao_open_api_schedule_sync_lease_v2";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_window";
-const JIAOWUBAO_OPEN_API_SCHEDULE_IDENTITY_READER_RPC = "get_jiaowubao_open_api_schedule_snapshot_identity_page";
 const JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_TARGET_RPC = "get_jiaowubao_open_api_schedule_projection_target";
 const JIAOWUBAO_OPEN_API_SCHEDULE_PROJECTION_ADVANCE_RPC = "advance_jiaowubao_open_api_schedule_projection";
 export const JIAOWUBAO_OPEN_API_AUTHORITY_PROJECT_RPC = "project_jiaowubao_open_api_authority";
@@ -973,6 +972,11 @@ export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PENDING_RPC = "get_jiaowubao_comp
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_BEGIN_RPC = "begin_jiaowubao_completed_lesson_member_collection";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_RESERVE_RPC = "reserve_jiaowubao_completed_lesson_api_request";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_RESERVE_RPC = "reserve_jiaowubao_open_api_schedule_request";
+const JIAOWUBAO_SCHEDULE_HORIZON_BEGIN_RPC = "begin_jiaowubao_schedule_horizon_collection";
+const JIAOWUBAO_SCHEDULE_HORIZON_STAGE_RPC = "stage_jiaowubao_schedule_horizon_page";
+const JIAOWUBAO_SCHEDULE_HORIZON_READ_RPC = "read_jiaowubao_schedule_horizon_pages";
+const JIAOWUBAO_SCHEDULE_HORIZON_CLOSE_RPC = "close_jiaowubao_schedule_horizon_collection";
+const JIAOWUBAO_SCHEDULE_HORIZON_ABORT_RPC = "abort_jiaowubao_schedule_horizon_collection";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_STAGE_RPC = "stage_jiaowubao_completed_lesson_member_page";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_ITEMS_RPC = "get_jiaowubao_completed_lesson_member_items_page";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PREPARE_RPC = "prepare_jiaowubao_completed_lesson_member_publication";
@@ -1151,6 +1155,29 @@ type JiaowubaoOpenApiScheduleSnapshotCompleteReceipt = Readonly<{
   rowsSha256: string;
   payloadSha256: string;
   replayed: boolean;
+}>;
+
+export type JiaowubaoScheduleHorizonCollectionReceipt = Readonly<{
+  runId: string;
+  state: "collecting" | "ready";
+  passNumber: number;
+  windowIndex: number;
+  nextPage: number;
+  firstPassCount: number;
+  secondPassCount: number;
+}>;
+
+type JiaowubaoScheduleHorizonPageBatch = Readonly<{
+  runId: string;
+  state: "ready";
+  pageCount: number;
+  pages: readonly Readonly<{
+    passNumber: number;
+    windowIndex: number;
+    pageNumber: number;
+    rows: readonly Readonly<{ sourceKey: string; record: Readonly<Record<string, unknown>> }>[];
+  }>[];
+  hasMore: boolean;
 }>;
 
 export type JiaowubaoOpenApiScheduleSnapshotIdentityPage = Readonly<{
@@ -2017,6 +2044,91 @@ export function beginJiaowubaoOpenApiScheduleSnapshot(input: {
   }, options);
 }
 
+export function beginJiaowubaoScheduleHorizonCollection(input: {
+  runKey: string;
+  window: Readonly<{ start: string; end: string }>;
+  expectedCurrentRevision: string | null;
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoScheduleHorizonCollectionReceipt>(JIAOWUBAO_SCHEDULE_HORIZON_BEGIN_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_window_start: input.window.start,
+    p_window_end: input.window.end,
+    p_expected_current_revision: input.expectedCurrentRevision,
+    p_actor: input.actor,
+  }, options);
+}
+
+export function stageJiaowubaoScheduleHorizonPage(input: {
+  runKey: string;
+  runId: string;
+  passNumber: number;
+  windowIndex: number;
+  pageNumber: number;
+  rows: readonly Readonly<{ sourceKey: string; record: Readonly<Record<string, unknown>> }>[];
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoScheduleHorizonCollectionReceipt>(JIAOWUBAO_SCHEDULE_HORIZON_STAGE_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_run_id: input.runId,
+    p_pass_number: input.passNumber,
+    p_window_index: input.windowIndex,
+    p_page_number: input.pageNumber,
+    p_rows: input.rows,
+    p_actor: input.actor,
+  }, options);
+}
+
+export function readJiaowubaoScheduleHorizonPages(input: {
+  runKey: string;
+  runId: string;
+  offset: number;
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<JiaowubaoScheduleHorizonPageBatch>(JIAOWUBAO_SCHEDULE_HORIZON_READ_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_run_id: input.runId,
+    p_offset: input.offset,
+    p_actor: input.actor,
+  }, options);
+}
+
+export function closeJiaowubaoScheduleHorizonCollection(input: {
+  runKey: string;
+  runId: string;
+  publishedRevision: string;
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ runId: string; closed: boolean }>>(JIAOWUBAO_SCHEDULE_HORIZON_CLOSE_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_run_id: input.runId,
+    p_published_revision: input.publishedRevision,
+    p_actor: input.actor,
+  }, options);
+}
+
+export function abortJiaowubaoScheduleHorizonCollection(input: {
+  runKey: string;
+  runId: string;
+  actor: "Ops Admin";
+}, options: OpsRpcOptions = {}) {
+  const { secret } = configuration();
+  return rpc<Readonly<{ runId: string; aborted: boolean }>>(JIAOWUBAO_SCHEDULE_HORIZON_ABORT_RPC, {
+    p_secret: secret,
+    p_run_key: input.runKey,
+    p_run_id: input.runId,
+    p_actor: input.actor,
+  }, options);
+}
+
 export function stageJiaowubaoOpenApiScheduleSnapshotPage(input: {
   runId: string;
   pageIndex: number;
@@ -2398,22 +2510,6 @@ export function getJiaowubaoOpenApiScheduleSnapshotWindow(input: {
     p_cursor_start: input.cursor?.startsAt ?? null,
     p_cursor_event_id: input.cursor?.eventId ?? null,
     p_snapshot_revision: input.revision,
-  }, options);
-}
-
-export function getJiaowubaoOpenApiScheduleSnapshotIdentityPage(input: {
-  apiSourceKey: string;
-  revision: string;
-  limit: number;
-  cursorSourceKey: string | null;
-}, options: OpsRpcOptions = {}) {
-  const { secret } = configuration();
-  return rpc<JiaowubaoOpenApiScheduleSnapshotIdentityPage>(JIAOWUBAO_OPEN_API_SCHEDULE_IDENTITY_READER_RPC, {
-    p_secret: secret,
-    p_api_source_key: input.apiSourceKey,
-    p_snapshot_revision: input.revision,
-    p_limit: input.limit,
-    p_cursor_source_key: input.cursorSourceKey,
   }, options);
 }
 
