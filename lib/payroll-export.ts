@@ -1,11 +1,14 @@
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
 import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
+import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
+import { snapshotJiaowubaoHour, snapshotJiaowubaoOptionalHour } from "@/lib/jiaowubao-hour-evidence";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export type PayrollExportLine = Readonly<{
   studentName: string;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   rate: number;
   subtotal: number;
   note?: string;
@@ -61,7 +64,8 @@ export type PayrollExportLessonEvidence = Readonly<{
   studentMatch: string;
   lessonDate: string;
   timeTitle: string | null;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   isTrial: boolean;
   attendanceCode: number | null;
   attendanceTitle: string | null;
@@ -77,7 +81,7 @@ export type PayrollExportScheduleEvidence = Readonly<{
   timeTitle: string | null;
   courseTitle: string | null;
   teamTitle: string | null;
-  teachers: readonly (PayrollExportTeacherLink & Readonly<{ sourceTeacherHours: number | null }>)[];
+  teachers: readonly (PayrollExportTeacherLink & Readonly<{ sourceTeacherHours: number | null; sourceTeacherHoursIssue?: JiaowubaoHourIssue | null }>)[];
 }>;
 
 export type PayrollExportEvidence = Readonly<{
@@ -116,9 +120,9 @@ type SheetRow = readonly Cell[];
 
 type AggregatedStudent = {
   studentName: string;
-  regularHours: number;
-  trialHours: number;
-  hours: number;
+  regularHours: number | null;
+  trialHours: number | null;
+  hours: number | null;
   rates: Set<number>;
   subtotal: number;
   lessonCount: number;
@@ -253,6 +257,11 @@ function numberCell(value: number | null | undefined, style = 5): Cell {
   return { value: value == null ? null : number(value, "cell"), style };
 }
 
+function sourceHourCell(value: number | null | undefined): Cell {
+  if (value == null) return stringCell("待核对");
+  return Math.abs(value) > 1_000_000_000_000 ? stringCell(String(value)) : numberCell(value);
+}
+
 function joined(values: ReadonlySet<string>) {
   return [...values].join("、");
 }
@@ -287,10 +296,19 @@ function aggregateStudents(lines: readonly PayrollExportLine[]) {
       studentMatches: new Set<string>(),
       notes: new Set<string>(),
     };
-    const hours = number(line.hours, "学生课时");
-    existing.hours = number(existing.hours + hours, "学生课时合计");
-    if (line.isTrial) existing.trialHours = number(existing.trialHours + hours, "试听课时");
-    else existing.regularHours = number(existing.regularHours + hours, "常规课时");
+    if (line.evidenceOnly) snapshotJiaowubaoHour(line.hours, line.hoursIssue ?? undefined);
+    else if (line.hoursIssue || line.hours === null) fail("普通薪资明细不能包含异常课时。");
+    const hours = line.hours === null || line.hoursIssue ? null : number(line.hours, "学生课时");
+    if (hours === null || line.hoursIssue) {
+      existing.hours = null;
+      if (line.isTrial) existing.trialHours = null;
+      else existing.regularHours = null;
+      existing.notes.add("课时异常，合计不完整");
+    } else {
+      if (existing.hours !== null) existing.hours = number(existing.hours + hours, "学生课时合计");
+      if (line.isTrial && existing.trialHours !== null) existing.trialHours = number(existing.trialHours + hours, "试听课时");
+      if (!line.isTrial && existing.regularHours !== null) existing.regularHours = number(existing.regularHours + hours, "常规课时");
+    }
     existing.rates.add(number(line.rate, "课时费率"));
     existing.subtotal = number(existing.subtotal + number(line.subtotal, "行小计"), "学生小计");
     existing.lessonCount += 1;
@@ -327,7 +345,13 @@ function assertWorkbook(input: PayrollWorkbookExport) {
       if (!lesson.sourceKey?.trim()) fail("教务宝消课证据缺少来源键。");
       safeText(lesson.sourceKey, "教务宝消课证据来源键");
       if (evidenceBySourceKey.has(lesson.sourceKey)) fail("教务宝消课证据包含重复来源键。");
+      snapshotJiaowubaoHour(lesson.hours, lesson.hoursIssue ?? undefined);
       evidenceBySourceKey.set(lesson.sourceKey, lesson);
+    }
+    for (const schedule of input.evidence.schedules) {
+      for (const teacher of schedule.teachers) {
+        snapshotJiaowubaoOptionalHour(teacher.sourceTeacherHours, teacher.sourceTeacherHoursIssue ?? undefined);
+      }
     }
     if (!Array.isArray(input.evidence.teacherLessonSourceKeys)
       || input.evidence.teacherLessonSourceKeys.length > MAX_EXPORT_ROWS) {
@@ -367,6 +391,9 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     if (row.month !== input.month || !MONTH.test(row.month)) fail("薪资行月份与导出月份不一致。");
     if (row.currency !== "CNY" && row.currency !== "AUD") fail("薪资币种无效。");
     if (row.paymentMode !== "payable" && row.paymentMode !== "review_only") fail("付款模式无效。");
+    if (input.evidence && row.paymentMode === "payable" && row.sourceHours == null) {
+      fail("缺失教务宝老师课时不能生成付款资料。");
+    }
     number(row.payrollHours, "薪资课时");
     if (row.sourceHours != null) number(row.sourceHours, "教务宝老师课时");
     if (row.sourceLessonCount != null) integer(row.sourceLessonCount, "教务宝课次数", MAX_EVIDENCE_ROWS);
@@ -385,6 +412,10 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     if (payrollDetailRows > MAX_PAYROLL_DETAIL_ROWS) fail("学生明细总行数无效。");
     aggregateStudents(row.lines);
     if (input.evidence) {
+      if (row.paymentMode === "payable" && input.evidence.schedules.some((schedule) => schedule.teachers.some(
+        (teacher) => teacher.teacherId === row.teacherId
+          && (teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue),
+      ))) fail("异常教务宝老师课时不能生成付款资料。");
       const expectedSourceKeys = expectedSourceKeysByTeacher.get(row.teacherKey);
       if (!expectedSourceKeys) fail("薪资行缺少当前教务宝老师课次映射。");
       const rowSourceKeys = new Set<string>();
@@ -395,10 +426,12 @@ function assertWorkbook(input: PayrollWorkbookExport) {
         rowSourceKeys.add(line.sourceKey);
         const lesson = evidenceBySourceKey.get(line.sourceKey);
         if (!lesson) fail("学生明细来源键不属于当前教务宝消课证据。");
+        if (lesson.hoursIssue && row.paymentMode === "payable") fail("异常教务宝课时不能生成付款资料。");
         const expectedStudentName = lesson.displayStudentName
           ?? `${lesson.memberName ?? lesson.memberId}（待核对姓名）`;
         if (line.studentName !== expectedStudentName
           || line.hours !== lesson.hours
+          || (line.hoursIssue ?? null) !== (lesson.hoursIssue ?? null)
           || line.isTrial !== lesson.isTrial
           || line.sourceMemberId !== lesson.memberId
           || line.studentId !== lesson.studentId
@@ -521,22 +554,22 @@ function teacherDescription(teachers: readonly PayrollExportTeacherLink[]) {
 
 function lessonEvidenceSheet(input: PayrollWorkbookExport) {
   const rows: SheetRow[] = [[
-    "来源键", "分校 ID", "排课 ID", "日期", "时间", "教务宝学员 ID", "教务宝账号名", "展示学生名", "系统学生 ID", "系统学生名", "匹配状态", "学生课时", "试听", "签到代码", "签到状态", "课程", "班级", "老师角色与匹配",
+    "来源键", "分校 ID", "排课 ID", "日期", "时间", "教务宝学员 ID", "教务宝账号名", "展示学生名", "系统学生 ID", "系统学生名", "匹配状态", "学生课时", "课时核对", "试听", "签到代码", "签到状态", "课程", "班级", "老师角色与匹配",
   ].map((value) => stringCell(value, 3))];
   for (const item of input.evidence?.lessons ?? []) {
     rows.push([
       stringCell(item.sourceKey), stringCell(jiaowubaoCompletedLessonBranchDisplay(item.branchId)), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle),
       stringCell(item.memberId), stringCell(item.memberName), stringCell(item.displayStudentName), stringCell(item.studentId), stringCell(item.studentName),
-      stringCell(item.studentMatch), numberCell(item.hours), stringCell(item.isTrial ? "是" : "否"), numberCell(item.attendanceCode),
+      stringCell(item.studentMatch), sourceHourCell(item.hours), stringCell(item.hoursIssue ? "待核对" : "正常"), stringCell(item.isTrial ? "是" : "否"), numberCell(item.attendanceCode),
       stringCell(item.attendanceTitle), stringCell(item.courseTitle), stringCell(item.teamTitle), stringCell(teacherDescription(item.teachers)),
     ]);
   }
-  return worksheetXml({ rows, widths: [38, 16, 18, 13, 16, 19, 23, 23, 19, 23, 18, 12, 9, 11, 14, 28, 28, 48], freezeRows: 1, landscape: true });
+  return worksheetXml({ rows, widths: [38, 16, 18, 13, 16, 19, 23, 23, 19, 23, 18, 12, 13, 9, 11, 14, 28, 28, 48], freezeRows: 1, landscape: true });
 }
 
 function scheduleEvidenceSheet(input: PayrollWorkbookExport) {
   const rows: SheetRow[] = [[
-    "来源键", "排课 ID", "日期", "时间", "课程", "班级", "老师角色", "教务宝老师 ID", "教务宝老师名", "系统老师 ID", "系统老师名", "匹配状态", "角色老师课时",
+    "来源键", "排课 ID", "日期", "时间", "课程", "班级", "老师角色", "教务宝老师 ID", "教务宝老师名", "系统老师 ID", "系统老师名", "匹配状态", "角色老师课时", "课时核对",
   ].map((value) => stringCell(value, 3))];
   for (const item of input.evidence?.schedules ?? []) {
     const teachers = item.teachers.length ? item.teachers : [null];
@@ -544,15 +577,22 @@ function scheduleEvidenceSheet(input: PayrollWorkbookExport) {
       rows.push([
         stringCell(item.sourceKey), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle), stringCell(item.courseTitle), stringCell(item.teamTitle),
         stringCell(teacher?.role ?? "无老师角色"), stringCell(teacher?.sourceTeacherId), stringCell(teacher?.sourceTeacherName),
-        stringCell(teacher?.teacherId), stringCell(teacher?.teacherName), stringCell(teacher?.teacherMatch), numberCell(teacher?.sourceTeacherHours),
+        stringCell(teacher?.teacherId), stringCell(teacher?.teacherName), stringCell(teacher?.teacherMatch), sourceHourCell(teacher?.sourceTeacherHours), stringCell(teacher?.sourceTeacherHoursIssue || teacher?.sourceTeacherHours == null ? "待核对" : "正常"),
       ]);
     }
   }
-  return worksheetXml({ rows, widths: [38, 18, 13, 16, 28, 28, 13, 20, 22, 19, 22, 18, 15], freezeRows: 1, landscape: true });
+  return worksheetXml({ rows, widths: [38, 18, 13, 16, 28, 28, 13, 20, 22, 19, 22, 18, 15, 13], freezeRows: 1, landscape: true });
 }
 
 function sourceSheet(input: PayrollWorkbookExport) {
   const evidence = input.evidence;
+  const unresolvedStudentHours = evidence?.lessons.filter((lesson) => lesson.hoursIssue || lesson.hours === null).length ?? 0;
+  const studentHours = unresolvedStudentHours === 0
+    ? Number((evidence?.lessons.reduce((total, lesson) => total + (lesson.hours ?? 0), 0) ?? 0).toFixed(4))
+    : `不完整：${unresolvedStudentHours} 条课时待核对`;
+  const unresolvedTeacherHours = evidence?.schedules.reduce(
+    (total, schedule) => total + schedule.teachers.filter((teacher) => teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue).length, 0,
+  ) ?? 0;
   const sourceRows: Array<readonly [string, CellValue]> = [
     ["导出月份", input.month],
     ["导出时间", input.generatedAt],
@@ -573,7 +613,9 @@ function sourceSheet(input: PayrollWorkbookExport) {
     ["老师总课时来源", "query_schedule_list；over=1；只使用 teacher_hour / teacher_s_hour / teacher_t_hour 对应角色字段"],
     ["共享试听账号规则", "试听学员 A/B/C 保留原账号；展示姓名从已消课课程标题或唯一系统姓名安全解析"],
     ["核算边界", "学生消课课时用于学生明细；老师总课时来自排课角色字段。小组课不得按学生人数重复计算老师薪资。"],
-    ["付款安全", "待匹配、冲突、来源缺失、来源或映射修订变化、课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
+    ["付款安全", "待匹配、冲突、来源缺失、异常课时、来源或映射修订变化、课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
+    ["学生实扣课时总计", evidence ? studentHours : "无来源"],
+    ["异常老师角色课时数", unresolvedTeacherHours],
   ];
   const rows: SheetRow[] = [[stringCell("项目", 3), stringCell("内容", 3)]];
   for (const [label, value] of sourceRows) {

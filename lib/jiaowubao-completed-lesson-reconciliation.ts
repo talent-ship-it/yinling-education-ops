@@ -7,6 +7,7 @@
  */
 
 import { isJiaowubaoCompletedLessonUnknownBranchId } from "@/lib/jiaowubao-completed-lesson-branch";
+import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 
 export type JiaowubaoCompletedLessonMatch =
   | "source_id"
@@ -34,7 +35,8 @@ export type JiaowubaoCompletedLessonStudentEvidence = Readonly<{
   memberName: string | null;
   lessonDate: string;
   timeTitle: string | null;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   isTrial: boolean;
   attendanceCode: number | null;
   attendanceTitle: string | null;
@@ -50,6 +52,7 @@ export type JiaowubaoCompletedLessonStudentEvidence = Readonly<{
 
 export type JiaowubaoCompletedScheduleTeacherEvidence = JiaowubaoCompletedLessonTeacherLink & Readonly<{
   sourceTeacherHours: number | null;
+  sourceTeacherHoursIssue?: JiaowubaoHourIssue | null;
 }>;
 
 export type JiaowubaoCompletedScheduleEventEvidence = Readonly<{
@@ -317,7 +320,7 @@ export function reconcileJiaowubaoCompletedLessonEvidence(
       const summary = summaries.get(key) ?? accumulatorFor(teacher);
       summary.sourceLessonCount += 1;
       plan.members.forEach((member) => summary.studentSourceKeys.add(member.sourceKey));
-      if (teacher.sourceTeacherHours === null) {
+      if (teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue) {
         summary.missingHours = true;
         summary.unresolvedLessonCount += 1;
       } else {
@@ -326,10 +329,13 @@ export function reconcileJiaowubaoCompletedLessonEvidence(
       if (plan.status !== "reconciled") {
         summary.unresolvedLessonCount += 1;
         summary.unresolvedTrialLessonCount += 1;
-      } else if (plan.isTrial === null || teacher.sourceTeacherHours === null) {
-        summary.unresolvedTrialLessonCount += 1;
-      } else if (plan.isTrial) {
-        summary.trialSourceHours = Number((summary.trialSourceHours + teacher.sourceTeacherHours).toFixed(4));
+      } else {
+        if (plan.members.some((member) => member.hoursIssue)) summary.unresolvedLessonCount += 1;
+        if (plan.isTrial === null || teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue) {
+          summary.unresolvedTrialLessonCount += 1;
+        } else if (plan.isTrial) {
+          summary.trialSourceHours = Number((summary.trialSourceHours + teacher.sourceTeacherHours).toFixed(4));
+        }
       }
       summaries.set(key, summary);
     }

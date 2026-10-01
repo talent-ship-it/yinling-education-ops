@@ -9,6 +9,7 @@ import {
   isJiaowubaoCompletedLessonUnknownBranchId,
   JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID,
 } from "@/lib/jiaowubao-completed-lesson-branch";
+import { snapshotJiaowubaoHour, sourceJiaowubaoHour, type JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 
 /**
  * Immutable, curated evidence feed for the monthly payroll worksheet.
@@ -60,7 +61,8 @@ export type JiaowubaoCompletedLessonRecord = Readonly<{
   memberName: string | null;
   lessonDate: string;
   timeTitle: string | null;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue;
   lessonType: number | null;
   isTrial: boolean;
   attendanceCode: number | null;
@@ -413,19 +415,6 @@ function optionalInteger(value: unknown, field: string, minimum: number, maximum
   return parsed;
 }
 
-function requiredDecimal(value: unknown, field: string, minimum: number, maximum: number) {
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string" && value.trim()
-      ? Number(value)
-      : Number.NaN;
-  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
-    fail(`教务宝已消课记录的 ${field} 无效。`);
-  }
-  // Store a canonical decimal rather than the supplier's original spelling.
-  return Number(parsed.toFixed(4));
-}
-
 function completed(value: unknown) {
   if (value === 1 || value === "1" || value === true) return true;
   fail("教务宝已消课记录不属于 over=1 完成状态。");
@@ -569,7 +558,7 @@ export function projectJiaowubaoCompletedLessonRecord(
   const calendarId = completedLessonSourceComponent(value.cal_id, "cal_id");
   const memberId = completedLessonSourceComponent(value.mem_id, "mem_id");
   const lessonDate = sourceDate(value.dated, window);
-  const hours = requiredDecimal(value.hours, "hours", 0, 24);
+  const hourEvidence = sourceJiaowubaoHour(value.hours);
   const lessonType = optionalInteger(value.type, "type", 1, 5);
   const attendanceCode = optionalInteger(value.sign, "sign", -1, 99);
   const sourceKey = `jwb-open-api:lesson:${branchId}:${calendarId}:${memberId}`;
@@ -583,7 +572,7 @@ export function projectJiaowubaoCompletedLessonRecord(
     memberName: sourceMemberName(value.mem_title),
     lessonDate,
     timeTitle: timeTitle(value),
-    hours,
+    ...hourEvidence,
     lessonType,
     isTrial: lessonType === 3,
     attendanceCode,
@@ -611,8 +600,10 @@ const COMPLETED_LESSON_RECORD_FIELDS = Object.freeze([
 export function readJiaowubaoCompletedLessonSnapshotRecord(value: unknown): JiaowubaoCompletedLessonRecord {
   if (!isRecord(value)) fail("已消课快照记录无效。");
   const fields = Object.keys(value);
-  if (fields.length !== COMPLETED_LESSON_RECORD_FIELDS.length
-    || COMPLETED_LESSON_RECORD_FIELDS.some((field) => !Object.hasOwn(value, field))) {
+  if ((fields.length !== COMPLETED_LESSON_RECORD_FIELDS.length
+      && fields.length !== COMPLETED_LESSON_RECORD_FIELDS.length + 1)
+    || COMPLETED_LESSON_RECORD_FIELDS.some((field) => !Object.hasOwn(value, field))
+    || fields.some((field) => field !== "hoursIssue" && !COMPLETED_LESSON_RECORD_FIELDS.includes(field as typeof COMPLETED_LESSON_RECORD_FIELDS[number]))) {
     fail("已消课快照记录字段无效。");
   }
   if (value.kind !== "lesson" || value.completed !== true || typeof value.isTrial !== "boolean") fail("已消课快照记录状态无效。");
@@ -620,7 +611,7 @@ export function readJiaowubaoCompletedLessonSnapshotRecord(value: unknown): Jiao
   const calendarId = snapshotSourceComponent(value.calendarId, "calendarId");
   const memberId = snapshotSourceComponent(value.memberId, "memberId");
   const lessonDate = exactDate(value.lessonDate, "lessonDate");
-  const hours = requiredDecimal(value.hours, "hours", 0, 24);
+  const hourEvidence = snapshotJiaowubaoHour(value.hours, value.hoursIssue);
   const lessonType = optionalInteger(value.lessonType, "lessonType", 1, 5);
   if (value.isTrial !== (lessonType === 3)) fail("已消课快照试听状态无效。");
   const attendanceCode = optionalInteger(value.attendanceCode, "attendanceCode", -1, 99);
@@ -636,7 +627,7 @@ export function readJiaowubaoCompletedLessonSnapshotRecord(value: unknown): Jiao
     memberName: snapshotText(value.memberName, "memberName"),
     lessonDate,
     timeTitle: snapshotText(value.timeTitle, "timeTitle", 80),
-    hours,
+    ...hourEvidence,
     lessonType,
     isTrial: value.isTrial,
     attendanceCode,
