@@ -1,5 +1,6 @@
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
 import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
+import { jiaowubaoCompletedLessonTeacherIdentityKey } from "@/lib/jiaowubao-completed-lesson-reconciliation";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -106,6 +107,7 @@ export type PayrollExportEvidence = Readonly<{
 export type PayrollWorkbookExport = Readonly<{
   month: string;
   generatedAt: string;
+  exportMode?: "hours_only";
   rows: readonly PayrollExportRow[];
   evidence?: PayrollExportEvidence;
 }>;
@@ -306,6 +308,8 @@ function aggregateStudents(lines: readonly PayrollExportLine[]) {
 }
 
 function assertWorkbook(input: PayrollWorkbookExport) {
+  if (input.exportMode !== undefined && input.exportMode !== "hours_only") fail("导出模式无效。");
+  if (input.exportMode === "hours_only" && !input.evidence) fail("课时核对表缺少完整双源快照。");
   const match = MONTH.exec(input.month);
   if (!match) fail("导出月份格式无效。");
   const generatedAt = new Date(input.generatedAt);
@@ -423,6 +427,90 @@ function assertWorkbook(input: PayrollWorkbookExport) {
   return { year: Number(match[1]), month: Number(match[2]) };
 }
 
+const TEMPLATE_MAIN_WIDTHS = [7.4375, 32.9375, 26.9375, 21.8125, 27.125, 32.25, 22.3125, 23.375, 31.3125, 40.5625, 34.625, 41.375, 112.5625];
+const TEMPLATE_STUDENT_WIDTHS = TEMPLATE_MAIN_WIDTHS.slice(0, 9);
+const TEMPLATE_SOURCE_LABEL = "教务宝已结课双源快照；学生课时与老师角色课时分别核对";
+
+function roundedHours(value: number) {
+  return number(Number(value.toFixed(4)), "课时合计");
+}
+
+function visualUnits(value: string) {
+  return [...value].reduce((total, character) => total + (/[^\u0000-\u007f]/u.test(character) ? 2 : 1), 0);
+}
+
+function fittedHeight(cells: readonly Readonly<{ value: string; width: number }>[]) {
+  const lines = Math.max(1, ...cells.map(({ value, width }) => Math.ceil(visualUnits(value) / width)));
+  return Math.min(409.5, Math.max(31.5, lines * 19 + 4));
+}
+
+function lessonEvidenceBySourceKey(input: PayrollWorkbookExport) {
+  return new Map((input.evidence?.lessons ?? []).map((lesson) => [lesson.sourceKey, lesson]));
+}
+
+function ownerForLesson(lesson: PayrollExportLessonEvidence, eligible: readonly string[]) {
+  const primary = lesson.teachers.find((teacher) => teacher.role === "primary");
+  const preferred = primary ? jiaowubaoCompletedLessonTeacherIdentityKey(primary) : null;
+  if (preferred && eligible.includes(preferred)) return preferred;
+  return eligible.length === 1 ? eligible[0]! : null;
+}
+
+function eligibleTeachersBySourceKey(rows: readonly PayrollExportRow[]) {
+  const mapped = new Map<string, string[]>();
+  for (const row of rows) {
+    for (const line of row.lines) {
+      if (!line.sourceKey) continue;
+      mapped.set(line.sourceKey, [...mapped.get(line.sourceKey) ?? [], row.teacherKey]);
+    }
+  }
+  return mapped;
+}
+
+function studentHoursOwnerBySourceKey(input: PayrollWorkbookExport) {
+  const mapped = eligibleTeachersBySourceKey(input.rows);
+  const owners = new Map<string, string>();
+  for (const lesson of input.evidence?.lessons ?? []) {
+    const owner = ownerForLesson(lesson, mapped.get(lesson.sourceKey) ?? []);
+    if (owner) owners.set(lesson.sourceKey, owner);
+  }
+  return owners;
+}
+
+function displayedStudentHours(
+  payroll: PayrollExportRow,
+  sourceKeys: ReadonlySet<string>,
+  fallback: number,
+  owners: ReadonlyMap<string, string>,
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+) {
+  if (!evidence.size) return roundedHours(fallback);
+  return roundedHours([...sourceKeys].reduce((total, sourceKey) => (
+    total + (owners.get(sourceKey) === payroll.teacherKey ? evidence.get(sourceKey)?.hours ?? 0 : 0)
+  ), 0));
+}
+
+function attendanceSummary(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
+  const counts = new Map<string, number>();
+  for (const sourceKey of sourceKeys) {
+    const lesson = evidence.get(sourceKey);
+    if (!lesson) continue;
+    const label = lesson.attendanceTitle?.trim() || (lesson.attendanceCode === null ? "出勤待核对" : `出勤代码 ${lesson.attendanceCode}`);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts].map(([label, count]) => `${label} ${count}`).join("；");
+}
+
+function trialStudents(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
+  const names = new Set<string>();
+  for (const sourceKey of sourceKeys) {
+    const lesson = evidence.get(sourceKey);
+    if (!lesson?.isTrial) continue;
+    const name = lesson.displayStudentName ?? lesson.memberName;
+    if (name) names.add(lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
+  }
+  return joined(names);
+}
+
 function mainSheet(input: PayrollWorkbookExport, year: number, month: number) {
   const rows: SheetRow[] = [
     [stringCell(`${year}年${month}月 教务宝课时表`, 1), ...Array.from({ length: 7 }, () => stringCell(null, 1))],
@@ -490,10 +578,297 @@ function studentDetailSheet(input: PayrollWorkbookExport) {
   return worksheetXml({ rows, widths: [12, 22, 24, 12, 12, 14, 11, 20, 20, 34, 18, 42], freezeRows: 1, landscape: true });
 }
 
+function hoursOnlyTeacherDifference(payroll: PayrollExportRow, studentHours: number) {
+  if (payroll.sourceHours == null) return "老师课时待核对";
+  return Math.abs(studentHours - payroll.sourceHours) > 0.0001
+    ? `学生 ${studentHours} 小时；老师 ${payroll.sourceHours} 小时，按角色课时核对`
+    : "";
+}
+
+function hoursOnlyMainStudentNote(
+  payroll: PayrollExportRow,
+  student: AggregatedStudent | null,
+  hours: number | null,
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+) {
+  const notes = student ? [attendanceSummary(student.sourceKeys, evidence)] : [];
+  if (student && hours === 0 && student.hours !== 0 && evidence.size) notes.push("学生课时计于主讲或下方待核对");
+  if (payroll.paymentMode === "review_only") notes.push("待核对");
+  return notes.filter(Boolean).join("；");
+}
+
+function hoursOnlyMainTeacherCells(payroll: PayrollExportRow, teacherIndex: number, studentIndex: number) {
+  if (studentIndex !== 0) return {
+    leading: [stringCell(null, 19), stringCell(null, 18)],
+    source: stringCell(null, 21),
+  };
+  return {
+    leading: [numberCell(teacherIndex + 1, 19), stringCell(payroll.teacherName, 18)],
+    source: numberCell(payroll.sourceHours ?? null, 21),
+  };
+}
+
+function hoursOnlyMainStudentCells(input: Readonly<{
+  payroll: PayrollExportRow;
+  student: AggregatedStudent | null;
+  teacherIndex: number;
+  studentIndex: number;
+  teacherStudentHours: number;
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>;
+  owners: ReadonlyMap<string, string>;
+}>) {
+  const { payroll, student, teacherIndex, studentIndex, teacherStudentHours, evidence, owners } = input;
+  const hours = student ? displayedStudentHours(payroll, student.sourceKeys, student.hours, owners, evidence) : null;
+  const note = hoursOnlyMainStudentNote(payroll, student, hours, evidence);
+  const difference = studentIndex === 0 ? hoursOnlyTeacherDifference(payroll, teacherStudentHours) : "";
+  const candidate = student ? trialStudents(student.sourceKeys, evidence) : "";
+  const teacherCells = hoursOnlyMainTeacherCells(payroll, teacherIndex, studentIndex);
+  const cells: SheetRow = [
+    ...teacherCells.leading,
+    stringCell(student?.studentName ?? "（无学生明细）", 19),
+    numberCell(hours === 0 && student && student.hours !== 0 ? null : hours, 20),
+    stringCell(null, 18), stringCell(null, 18),
+    teacherCells.source,
+    stringCell(null, 21), stringCell(note, 22), stringCell(difference, 22),
+    stringCell(null, 18), stringCell(null, 18), stringCell(candidate, 22),
+  ];
+  return { cells, hours, height: fittedHeight([{ value: note, width: 29 }, { value: difference, width: 38 }, { value: candidate, width: 104 }]) };
+}
+
+function hoursOnlyUnallocatedSourceCells(lesson: PayrollExportLessonEvidence): SheetRow {
+  return [
+    stringCell(lesson.teachers.map((teacher) => teacher.sourceTeacherName ?? teacher.teacherName ?? "未命名老师").join("、"), 18),
+    stringCell(lesson.displayStudentName ?? lesson.memberName ?? "待核对姓名", 19), numberCell(lesson.hours, 20),
+    stringCell(null, 18), stringCell(null, 18), stringCell(lesson.teamTitle, 18),
+    stringCell(lesson.courseTitle, 22),
+  ];
+}
+
+function appendHoursOnlyUnallocatedMainRows(
+  rows: SheetRow[],
+  heights: Map<number, number>,
+  lessons: readonly PayrollExportLessonEvidence[],
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+) {
+  let total = 0;
+  for (const [index, lesson] of lessons.entries()) {
+    total = roundedHours(total + lesson.hours);
+    const candidate = lesson.isTrial ? trialStudents(new Set([lesson.sourceKey]), evidence) : "";
+    const note = "多教师学生课时归属待核对";
+    const rowNumber = rows.length + 1;
+    rows.push([
+      numberCell(index + 1, 18), ...hoursOnlyUnallocatedSourceCells(lesson),
+      stringCell(note, 22), stringCell(attendanceSummary(new Set([lesson.sourceKey]), evidence), 22),
+      stringCell(null, 18), stringCell(null, 18), stringCell(candidate, 22),
+    ]);
+    heights.set(rowNumber, fittedHeight([{ value: note, width: 29 }, { value: candidate, width: 104 }]));
+  }
+  return total;
+}
+
+function appendHoursOnlyTeacherMainRows(input: Readonly<{
+  payroll: PayrollExportRow;
+  teacherIndex: number;
+  rows: SheetRow[];
+  heights: Map<number, number>;
+  merges: string[];
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>;
+  owners: ReadonlyMap<string, string>;
+}>) {
+  const { payroll, teacherIndex, rows, heights, merges, evidence, owners } = input;
+  const students = aggregateStudents(payroll.lines);
+  const firstRow = rows.length + 1;
+  const lastRow = firstRow + Math.max(1, students.length) - 1;
+  const teacherStudentHours = roundedHours(students.reduce((total, student) => (
+    total + displayedStudentHours(payroll, student.sourceKeys, student.hours, owners, evidence)
+  ), 0));
+  let studentTotal = 0;
+  for (const [studentIndex, student] of (students.length ? students : [null]).entries()) {
+    const rendered = hoursOnlyMainStudentCells({ payroll, student, teacherIndex, studentIndex, teacherStudentHours, evidence, owners });
+    if (rendered.hours !== null) studentTotal = roundedHours(studentTotal + rendered.hours);
+    const rowNumber = rows.length + 1;
+    rows.push(rendered.cells);
+    heights.set(rowNumber, rendered.height);
+  }
+  if (lastRow > firstRow) {
+    for (const column of ["A", "B", "G", "H", "K", "L"]) merges.push(`${column}${firstRow}:${column}${lastRow}`);
+  }
+  return studentTotal;
+}
+
+function hoursOnlyMainSheet(input: PayrollWorkbookExport, year: number, month: number) {
+  const rows: SheetRow[] = [
+    [stringCell(`${year}年${String(month).padStart(2, "0")}月教务宝课时表`, 15)],
+    [stringCell(TEMPLATE_SOURCE_LABEL, 16)],
+    ["序号", "教师姓名", "学生姓名", "课时（小时）", "课时费单价（小时）", "合计（待补费率）", "老师总课时（小时）", "老师总薪资（待补）", "老师薪资备注", "其他", "银行卡号", "开户行", "试听员名单"].map((value) => stringCell(value, 17)),
+  ];
+  const merges = ["A1:I1", "A2:I2"];
+  const heights = new Map<number, number>([[1, 59.55], [2, 36.5], [3, 31.5]]);
+  const evidence = lessonEvidenceBySourceKey(input);
+  const owners = studentHoursOwnerBySourceKey(input);
+  let studentTotal = 0;
+  let teacherTotal = 0;
+  let unknownTeacherHours = false;
+  for (const [index, payroll] of input.rows.entries()) {
+    studentTotal = roundedHours(studentTotal + appendHoursOnlyTeacherMainRows({
+      payroll, teacherIndex: index, rows, heights, merges, evidence, owners,
+    }));
+    if (payroll.sourceHours == null) unknownTeacherHours = true;
+    else teacherTotal = roundedHours(teacherTotal + payroll.sourceHours);
+  }
+  rows.push([
+    stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), numberCell(studentTotal, 23),
+    stringCell(null, 23), stringCell(null, 23), numberCell(unknownTeacherHours ? null : teacherTotal, 23),
+    ...Array.from({ length: 6 }, () => stringCell(null, 23)),
+  ]);
+  heights.set(rows.length, 31.5);
+  rows.push(Array.from({ length: 13 }, () => stringCell(null, 18)));
+  rows.push([stringCell("教务宝多教师记录（课时暂未拆分）", 24)]);
+  merges.push(`A${rows.length}:I${rows.length}`);
+  heights.set(rows.length, 36.5);
+  rows.push(["序号", "教师姓名（教务宝原始）", "学生姓名", "课时（小时）", "课时费单价（小时）", "合计", "课程类型", "课程名称", "备注", "其他", "银行卡号", "开户行", "试听员名单"].map((value) => stringCell(value, 17)));
+  heights.set(rows.length, 31.5);
+  const unallocated = input.evidence?.lessons.filter((lesson) => !owners.has(lesson.sourceKey)) ?? [];
+  const unallocatedHours = appendHoursOnlyUnallocatedMainRows(rows, heights, unallocated, evidence);
+  rows.push([
+    stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), unallocated.length ? numberCell(unallocatedHours, 23) : stringCell(null, 23),
+    stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), stringCell(null, 23),
+    stringCell(unallocated.length ? "学生课时未分配，待核对" : "本月逐课次老师已明确，课时已在上表按老师归属", 23),
+    ...Array.from({ length: 4 }, () => stringCell(null, 23)),
+  ]);
+  heights.set(rows.length, 31.5);
+  return worksheetXml({ rows, widths: TEMPLATE_MAIN_WIDTHS, merges, freezeRows: 3, landscape: true, rowHeights: heights });
+}
+
+type HoursOnlyCourseGroup = {
+  studentName: string;
+  courseType: string;
+  courseTitle: string;
+  hours: number;
+  ownedHours: number;
+  trial: boolean;
+  sourceKeys: Set<string>;
+};
+
+function hoursOnlyCourseIdentity(line: PayrollExportLine, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
+  const lesson = line.sourceKey ? evidence.get(line.sourceKey) : undefined;
+  const courseType = lesson?.teamTitle ?? (line.isTrial ? "试听" : "");
+  const courseTitle = lesson?.courseTitle ?? "";
+  return {
+    courseType,
+    courseTitle,
+    key: JSON.stringify([aggregationKey(line), courseType, courseTitle, Boolean(line.isTrial)]),
+  };
+}
+
+function isHoursOnlyStudentLineOwned(
+  line: PayrollExportLine,
+  teacherKey: string,
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+  owners: ReadonlyMap<string, string>,
+) {
+  return !evidence.size || Boolean(line.sourceKey && owners.get(line.sourceKey) === teacherKey);
+}
+
+function hoursOnlyCourseGroups(
+  payroll: PayrollExportRow,
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+  owners: ReadonlyMap<string, string>,
+) {
+  const groups = new Map<string, HoursOnlyCourseGroup>();
+  for (const line of payroll.lines) {
+    const { courseType, courseTitle, key } = hoursOnlyCourseIdentity(line, evidence);
+    const group = groups.get(key) ?? {
+      studentName: line.studentName, courseType, courseTitle, hours: 0, ownedHours: 0,
+      trial: false, sourceKeys: new Set<string>(),
+    };
+    group.hours = roundedHours(group.hours + line.hours);
+    if (isHoursOnlyStudentLineOwned(line, payroll.teacherKey, evidence, owners)) {
+      group.ownedHours = roundedHours(group.ownedHours + line.hours);
+    }
+    group.trial ||= Boolean(line.isTrial);
+    if (line.sourceKey) group.sourceKeys.add(line.sourceKey);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function hoursOnlyDetailCells(
+  payroll: PayrollExportRow,
+  group: HoursOnlyCourseGroup,
+  rowNumber: number,
+  evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
+) {
+  const note = [attendanceSummary(group.sourceKeys, evidence), group.trial ? "试听" : "",
+    group.hours !== group.ownedHours ? "学生课时计于主讲或待核对区" : "",
+    payroll.paymentMode === "review_only" ? "待核对" : ""].filter(Boolean).join("；");
+  const cells: SheetRow = [
+    numberCell(rowNumber - 3, 18), stringCell(payroll.teacherName, 18), stringCell(group.studentName, 19),
+    numberCell(group.hours !== group.ownedHours && group.ownedHours === 0 ? null : group.ownedHours, 20),
+    stringCell(null, 18), stringCell(null, 18), stringCell(group.courseType, 18),
+    stringCell(group.courseTitle, 22), stringCell(note, 22),
+  ];
+  return { cells, height: fittedHeight([{ value: group.courseTitle, width: 21 }, { value: note, width: 29 }]) };
+}
+
+function hoursOnlyUnallocatedDetailCells(lesson: PayrollExportLessonEvidence, rowNumber: number) {
+  const note = "多教师学生课时归属待核对";
+  const cells: SheetRow = [
+    numberCell(rowNumber - 3, 18), ...hoursOnlyUnallocatedSourceCells(lesson), stringCell(note, 22),
+  ];
+  return { cells, height: fittedHeight([{ value: lesson.courseTitle ?? "", width: 21 }, { value: note, width: 29 }]) };
+}
+
+function hoursOnlyStudentDetailSheet(input: PayrollWorkbookExport, year: number, month: number) {
+  const rows: SheetRow[] = [
+    [stringCell(`${year}年${String(month).padStart(2, "0")}月学生课时明细`, 15)],
+    [stringCell(TEMPLATE_SOURCE_LABEL, 16)],
+    ["序号", "教师姓名（教务宝原始）", "学生姓名", "课时（小时）", "课时费单价（小时）", "合计", "课程类型", "课程名称", "备注"].map((value) => stringCell(value, 17)),
+  ];
+  const heights = new Map<number, number>([[1, 59.55], [2, 36.5], [3, 31.5]]);
+  const evidence = lessonEvidenceBySourceKey(input);
+  const owners = studentHoursOwnerBySourceKey(input);
+  for (const payroll of input.rows) {
+    for (const group of hoursOnlyCourseGroups(payroll, evidence, owners)) {
+      const rowNumber = rows.length + 1;
+      const detail = hoursOnlyDetailCells(payroll, group, rowNumber, evidence);
+      rows.push(detail.cells);
+      heights.set(rowNumber, detail.height);
+    }
+  }
+  for (const lesson of input.evidence?.lessons ?? []) {
+    if (owners.has(lesson.sourceKey)) continue;
+    const rowNumber = rows.length + 1;
+    const detail = hoursOnlyUnallocatedDetailCells(lesson, rowNumber);
+    rows.push(detail.cells);
+    heights.set(rowNumber, detail.height);
+  }
+  return worksheetXml({ rows, widths: TEMPLATE_STUDENT_WIDTHS, merges: ["A1:I1", "A2:I2"], freezeRows: 3, landscape: true, rowHeights: heights });
+}
+
+const PAYROLL_REVIEW_HEADERS = [
+  "月份", "老师", "教师类别", "币种", "状态", "薪资表课时", "教务宝老师课时", "课时差异", "建议金额", "银行", "账户", "付款说明", "锁定人", "锁定时间",
+];
+const PAYROLL_REVIEW_WIDTHS = [12, 22, 24, 9, 12, 14, 17, 12, 14, 18, 23, 40, 16, 24];
+
+function payrollReviewHeader(): SheetRow {
+  return PAYROLL_REVIEW_HEADERS.map((value) => stringCell(value, 3));
+}
+
+function hoursOnlyReviewSheet(input: PayrollWorkbookExport) {
+  const rows: SheetRow[] = [payrollReviewHeader()];
+  for (const payroll of input.rows) {
+    rows.push([
+      stringCell(input.month), stringCell(payroll.teacherName), stringCell(payroll.section),
+      stringCell(null), stringCell("课时待核对"), stringCell(null), numberCell(payroll.sourceHours ?? null),
+      ...Array.from({ length: 7 }, () => stringCell(null)),
+    ]);
+  }
+  return worksheetXml({ rows, widths: PAYROLL_REVIEW_WIDTHS, freezeRows: 1, landscape: true });
+}
+
 function payrollReviewSheet(input: PayrollWorkbookExport) {
-  const rows: SheetRow[] = [[
-    "月份", "老师", "教师类别", "币种", "状态", "薪资表课时", "教务宝老师课时", "课时差异", "建议金额", "银行", "账户", "付款说明", "锁定人", "锁定时间",
-  ].map((value) => stringCell(value, 3))];
+  const rows: SheetRow[] = [payrollReviewHeader()];
   for (const payroll of input.rows) {
     const reviewOnly = payroll.paymentMode === "review_only";
     const sourceHours = payroll.sourceHours ?? null;
@@ -507,7 +882,7 @@ function payrollReviewSheet(input: PayrollWorkbookExport) {
       stringCell(reviewOnly ? null : payroll.paymentNote), stringCell(reviewOnly ? null : payroll.lockedBy), stringCell(reviewOnly ? null : payroll.lockedAt),
     ]);
   }
-  return worksheetXml({ rows, widths: [12, 22, 24, 9, 12, 14, 17, 12, 14, 18, 23, 40, 16, 24], freezeRows: 1, landscape: true });
+  return worksheetXml({ rows, widths: PAYROLL_REVIEW_WIDTHS, freezeRows: 1, landscape: true });
 }
 
 function teacherDescription(teachers: readonly PayrollExportTeacherLink[]) {
@@ -588,21 +963,27 @@ function stylesXml() {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <numFmts count="2"><numFmt numFmtId="164" formatCode="¥#,##0.00"/><numFmt numFmtId="165" formatCode="A$#,##0.00"/></numFmts>
-  <fonts count="4">
+  <fonts count="9">
     <font><sz val="12"/><name val="宋体"/><family val="3"/></font>
     <font><b/><sz val="28"/><name val="宋体"/><family val="3"/></font>
     <font><b/><sz val="18"/><name val="宋体"/><family val="3"/></font>
     <font><b/><sz val="12"/><name val="宋体"/><family val="3"/></font>
+    <font><sz val="14"/><name val="宋体"/><family val="3"/></font>
+    <font><b/><sz val="36"/><name val="宋体"/><family val="3"/></font>
+    <font><b/><sz val="28"/><name val="宋体"/><family val="3"/></font>
+    <font><sz val="14"/><color rgb="FFFF0000"/><name val="宋体"/><family val="3"/></font>
+    <font><b/><sz val="14"/><name val="宋体"/><family val="3"/></font>
   </fonts>
-  <fills count="10">
+  <fills count="11">
     <fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFFFD966"/><bgColor indexed="64"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFE2F0D9"/><bgColor indexed="64"/></patternFill></fill>
     ${fills.map((color) => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`).join("")}
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFCD9FF"/><bgColor indexed="64"/></patternFill></fill>
   </fills>
   <borders count="2"><border/><border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border></borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="15">
+  <cellXfs count="25">
     <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
     <xf numFmtId="0" fontId="1" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
     <xf numFmtId="0" fontId="2" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
@@ -613,6 +994,16 @@ function stylesXml() {
     <xf numFmtId="164" fontId="0" fillId="0" borderId="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
     <xf numFmtId="165" fontId="0" fillId="0" borderId="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
     <xf numFmtId="0" fontId="3" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="5" fillId="2" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="6" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="8" fillId="0" borderId="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="4" fillId="0" borderId="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="4" fillId="10" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="2" fontId="4" fillId="0" borderId="1" applyFont="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="2" fontId="7" fillId="0" borderId="1" applyFont="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="4" fillId="0" borderId="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="2" fontId="8" fillId="3" borderId="1" applyFont="1" applyFill="1" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="0" fontId="6" fillId="3" borderId="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
   </cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -650,10 +1041,11 @@ function workbookRelationshipsXml(sheetCount: number) {
 
 function packageParts(input: PayrollWorkbookExport, year: number, month: number): OpenXmlPart[] {
   const sheetNames = ["Sheet1", "学生明细", "薪资审核", "消课证据", "排课课时", "数据来源"] as const;
+  const hoursOnly = input.exportMode === "hours_only";
   const sheets = [
-    mainSheet(input, year, month),
-    studentDetailSheet(input),
-    payrollReviewSheet(input),
+    hoursOnly ? hoursOnlyMainSheet(input, year, month) : mainSheet(input, year, month),
+    hoursOnly ? hoursOnlyStudentDetailSheet(input, year, month) : studentDetailSheet(input),
+    hoursOnly ? hoursOnlyReviewSheet(input) : payrollReviewSheet(input),
     lessonEvidenceSheet(input),
     scheduleEvidenceSheet(input),
     sourceSheet(input),
