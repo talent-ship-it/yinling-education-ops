@@ -77,7 +77,7 @@ test("schedule snapshot fails closed on oversized student evidence rather than d
 });
 
 test("production uses a private 30-minute database schedule and projects the completed source as one authority", async () => {
-  const [vercel, route, projectionRunner, migration, rpcGrantMigration, completionFix, unchangedConfirmation, authorityMigration, identityMigration, projectionMigration, runtimeBudget] = await Promise.all([
+  const [vercel, route, projectionRunner, migration, rpcGrantMigration, completionFix, unchangedConfirmation, authorityMigration, identityMigration, projectionMigration, runtimeBudget, horizonMigration] = await Promise.all([
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cron/jiaowubao-schedule/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/jiaowubao-schedule-projection-runner.ts", import.meta.url), "utf8"),
@@ -89,6 +89,7 @@ test("production uses a private 30-minute database schedule and projects the com
     readFile(new URL("../supabase/migrations/20260923000100_read_jiaowubao_schedule_snapshot_identities.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260923000200_jiaowubao_schedule_projection_jobs.sql", import.meta.url), "utf8"),
     readFile(new URL("../lib/jiaowubao-schedule-runtime-budget.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20261001000100_resume_jiaowubao_schedule_horizon.sql", import.meta.url), "utf8"),
   ]);
   const scheduleMigration = await readFile(new URL("../supabase/migrations/20260822000200_schedule_jiaowubao_open_api_sync_every_30_minutes.sql", import.meta.url), "utf8");
   assert.deepEqual(JSON.parse(vercel).crons, []);
@@ -103,7 +104,11 @@ test("production uses a private 30-minute database schedule and projects the com
   assert.match(projectionRunner, /setPhase\("project_authority"\)/);
   assert.match(projectionRunner, /setPhase\("project_trials"\)/);
   assert.match(route, /phase = "confirm_current"/);
-  assert.match(route, /readJiaowubaoScheduleSnapshotIdentities/);
+  assert.match(route, /collectResumableHorizon/);
+  assert.match(route, /stageJiaowubaoScheduleHorizonPage/);
+  assert.match(route, /buildJiaowubaoScheduleHorizonFromCollectedPages/);
+  assert.match(route, /outcome: "in_progress"/);
+  assert.doesNotMatch(route, /collectJiaowubaoScheduleHorizon\(/);
   assert.match(route, /const deadlineAt = jiaowubaoScheduleWorkDeadline\(\)/);
   assert.match(route, /currentTarget\.projectionState !== "complete"/);
   assert.ok(
@@ -166,6 +171,11 @@ test("production uses a private 30-minute database schedule and projects the com
   assert.match(identityMigration, /revoke all on function public\.get_jiaowubao_open_api_schedule_snapshot_identity_page[\s\S]*from public, anon, authenticated/);
   assert.match(identityMigration, /grant execute on function public\.get_jiaowubao_open_api_schedule_snapshot_identity_page[\s\S]*to anon, authenticated/);
   assert.match(projectionMigration, /jiaowubao_open_api_schedule_projection_jobs/);
+  assert.match(horizonMigration, /create table internal\.jiaowubao_schedule_horizon_pages/);
+  assert.match(horizonMigration, /create table internal\.jiaowubao_schedule_horizon_items/);
+  assert.match(horizonMigration, /internal\.jiaowubao_schedule_horizon_current_matches/);
+  assert.match(horizonMigration, /not exists\([\s\S]*collected_item\.source_key = current_item\.source_key/);
+  assert.match(horizonMigration, /grant execute on function public\.stage_jiaowubao_schedule_horizon_page/);
   assert.match(projectionMigration, /existing_job\.state <> 'complete'/);
   assert.match(projectionMigration, /state in \('pending','authority_done','complete'\)/);
   assert.match(projectionMigration, /p_expected_state = 'complete' and p_next_state = 'pending'/);

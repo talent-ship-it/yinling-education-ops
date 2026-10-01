@@ -35,6 +35,11 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "supabase/migrations/20260923000200_jiaowubao_schedule_projection_jobs.sql" },
     { kind: "sql", file: "tests/sql/jiaowubao-schedule-projection-jobs-runtime.sql" },
   ] },
+  { id: "jiaowubao-schedule-horizon-resume", source: "tests/sql/jiaowubao-schedule-horizon-resume-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-horizon-resume-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20261001000100_resume_jiaowubao_schedule_horizon.sql" },
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-horizon-resume-runtime.sql" },
+  ] },
   { id: "jiaowubao-trial-lifecycle", source: "tests/sql/jiaowubao-trial-lifecycle-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/jiaowubao-trial-lifecycle-runtime.sql" },
   ] },

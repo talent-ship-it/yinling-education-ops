@@ -6,15 +6,16 @@ import {
   JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,
   assertJiaowubaoScheduleSnapshotPageBytes,
   buildJiaowubaoScheduleSnapshotEnvelope,
-  collectJiaowubaoScheduleHorizon,
+  buildJiaowubaoScheduleHorizonFromCollectedPages,
   jiaowubaoScheduleCollectionWindows,
   JIAOWUBAO_SCHEDULE_HORIZON_DAYS,
   JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS,
   JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE,
+  jiaowubaoScheduleSourcePageRows,
   jiaowubaoScheduleSnapshotRows,
+  type JiaowubaoScheduleHorizonCollectedPage,
 } from "@/lib/jiaowubao-open-api-schedule-snapshot";
 import { queryJiaowubaoScheduleList } from "@/lib/jiaowubao-open-api-node";
-import { readJiaowubaoScheduleSnapshotIdentities } from "@/lib/jiaowubao-open-api-schedule-identities";
 import {
   JIAOWUBAO_SCHEDULE_COLLECTION_RESERVE_MS,
   JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS,
@@ -38,18 +39,23 @@ import {
   runJiaowubaoTrialAutoSyncHorizon,
 } from "@/lib/jiaowubao-trial-auto-sync";
 import {
+  abortJiaowubaoScheduleHorizonCollection,
   advanceJiaowubaoOpenApiScheduleProjection,
+  beginJiaowubaoScheduleHorizonCollection,
   beginJiaowubaoOpenApiScheduleSnapshot,
   claimJiaowubaoOpenApiScheduleSyncLease,
+  closeJiaowubaoScheduleHorizonCollection,
   completeJiaowubaoOpenApiScheduleSnapshot,
   confirmJiaowubaoOpenApiScheduleSnapshotCurrent,
-  getJiaowubaoOpenApiScheduleSnapshotIdentityPage,
   getJiaowubaoOpenApiScheduleProjectionTarget,
   OpsStoreError,
   projectJiaowubaoOpenApiAuthority,
+  readJiaowubaoScheduleHorizonPages,
   releaseJiaowubaoOpenApiScheduleSyncLease,
   reserveJiaowubaoOpenApiScheduleRequest,
+  stageJiaowubaoScheduleHorizonPage,
   stageJiaowubaoOpenApiScheduleSnapshotPage,
+  type JiaowubaoScheduleHorizonCollectionReceipt,
   type JiaowubaoOpenApiScheduleProjectionTarget,
   type OpsRpcOptions,
 } from "@/lib/ops-store";
@@ -157,6 +163,11 @@ function addDays(date: string, days: number) {
 function fixedWindow(now = new Date()) {
   const start = dateInTimeZone(now);
   return Object.freeze({ start, end: addDays(start, DAYS - 1) });
+}
+
+function assertCurrentWindow(window: Readonly<{ start: string; end: string }>) {
+  const today = fixedWindow();
+  if (today.start !== window.start || today.end !== window.end) throw new Error("schedule_horizon_window_expired");
 }
 
 function scheduledRunKey(now = Date.now(), attemptId = randomUUID()) {
@@ -277,6 +288,179 @@ function receiptMatchesPage(value: Readonly<Record<string, unknown>>, runId: str
   ].every(Boolean);
 }
 
+function boundedSafeInteger(value: number, minimum: number, maximum: number) {
+  return [Number.isSafeInteger(value), value >= minimum, value <= maximum].every(Boolean);
+}
+
+function validHorizonCollectionReceipt(value: JiaowubaoScheduleHorizonCollectionReceipt, runId?: string) {
+  return [
+    exactRunId(value?.runId) !== null,
+    runId === undefined ? true : value.runId === runId,
+    new Set(["collecting", "ready"]).has(value.state),
+    value.state === "ready" ? value.windowIndex === 3 : true,
+    boundedSafeInteger(value.passNumber, 0, 1),
+    boundedSafeInteger(value.windowIndex, 0, 3),
+    boundedSafeInteger(value.nextPage, 1, 61),
+    boundedSafeInteger(value.firstPassCount, 0, JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS),
+    boundedSafeInteger(value.secondPassCount, 0, JIAOWUBAO_SCHEDULE_SNAPSHOT_MAX_RECORDS),
+  ].every(Boolean);
+}
+
+type HorizonCollectionContext = Readonly<{
+  runId: string;
+  runKey: string;
+  deadlineAt: number;
+  parts: ReturnType<typeof jiaowubaoScheduleCollectionWindows>;
+}>;
+
+function shouldAbortHorizonStageError(error: unknown) {
+  if (!(error instanceof OpsStoreError)) return true;
+  return new Set(["22023", "23505"]).has(error.code ?? "");
+}
+
+async function abortFailedHorizonStage(error: unknown, context: HorizonCollectionContext) {
+  if (!shouldAbortHorizonStageError(error)) return;
+  await abortJiaowubaoScheduleHorizonCollection({
+    runKey: context.runKey, runId: context.runId, actor: ACTOR,
+  }, jiaowubaoScheduleRpcOptions(context.deadlineAt)).catch(() => undefined);
+}
+
+async function stageHorizonSourcePage(
+  cursor: JiaowubaoScheduleHorizonCollectionReceipt,
+  context: HorizonCollectionContext,
+) {
+  const part = context.parts[cursor.windowIndex];
+  if (!part) throw new Error("schedule_horizon_cursor_invalid");
+  const response = await queryScheduleWithGlobalRateGate({
+    start: part.start,
+    end: part.end,
+    page: cursor.nextPage,
+    limit: JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE,
+    order: "asc",
+  }, context.deadlineAt);
+  try {
+    const rows = jiaowubaoScheduleSourcePageRows(response);
+    const next = await stageJiaowubaoScheduleHorizonPage({
+      runKey: context.runKey,
+      runId: context.runId,
+      passNumber: cursor.passNumber,
+      windowIndex: cursor.windowIndex,
+      pageNumber: cursor.nextPage,
+      rows,
+      actor: ACTOR,
+    }, jiaowubaoScheduleRpcOptions(context.deadlineAt));
+    if (!validHorizonCollectionReceipt(next, context.runId)) throw new Error("schedule_horizon_cursor_invalid");
+    return next;
+  } catch (error) {
+    await abortFailedHorizonStage(error, context);
+    throw error;
+  }
+}
+
+function validCollectedHorizonPageBatch(
+  batch: Awaited<ReturnType<typeof readJiaowubaoScheduleHorizonPages>>,
+  runId: string,
+  expectedCount: number | null,
+) {
+  return [
+    batch.runId === runId,
+    batch.state === "ready",
+    boundedSafeInteger(batch.pageCount, 3, 126),
+    Array.isArray(batch.pages),
+    boundedSafeInteger(batch.pages?.length, 1, 4),
+    typeof batch.hasMore === "boolean",
+    expectedCount === null ? true : batch.pageCount === expectedCount,
+  ].every(Boolean);
+}
+
+function assertCollectedHorizonPagePosition(offset: number, pageCount: number, hasMore: boolean) {
+  if (hasMore ? offset >= pageCount : offset !== pageCount) {
+    throw new Error("schedule_horizon_pages_invalid");
+  }
+}
+
+async function readCollectedHorizonPages(context: HorizonCollectionContext) {
+  const pages: JiaowubaoScheduleHorizonCollectedPage[] = [];
+  let offset = 0;
+  let expectedCount: number | null = null;
+  for (;;) {
+    const batch = await readJiaowubaoScheduleHorizonPages({
+      runKey: context.runKey, runId: context.runId, offset, actor: ACTOR,
+    }, jiaowubaoScheduleRpcOptions(context.deadlineAt));
+    if (!validCollectedHorizonPageBatch(batch, context.runId, expectedCount)) {
+      throw new Error("schedule_horizon_pages_invalid");
+    }
+    expectedCount = batch.pageCount;
+    pages.push(...batch.pages);
+    offset += batch.pages.length;
+    assertCollectedHorizonPagePosition(offset, batch.pageCount, batch.hasMore);
+    if (!batch.hasMore) {
+      return pages;
+    }
+  }
+}
+
+function canFetchNextHorizonPage(requests: number, deadlineAt: number) {
+  return [
+    requests < 66,
+    hasJiaowubaoScheduleTime(
+      deadlineAt,
+      JIAOWUBAO_SCHEDULE_COLLECTION_RESERVE_MS,
+      15_000 + JIAOWUBAO_SCHEDULE_UPSTREAM_REQUEST_MS,
+    ),
+  ].every(Boolean);
+}
+
+async function advanceHorizonCollectionUntilBudget(
+  cursor: JiaowubaoScheduleHorizonCollectionReceipt,
+  context: HorizonCollectionContext,
+) {
+  let requests = 0;
+  while (cursor.state === "collecting") {
+    if (!canFetchNextHorizonPage(requests, context.deadlineAt)) return cursor;
+    cursor = await stageHorizonSourcePage(cursor, context);
+    requests += 1;
+  }
+  return cursor;
+}
+
+function shouldDeferHorizonAssembly(cursor: JiaowubaoScheduleHorizonCollectionReceipt, deadlineAt: number) {
+  return [cursor.state !== "ready", !hasJiaowubaoScheduleTime(deadlineAt, 100_000)].some(Boolean);
+}
+
+async function collectResumableHorizon(
+  window: Readonly<{ start: string; end: string }>,
+  currentRevision: string | null,
+  deadlineAt: number,
+  runKey: string,
+) {
+  const initialCursor = await beginJiaowubaoScheduleHorizonCollection({
+    runKey,
+    window,
+    expectedCurrentRevision: currentRevision,
+    actor: ACTOR,
+  }, jiaowubaoScheduleRpcOptions(deadlineAt));
+  if (!validHorizonCollectionReceipt(initialCursor)) throw new Error("schedule_horizon_cursor_invalid");
+  const runId = initialCursor.runId;
+  const context = { runId, runKey, deadlineAt, parts: jiaowubaoScheduleCollectionWindows(window) };
+  const cursor = await advanceHorizonCollectionUntilBudget(initialCursor, context);
+  if (shouldDeferHorizonAssembly(cursor, deadlineAt)) {
+    return Object.freeze({ runId, cursor, snapshot: null });
+  }
+  const pages = await readCollectedHorizonPages(context);
+  try {
+    return Object.freeze({
+      runId,
+      cursor,
+      snapshot: buildJiaowubaoScheduleHorizonFromCollectedPages(window, pages),
+    });
+  } catch (error) {
+    await abortJiaowubaoScheduleHorizonCollection({ runKey, runId, actor: ACTOR },
+      jiaowubaoScheduleRpcOptions(deadlineAt)).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function projectAuthority(revision: string, rowCount: number, options: OpsRpcOptions) {
   const receipt = await projectJiaowubaoOpenApiAuthority({ revision, actor: ACTOR }, options);
   const coverage = receipt?.coverage;
@@ -361,6 +545,7 @@ type UnchangedSnapshotResponseInput = Readonly<{
 }>;
 
 async function confirmedUnchangedSnapshotResponse(input: UnchangedSnapshotResponseInput) {
+  assertCurrentWindow(input.window);
   const target = assertProjectionMatches(input.target, {
     revision: input.manifest.revision,
     rowCount: input.manifest.recordCount,
@@ -437,22 +622,18 @@ export async function GET(request: Request) {
 
     const window = fixedWindow();
     const currentRevision = currentTarget?.revision ?? null;
-    phase = "read_current_identities";
-    const currentIdentities = currentRevision === null
-      ? null
-      : await readJiaowubaoScheduleSnapshotIdentities(
-        currentRevision,
-        (input) => getJiaowubaoOpenApiScheduleSnapshotIdentityPage(
-          input,
-          jiaowubaoScheduleRpcOptions(deadlineAt),
-        ),
-      );
     phase = "collect_source";
-    const snapshot = await collectJiaowubaoScheduleHorizon(
-      window,
-      (query) => queryScheduleWithGlobalRateGate(query, deadlineAt),
-      currentIdentities,
-    );
+    const collection = await collectResumableHorizon(window, currentRevision, deadlineAt, runKey);
+    if (collection.snapshot === null) {
+      return noStore({
+        outcome: "in_progress",
+        window,
+        pass: collection.cursor.passNumber + 1,
+        rowCount: collection.cursor.firstPassCount,
+      }, 202);
+    }
+    const snapshot = collection.snapshot;
+    assertCurrentWindow(window);
     const respondWithUnchangedSnapshot = (target: ProjectionTarget | null) => {
       phase = "confirm_current";
       return confirmedUnchangedSnapshotResponse({
@@ -464,7 +645,14 @@ export async function GET(request: Request) {
       });
     };
     if (currentRevision === snapshot.manifest.revision) {
-      return respondWithUnchangedSnapshot(currentTarget);
+      const response = await respondWithUnchangedSnapshot(currentTarget);
+      await closeJiaowubaoScheduleHorizonCollection({
+        runKey,
+        runId: collection.runId,
+        publishedRevision: snapshot.manifest.revision,
+        actor: ACTOR,
+      }, jiaowubaoScheduleRpcOptions(deadlineAt));
+      return response;
     }
 
     const envelope = buildJiaowubaoScheduleSnapshotEnvelope(snapshot, currentRevision);
@@ -480,7 +668,14 @@ export async function GET(request: Request) {
       || typeof begin.replayed !== "boolean") throw new Error("begin_receipt_invalid");
     if (begin.state === "complete") {
       phase = "read_projection_target";
-      return respondWithUnchangedSnapshot(await readProjectionTarget(deadlineAt));
+      const response = await respondWithUnchangedSnapshot(await readProjectionTarget(deadlineAt));
+      await closeJiaowubaoScheduleHorizonCollection({
+        runKey,
+        runId: collection.runId,
+        publishedRevision: snapshot.manifest.revision,
+        actor: ACTOR,
+      }, jiaowubaoScheduleRpcOptions(deadlineAt));
+      return response;
     }
     if (begin.state !== "staging") throw new Error("begin_receipt_invalid");
 
@@ -502,6 +697,7 @@ export async function GET(request: Request) {
       }
     }
     phase = "complete_snapshot";
+    assertCurrentWindow(window);
     const completed = await completeJiaowubaoOpenApiScheduleSnapshot(
       { runId, actor: ACTOR },
       jiaowubaoScheduleRpcOptions(deadlineAt),
@@ -520,6 +716,12 @@ export async function GET(request: Request) {
       rowCount: snapshot.manifest.recordCount,
       window,
     });
+    await closeJiaowubaoScheduleHorizonCollection({
+      runKey,
+      runId: collection.runId,
+      publishedRevision: snapshot.manifest.revision,
+      actor: ACTOR,
+    }, jiaowubaoScheduleRpcOptions(deadlineAt));
     const projections = await runOrQueueJiaowubaoScheduleProjectionTarget(
       target,
       projectionDependencies(deadlineAt),
