@@ -27,7 +27,7 @@ test("payroll export and locking fail closed on stale or missing current JWB evi
   assert.match(source, /setJiaowubaoCompletedLessonFeed\(freshFeed\);[\s\S]*return;/);
   assert.match(source, /const currentEvidence = currentJiaowubaoPayrollExportEvidence\(source\)/);
   assert.match(source, /const sourceVersionIsCurrent = jiaowubaoPayrollSourceVersionIsCurrent\(\{[\s\S]*persistedSourceRevision: row\.sourceRevision,[\s\S]*currentSourceRevision: freshFeed\.revision/);
-  assert.match(source, /paymentMode = row\.paymentReviewOnly \|\| !source \|\| !sourceVersionIsCurrent \|\| row\.status === "需核对"/);
+  assert.match(source, /paymentMode = row\.paymentReviewOnly \|\| !source \|\| !sourceVersionIsCurrent[\s\S]*!jiaowubaoCompletedLessonCanGeneratePayroll\(source\.summary\) \|\| row\.status === "需核对"/);
   assert.match(source, /sourceHours: currentEvidence\.sourceHours,[\s\S]*sourceLessonCount: currentEvidence\.sourceLessonCount,[\s\S]*lines: currentEvidence\.lines/);
   assert.doesNotMatch(source, /source\?\.summary\.sourceHours \?\? row\.sourceHours/);
   assert.doesNotMatch(source, /lines: \(row\.lines \?\? \[\]\)\.map/);

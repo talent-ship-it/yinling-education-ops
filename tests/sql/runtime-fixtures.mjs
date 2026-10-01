@@ -1,4 +1,18 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "completed-hour-review", source: "tests/sql/completed-hour-review-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/completed-hour-review-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260813013935_operational_atomic_contracts.sql",
+      start: "create or replace function internal.student_import_display_name(p_name text)",
+      end: "create or replace function internal.student_import_is_manual_trial(p_student jsonb)" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260817000300_enforce_exact_student_jwb_name_match.sql",
+      start: "create or replace function internal.student_import_name_key(p_name text)",
+      end: "create or replace function internal.student_import_master_review_name_key(p_name text)" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260817000500_review_jwb_latin_parenthetical_annotations.sql",
+      start: "create or replace function internal.student_import_ascii_latin_letters(",
+      end: "create or replace function internal.student_import_jwb_annotation_relaxed_name_key(" },
+    { kind: "sql", file: "supabase/migrations/20261001000200_completed_hour_review_evidence.sql" },
+    { kind: "sql", file: "tests/sql/completed-hour-review-runtime.sql" },
+  ] },
   { id: "booking-projection-atomic", source: "tests/sql/booking-projection-atomic-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/booking-projection-atomic-runtime.sql" },
   ] },

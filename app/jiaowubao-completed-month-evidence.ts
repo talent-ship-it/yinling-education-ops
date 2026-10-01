@@ -14,6 +14,7 @@ import {
   JIAOWUBAO_COMPLETED_LESSON_BROWSER_PAGE_SIZE,
 } from "@/lib/jiaowubao-completed-lesson-pagination";
 import { JIAOWUBAO_COMPLETED_LESSON_UNKNOWN_BRANCH_ID } from "@/lib/jiaowubao-completed-lesson-branch";
+import { snapshotJiaowubaoHour, snapshotJiaowubaoOptionalHour } from "@/lib/jiaowubao-hour-evidence";
 
 export type JiaowubaoCompletedLessonFeedItem = JiaowubaoCompletedLessonStudentEvidence;
 export type JiaowubaoCompletedScheduleFeedEvent = JiaowubaoCompletedScheduleEventEvidence;
@@ -111,7 +112,7 @@ const PAGE_FIELDS = new Set([
   "state", "source", "month", "revision", "rowCount", "pageIndex", "pageCount", "publishedAt", "projectionRevision", "items",
 ]);
 const LESSON_FIELDS = new Set([
-  "sourceKey", "branchId", "calendarId", "memberId", "memberName", "lessonDate", "timeTitle", "hours", "isTrial",
+  "sourceKey", "branchId", "calendarId", "memberId", "memberName", "lessonDate", "timeTitle", "hours", "hoursIssue", "isTrial",
   "attendanceCode", "attendanceTitle", "courseTitle", "teamTitle", "studentId", "studentName", "displayStudentName", "studentMatch", "teachers",
 ]);
 const SCHEDULE_FIELDS = new Set([
@@ -120,7 +121,7 @@ const SCHEDULE_FIELDS = new Set([
 const TEACHER_FIELDS = new Set([
   "role", "sourceTeacherId", "sourceTeacherName", "teacherId", "teacherName", "teacherMatch",
 ]);
-const SCHEDULE_TEACHER_FIELDS = new Set([...TEACHER_FIELDS, "sourceTeacherHours"]);
+const SCHEDULE_TEACHER_FIELDS = new Set([...TEACHER_FIELDS, "sourceTeacherHours", "sourceTeacherHoursIssue"]);
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/u;
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
@@ -222,7 +223,10 @@ function parsedTeacher(value: unknown, schedule: boolean): JiaowubaoCompletedLes
     teacherId: id(teacher.teacherId, "teacherId"),
     teacherName: text(teacher.teacherName, "teacherName"),
     teacherMatch: match(teacher.teacherMatch, "teacherMatch"),
-    ...(schedule ? { sourceTeacherHours: teacher.sourceTeacherHours === null ? null : number(teacher.sourceTeacherHours, "sourceTeacherHours", 0, 24) } : {}),
+    ...(schedule ? (() => {
+      const evidence = snapshotJiaowubaoOptionalHour(teacher.sourceTeacherHours, teacher.sourceTeacherHoursIssue);
+      return { sourceTeacherHours: evidence.hours, sourceTeacherHoursIssue: evidence.hoursIssue ?? null };
+    })() : {}),
   };
   if ((parsed.teacherId === null) !== (parsed.teacherName === null)) throw new Error("老师匹配资料不一致。");
   if (parsed.teacherId !== null && (parsed.teacherMatch === "unmatched" || parsed.teacherMatch === "ambiguous" || parsed.teacherMatch === "trial_course_title")) {
@@ -264,7 +268,7 @@ function lessonItem(value: unknown): JiaowubaoCompletedLessonFeedItem {
     memberName: text(item.memberName, "memberName"),
     lessonDate: exactDate(item.lessonDate, "lessonDate"),
     timeTitle: text(item.timeTitle, "timeTitle", 80),
-    hours: number(item.hours, "hours", 0, 24),
+    ...snapshotJiaowubaoHour(item.hours, item.hoursIssue),
     isTrial: item.isTrial,
     attendanceCode: nullableInteger(item.attendanceCode, "attendanceCode", -1, 99),
     attendanceTitle: text(item.attendanceTitle, "attendanceTitle", 80),

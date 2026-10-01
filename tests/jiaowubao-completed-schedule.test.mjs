@@ -102,7 +102,8 @@ test("invalid supplier teacher hours remain unresolved without blocking the mont
   const period = { start: "2026-08-01", end: "2026-08-31" };
   for (const teacherHour of ["N/A", -1, 25, Number.POSITIVE_INFINITY, {}, []]) {
     const record = projectJiaowubaoCompletedScheduleRecord(sourceRecord({ teacher_hour: teacherHour }), period);
-    assert.equal(record.teachers[0]?.hours, null);
+    assert.equal(record.teachers[0]?.hours, Number.isFinite(teacherHour) ? teacherHour : null);
+    assert.equal(record.teachers[0]?.hoursIssue, Number.isFinite(teacherHour) ? "out_of_range" : "non_numeric");
     assert.equal(record.teachers[0]?.id, "90");
     assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(record), record);
   }
@@ -112,7 +113,7 @@ test("invalid supplier teacher hours remain unresolved without blocking the mont
     teacher_s_title: "",
     teacher_s_hour: "invalid",
   }), period);
-  assert.deepEqual(anonymous.teachers[1], { role: "assistant", id: null, name: null, hours: null });
+  assert.deepEqual(anonymous.teachers[1], { role: "assistant", id: null, name: null, hours: null, hoursIssue: "non_numeric" });
   assert.deepEqual(readJiaowubaoCompletedScheduleSnapshotRecord(anonymous), anonymous);
 
   const snapshot = await collectJiaowubaoCompletedScheduleSnapshot(period, async ({ page }) => ({
@@ -121,7 +122,7 @@ test("invalid supplier teacher hours remain unresolved without blocking the mont
   assert.equal(snapshot.manifest.recordCount, 1);
   assert.doesNotThrow(() => assertJiaowubaoCompletedScheduleSnapshotIntegrity(snapshot));
   const invalidPersisted = { ...anonymous, teachers: [{ role: "primary", id: "90", name: "Crystal Wong", hours: "N/A" }] };
-  assert.throws(() => readJiaowubaoCompletedScheduleSnapshotRecord(invalidPersisted), /hours 无效/);
+  assert.throws(() => readJiaowubaoCompletedScheduleSnapshotRecord(invalidPersisted), /课时/);
 });
 
 test("completed schedule normalizes only the supplier's numeric zero team-title sentinel", async () => {

@@ -7,6 +7,7 @@
  */
 
 import { isJiaowubaoCompletedLessonUnknownBranchId } from "@/lib/jiaowubao-completed-lesson-branch";
+import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 
 export type JiaowubaoCompletedLessonMatch =
   | "source_id"
@@ -34,7 +35,8 @@ export type JiaowubaoCompletedLessonStudentEvidence = Readonly<{
   memberName: string | null;
   lessonDate: string;
   timeTitle: string | null;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   isTrial: boolean;
   attendanceCode: number | null;
   attendanceTitle: string | null;
@@ -50,6 +52,7 @@ export type JiaowubaoCompletedLessonStudentEvidence = Readonly<{
 
 export type JiaowubaoCompletedScheduleTeacherEvidence = JiaowubaoCompletedLessonTeacherLink & Readonly<{
   sourceTeacherHours: number | null;
+  sourceTeacherHoursIssue?: JiaowubaoHourIssue | null;
 }>;
 
 export type JiaowubaoCompletedScheduleEventEvidence = Readonly<{
@@ -267,6 +270,7 @@ type SummaryAccumulator = {
   unresolvedLessonCount: number;
   unresolvedTrialLessonCount: number;
   missingHours: boolean;
+  missingTrialHours: boolean;
   studentSourceKeys: Set<string>;
 };
 
@@ -284,6 +288,7 @@ function accumulatorFor(teacher: JiaowubaoCompletedScheduleTeacherEvidence) {
     unresolvedLessonCount: 0,
     unresolvedTrialLessonCount: 0,
     missingHours: false,
+    missingTrialHours: false,
     studentSourceKeys: new Set<string>(),
   } satisfies SummaryAccumulator;
 }
@@ -305,6 +310,7 @@ export function reconcileJiaowubaoCompletedLessonEvidence(
       sourceTeacherId: null,
       sourceTeacherName: null,
       sourceTeacherHours: null,
+      sourceTeacherHoursIssue: null,
       teacherId: null,
       teacherName: null,
       teacherMatch: "unmatched" as const,
@@ -317,19 +323,39 @@ export function reconcileJiaowubaoCompletedLessonEvidence(
       const summary = summaries.get(key) ?? accumulatorFor(teacher);
       summary.sourceLessonCount += 1;
       plan.members.forEach((member) => summary.studentSourceKeys.add(member.sourceKey));
+      if (teacher.sourceTeacherHoursIssue) summary.unresolvedLessonCount += 1;
       if (teacher.sourceTeacherHours === null) {
         summary.missingHours = true;
         summary.unresolvedLessonCount += 1;
       } else {
-        summary.sourceHours = Number((summary.sourceHours + teacher.sourceTeacherHours).toFixed(4));
+        const total = summary.sourceHours + teacher.sourceTeacherHours;
+        if (!Number.isFinite(total)) {
+          summary.missingHours = true;
+          summary.unresolvedLessonCount += 1;
+        } else {
+          summary.sourceHours = Number(total.toFixed(4));
+        }
       }
       if (plan.status !== "reconciled") {
         summary.unresolvedLessonCount += 1;
         summary.unresolvedTrialLessonCount += 1;
-      } else if (plan.isTrial === null || teacher.sourceTeacherHours === null) {
-        summary.unresolvedTrialLessonCount += 1;
-      } else if (plan.isTrial) {
-        summary.trialSourceHours = Number((summary.trialSourceHours + teacher.sourceTeacherHours).toFixed(4));
+        summary.missingTrialHours = true;
+      } else {
+        if (plan.members.some((member) => member.hoursIssue)) summary.unresolvedLessonCount += 1;
+        if (plan.isTrial === null || teacher.sourceTeacherHours === null) {
+          summary.unresolvedTrialLessonCount += 1;
+          summary.missingTrialHours = true;
+        } else if (plan.isTrial) {
+          if (teacher.sourceTeacherHoursIssue) summary.unresolvedTrialLessonCount += 1;
+          const trialTotal = summary.trialSourceHours + teacher.sourceTeacherHours;
+          if (!Number.isFinite(trialTotal)) {
+            summary.unresolvedTrialLessonCount += 1;
+            summary.missingTrialHours = true;
+          }
+          else summary.trialSourceHours = Number(trialTotal.toFixed(4));
+        } else if (teacher.sourceTeacherHoursIssue) {
+          summary.unresolvedTrialLessonCount += 1;
+        }
       }
       summaries.set(key, summary);
     }
@@ -346,7 +372,7 @@ export function reconcileJiaowubaoCompletedLessonEvidence(
       teacherName: summary.teacherName,
       teacherMatch: summary.teacherMatch,
       sourceHours: summary.missingHours ? null : summary.sourceHours,
-      trialSourceHours: summary.missingHours || summary.unresolvedTrialLessonCount > 0 ? null : summary.trialSourceHours,
+      trialSourceHours: summary.missingHours || summary.missingTrialHours ? null : summary.trialSourceHours,
       sourceLessonCount: summary.sourceLessonCount,
       unresolvedLessonCount: summary.unresolvedLessonCount,
       unresolvedTrialLessonCount: summary.unresolvedTrialLessonCount,

@@ -802,7 +802,8 @@ type PayrollStateRow = PayrollRow | TeacherPayrollLedgerRow;
 
 type PayrollLine = {
   studentName: string;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: "missing" | "non_numeric" | "out_of_range" | null;
   rate: number;
   subtotal: number;
   note?: string;
@@ -826,7 +827,7 @@ function payrollTeacherMonthKey(teacherId: string, month: string | undefined) {
 }
 
 function jiaowubaoCompletedLessonLineNote(item: JiaowubaoCompletedLessonFeedItem) {
-  return [item.lessonDate, item.timeTitle, item.courseTitle, item.teamTitle]
+  return [item.lessonDate, item.timeTitle, item.courseTitle, item.teamTitle, item.hoursIssue ? "课时待核对" : null]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 }
@@ -843,6 +844,7 @@ function jiaowubaoCompletedLessonEvidenceLines(items: readonly JiaowubaoComplete
     sourceKey: item.sourceKey,
     studentMatch: item.studentMatch,
     hours: item.hours,
+    hoursIssue: item.hoursIssue ?? null,
     // A shared/group lesson's student rows are source evidence only. They
     // must never multiply the teacher's salary total.
     rate: 0,
@@ -10017,7 +10019,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 currentSourceRevision: freshFeed.revision,
                 currentProjectionRevision: freshFeed.projectionRevision,
               });
-              const paymentMode = row.paymentReviewOnly || !source || !sourceVersionIsCurrent || row.status === "需核对"
+              const paymentMode = row.paymentReviewOnly || !source || !sourceVersionIsCurrent
+                || !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary) || row.status === "需核对"
                 ? "review_only"
                 : "payable";
               return {
@@ -10428,7 +10431,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                                   (line.isTrial ? "试听" : "常规课")}
                               </small>
                             </span>
-                            <span>{formatHours(line.hours)}</span>
+                            <span>{line.hours === null ? "课时待核对" : formatHours(line.hours)}</span>
                             <span>
                               {line.evidenceOnly
                                 ? "来源明细"
@@ -12898,6 +12901,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       }
       const submittedRate = Number(data.get(`lineRate-${index}`) ?? line.rate);
       const rate = Number.isFinite(submittedRate) && submittedRate >= 0 ? submittedRate : line.rate;
+      if (line.hours === null) throw new Error("学生课时待核对，不能生成薪资。");
       return { ...line, rate, subtotal: Number((line.hours * rate).toFixed(2)) };
     });
     const payrollHours = payrollDraft.teacherTotalHours ?? payrollDraft.lessons + payrollDraft.trialLessons;
@@ -14640,7 +14644,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>银行名称<input name="bankName" defaultValue={payrollDraft.bankName ?? ""} /></label>
           <label>银行账户<input name="bankAccount" defaultValue={payrollDraft.bankAccount ?? ""} /></label>
           <label className="span-2">付款说明<textarea name="paymentNote" rows={3} defaultValue={payrollDraft.paymentNote ?? payrollDraft.note} /></label>
-          {(payrollDraft.lines?.length ?? 0) > 0 && <div className="span-2 payroll-rate-editor"><header><strong>{payrollDraft.lines?.every((line) => line.evidenceOnly === true) ? "教务宝学生明细" : "学生费率"}</strong><small>{payrollDraft.lines?.every((line) => line.evidenceOnly === true) ? "这些是 over=1 已消课的核对证据；共享/小组课不会按学生数重复计薪，系统以老师总课时 × 默认课时费计算金额。" : "修改后系统会重新计算每位学生小计和老师总额。"}</small></header>{payrollDraft.lines?.map((line, index) => <label className="payroll-rate-row" key={`${line.studentName}-${line.sourceRow ?? index}`}><span><strong>{line.studentName}</strong><small>{formatHours(line.hours)}</small></span><span>{line.isTrial ? "试听" : "常规课"}</span>{line.evidenceOnly ? <span>来源明细（不分摊）</span> : <input name={`lineRate-${index}`} type="number" min="0" step="0.01" defaultValue={line.rate} aria-label={`${line.studentName} 课时费`} />}</label>)}</div>}
+          {(payrollDraft.lines?.length ?? 0) > 0 && <div className="span-2 payroll-rate-editor"><header><strong>{payrollDraft.lines?.every((line) => line.evidenceOnly === true) ? "教务宝学生明细" : "学生费率"}</strong><small>{payrollDraft.lines?.every((line) => line.evidenceOnly === true) ? "这些是 over=1 已消课的核对证据；共享/小组课不会按学生数重复计薪，系统以老师总课时 × 默认课时费计算金额。" : "修改后系统会重新计算每位学生小计和老师总额。"}</small></header>{payrollDraft.lines?.map((line, index) => <label className="payroll-rate-row" key={`${line.studentName}-${line.sourceRow ?? index}`}><span><strong>{line.studentName}</strong><small>{line.hours === null ? "课时待核对" : formatHours(line.hours)}</small></span><span>{line.isTrial ? "试听" : "常规课"}</span>{line.evidenceOnly ? <span>来源明细（不分摊）</span> : <input name={`lineRate-${index}`} type="number" min="0" step="0.01" defaultValue={line.rate} aria-label={`${line.studentName} 课时费`} />}</label>)}</div>}
           {payrollDraft.status === "已锁定" && <div className="form-notice span-2"><CircleAlert size={16} /> 当前记录已锁定；修改后将清除锁定并重新核对。</div>}
           <footer><button className="secondary-button" type="button" onClick={() => { setPayrollDraft(null); setPayrollDraftSourceIndex(null); setModal(null); }}>取消</button><button className="primary-button" type="submit"><Check size={16} /> 保存薪资修改</button></footer>
         </form>
@@ -14972,12 +14976,14 @@ function StudentDetail({ student, tasks, bookings, lpItems, operations, renewals
     fu: studentRecordData.files.fu.length,
     followUp: studentRecordData.followUps.length,
   };
-  const completedLessonHours = Number(completedLessonItems.reduce((total, item) => total + item.hours, 0).toFixed(4));
+  const completedLessonHours = Number(completedLessonItems.reduce((total, item) => total + (item.hours ?? 0), 0).toFixed(4));
+  const completedLessonHoursIncomplete = completedLessonItems.some((item) => item.hours === null) || !Number.isFinite(completedLessonHours);
+  const completedLessonHoursExceptional = completedLessonItems.some((item) => item.hoursIssue);
   return <aside className={`student-detail ${mobileOpen ? "mobile-detail-open" : ""}`}>
     <button className="mobile-preview-close" type="button" aria-label={english ? "Close student details" : "关闭学生详情"} onClick={onClose}><ChevronLeft size={20} /> {english ? "Back to students" : "返回学生列表"}</button>
     <div className="detail-top"><Avatar initials={student.initials} tone={readOnly ? "neutral" : statusTone(student.status)} /><div><h2>{student.name}</h2>{readOnly ? <StatusPill tone="neutral">{english ? "Historical archive · read only" : "历史归档 · 只读"}</StatusPill> : <StatusPill tone={statusTone(student.status)}>{displayTerm(student.segment ?? "已报名", preferences.language)} · {displayTerm(student.status, preferences.language)}</StatusPill>}</div></div>
     <div className="student-facts"><span><small>{english ? "Location / timezone" : "所在地 / 时区"}</small><strong>{student.location ?? (english ? "To be confirmed" : "待确认")}</strong><em>{timezoneLabel(student.timezone, preferences.language)}</em></span><span><small>{english ? "Lesson hours" : "课时"}</small><strong className={lowHours && !hasNoActiveJwbLedger ? "low-hours" : ""}>{jwbHoursValue}</strong></span></div>
-    {completedLessonMonth && completedLessonItems.length ? <div className="detail-section"><span>{completedLessonMonth} 教务宝已消课（只读核对）</span><strong>{formatHours(completedLessonHours)} · {completedLessonItems.length} 条学生明细</strong><p>{completedLessonItems.filter((item) => item.isTrial).length ? `含 ${completedLessonItems.filter((item) => item.isTrial).length} 条试听；` : ""}来源为已消课 over=1，不会修改课包余额或学生状态。</p></div> : null}
+    {completedLessonMonth && completedLessonItems.length ? <div className="detail-section"><span>{completedLessonMonth} 教务宝已消课（只读核对）</span><strong>{!Number.isFinite(completedLessonHours) ? "课时无法合计，待核对" : completedLessonHoursIncomplete ? `已知 ${formatHours(completedLessonHours)}（课时待核对，总计不完整）` : completedLessonHoursExceptional ? `${formatHours(completedLessonHours)}（含异常来源课时，待核对）` : formatHours(completedLessonHours)} · {completedLessonItems.length} 条学生明细</strong><p>{completedLessonItems.filter((item) => item.isTrial).length ? `含 ${completedLessonItems.filter((item) => item.isTrial).length} 条试听；` : ""}来源为已消课 over=1，不会修改课包余额或学生状态。</p></div> : null}
     <div className="detail-section"><span>{english ? "Course and teacher" : "课程与老师"}</span><strong>{student.course}</strong><p>{student.teacher}</p></div>
     <div className="detail-section student-record-entry-grid"><button type="button" onClick={() => onRecord("lp")}><strong>LP / 学校资料</strong>{studentRecordCounts.lp > 0 ? <span>{studentRecordCounts.lp}</span> : null}</button><button type="button" onClick={() => onRecord("report")}><strong>Report 资料</strong>{studentRecordCounts.report > 0 ? <span>{studentRecordCounts.report}</span> : null}</button><button type="button" onClick={() => onRecord("fu")}><strong>FU</strong>{studentRecordCounts.fu > 0 ? <span>{studentRecordCounts.fu}</span> : null}</button><button type="button" onClick={() => onRecord("followUp")}><strong>最近跟进</strong>{studentRecordCounts.followUp > 0 ? <span>{studentRecordCounts.followUp}</span> : null}</button></div>
     <div className="detail-section split"><button className="inline-link" type="button" onClick={() => onRecord("lessonPackages")}>{readOnly ? "查看课时 / 课包" : "录入课时 / 课包"} {student.lessonPackages?.length ?? 0}</button><button className="inline-link" type="button" onClick={() => onRecord("exams")}>考试 {student.exams?.length ?? (student.examDate || student.examSubject ? 1 : 0)}</button></div>

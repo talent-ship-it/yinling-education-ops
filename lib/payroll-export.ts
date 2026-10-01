@@ -1,12 +1,15 @@
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
 import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
+import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
+import { snapshotJiaowubaoHour, snapshotJiaowubaoOptionalHour } from "@/lib/jiaowubao-hour-evidence";
 import { jiaowubaoCompletedLessonTeacherIdentityKey } from "@/lib/jiaowubao-completed-lesson-reconciliation";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export type PayrollExportLine = Readonly<{
   studentName: string;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   rate: number;
   subtotal: number;
   note?: string;
@@ -62,7 +65,8 @@ export type PayrollExportLessonEvidence = Readonly<{
   studentMatch: string;
   lessonDate: string;
   timeTitle: string | null;
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   isTrial: boolean;
   attendanceCode: number | null;
   attendanceTitle: string | null;
@@ -78,7 +82,7 @@ export type PayrollExportScheduleEvidence = Readonly<{
   timeTitle: string | null;
   courseTitle: string | null;
   teamTitle: string | null;
-  teachers: readonly (PayrollExportTeacherLink & Readonly<{ sourceTeacherHours: number | null }>)[];
+  teachers: readonly (PayrollExportTeacherLink & Readonly<{ sourceTeacherHours: number | null; sourceTeacherHoursIssue?: JiaowubaoHourIssue | null }>)[];
 }>;
 
 export type PayrollExportEvidence = Readonly<{
@@ -118,12 +122,13 @@ type SheetRow = readonly Cell[];
 
 type AggregatedStudent = {
   studentName: string;
-  regularHours: number;
-  trialHours: number;
-  hours: number;
+  regularHours: number | null;
+  trialHours: number | null;
+  hours: number | null;
   rates: Set<number>;
   subtotal: number;
   lessonCount: number;
+  hasExceptionalHours: boolean;
   evidenceOnly: boolean;
   studentIds: Set<string>;
   sourceMemberIds: Set<string>;
@@ -255,6 +260,18 @@ function numberCell(value: number | null | undefined, style = 5): Cell {
   return { value: value == null ? null : number(value, "cell"), style };
 }
 
+function sourceHourCell(value: number | null | undefined): Cell {
+  if (value == null) return stringCell("待核对");
+  return Math.abs(value) > 1_000_000_000_000 ? stringCell(String(value)) : numberCell(value);
+}
+
+function safeSourceSum(total: number | null, value: number | null) {
+  if (total === null || value === null || !Number.isFinite(value)) return null;
+  const next = total + value;
+  return Number.isFinite(next) && Math.abs(next) <= 1_000_000_000_000
+    ? Number(next.toFixed(4)) : null;
+}
+
 function joined(values: ReadonlySet<string>) {
   return [...values].join("、");
 }
@@ -282,6 +299,7 @@ function aggregateStudents(lines: readonly PayrollExportLine[]) {
       rates: new Set<number>(),
       subtotal: 0,
       lessonCount: 0,
+      hasExceptionalHours: false,
       evidenceOnly: true,
       studentIds: new Set<string>(),
       sourceMemberIds: new Set<string>(),
@@ -289,10 +307,26 @@ function aggregateStudents(lines: readonly PayrollExportLine[]) {
       studentMatches: new Set<string>(),
       notes: new Set<string>(),
     };
-    const hours = number(line.hours, "学生课时");
-    existing.hours = number(existing.hours + hours, "学生课时合计");
-    if (line.isTrial) existing.trialHours = number(existing.trialHours + hours, "试听课时");
-    else existing.regularHours = number(existing.regularHours + hours, "常规课时");
+    if (line.evidenceOnly) snapshotJiaowubaoHour(line.hours, line.hoursIssue ?? undefined);
+    else if (line.hoursIssue || line.hours === null) fail("普通薪资明细不能包含异常课时。");
+    const hours = line.hours === null || (line.evidenceOnly && Math.abs(line.hours) > 1_000_000_000_000)
+      ? null : number(line.hours, "学生课时");
+    if (line.hoursIssue || hours === null) {
+      existing.hasExceptionalHours = true;
+      existing.notes.add(hours === null ? "课时缺失或无法安全合计，待核对" : "来源课时越界，待核对");
+    }
+    if (hours === null) {
+      existing.hours = null;
+      if (line.isTrial) existing.trialHours = null;
+      else existing.regularHours = null;
+    } else {
+      existing.hours = line.evidenceOnly ? safeSourceSum(existing.hours, hours)
+        : number(existing.hours! + hours, "学生课时合计");
+      if (line.isTrial) existing.trialHours = line.evidenceOnly ? safeSourceSum(existing.trialHours, hours)
+        : number(existing.trialHours! + hours, "试听课时");
+      else existing.regularHours = line.evidenceOnly ? safeSourceSum(existing.regularHours, hours)
+        : number(existing.regularHours! + hours, "常规课时");
+    }
     existing.rates.add(number(line.rate, "课时费率"));
     existing.subtotal = number(existing.subtotal + number(line.subtotal, "行小计"), "学生小计");
     existing.lessonCount += 1;
@@ -331,7 +365,13 @@ function assertWorkbook(input: PayrollWorkbookExport) {
       if (!lesson.sourceKey?.trim()) fail("教务宝消课证据缺少来源键。");
       safeText(lesson.sourceKey, "教务宝消课证据来源键");
       if (evidenceBySourceKey.has(lesson.sourceKey)) fail("教务宝消课证据包含重复来源键。");
+      snapshotJiaowubaoHour(lesson.hours, lesson.hoursIssue ?? undefined);
       evidenceBySourceKey.set(lesson.sourceKey, lesson);
+    }
+    for (const schedule of input.evidence.schedules) {
+      for (const teacher of schedule.teachers) {
+        snapshotJiaowubaoOptionalHour(teacher.sourceTeacherHours, teacher.sourceTeacherHoursIssue ?? undefined);
+      }
     }
     if (!Array.isArray(input.evidence.teacherLessonSourceKeys)
       || input.evidence.teacherLessonSourceKeys.length > MAX_EXPORT_ROWS) {
@@ -371,8 +411,15 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     if (row.month !== input.month || !MONTH.test(row.month)) fail("薪资行月份与导出月份不一致。");
     if (row.currency !== "CNY" && row.currency !== "AUD") fail("薪资币种无效。");
     if (row.paymentMode !== "payable" && row.paymentMode !== "review_only") fail("付款模式无效。");
+    if (input.evidence && row.paymentMode === "payable" && row.sourceHours == null) {
+      fail("缺失教务宝老师课时不能生成付款资料。");
+    }
     number(row.payrollHours, "薪资课时");
-    if (row.sourceHours != null) number(row.sourceHours, "教务宝老师课时");
+    if (row.sourceHours != null) {
+      if (input.exportMode === "hours_only" && row.paymentMode === "review_only") {
+        if (!Number.isFinite(row.sourceHours)) fail("教务宝老师课时数值无效。");
+      } else number(row.sourceHours, "教务宝老师课时");
+    }
     if (row.sourceLessonCount != null) integer(row.sourceLessonCount, "教务宝课次数", MAX_EVIDENCE_ROWS);
     number(row.amount, "薪资金额");
     safeText(row.section, "教师类别");
@@ -389,6 +436,10 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     if (payrollDetailRows > MAX_PAYROLL_DETAIL_ROWS) fail("学生明细总行数无效。");
     aggregateStudents(row.lines);
     if (input.evidence) {
+      if (row.paymentMode === "payable" && input.evidence.schedules.some((schedule) => schedule.teachers.some(
+        (teacher) => teacher.teacherId === row.teacherId
+          && (teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue),
+      ))) fail("异常教务宝老师课时不能生成付款资料。");
       const expectedSourceKeys = expectedSourceKeysByTeacher.get(row.teacherKey);
       if (!expectedSourceKeys) fail("薪资行缺少当前教务宝老师课次映射。");
       const rowSourceKeys = new Set<string>();
@@ -399,10 +450,12 @@ function assertWorkbook(input: PayrollWorkbookExport) {
         rowSourceKeys.add(line.sourceKey);
         const lesson = evidenceBySourceKey.get(line.sourceKey);
         if (!lesson) fail("学生明细来源键不属于当前教务宝消课证据。");
+        if (lesson.hoursIssue && row.paymentMode === "payable") fail("异常教务宝课时不能生成付款资料。");
         const expectedStudentName = lesson.displayStudentName
           ?? `${lesson.memberName ?? lesson.memberId}（待核对姓名）`;
         if (line.studentName !== expectedStudentName
           || line.hours !== lesson.hours
+          || (line.hoursIssue ?? null) !== (lesson.hoursIssue ?? null)
           || line.isTrial !== lesson.isTrial
           || line.sourceMemberId !== lesson.memberId
           || line.studentId !== lesson.studentId
@@ -479,14 +532,19 @@ function studentHoursOwnerBySourceKey(input: PayrollWorkbookExport) {
 function displayedStudentHours(
   payroll: PayrollExportRow,
   sourceKeys: ReadonlySet<string>,
-  fallback: number,
+  fallback: number | null,
   owners: ReadonlyMap<string, string>,
   evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
-) {
-  if (!evidence.size) return roundedHours(fallback);
-  return roundedHours([...sourceKeys].reduce((total, sourceKey) => (
-    total + (owners.get(sourceKey) === payroll.teacherKey ? evidence.get(sourceKey)?.hours ?? 0 : 0)
-  ), 0));
+): number | null {
+  if (!evidence.size) return fallback === null ? null : roundedHours(fallback);
+  let total: number | null = 0;
+  for (const sourceKey of sourceKeys) {
+    if (owners.get(sourceKey) !== payroll.teacherKey) continue;
+    const lesson = evidence.get(sourceKey);
+    if (!lesson || lesson.hours === null) return null;
+    total = safeSourceSum(total, lesson.hours);
+  }
+  return total;
 }
 
 function attendanceSummary(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
@@ -578,7 +636,8 @@ function studentDetailSheet(input: PayrollWorkbookExport) {
   return worksheetXml({ rows, widths: [12, 22, 24, 12, 12, 14, 11, 20, 20, 34, 18, 42], freezeRows: 1, landscape: true });
 }
 
-function hoursOnlyTeacherDifference(payroll: PayrollExportRow, studentHours: number) {
+function hoursOnlyTeacherDifference(payroll: PayrollExportRow, studentHours: number | null) {
+  if (studentHours === null) return "学生课时待核对，合计不完整";
   if (payroll.sourceHours == null) return "老师课时待核对";
   return Math.abs(studentHours - payroll.sourceHours) > 0.0001
     ? `学生 ${studentHours} 小时；老师 ${payroll.sourceHours} 小时，按角色课时核对`
@@ -593,6 +652,7 @@ function hoursOnlyMainStudentNote(
 ) {
   const notes = student ? [attendanceSummary(student.sourceKeys, evidence)] : [];
   if (student && hours === 0 && student.hours !== 0 && evidence.size) notes.push("学生课时计于主讲或下方待核对");
+  if (student?.hasExceptionalHours) notes.push(hours === null ? "课时缺失，合计不完整" : "来源课时越界，待核对");
   if (payroll.paymentMode === "review_only") notes.push("待核对");
   return notes.filter(Boolean).join("；");
 }
@@ -604,7 +664,7 @@ function hoursOnlyMainTeacherCells(payroll: PayrollExportRow, teacherIndex: numb
   };
   return {
     leading: [numberCell(teacherIndex + 1, 19), stringCell(payroll.teacherName, 18)],
-    source: numberCell(payroll.sourceHours ?? null, 21),
+    source: { ...sourceHourCell(payroll.sourceHours), style: 21 },
   };
 }
 
@@ -613,7 +673,7 @@ function hoursOnlyMainStudentCells(input: Readonly<{
   student: AggregatedStudent | null;
   teacherIndex: number;
   studentIndex: number;
-  teacherStudentHours: number;
+  teacherStudentHours: number | null;
   evidence: ReadonlyMap<string, PayrollExportLessonEvidence>;
   owners: ReadonlyMap<string, string>;
 }>) {
@@ -638,7 +698,7 @@ function hoursOnlyMainStudentCells(input: Readonly<{
 function hoursOnlyUnallocatedSourceCells(lesson: PayrollExportLessonEvidence): SheetRow {
   return [
     stringCell(lesson.teachers.map((teacher) => teacher.sourceTeacherName ?? teacher.teacherName ?? "未命名老师").join("、"), 18),
-    stringCell(lesson.displayStudentName ?? lesson.memberName ?? "待核对姓名", 19), numberCell(lesson.hours, 20),
+    stringCell(lesson.displayStudentName ?? lesson.memberName ?? "待核对姓名", 19), { ...sourceHourCell(lesson.hours), style: 20 },
     stringCell(null, 18), stringCell(null, 18), stringCell(lesson.teamTitle, 18),
     stringCell(lesson.courseTitle, 22),
   ];
@@ -650,11 +710,13 @@ function appendHoursOnlyUnallocatedMainRows(
   lessons: readonly PayrollExportLessonEvidence[],
   evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
 ) {
-  let total = 0;
+  let total: number | null = 0;
   for (const [index, lesson] of lessons.entries()) {
-    total = roundedHours(total + lesson.hours);
+    total = safeSourceSum(total, lesson.hours);
     const candidate = lesson.isTrial ? trialStudents(new Set([lesson.sourceKey]), evidence) : "";
-    const note = "多教师学生课时归属待核对";
+    const note = lesson.hours === null || lesson.hoursIssue
+      ? lesson.hours === null ? "多教师学生课时归属待核对；课时缺失，合计不完整" : "多教师学生课时归属待核对；来源课时越界，待核对"
+      : "多教师学生课时归属待核对";
     const rowNumber = rows.length + 1;
     rows.push([
       numberCell(index + 1, 18), ...hoursOnlyUnallocatedSourceCells(lesson),
@@ -679,13 +741,15 @@ function appendHoursOnlyTeacherMainRows(input: Readonly<{
   const students = aggregateStudents(payroll.lines);
   const firstRow = rows.length + 1;
   const lastRow = firstRow + Math.max(1, students.length) - 1;
-  const teacherStudentHours = roundedHours(students.reduce((total, student) => (
-    total + displayedStudentHours(payroll, student.sourceKeys, student.hours, owners, evidence)
-  ), 0));
-  let studentTotal = 0;
+  let teacherStudentHours: number | null = 0;
+  for (const student of students) {
+    const hours = displayedStudentHours(payroll, student.sourceKeys, student.hours, owners, evidence);
+    teacherStudentHours = safeSourceSum(teacherStudentHours, hours);
+  }
+  let studentTotal: number | null = 0;
   for (const [studentIndex, student] of (students.length ? students : [null]).entries()) {
     const rendered = hoursOnlyMainStudentCells({ payroll, student, teacherIndex, studentIndex, teacherStudentHours, evidence, owners });
-    if (rendered.hours !== null) studentTotal = roundedHours(studentTotal + rendered.hours);
+    if (student) studentTotal = safeSourceSum(studentTotal, rendered.hours);
     const rowNumber = rows.length + 1;
     rows.push(rendered.cells);
     heights.set(rowNumber, rendered.height);
@@ -706,20 +770,31 @@ function hoursOnlyMainSheet(input: PayrollWorkbookExport, year: number, month: n
   const heights = new Map<number, number>([[1, 59.55], [2, 36.5], [3, 31.5]]);
   const evidence = lessonEvidenceBySourceKey(input);
   const owners = studentHoursOwnerBySourceKey(input);
-  let studentTotal = 0;
-  let teacherTotal = 0;
-  let unknownTeacherHours = false;
+  const scheduleCalendarIds = new Set(input.evidence?.schedules.map((schedule) => schedule.calendarId) ?? []);
+  const missingSchedule = input.evidence?.lessons.some((lesson) => !scheduleCalendarIds.has(lesson.calendarId)) ?? false;
+  const assignedExceptionalHours = input.evidence?.lessons.some((lesson) => owners.has(lesson.sourceKey) && lesson.hoursIssue) ?? false;
+  let studentTotal: number | null = 0;
+  let teacherTotal: number | null = missingSchedule ? null : 0;
+  const exceptionalTeacherHours = missingSchedule || (input.evidence?.schedules.some((schedule) => !schedule.teachers.length
+    || schedule.teachers.some((teacher) => teacher.sourceTeacherHoursIssue)) ?? false);
   for (const [index, payroll] of input.rows.entries()) {
-    studentTotal = roundedHours(studentTotal + appendHoursOnlyTeacherMainRows({
+    const teacherStudentHours = appendHoursOnlyTeacherMainRows({
       payroll, teacherIndex: index, rows, heights, merges, evidence, owners,
-    }));
-    if (payroll.sourceHours == null) unknownTeacherHours = true;
-    else teacherTotal = roundedHours(teacherTotal + payroll.sourceHours);
+    });
+    studentTotal = safeSourceSum(studentTotal, teacherStudentHours);
+  }
+  for (const schedule of input.evidence?.schedules ?? []) {
+    if (!schedule.teachers.length) teacherTotal = null;
+    for (const teacher of schedule.teachers) {
+      teacherTotal = safeSourceSum(teacherTotal, teacher.sourceTeacherHours);
+    }
   }
   rows.push([
     stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), numberCell(studentTotal, 23),
-    stringCell(null, 23), stringCell(null, 23), numberCell(unknownTeacherHours ? null : teacherTotal, 23),
-    ...Array.from({ length: 6 }, () => stringCell(null, 23)),
+    stringCell(null, 23), stringCell(null, 23), numberCell(teacherTotal, 23),
+    stringCell(null, 23), stringCell(studentTotal === null ? "学生课时缺失，合计不完整" : assignedExceptionalHours ? "学生来源课时含越界值，待核对" : null, 23),
+    stringCell(teacherTotal === null ? "老师课时缺失，合计不完整" : exceptionalTeacherHours ? "老师来源课时含越界值，待核对" : null, 23),
+    ...Array.from({ length: 3 }, () => stringCell(null, 23)),
   ]);
   heights.set(rows.length, 31.5);
   rows.push(Array.from({ length: 13 }, () => stringCell(null, 18)));
@@ -733,7 +808,10 @@ function hoursOnlyMainSheet(input: PayrollWorkbookExport, year: number, month: n
   rows.push([
     stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), unallocated.length ? numberCell(unallocatedHours, 23) : stringCell(null, 23),
     stringCell(null, 23), stringCell(null, 23), stringCell(null, 23), stringCell(null, 23),
-    stringCell(unallocated.length ? "学生课时未分配，待核对" : "本月逐课次老师已明确，课时已在上表按老师归属", 23),
+    stringCell(unallocated.length
+      ? unallocatedHours === null ? "学生课时缺失，合计不完整；归属待核对"
+        : unallocated.some((lesson) => lesson.hoursIssue) ? "来源课时含越界值，待核对；归属待核对" : "学生课时未分配，待核对"
+      : "本月逐课次老师已明确，课时已在上表按老师归属", 23),
     ...Array.from({ length: 4 }, () => stringCell(null, 23)),
   ]);
   heights.set(rows.length, 31.5);
@@ -744,9 +822,10 @@ type HoursOnlyCourseGroup = {
   studentName: string;
   courseType: string;
   courseTitle: string;
-  hours: number;
-  ownedHours: number;
+  hours: number | null;
+  ownedHours: number | null;
   trial: boolean;
+  hasExceptionalHours: boolean;
   sourceKeys: Set<string>;
 };
 
@@ -780,12 +859,13 @@ function hoursOnlyCourseGroups(
     const { courseType, courseTitle, key } = hoursOnlyCourseIdentity(line, evidence);
     const group = groups.get(key) ?? {
       studentName: line.studentName, courseType, courseTitle, hours: 0, ownedHours: 0,
-      trial: false, sourceKeys: new Set<string>(),
+      trial: false, hasExceptionalHours: false, sourceKeys: new Set<string>(),
     };
-    group.hours = roundedHours(group.hours + line.hours);
+    group.hours = safeSourceSum(group.hours, line.hours);
     if (isHoursOnlyStudentLineOwned(line, payroll.teacherKey, evidence, owners)) {
-      group.ownedHours = roundedHours(group.ownedHours + line.hours);
+      group.ownedHours = safeSourceSum(group.ownedHours, line.hours);
     }
+    group.hasExceptionalHours ||= Boolean(line.hoursIssue || line.hours === null);
     group.trial ||= Boolean(line.isTrial);
     if (line.sourceKey) group.sourceKeys.add(line.sourceKey);
     groups.set(key, group);
@@ -800,6 +880,8 @@ function hoursOnlyDetailCells(
   evidence: ReadonlyMap<string, PayrollExportLessonEvidence>,
 ) {
   const note = [attendanceSummary(group.sourceKeys, evidence), group.trial ? "试听" : "",
+    group.hasExceptionalHours ? group.hours === null || group.ownedHours === null
+      ? "课时缺失，合计不完整" : "来源课时越界，待核对" : "",
     group.hours !== group.ownedHours ? "学生课时计于主讲或待核对区" : "",
     payroll.paymentMode === "review_only" ? "待核对" : ""].filter(Boolean).join("；");
   const cells: SheetRow = [
@@ -812,7 +894,9 @@ function hoursOnlyDetailCells(
 }
 
 function hoursOnlyUnallocatedDetailCells(lesson: PayrollExportLessonEvidence, rowNumber: number) {
-  const note = "多教师学生课时归属待核对";
+  const note = lesson.hours === null || lesson.hoursIssue
+    ? lesson.hours === null ? "多教师学生课时归属待核对；课时缺失，合计不完整" : "多教师学生课时归属待核对；来源课时越界，待核对"
+    : "多教师学生课时归属待核对";
   const cells: SheetRow = [
     numberCell(rowNumber - 3, 18), ...hoursOnlyUnallocatedSourceCells(lesson), stringCell(note, 22),
   ];
@@ -860,7 +944,7 @@ function hoursOnlyReviewSheet(input: PayrollWorkbookExport) {
   for (const payroll of input.rows) {
     rows.push([
       stringCell(input.month), stringCell(payroll.teacherName), stringCell(payroll.section),
-      stringCell(null), stringCell("课时待核对"), stringCell(null), numberCell(payroll.sourceHours ?? null),
+      stringCell(null), stringCell("课时待核对"), stringCell(null), sourceHourCell(payroll.sourceHours),
       ...Array.from({ length: 7 }, () => stringCell(null)),
     ]);
   }
@@ -896,22 +980,22 @@ function teacherDescription(teachers: readonly PayrollExportTeacherLink[]) {
 
 function lessonEvidenceSheet(input: PayrollWorkbookExport) {
   const rows: SheetRow[] = [[
-    "来源键", "分校 ID", "排课 ID", "日期", "时间", "教务宝学员 ID", "教务宝账号名", "展示学生名", "系统学生 ID", "系统学生名", "匹配状态", "学生课时", "试听", "签到代码", "签到状态", "课程", "班级", "老师角色与匹配",
+    "来源键", "分校 ID", "排课 ID", "日期", "时间", "教务宝学员 ID", "教务宝账号名", "展示学生名", "系统学生 ID", "系统学生名", "匹配状态", "学生课时", "课时核对", "试听", "签到代码", "签到状态", "课程", "班级", "老师角色与匹配",
   ].map((value) => stringCell(value, 3))];
   for (const item of input.evidence?.lessons ?? []) {
     rows.push([
       stringCell(item.sourceKey), stringCell(jiaowubaoCompletedLessonBranchDisplay(item.branchId)), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle),
       stringCell(item.memberId), stringCell(item.memberName), stringCell(item.displayStudentName), stringCell(item.studentId), stringCell(item.studentName),
-      stringCell(item.studentMatch), numberCell(item.hours), stringCell(item.isTrial ? "是" : "否"), numberCell(item.attendanceCode),
+      stringCell(item.studentMatch), sourceHourCell(item.hours), stringCell(item.hoursIssue ? "待核对" : "正常"), stringCell(item.isTrial ? "是" : "否"), numberCell(item.attendanceCode),
       stringCell(item.attendanceTitle), stringCell(item.courseTitle), stringCell(item.teamTitle), stringCell(teacherDescription(item.teachers)),
     ]);
   }
-  return worksheetXml({ rows, widths: [38, 16, 18, 13, 16, 19, 23, 23, 19, 23, 18, 12, 9, 11, 14, 28, 28, 48], freezeRows: 1, landscape: true });
+  return worksheetXml({ rows, widths: [38, 16, 18, 13, 16, 19, 23, 23, 19, 23, 18, 12, 13, 9, 11, 14, 28, 28, 48], freezeRows: 1, landscape: true });
 }
 
 function scheduleEvidenceSheet(input: PayrollWorkbookExport) {
   const rows: SheetRow[] = [[
-    "来源键", "排课 ID", "日期", "时间", "课程", "班级", "老师角色", "教务宝老师 ID", "教务宝老师名", "系统老师 ID", "系统老师名", "匹配状态", "角色老师课时",
+    "来源键", "排课 ID", "日期", "时间", "课程", "班级", "老师角色", "教务宝老师 ID", "教务宝老师名", "系统老师 ID", "系统老师名", "匹配状态", "角色老师课时", "课时核对",
   ].map((value) => stringCell(value, 3))];
   for (const item of input.evidence?.schedules ?? []) {
     const teachers = item.teachers.length ? item.teachers : [null];
@@ -919,15 +1003,32 @@ function scheduleEvidenceSheet(input: PayrollWorkbookExport) {
       rows.push([
         stringCell(item.sourceKey), stringCell(item.calendarId), stringCell(item.lessonDate), stringCell(item.timeTitle), stringCell(item.courseTitle), stringCell(item.teamTitle),
         stringCell(teacher?.role ?? "无老师角色"), stringCell(teacher?.sourceTeacherId), stringCell(teacher?.sourceTeacherName),
-        stringCell(teacher?.teacherId), stringCell(teacher?.teacherName), stringCell(teacher?.teacherMatch), numberCell(teacher?.sourceTeacherHours),
+        stringCell(teacher?.teacherId), stringCell(teacher?.teacherName), stringCell(teacher?.teacherMatch), sourceHourCell(teacher?.sourceTeacherHours), stringCell(teacher?.sourceTeacherHoursIssue || teacher?.sourceTeacherHours == null ? "待核对" : "正常"),
       ]);
     }
   }
-  return worksheetXml({ rows, widths: [38, 18, 13, 16, 28, 28, 13, 20, 22, 19, 22, 18, 15], freezeRows: 1, landscape: true });
+  return worksheetXml({ rows, widths: [38, 18, 13, 16, 28, 28, 13, 20, 22, 19, 22, 18, 15, 13], freezeRows: 1, landscape: true });
 }
 
 function sourceSheet(input: PayrollWorkbookExport) {
   const evidence = input.evidence;
+  const scheduleCalendarIds = new Set(evidence?.schedules.map((schedule) => schedule.calendarId) ?? []);
+  const missingScheduleCalendarIds = new Set(evidence?.lessons
+    .filter((lesson) => !scheduleCalendarIds.has(lesson.calendarId))
+    .map((lesson) => lesson.calendarId) ?? []);
+  const missingStudentHours = evidence?.lessons.filter((lesson) => lesson.hours === null).length ?? 0;
+  const exceptionalStudentHours = evidence?.lessons.filter((lesson) => lesson.hoursIssue).length ?? 0;
+  const studentHoursTotal = evidence
+    ? evidence.lessons.reduce<number | null>((total, lesson) => safeSourceSum(total, lesson.hours), 0)
+    : 0;
+  const studentHours = missingStudentHours > 0
+    ? `不完整：${missingStudentHours} 条课时缺失`
+    : studentHoursTotal === null ? "课时数值无法安全合计，待核对" : studentHoursTotal;
+  const unresolvedTeacherHours = missingScheduleCalendarIds.size + (evidence?.schedules.reduce(
+    (total, schedule) => total + (schedule.teachers.length
+      ? schedule.teachers.filter((teacher) => teacher.sourceTeacherHours === null || teacher.sourceTeacherHoursIssue).length
+      : 1), 0,
+  ) ?? 0);
   const sourceRows: Array<readonly [string, CellValue]> = [
     ["导出月份", input.month],
     ["导出时间", input.generatedAt],
@@ -948,7 +1049,10 @@ function sourceSheet(input: PayrollWorkbookExport) {
     ["老师总课时来源", "query_schedule_list；over=1；只使用 teacher_hour / teacher_s_hour / teacher_t_hour 对应角色字段"],
     ["共享试听账号规则", "试听学员 A/B/C 保留原账号；展示姓名从已消课课程标题或唯一系统姓名安全解析"],
     ["核算边界", "学生消课课时用于学生明细；老师总课时来自排课角色字段。小组课不得按学生人数重复计算老师薪资。"],
-    ["付款安全", "待匹配、冲突、来源缺失、来源或映射修订变化、课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
+    ["付款安全", "待匹配、冲突、来源缺失、异常课时、来源或映射修订变化、课时不一致的老师只导出待核对证据，不导出金额、银行、付款说明或锁定信息。"],
+    ["学生实扣课时总计", evidence ? studentHours : "无来源"],
+    ["异常学生来源课时数", exceptionalStudentHours],
+    ["异常老师角色课时数", unresolvedTeacherHours],
   ];
   const rows: SheetRow[] = [[stringCell("项目", 3), stringCell("内容", 3)]];
   for (const [label, value] of sourceRows) {

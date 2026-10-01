@@ -5,6 +5,7 @@ import {
   type JiaowubaoScheduleListQuery,
   type JiaowubaoScheduleListResponse,
 } from "@/lib/jiaowubao-open-api-node";
+import { snapshotJiaowubaoOptionalHour, sourceJiaowubaoHour, type JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 
 /**
  * Immutable, curated teacher-credit evidence for a completed reporting month.
@@ -34,6 +35,7 @@ export type JiaowubaoCompletedScheduleTeacher = Readonly<{
   id: string | null;
   name: string | null;
   hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue;
 }>;
 
 export type JiaowubaoCompletedScheduleRecord = Readonly<{
@@ -235,32 +237,6 @@ function sourceTeamTitle(value: unknown) {
   fail(`教务宝已结课排课的 team_title 无效（${sourceTeamTitleKind(value)}）。`);
 }
 
-function optionalDecimal(value: unknown, field: string, minimum: number, maximum: number) {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string" && value.trim()
-      ? Number(value)
-      : Number.NaN;
-  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
-    fail(`教务宝已结课排课的 ${field} 无效。`);
-  }
-  return Number(parsed.toFixed(4));
-}
-
-function sourceTeacherHours(value: unknown) {
-  try {
-    return optionalDecimal(value, "teacher_hour", 0, 24);
-  } catch {
-    return null;
-  }
-}
-
-function sourceTeacherHoursProvided(value: unknown) {
-  if (value === undefined || value === null) return false;
-  return typeof value !== "string" || value.trim().length > 0;
-}
-
 function optionalInteger(value: unknown, field: string, minimum: number, maximum: number) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = typeof value === "number"
@@ -314,13 +290,14 @@ const ROLE_ORDER = new Map<JiaowubaoCompletedScheduleTeacherRole, number>([
 function scheduleTeachers(value: JsonRecord) {
   return Object.freeze(TEACHER_SLOTS.flatMap((slot) => {
     const rawHours = value[slot.hours];
+    const hourEvidence = sourceJiaowubaoHour(rawHours);
     const teacher = Object.freeze({
       role: slot.role,
       id: sourceTeacherId(value[slot.id], slot.id),
       name: text(value[slot.name], slot.name),
-      hours: sourceTeacherHours(rawHours),
+      ...(hourEvidence.hoursIssue === "missing" ? { hours: null } : hourEvidence),
     });
-    const unknownHours = teacher.hours === null && sourceTeacherHoursProvided(rawHours);
+    const unknownHours = teacher.hoursIssue !== undefined;
     return teacher.id || teacher.name || (teacher.hours !== null && teacher.hours !== 0) || unknownHours ? [teacher] : [];
   }));
 }
@@ -377,14 +354,15 @@ const RECORD_FIELDS = Object.freeze([
 
 function readScheduleTeacher(candidate: unknown) {
   if (!isRecord(candidate)) fail("已结课排课快照老师资料无效。");
-  if (Object.keys(candidate).sort().join(",") !== "hours,id,name,role") fail("已结课排课快照老师资料无效。");
+  const fields = Object.keys(candidate).sort().join(",");
+  if (fields !== "hours,id,name,role" && fields !== "hours,hoursIssue,id,name,role") fail("已结课排课快照老师资料无效。");
   const role = candidate.role;
   if (!ROLE_ORDER.has(role as JiaowubaoCompletedScheduleTeacherRole)) fail("已结课排课快照老师资料无效。");
   return Object.freeze({
     role: role as JiaowubaoCompletedScheduleTeacherRole,
     id: snapshotTeacherId(candidate.id, `teachers.${role}.id`),
     name: snapshotText(candidate.name, `teachers.${role}.name`),
-    hours: optionalDecimal(candidate.hours, `teachers.${role}.hours`, 0, 24),
+    ...snapshotJiaowubaoOptionalHour(candidate.hours, candidate.hoursIssue),
   });
 }
 

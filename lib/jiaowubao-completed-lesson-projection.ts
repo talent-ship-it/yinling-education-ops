@@ -3,6 +3,7 @@ import type {
   JiaowubaoCompletedLessonTeacherRole,
 } from "@/lib/jiaowubao-completed-lessons";
 import type { JiaowubaoCompletedScheduleRecord } from "@/lib/jiaowubao-completed-schedule";
+import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 import {
   reconcileJiaowubaoCompletedLessonEvidence,
   type JiaowubaoCompletedLessonMatch,
@@ -43,7 +44,8 @@ export type JiaowubaoCompletedLessonProjectionItem = Readonly<{
   lessonDate: string;
   timeTitle: string | null;
   /** Per-student JWB consumption/attendance evidence; never a teacher allocation. */
-  hours: number;
+  hours: number | null;
+  hoursIssue?: JiaowubaoHourIssue | null;
   isTrial: boolean;
   attendanceCode: number | null;
   attendanceTitle: string | null;
@@ -264,6 +266,7 @@ export function projectJiaowubaoCompletedLessonRecords(input: Readonly<{
       lessonDate: recordValue.lessonDate,
       timeTitle: recordValue.timeTitle,
       hours: recordValue.hours,
+      ...(recordValue.hoursIssue ? { hoursIssue: recordValue.hoursIssue } : {}),
       isTrial: recordValue.isTrial,
       attendanceCode: recordValue.attendanceCode,
       attendanceTitle: recordValue.attendanceTitle,
@@ -290,6 +293,7 @@ export function projectJiaowubaoCompletedLessonRecords(input: Readonly<{
         sourceTeacherId: sourceTeacher.id,
         sourceTeacherName: sourceTeacher.name,
         sourceTeacherHours: sourceTeacher.hours,
+        ...(sourceTeacher.hoursIssue ? { sourceTeacherHoursIssue: sourceTeacher.hoursIssue } : {}),
         teacherId: teacher.id,
         teacherName: teacher.name,
         teacherMatch: teacher.match,
