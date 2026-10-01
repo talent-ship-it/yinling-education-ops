@@ -1145,13 +1145,13 @@
         "count": 1
       },
       "crap_critical": {
-        "count": 6
+        "count": 5
       },
       "crap_high": {
-        "count": 7
+        "count": 8
       },
       "crap_moderate": {
-        "count": 4
+        "count": 3
       }
     },
     "lib/jiaowubao-direct-import-batch-gate.ts": {
@@ -4583,14 +4583,8 @@
       }
     },
     "lib/jiaowubao-completed-schedule.ts\u0000<arrow>": {
-      "crap_critical": {
-        "count": 1
-      },
       "crap_high": {
-        "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
+        "count": 2
       }
     },
     "lib/jiaowubao-completed-schedule.ts\u0000assertJiaowubaoCompletedScheduleSnapshotIntegrity": {
@@ -6638,10 +6632,10 @@
     "app/jiaowubao-schedule-mapping-priority-review.tsx:complexity",
     "app/jiaowubao-schedule-mapping-review.tsx:high impact",
     "scripts/student-import-management.ts:untested risk",
-    "lib/jiaowubao-completed-schedule.ts:high impact",
     "app/jiaowubao-imported-schedule.tsx:complexity",
     "app/jiaowubao-completed-month-evidence.ts:high impact",
     "lib/lp-atomic-service.ts:high impact",
+    "lib/jiaowubao-completed-schedule.ts:high impact",
     "app/account-security-panel.tsx:complexity",
     "app/api/jiaowubao-open-api/completed-lessons/route.ts:untested risk",
     "app/lesson-package-purchase-form.tsx:high impact",
@@ -6696,6 +6690,7 @@
     "lib/demo-session-token.ts:high impact",
     "app/api/operations/permanent-replacement/route.ts:untested risk",
     "lib/direct-enrollment-pending.ts:untested risk",
+    "scripts/wecom-receiver/receiver.mjs:complexity",
     "lib/jiaowubao-student-source-staging.ts:dead code",
     "app/api/operations/trial-ledger/route.ts:complexity",
     "app/api/jiaowubao-direct-import/schedule/route.ts:complexity",
@@ -6719,10 +6714,8 @@
     "app/api/lesson-occurrences/complete/route.ts:untested risk",
     "scripts/wecom-receiver/sync.mjs:complexity",
     "lib/jiaowubao-completed-lesson-resumable-sync.ts:complexity",
-    "app/api/cron/jiaowubao-schedule/route.ts:complexity",
     "scripts/run-sql-runtime-fixtures.mjs:untested risk",
     "app/api/integrations/tencent-trial-ledger/route.ts:complexity",
-    "scripts/wecom-receiver/receiver.mjs:complexity",
     "lib/jiaowubao-static-import.ts:complexity",
     "app/api/cron/trial-payment/route.ts:untested risk",
     "lib/payroll-export.ts:complexity",
