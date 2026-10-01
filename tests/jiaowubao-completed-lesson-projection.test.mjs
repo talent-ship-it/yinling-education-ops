@@ -280,6 +280,18 @@ test("missing or ambiguous schedule evidence is review-only rather than a guesse
   assert.ok((projection.teachers[0]?.unresolvedLessonCount ?? 0) > 0);
 });
 
+test("invalid supplier teacher hours keep the lesson for review without payable hours", () => {
+  const period = { start: "2026-08-01", end: "2026-08-31" };
+  const record = projectJiaowubaoCompletedLessonRecord(sourceRecord(), period);
+  const schedule = projectJiaowubaoCompletedScheduleRecord(scheduleSourceRecord({ teacher_hour: "N/A" }), period);
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], scheduleRecords: [schedule], stateRows: stateRows() });
+  const teacher = projection.teachers.find((candidate) => candidate.sourceTeacherId === "80");
+  assert.ok(teacher);
+  assert.equal(teacher.sourceHours, null);
+  assert.ok(teacher.unresolvedLessonCount > 0);
+  assert.equal(teacher.studentLineCount, 1);
+});
+
 test("a historical lesson with no branch stays review-only even when its schedule otherwise matches", () => {
   const record = projectJiaowubaoCompletedLessonRecord(
     sourceRecord({ branch_id: undefined, mem_id: 702, mem_title: "Rita Wu", type: 1, course_title: "Y9 ICAS" }),

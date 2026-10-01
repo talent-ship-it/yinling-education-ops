@@ -248,6 +248,19 @@ function optionalDecimal(value: unknown, field: string, minimum: number, maximum
   return Number(parsed.toFixed(4));
 }
 
+function sourceTeacherHours(value: unknown) {
+  try {
+    return optionalDecimal(value, "teacher_hour", 0, 24);
+  } catch {
+    return null;
+  }
+}
+
+function sourceTeacherHoursProvided(value: unknown) {
+  if (value === undefined || value === null) return false;
+  return typeof value !== "string" || value.trim().length > 0;
+}
+
 function optionalInteger(value: unknown, field: string, minimum: number, maximum: number) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = typeof value === "number"
@@ -300,16 +313,15 @@ const ROLE_ORDER = new Map<JiaowubaoCompletedScheduleTeacherRole, number>([
 
 function scheduleTeachers(value: JsonRecord) {
   return Object.freeze(TEACHER_SLOTS.flatMap((slot) => {
+    const rawHours = value[slot.hours];
     const teacher = Object.freeze({
       role: slot.role,
       id: sourceTeacherId(value[slot.id], slot.id),
       name: text(value[slot.name], slot.name),
-      hours: optionalDecimal(value[slot.hours], slot.hours, 0, 24),
+      hours: sourceTeacherHours(rawHours),
     });
-    // The supplier emits 0/blank/0 for an unused assistant or third slot.
-    // Keep positive hours without an identity as unresolved evidence, but do
-    // not let a fully empty zero-hour sentinel create a phantom teacher role.
-    return teacher.id || teacher.name || (teacher.hours !== null && teacher.hours !== 0) ? [teacher] : [];
+    const unknownHours = teacher.hours === null && sourceTeacherHoursProvided(rawHours);
+    return teacher.id || teacher.name || (teacher.hours !== null && teacher.hours !== 0) || unknownHours ? [teacher] : [];
   }));
 }
 
@@ -363,31 +375,32 @@ const RECORD_FIELDS = Object.freeze([
   "teamId", "teamTitle", "teachers", "completedAt",
 ] as const);
 
+function readScheduleTeacher(candidate: unknown) {
+  if (!isRecord(candidate)) fail("已结课排课快照老师资料无效。");
+  if (Object.keys(candidate).sort().join(",") !== "hours,id,name,role") fail("已结课排课快照老师资料无效。");
+  const role = candidate.role;
+  if (!ROLE_ORDER.has(role as JiaowubaoCompletedScheduleTeacherRole)) fail("已结课排课快照老师资料无效。");
+  return Object.freeze({
+    role: role as JiaowubaoCompletedScheduleTeacherRole,
+    id: snapshotTeacherId(candidate.id, `teachers.${role}.id`),
+    name: snapshotText(candidate.name, `teachers.${role}.name`),
+    hours: optionalDecimal(candidate.hours, `teachers.${role}.hours`, 0, 24),
+  });
+}
+
+function orderedScheduleTeachers(teachers: readonly JiaowubaoCompletedScheduleTeacher[]) {
+  let previousOrder = -1;
+  for (const teacher of teachers) {
+    const order = ROLE_ORDER.get(teacher.role)!;
+    if (order <= previousOrder) fail("已结课排课快照老师资料无效。");
+    previousOrder = order;
+  }
+  return Object.freeze(teachers);
+}
+
 function readScheduleTeachers(value: unknown) {
   if (!Array.isArray(value) || value.length > TEACHER_SLOTS.length) fail("已结课排课快照老师资料无效。");
-  const roles = new Set<JiaowubaoCompletedScheduleTeacherRole>();
-  let previousOrder = -1;
-  return Object.freeze(value.map((candidate) => {
-    if (!isRecord(candidate) || Object.keys(candidate).length !== 4
-      || !Object.hasOwn(candidate, "role") || !Object.hasOwn(candidate, "id")
-      || !Object.hasOwn(candidate, "name") || !Object.hasOwn(candidate, "hours")) {
-      fail("已结课排课快照老师资料无效。");
-    }
-    const role = candidate.role;
-    if (role !== "primary" && role !== "assistant" && role !== "third") fail("已结课排课快照老师资料无效。");
-    const order = ROLE_ORDER.get(role)!;
-    if (roles.has(role) || order <= previousOrder) fail("已结课排课快照老师资料无效。");
-    roles.add(role);
-    previousOrder = order;
-    const teacher = Object.freeze({
-      role,
-      id: snapshotTeacherId(candidate.id, `teachers.${role}.id`),
-      name: snapshotText(candidate.name, `teachers.${role}.name`),
-      hours: optionalDecimal(candidate.hours, `teachers.${role}.hours`, 0, 24),
-    });
-    if (!teacher.id && !teacher.name && teacher.hours === null) fail("已结课排课快照老师资料无效。");
-    return teacher;
-  }));
+  return orderedScheduleTeachers(value.map(readScheduleTeacher));
 }
 
 /** Re-validates a private database DTO before it reaches a route projection. */
