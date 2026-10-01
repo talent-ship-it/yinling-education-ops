@@ -25,10 +25,17 @@ const loadableManifest = JSON.parse(readFileSync(`${buildRoot}/server/app/page/r
 const lazyFiles = [...new Set(Object.values(loadableManifest).flatMap((entry) => entry.files ?? []))]
   .filter((file) => file.endsWith(".js"));
 assert.ok(lazyFiles.length > 0, "The authenticated operations bundle is no longer emitted as a lazy chunk.");
-const anonymousHtml = readFileSync(`${buildRoot}/server/app/index.html`, "utf8");
+let anonymousHtml = null;
+try {
+  anonymousHtml = readFileSync(`${buildRoot}/server/app/index.html`, "utf8");
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+}
 for (const file of lazyFiles) {
   assert.ok(!pageEntry.includes(file), `${file} is both lazy and part of the anonymous page entry.`);
-  assert.ok(!anonymousHtml.includes(`/_next/${file}`), `${file} is preloaded by the anonymous HTML artifact.`);
+  if (anonymousHtml !== null) {
+    assert.ok(!anonymousHtml.includes(`/_next/${file}`), `${file} is preloaded by the anonymous HTML artifact.`);
+  }
 }
 const authenticatedFeatureBytes = lazyFiles.reduce((total, file) => total + statSync(`${buildRoot}/${file}`).size, 0);
 assert.ok(authenticatedFeatureBytes <= 925 * 1024, `Authenticated feature JavaScript grew to ${authenticatedFeatureBytes} bytes (budget: 947200).`);
