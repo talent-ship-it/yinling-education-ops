@@ -385,7 +385,6 @@
     "lib/ops-store.ts:JiaowubaoOpenApiScheduleSyncLease",
     "lib/ops-store.ts:JiaowubaoCompletedLessonSnapshotReceipt",
     "lib/ops-store.ts:JiaowubaoCompletedLessonSnapshotPreflight",
-    "lib/ops-store.ts:JiaowubaoCompletedLessonSnapshotPage",
     "lib/ops-store.ts:JiaowubaoCompletedLessonSyncLease",
     "lib/ops-store.ts:JiaowubaoCompletedLessonMemberItemsPage",
     "lib/ops-store.ts:JiaowubaoCompletedLessonPendingMonth",

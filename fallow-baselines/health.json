@@ -1067,19 +1067,13 @@
       }
     },
     "lib/jiaowubao-completed-lesson-projection.ts": {
-      "crap_critical": {
+      "crap_high": {
         "count": 1
-      },
-      "crap_moderate": {
-        "count": 3
       }
     },
     "lib/jiaowubao-completed-lesson-reconciliation.ts": {
       "complexity_critical": {
-        "count": 1
-      },
-      "complexity_high": {
-        "count": 1
+        "count": 2
       },
       "crap_critical": {
         "count": 1
@@ -1141,14 +1135,11 @@
       }
     },
     "lib/jiaowubao-completed-schedule.ts": {
-      "complexity_critical": {
+      "complexity_high": {
         "count": 1
       },
-      "crap_critical": {
-        "count": 5
-      },
       "crap_high": {
-        "count": 8
+        "count": 1
       },
       "crap_moderate": {
         "count": 3
@@ -1234,6 +1225,17 @@
       },
       "crap_moderate": {
         "count": 3
+      }
+    },
+    "lib/jiaowubao-payroll-authority.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
       }
     },
     "lib/jiaowubao-static-import-service.ts": {
@@ -1474,16 +1476,13 @@
     },
     "lib/payroll-export.ts": {
       "complexity_critical": {
-        "count": 2
+        "count": 5
       },
       "complexity_high": {
         "count": 1
       },
-      "complexity_moderate": {
-        "count": 1
-      },
       "crap_critical": {
-        "count": 3
+        "count": 5
       },
       "crap_high": {
         "count": 2
@@ -1967,6 +1966,11 @@
       },
       "crap_moderate": {
         "count": 4
+      }
+    },
+    "tests/jiaowubao-completed-schedule.test.mjs": {
+      "crap_high": {
+        "count": 1
       }
     },
     "tests/jiaowubao-direct-import-projection-schema.test.mjs": {
@@ -4423,23 +4427,8 @@
         "count": 1
       }
     },
-    "lib/jiaowubao-completed-lesson-projection.ts\u0000id": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
     "lib/jiaowubao-completed-lesson-projection.ts\u0000resolveEntity": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-lesson-projection.ts\u0000resolveStudent": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-lesson-projection.ts\u0000sourceIds": {
-      "crap_moderate": {
+      "crap_high": {
         "count": 1
       }
     },
@@ -4452,7 +4441,7 @@
       }
     },
     "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000reconcileJiaowubaoCompletedLessonEvidence": {
-      "complexity_high": {
+      "complexity_critical": {
         "count": 1
       }
     },
@@ -4582,80 +4571,25 @@
         "count": 1
       }
     },
-    "lib/jiaowubao-completed-schedule.ts\u0000<arrow>": {
-      "crap_high": {
-        "count": 2
-      }
-    },
     "lib/jiaowubao-completed-schedule.ts\u0000assertJiaowubaoCompletedScheduleSnapshotIntegrity": {
-      "crap_critical": {
+      "crap_moderate": {
         "count": 1
       }
     },
     "lib/jiaowubao-completed-schedule.ts\u0000collectJiaowubaoCompletedScheduleSnapshotInternal": {
-      "complexity_critical": {
+      "complexity_high": {
         "count": 1
       },
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000exactDate": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000optionalDecimal": {
-      "crap_critical": {
+      "crap_high": {
         "count": 1
       }
     },
     "lib/jiaowubao-completed-schedule.ts\u0000optionalInteger": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000pages": {
-      "crap_critical": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000readJiaowubaoCompletedScheduleSnapshotRecord": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000snapshotText": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000sourceId": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeacherId": {
       "crap_moderate": {
         "count": 1
       }
     },
-    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeamTitle": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000sourceTeamTitleKind": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000text": {
-      "crap_high": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-schedule.ts\u0000timeTitle": {
+    "lib/jiaowubao-completed-schedule.ts\u0000pages": {
       "crap_moderate": {
         "count": 1
       }
@@ -4831,6 +4765,19 @@
     },
     "lib/jiaowubao-open-api-schedule-snapshot.ts\u0000projectJiaowubaoScheduleSnapshotRecord": {
       "crap_moderate": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-payroll-authority.ts\u0000assertJiaowubaoPayrollProjectedSummary": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/jiaowubao-payroll-authority.ts\u0000assertPage": {
+      "crap_high": {
         "count": 1
       }
     },
@@ -5307,10 +5254,10 @@
       }
     },
     "lib/payroll-export.ts\u0000aggregateStudents": {
-      "complexity_moderate": {
+      "complexity_critical": {
         "count": 1
       },
-      "crap_moderate": {
+      "crap_critical": {
         "count": 1
       }
     },
@@ -5319,6 +5266,19 @@
         "count": 1
       },
       "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000hoursOnlyMainSheet": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "lib/payroll-export.ts\u0000hoursOnlyMainStudentNote": {
+      "crap_moderate": {
         "count": 1
       }
     },
@@ -5341,6 +5301,9 @@
       }
     },
     "lib/payroll-export.ts\u0000sourceSheet": {
+      "complexity_critical": {
+        "count": 1
+      },
       "crap_critical": {
         "count": 1
       }
@@ -6487,6 +6450,11 @@
         "count": 4
       }
     },
+    "tests/jiaowubao-completed-schedule.test.mjs\u0000<arrow>": {
+      "crap_high": {
+        "count": 1
+      }
+    },
     "tests/jiaowubao-direct-import-projection-schema.test.mjs\u0000<arrow>": {
       "crap_moderate": {
         "count": 1
@@ -6598,10 +6566,10 @@
     "lib/jiaowubao-completed-lesson-sync.ts:complexity",
     "lib/jiaowubao-trial-source-window.ts:untested risk",
     "app/account-menu.tsx:untested risk",
-    "app/operations-client.tsx:high impact",
-    "lib/lesson-occurrence-service.ts:high impact",
-    "lib/account-directory.ts:dead code",
     "app/api/app-state/route.ts:high impact",
+    "app/operations-client.tsx:high impact",
+    "lib/account-directory.ts:dead code",
+    "lib/lesson-occurrence-service.ts:high impact",
     "lib/classroom-provision-plan.ts:high impact",
     "scripts/jiaowubao-authoritative-student-hints-read.mjs:untested risk",
     "app/course-package-summary.tsx:dead code",
@@ -6625,22 +6593,23 @@
     "scripts/wecom-receiver/core.mjs:high impact",
     "lib/temporary-classroom-request.ts:untested risk",
     "scripts/jiaowubao-open-api-schedule-management-staging.ts:complexity",
+    "app/jiaowubao-completed-month-evidence.ts:high impact",
     "lib/booking-capacity-service.ts:high impact",
     "scripts/jiaowubao-open-api-schedule-staging.ts:complexity",
     "lib/teacher-absence-creation-service.ts:high impact",
     "lib/wecom-archive.ts:high impact",
+    "lib/jiaowubao-completed-schedule.ts:high impact",
     "app/jiaowubao-schedule-mapping-priority-review.tsx:complexity",
     "app/jiaowubao-schedule-mapping-review.tsx:high impact",
     "scripts/student-import-management.ts:untested risk",
     "app/jiaowubao-imported-schedule.tsx:complexity",
-    "app/jiaowubao-completed-month-evidence.ts:high impact",
     "lib/lp-atomic-service.ts:high impact",
-    "lib/jiaowubao-completed-schedule.ts:high impact",
     "app/account-security-panel.tsx:complexity",
     "app/api/jiaowubao-open-api/completed-lessons/route.ts:untested risk",
     "app/lesson-package-purchase-form.tsx:high impact",
     "lib/exam-follow-up-service.ts:high impact",
     "lib/renewal-tasks.ts:high impact",
+    "lib/jiaowubao-completed-lessons.ts:high impact",
     "app/api/classroom/route.ts:complexity",
     "app/api/integrations/wecom/archive/route.ts:complexity",
     "lib/jiaowubao-completed-month-evidence.ts:dead code",
@@ -6651,10 +6620,10 @@
     "lib/jiaowubao-authority-status.ts:high impact",
     "lib/renewal-follow-up-service.ts:complexity",
     "scripts/student-import-identity-management.ts:untested risk",
-    "lib/jiaowubao-completed-lessons.ts:high impact",
     "lib/student-import-service.ts:high impact",
-    "app/api/operations/legacy/create/route.ts:complexity",
     "lib/booking-projection-pending.ts:high impact",
+    "app/api/operations/legacy/create/route.ts:complexity",
+    "lib/jiaowubao-payroll-authority.ts:untested risk",
     "lib/wecom-archive-bridge.ts:high impact",
     "app/auth-client.tsx:high impact",
     "lib/jiaowubao-trial-sync.ts:high impact",
@@ -6668,8 +6637,8 @@
     "lib/jiaowubao-static-xlsx-parser.ts:complexity",
     "lib/jiaowubao-direct-import-preflight.ts:dead code",
     "lib/account-credentials.ts:high impact",
-    "lib/teacher-departure-creation-service.ts:complexity",
     "lib/managed-exam-refresh.ts:high impact",
+    "lib/teacher-departure-creation-service.ts:complexity",
     "app/api/fu-attachments/route.ts:complexity",
     "app/api/operations/jiaowubao-trial-sync/route.ts:complexity",
     "lib/booking-teacher-scope.ts:high impact",
@@ -6697,6 +6666,7 @@
     "lib/jiaowubao-open-api-schedule-reader.ts:high impact",
     "lib/teacher-departure-occurrences.ts:complexity",
     "app/api/operations/direct-enrollment/route.ts:complexity",
+    "lib/jiaowubao-completed-lesson-reconciliation.ts:complexity",
     "app/api/account/mfa/route.ts:complexity",
     "app/api/account/password/route.ts:complexity",
     "app/account-admin-lifecycle.tsx:complexity",
@@ -6708,6 +6678,7 @@
     "scripts/check-api-write-boundaries.mjs:untested risk",
     "app/api/jiaowubao-open-api/schedule/route.ts:complexity",
     "app/teacher-availability-panel.tsx:complexity",
+    "lib/payroll-export.ts:complexity",
     "app/api/classroom/temporary/route.ts:complexity",
     "lib/lp-workflows.ts:complexity",
     "scripts/jiaowubao-completed-lesson-retirement-management.ts:untested risk",
@@ -6718,7 +6689,6 @@
     "app/api/integrations/tencent-trial-ledger/route.ts:complexity",
     "lib/jiaowubao-static-import.ts:complexity",
     "app/api/cron/trial-payment/route.ts:untested risk",
-    "lib/payroll-export.ts:complexity",
     "lib/xlsx-reader.ts:complexity",
     "app/api/account/sessions/route.ts:untested risk",
     "scripts/jiaowubao-student-source-staging.ts:complexity",

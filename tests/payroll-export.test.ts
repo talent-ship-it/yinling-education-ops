@@ -354,7 +354,7 @@ test("hours-only export follows the 13/9-column template and excludes every paym
   assert.match(String(cell(main!, "M5")), /课程标题候选，待核对/u);
   assert.equal(cell(main!, "G7"), 9);
   assert.equal(cell(main!, "D8"), 4.5);
-  assert.equal(cell(main!, "G8"), 12);
+  assert.equal(cell(main!, "G8"), null, "missing completed schedules keep the teacher control total unknown");
   assert.equal(cell(main!, "A10"), "教务宝多教师记录（课时暂未拆分）");
   assert.equal(cell(main!, "I12"), "本月逐课次老师已明确，课时已在上表按老师归属");
   assert.equal(cell(students!, "I3"), "备注");
@@ -420,9 +420,86 @@ test("hours-only export keeps role hours separate, leaves missing role hours unk
   assert.equal(cell(main!, "D7"), null);
   assert.equal(cell(main!, "G7"), 0.5);
   assert.equal(cell(main!, "D9"), 4.5);
-  assert.equal(cell(main!, "G9"), null);
+  assert.equal(cell(main!, "G9"), null, "missing completed schedules keep the teacher control total unknown");
   assert.equal(cell(main!, "J8"), "老师课时待核对");
   assert.equal(cell(detail!, "D8"), null);
+});
+
+test("hours-only export retains finite source outliers and marks truly unknown totals", () => {
+  for (const [hours, issue, expectedDetail, expectedTotal] of [
+    [58.53, "out_of_range", 60.53, 62.03],
+    [null, "non_numeric", null, null],
+    [1e13, "out_of_range", null, null],
+  ] as const) {
+    const sample = sampleWorkbook();
+    const first = sample.rows[0]!;
+    const line = first.lines[0]!;
+    const firstLesson = sample.evidence!.lessons[0]!;
+    const input: PayrollWorkbookExport = {
+      ...sample,
+      exportMode: "hours_only",
+      rows: [{ ...first, paymentMode: "review_only", amount: 0, lines: [
+        { ...line, hours, hoursIssue: issue }, ...first.lines.slice(1),
+      ] }, sample.rows[1]!],
+      evidence: { ...sample.evidence!, lessons: [
+        { ...firstLesson, hours, hoursIssue: issue }, ...sample.evidence!.lessons.slice(1),
+      ] },
+    };
+    const [main, detail, , sourceLessons, , source] = readXlsx(buildPayrollXlsx(input)).worksheets;
+    assert.equal(cell(main!, "D4"), expectedDetail);
+    assert.equal(cell(main!, "D8"), expectedTotal);
+    assert.equal(cell(sourceLessons!, "L2"), hours === null ? "待核对" : hours === 1e13 ? String(hours) : hours);
+    const sourceTotal = source!.rows.find((row) => row.cells[0]?.value === "学生实扣课时总计")?.cells[1]?.value;
+    if (hours === 58.53) assert.equal(sourceTotal, 62.03);
+    else assert.match(String(sourceTotal), hours === null ? /不完整/u : /无法安全合计/u);
+    assert.match(String(cell(detail!, "I4")), /待核对|合计不完整/u);
+  }
+});
+
+test("hours-only review keeps an oversized teacher role as text without enabling payment", () => {
+  const sample = sampleWorkbook();
+  const first = sample.rows[0]!;
+  const schedule = sample.evidence!.schedules[0]!;
+  const input: PayrollWorkbookExport = {
+    ...sample,
+    exportMode: "hours_only",
+    rows: [{ ...first, paymentMode: "review_only", amount: 0, sourceHours: 1e13 }, sample.rows[1]!],
+    evidence: { ...sample.evidence!, schedules: [{ ...schedule, teachers: [
+      { ...schedule.teachers[0]!, sourceTeacherHours: 1e13, sourceTeacherHoursIssue: "out_of_range" },
+      ...schedule.teachers.slice(1),
+    ] }] },
+  };
+  const [main, , , , sourceSchedules] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "G4"), String(1e13));
+  assert.equal(cell(main!, "G8"), null);
+  assert.match(String(cell(main!, "J8")), /不完整/u);
+  assert.equal(cell(sourceSchedules!, "M2"), String(1e13));
+  assert.throws(() => buildPayrollXlsx({ ...input, rows: [
+    { ...input.rows[0]!, paymentMode: "payable" }, input.rows[1]!,
+  ] }), /异常教务宝老师课时|教务宝老师课时/u);
+});
+
+test("hours-only teacher control total stays unknown when a completed lesson lacks its schedule role", () => {
+  for (const missingRole of [true, false]) {
+    const sample = sampleWorkbook();
+    const first = sample.rows[0]!;
+    const sourceKey = first.lines[0]!.sourceKey!;
+    const schedule = sample.evidence!.schedules[0]!;
+    const rows = [{ ...first, paymentMode: "review_only" as const, amount: 0,
+      sourceHours: null, lines: [first.lines[0]!] }, sample.rows[1]!];
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only", rows,
+      evidence: { ...sample.evidence!, lessonRowCount: 1, scheduleRowCount: missingRole ? 1 : 0,
+        lessons: [sample.evidence!.lessons[0]!],
+        schedules: missingRole ? [{ ...schedule, teachers: [] }] : [],
+        teacherLessonSourceKeys: [{ teacherKey: first.teacherKey, sourceKeys: [sourceKey] },
+          { teacherKey: sample.rows[1]!.teacherKey, sourceKeys: [] }],
+      },
+    };
+    const [main, , , , , source] = readXlsx(buildPayrollXlsx(input)).worksheets;
+    assert.equal(main!.rows[3 + rows.length]!.cells[6]!.value, null);
+    assert.equal(source!.rows.find((row) => row.cells[0]?.value === "异常老师角色课时数")?.cells[1]?.value, 1);
+  }
 });
 
 test("hours-only export retains ambiguous multi-teacher student hours once in both template sheets", () => {

@@ -18,6 +18,7 @@ import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { OpsRulesValidationError, parseRulesWrite } from "@/lib/ops-rules";
 import { assertOpsStateTransition, OpsStateTransitionError } from "@/lib/ops-state-transition";
 import { hasAppendedLessonPackagePurchase } from "@/lib/lesson-package-purchase-command";
+import { assertJiaowubaoPayrollAuthority, JiaowubaoPayrollAuthorityError } from "@/lib/jiaowubao-payroll-authority";
 import {
   getOpsSources,
   getOpsState,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 async function sessionContext() {
   const cookieStore = await cookies();
@@ -177,6 +179,13 @@ export async function PUT(request: NextRequest) {
       rows: allRows,
       context: access,
     });
+    if (body.entity === "payroll") {
+      await assertJiaowubaoPayrollAuthority({
+        currentPayload: currentRow.payload,
+        nextPayload: payload,
+        stateRows: allRows,
+      });
+    }
     const scopeVersions = submittedBookingScopeVersions ?? getAccessScopeVersions(allRows, access);
     const saved = await putOpsState({
       entity: body.entity,
@@ -187,6 +196,9 @@ export async function PUT(request: NextRequest) {
     });
     return noStore({ row: filterOpsStateRows(saved, access)[0] });
   } catch (error) {
+    if (error instanceof JiaowubaoPayrollAuthorityError) {
+      return noStore({ error: "教务宝课时或老师、学生映射需要重新核对，请刷新后重试。" }, 409);
+    }
     if (error instanceof OpsRulesValidationError) return noStore({ error: error.message }, 400);
     if (error instanceof OpsAccessError) return noStore({ error: error.message }, 403);
     if (error instanceof OpsStateTransitionError) return noStore({ error: error.message }, error.status);
