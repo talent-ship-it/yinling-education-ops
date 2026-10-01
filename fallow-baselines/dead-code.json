@@ -76,7 +76,6 @@
     "lib/exam-tasks.ts:EXAM_MANAGED_RULE_SUFFIXES",
     "lib/exam-tasks.ts:EXAM_ROLE_LABELS",
     "lib/exam-tasks.ts:configuredExamRecipient",
-    "lib/jiaowubao-completed-lesson-reconciliation.ts:jiaowubaoCompletedLessonTeacherIdentityKey",
     "lib/jiaowubao-completed-lessons.ts:JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_PAGE_SIZE",
     "lib/jiaowubao-completed-lessons.ts:JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_PAGES",
     "lib/jiaowubao-completed-lessons.ts:JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_MAX_RECORDS",
