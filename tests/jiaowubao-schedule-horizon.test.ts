@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildJiaowubaoScheduleHorizonFromCollectedPages,
   buildJiaowubaoScheduleSnapshotEnvelope,
   collectJiaowubaoScheduleHorizon,
   jiaowubaoScheduleCollectionWindows,
@@ -135,15 +136,16 @@ test("a missing later window or duplicate lesson prevents publishing partial cov
   ), /重复排课/);
 });
 
-test("source-call budget is shared across windows, including terminal empty pages", async () => {
+test("standalone double scan admits 6000 rows and 126 calls, including terminal empty pages", async () => {
   let calls = 0;
-  await assert.rejects(collectJiaowubaoScheduleHorizon(horizon, async (query) => {
+  const snapshot = await collectJiaowubaoScheduleHorizon(horizon, async (query) => {
     calls++;
-    const window = query.start === horizon.start ? 1 : 2;
-    if (query.page === 40) return { lists: [] };
+    const window = jiaowubaoScheduleCollectionWindows(horizon).findIndex((part) => part.start === query.start);
+    if (query.page === 21) return { lists: [] };
     return { lists: Array.from({ length: 100 }, (_, index) => ({ cal_id: window * 100000 + query.page! * 100 + index })) };
-  }, null), /本轮请求上限/);
-  assert.equal(calls, 66);
+  }, [{ sourceKey: jiaowubaoScheduleSnapshotSourceKey("missing-current-row"), sourceDate: horizon.start }]);
+  assert.equal(calls, 126);
+  assert.equal(snapshot.manifest.recordCount, 6000);
 });
 
 function rowsForStableWindow(query: Readonly<{ start: string; page?: number; limit?: number }>, extraFirstWindow = 0) {
@@ -197,11 +199,41 @@ test("an invalid current source date forces a complete confirmation scan", async
   assert.equal(snapshot.manifest.recordCount, 0);
 });
 
-test("a 3001-row rolling horizon fails before publication", async () => {
+test("a 6001-row rolling horizon fails before publication", async () => {
   let calls = 0;
   await assert.rejects(collectJiaowubaoScheduleHorizon(horizon, async (query) => {
     calls += 1;
-    return { lists: rowsForStableWindow(query, 1) };
+    const windowIndex = jiaowubaoScheduleCollectionWindows(horizon).findIndex((part) => part.start === query.start);
+    const size = 2_000 + (windowIndex === 0 ? 1 : 0);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 100;
+    return { lists: Array.from({ length: size }, (_, index) => ({
+      cal_id: `oversize-${windowIndex}-${index}`,
+      dated: query.start,
+    })).slice((page - 1) * limit, page * limit) };
   }, null), /滚动排课记录超过安全上限/);
-  assert.equal(calls, 33);
+  assert.equal(calls, 63);
+});
+
+test("persisted horizon pages require full coverage and preserve confirmation union", () => {
+  const first = { sourceKey: jiaowubaoScheduleSnapshotSourceKey("first"), record: { cal_id: "first", version: 1 } };
+  const updated = { sourceKey: jiaowubaoScheduleSnapshotSourceKey("updated"), record: { cal_id: "updated", version: 1 } };
+  const revised = { sourceKey: jiaowubaoScheduleSnapshotSourceKey("updated"), record: { cal_id: "updated", version: 2 } };
+  const added = { sourceKey: jiaowubaoScheduleSnapshotSourceKey("added"), record: { cal_id: "added" } };
+  const pages = [
+    { passNumber: 0, windowIndex: 0, pageNumber: 1, rows: [first, updated] },
+    { passNumber: 0, windowIndex: 1, pageNumber: 1, rows: [] },
+    { passNumber: 0, windowIndex: 2, pageNumber: 1, rows: [] },
+    { passNumber: 1, windowIndex: 0, pageNumber: 1, rows: [revised, added] },
+    { passNumber: 1, windowIndex: 1, pageNumber: 1, rows: [] },
+    { passNumber: 1, windowIndex: 2, pageNumber: 1, rows: [] },
+  ];
+  assert.throws(() => buildJiaowubaoScheduleHorizonFromCollectedPages(horizon, pages.slice(0, 2)), /尚未覆盖完整/);
+  const snapshot = buildJiaowubaoScheduleHorizonFromCollectedPages(horizon, pages);
+  const byId = new Map(snapshot.pages.flatMap((page) => page.records).map((record) => [record.cal_id, record]));
+  assert.equal(snapshot.manifest.recordCount, 3);
+  assert.equal(byId.get("first")?.version, 1);
+  assert.equal(byId.get("updated")?.version, 2);
+  assert.ok(byId.has("added"));
+  assert.throws(() => buildJiaowubaoScheduleHorizonFromCollectedPages(horizon, [pages[0], pages[0], ...pages.slice(1)]), /不连续|结束后/);
 });
