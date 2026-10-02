@@ -3,6 +3,7 @@ import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed
 import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 import { snapshotJiaowubaoHour, snapshotJiaowubaoOptionalHour } from "@/lib/jiaowubao-hour-evidence";
 import { jiaowubaoCompletedLessonTeacherIdentityKey } from "@/lib/jiaowubao-completed-lesson-reconciliation";
+import { isJiaowubaoSharedTrialAccountLabel } from "@/lib/trial-operations";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -562,7 +563,7 @@ function trialStudents(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<st
   const names = new Set<string>();
   for (const sourceKey of sourceKeys) {
     const lesson = evidence.get(sourceKey);
-    if (!lesson?.isTrial) continue;
+    if (!lesson || (!lesson.isTrial && !isJiaowubaoSharedTrialAccountLabel(lesson.memberName))) continue;
     const name = lesson.displayStudentName ?? lesson.memberName;
     if (name) names.add(lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
   }
@@ -713,7 +714,7 @@ function appendHoursOnlyUnallocatedMainRows(
   let total: number | null = 0;
   for (const [index, lesson] of lessons.entries()) {
     total = safeSourceSum(total, lesson.hours);
-    const candidate = lesson.isTrial ? trialStudents(new Set([lesson.sourceKey]), evidence) : "";
+    const candidate = trialStudents(new Set([lesson.sourceKey]), evidence);
     const note = lesson.hours === null || lesson.hoursIssue
       ? lesson.hours === null ? "多教师学生课时归属待核对；课时缺失，合计不完整" : "多教师学生课时归属待核对；来源课时越界，待核对"
       : "多教师学生课时归属待核对";

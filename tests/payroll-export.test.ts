@@ -389,6 +389,23 @@ test("hours-only export follows the 13/9-column template and excludes every paym
   assert.match(allXml, /&lt;Tutor&gt;/u);
 });
 
+test("hours-only trial names include shared accounts whose source lesson flag is regular", () => {
+  const sample = sampleWorkbook();
+  const input: PayrollWorkbookExport = {
+    ...sample, exportMode: "hours_only",
+    rows: sample.rows.map((row) => ({ ...row, lines: row.lines.map((line) => ({ ...line, isTrial: false })) })),
+    evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson) => ({ ...lesson, isTrial: false })) },
+  };
+  const [main, detail, , lessons] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "M4"), "");
+  assert.equal(cell(main!, "M5"), '=HYPERLINK("https://example.invalid")（课程标题候选，待核对）');
+  assert.equal(cell(main!, "M6"), "Trial Two（课程标题候选，待核对）");
+  assert.equal(cell(main!, "D8"), 4.5);
+  assert.equal(cell(detail!, "D6"), 1);
+  assert.equal(cell(lessons!, "N4"), "否");
+  assert.ok(input.evidence!.lessons.every((lesson) => !lesson.isTrial));
+});
+
 test("hours-only export keeps role hours separate, leaves missing role hours unknown, and never doubles student hours", () => {
   const sample = sampleWorkbook();
   const assistant = sample.evidence!.schedules[0]!.teachers[1]!;
@@ -525,7 +542,7 @@ test("hours-only export retains ambiguous multi-teacher student hours once in bo
         sample.evidence!.teacherLessonSourceKeys[1]!,
       ],
       lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
-        ? { ...lesson, teachers: [assistant, third] }
+        ? { ...lesson, memberName: "试听学员A", teachers: [assistant, third] }
         : lesson),
     },
   };
@@ -536,6 +553,7 @@ test("hours-only export retains ambiguous multi-teacher student hours once in bo
   assert.equal(cell(main!, "G8"), 0.25);
   assert.equal(cell(main!, "D10"), 3.5);
   assert.equal(cell(main!, "D14"), 1);
+  assert.equal(cell(main!, "M14"), "Olivia & Co");
   assert.equal(cell(main!, "D15"), 1);
   assert.equal(cell(detail!, "D7"), null);
   assert.equal(cell(detail!, "D8"), null);
