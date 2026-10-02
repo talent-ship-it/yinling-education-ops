@@ -145,12 +145,11 @@ function scheduleRecords(schedule: PayrollExportScheduleEvidence, lessons: reado
   });
 }
 
-function learnerOnlyRecords(lessons: readonly Lesson[], schedules: readonly PayrollExportScheduleEvidence[]) {
+function learnerOnlyRecords(lessons: readonly Lesson[]) {
   const roles = missingRoles(lessons, new Set());
-  const creditedTeachers = new Set(schedules.flatMap((schedule) => schedule.teachers.map(teacherKey)));
   return (roles.length ? roles : [null]).map((role) => ({
     ...roleRecord(lessons[0], role, lessons, "教务宝消课 API", "缺少可核实的排课角色关联"),
-    credit: !role || !creditedTeachers.has(teacherKey(role)),
+    credit: false,
   }));
 }
 
@@ -172,7 +171,7 @@ function recordsForCalendar(schedules: readonly PayrollExportScheduleEvidence[],
   const records = schedules.flatMap((schedule) => scheduleRecords(schedule, lessons, schedules.length > 1));
   const matched = schedules.length === 1 && associationIssue(schedules[0], lessons, false) === null;
   if (lessons.length && !matched) {
-    records.push(...lessons.flatMap((lesson) => learnerOnlyRecords([lesson], schedules)));
+    records.push(...lessons.flatMap((lesson) => learnerOnlyRecords([lesson])));
   }
   return records;
 }

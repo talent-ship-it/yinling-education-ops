@@ -12,7 +12,7 @@ function total(records: readonly CompleteHourRecord[]) {
 }
 function count(records: readonly CompleteHourRecord[]) {
   const credits = records.filter((record) => record.credit);
-  return credits.length ? new Set(credits.map((record) => record.eventKey)).size : new Set(records.map((record) => record.calendarId)).size;
+  return new Set(credits.map((record) => record.eventKey)).size;
 }
 const issues = (records: readonly CompleteHourRecord[]) => [...new Set(records.flatMap((record) => record.issues))].join("；");
 const header = (labels: string[], style = 1) => labels.map((label) => cell(label, style));
@@ -42,7 +42,7 @@ function mainSheet(groups: CompleteHourRecord[][], year: number, month: number):
     const students = completeHourGroups(records, (record) => JSON.stringify([record.studentKey, record.trial])).sort((a, b) =>
       (total(b) ?? -Infinity) - (total(a) ?? -Infinity) || a[0].studentName.localeCompare(b[0].studentName));
     const color = 8 + (index % 3) * 2;
-    const note = [`课节 ${count(records)}`, completeHourAttendance(records), `试听 ${count(records.filter((record) => record.trial))}`, issues(records)].filter(Boolean).join("；");
+    const note = [`课节 ${count(records) || "待核对"}`, completeHourAttendance(records), `试听 ${count(records.filter((record) => record.trial))}`, issues(records)].filter(Boolean).join("；");
     students.forEach((student, studentIndex) => {
       const first = studentIndex === 0;
       rows.push([
@@ -68,7 +68,7 @@ function detailSheet(groups: CompleteHourRecord[][]): Sheet {
       const dates = records.map((item) => item.date).sort();
       rows.push([
         cell(rows.length), cell(record.teacherName), cell(record.studentName), hours(total(records)),
-        cell(count(records)), cell(record.course), cell(`${dates[0]} 至 ${dates.at(-1)}`),
+        cell(count(records) || "待核对"), cell(record.course), cell(`${dates[0]} 至 ${dates.at(-1)}`),
         cell(completeHourAttendance(records)), cell(record.trial ? "试听" : "常规"),
         cell(["教务宝课节原始记录汇总", issues(records)].filter(Boolean).join("；")),
       ]);

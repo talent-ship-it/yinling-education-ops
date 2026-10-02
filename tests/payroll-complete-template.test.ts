@@ -201,3 +201,16 @@ test("conflicting learners retain each source date, time, course, name and atten
   ]);
   assert.equal(raw.filter((row) => typeof row[5] === "number").reduce((sum, row) => sum + Number(row[5]), 0), 1);
 });
+
+
+test("learner-only teachers do not obscure known schedule totals or add physical role events", async () => {
+  const evidence = fixture();
+  const otherTeacher = { ...teacher, teacherId: "teacher-2", sourceTeacherId: "source-2", teacherName: "Pending Teacher", sourceTeacherName: "Pending Teacher" };
+  const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], teachers: [otherTeacher] }] }));
+  const source = new Map(result[3].rows.slice(2).map((row) => [row[0], row[1]]));
+  assert.equal(source.get("教师总课时"), 1);
+  const pendingTeacher = result[0].rows.slice(3).find((row) => row[1] === "Pending Teacher")!;
+  assert.equal(pendingTeacher[6], "待核对"); assert.match(String(pendingTeacher[8]), /课节 待核对/u);
+  const detail = result[1].rows.slice(1).find((row) => row[1] === "Pending Teacher")!;
+  assert.equal(detail[3], "待核对"); assert.equal(detail[4], "待核对");
+});
