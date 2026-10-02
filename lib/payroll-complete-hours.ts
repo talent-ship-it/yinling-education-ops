@@ -1,12 +1,14 @@
 import type { PayrollExportEvidence, PayrollExportLessonEvidence, PayrollExportScheduleEvidence, PayrollExportTeacherLink } from "@/lib/payroll-export";
-import { jiaowubaoCompletedLessonTeacherIdentityKey as teacherKey } from "@/lib/jiaowubao-completed-lesson-reconciliation";
+import { jiaowubaoCompletedLessonTeacherIdentityKey as teacherKey, scheduleMatchesGroup } from "@/lib/jiaowubao-completed-lesson-reconciliation";
 import { isJiaowubaoSharedTrialAccountLabel } from "@/lib/trial-operations";
+
+import { isJiaowubaoCompletedLessonUnknownBranchId } from "@/lib/jiaowubao-completed-lesson-branch";
 
 type Lesson = PayrollExportLessonEvidence;
 type Role = PayrollExportTeacherLink & { sourceTeacherHours?: number | null; sourceTeacherHoursIssue?: string | null };
 
 export type CompleteHourRecord = Readonly<{
-  calendarId: string; date: string; time: string; course: string;
+  calendarId: string; eventKey: string; credit: boolean; date: string; time: string; course: string;
   teacherKey: string; teacherName: string; role: string; hours: number | null;
   studentKey: string; studentName: string; originalNames: string;
   trial: boolean; lessons: readonly Lesson[]; issues: readonly string[]; source: string;
@@ -78,12 +80,12 @@ function roleIssues(role: Role | null) {
 }
 
 function roleRecord(input: {
-  calendarId: string; lessonDate: string; timeTitle: string | null; courseTitle: string | null;
+  sourceKey: string; calendarId: string; lessonDate: string; timeTitle: string | null; courseTitle: string | null;
 }, role: Role | null, lessons: readonly Lesson[], source: string, extraIssue?: string): CompleteHourRecord {
   const learners = recordLearners(lessons);
   const course = lessons.length === 1 ? lessons[0].courseTitle : input.courseTitle;
   return {
-    calendarId: input.calendarId, date: input.lessonDate, time: input.timeTitle ?? "",
+    calendarId: input.calendarId, eventKey: input.sourceKey, credit: true, date: input.lessonDate, time: input.timeTitle ?? "",
     course: course ?? input.courseTitle ?? "", ...roleFields(role), ...learners,
     issues: [...learners.issues, ...roleIssues(role), ...(extraIssue ? [extraIssue] : [])],
     lessons, source,
@@ -119,38 +121,75 @@ function indexLessons(lessons: readonly Lesson[], month: string) {
   return result;
 }
 
-function scheduleRecords(schedule: PayrollExportScheduleEvidence, lessons: readonly Lesson[]) {
-  const roles = new Set(schedule.teachers.map((teacher) => teacher.role));
-  if (roles.size !== schedule.teachers.length) throw new Error("完整课时表包含重复老师角色。");
-  const conflict = lessons.some((lesson) => lesson.lessonDate !== schedule.lessonDate)
-    ? "双源课节日期冲突待核对" : undefined;
-  const records = (schedule.teachers.length ? schedule.teachers : [null]).map((role) =>
-    roleRecord(schedule, role, lessons, "教务宝开放 API 双源", conflict));
-  const present = new Set(schedule.teachers.map((role) => JSON.stringify([teacherKey(role), role.role])));
-  for (const role of missingRoles(lessons, present)) {
-    records.push(roleRecord(schedule, role, lessons, "教务宝消课 API", "双源老师角色冲突待核对"));
+function associationIssue(schedule: PayrollExportScheduleEvidence, lessons: readonly Lesson[], duplicateCalendar: boolean) {
+  if (duplicateCalendar || new Set(lessons.map((lesson) => lesson.branchId)).size !== 1) return "课节编号或分校关联冲突待核对";
+  if (!scheduleMatchesGroup(schedule, lessons)) return "双源课节资料冲突待核对";
+  return null;
+}
+
+function scheduleRecords(schedule: PayrollExportScheduleEvidence, lessons: readonly Lesson[], duplicateCalendar: boolean) {
+  const conflict = associationIssue(schedule, lessons, duplicateCalendar);
+  const members = conflict ? [] : lessons;
+  const historical = members.some((lesson) => isJiaowubaoCompletedLessonUnknownBranchId(lesson.branchId));
+  const issue = conflict ?? (historical ? "分校来源缺失，学生关联为候选，待核对" : undefined);
+  return (schedule.teachers.length ? schedule.teachers : [null]).map((role) => {
+    const record = roleRecord(schedule, role, members, "教务宝开放 API 双源", issue);
+    if (conflict) return { ...record, studentKey: "unallocated", studentName: "未分配老师课时（关联待核对）" };
+    if (historical) return { ...record, studentKey: JSON.stringify(["historical", record.studentKey]), studentName: `${record.studentName}（关联待核对）` };
+    return record;
+  });
+}
+
+function learnerOnlyRecords(lessons: readonly Lesson[], schedules: readonly PayrollExportScheduleEvidence[]) {
+  const roles = missingRoles(lessons, new Set());
+  const creditedTeachers = new Set(schedules.flatMap((schedule) => schedule.teachers.map(teacherKey)));
+  return (roles.length ? roles : [null]).map((role) => ({
+    ...roleRecord(lessons[0], role, lessons, "教务宝消课 API", "缺少可核实的排课角色关联"),
+    credit: !role || !creditedTeachers.has(teacherKey(role)),
+  }));
+}
+
+function indexSchedules(schedules: readonly PayrollExportScheduleEvidence[], month: string) {
+  const byCalendar = new Map<string, PayrollExportScheduleEvidence[]>();
+  const sourceKeys = new Set<string>();
+  for (const schedule of schedules) {
+    assertMonth(schedule.lessonDate, month);
+    if (sourceKeys.has(schedule.sourceKey)) throw new Error("完整课时表包含重复排课来源键。");
+    sourceKeys.add(schedule.sourceKey);
+    const group = byCalendar.get(schedule.calendarId) ?? [];
+    group.push(schedule);
+    byCalendar.set(schedule.calendarId, group);
+  }
+  return byCalendar;
+}
+
+function recordsForCalendar(schedules: readonly PayrollExportScheduleEvidence[], lessons: readonly Lesson[]) {
+  const records = schedules.flatMap((schedule) => scheduleRecords(schedule, lessons, schedules.length > 1));
+  const matched = schedules.length === 1 && associationIssue(schedules[0], lessons, false) === null;
+  if (lessons.length && !matched) {
+    const branches = completeHourGroupsByBranch(lessons);
+    records.push(...branches.flatMap((group) => learnerOnlyRecords(group, schedules)));
   }
   return records;
 }
 
+function completeHourGroupsByBranch(lessons: readonly Lesson[]) {
+  const groups = new Map<string, Lesson[]>();
+  for (const lesson of lessons) {
+    const group = groups.get(lesson.branchId) ?? [];
+    group.push(lesson);
+    groups.set(lesson.branchId, group);
+  }
+  return [...groups.values()];
+}
+
 export function completeHourRecords(evidence: PayrollExportEvidence, month: string) {
   const lessonsByCalendar = indexLessons(evidence.lessons, month);
-  const records: CompleteHourRecord[] = [];
-  const calendars = new Set<string>();
-  for (const schedule of evidence.schedules) {
-    assertMonth(schedule.lessonDate, month);
-    if (calendars.has(schedule.calendarId)) throw new Error("完整课时表包含重复排课 ID。");
-    calendars.add(schedule.calendarId);
-    records.push(...scheduleRecords(schedule, lessonsByCalendar.get(schedule.calendarId) ?? []));
-  }
-  for (const [calendarId, lessons] of lessonsByCalendar) {
-    if (calendars.has(calendarId)) continue;
-    const roles = missingRoles(lessons, new Set());
-    records.push(...(roles.length ? roles : [null]).map((role) =>
-      roleRecord(lessons[0], role, lessons, "教务宝消课 API", "缺少排课角色来源")));
-  }
+  const schedulesByCalendar = indexSchedules(evidence.schedules, month);
+  const calendars = new Set([...lessonsByCalendar.keys(), ...schedulesByCalendar.keys()]);
+  const records = [...calendars].flatMap((calendarId) => recordsForCalendar(schedulesByCalendar.get(calendarId) ?? [], lessonsByCalendar.get(calendarId) ?? []));
   return records.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)
-    || a.calendarId.localeCompare(b.calendarId) || a.teacherKey.localeCompare(b.teacherKey) || a.role.localeCompare(b.role));
+    || a.calendarId.localeCompare(b.calendarId) || a.eventKey.localeCompare(b.eventKey) || a.teacherKey.localeCompare(b.teacherKey) || a.role.localeCompare(b.role));
 }
 
 export function completeHourAttendance(records: readonly CompleteHourRecord[]) {

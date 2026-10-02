@@ -75,12 +75,12 @@ test("missing and conflicting role sources remain unknown and never use student 
   const evidence = fixture();
   const missing = await sheets(workbook({ ...evidence, schedules: [] }));
   assert.equal(missing[0].rows[3][3], "待核对"); assert.equal(missing[2].rows[1][5], "待核对");
-  assert.match(String(missing[2].rows[1][12]), /缺少排课角色来源/u);
+  assert.match(String(missing[2].rows[1][12]), /缺少可核实的排课角色关联/u);
   const mismatch = { ...teacher, teacherId: "teacher-2", sourceTeacherId: "source-2", teacherName: "Other Teacher", sourceTeacherHours: 1 };
   const conflict = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [mismatch] }] }));
   assert.equal(conflict[2].rows.length, 3);
   assert.ok(conflict[2].rows.slice(1).some((row) => row[5] === "待核对"));
-  assert.match(JSON.stringify(conflict), /双源老师角色冲突待核对/u);
+  assert.match(JSON.stringify(conflict), /双源课节资料冲突待核对/u);
 });
 
 test("finite outliers retain their source value while unsafe totals stay unknown", async () => {
@@ -107,7 +107,7 @@ test("shared trial candidates and unknown names retain raw accounts without beco
 
 test("complete export rejects duplicate schedule evidence, invalid dates and incomplete source mapping", () => {
   const evidence = fixture();
-  assert.throws(() => buildPayrollXlsx(workbook({ ...evidence, schedules: [evidence.schedules[0], { ...evidence.schedules[0], sourceKey: "duplicate" }] })), /重复排课/u);
+  assert.throws(() => buildPayrollXlsx(workbook({ ...evidence, schedules: [evidence.schedules[0], evidence.schedules[0]] })), /重复排课来源键/u);
   assert.throws(() => completeHourRecords({ ...evidence, lessons: [{ ...evidence.lessons[0], lessonDate: "2026-09-31" }] }, "2026-09"), /无效的课节日期/u);
   assert.throws(() => buildPayrollXlsx({ ...workbook(evidence), evidence: { ...workbook(evidence).evidence!, teacherLessonSourceKeys: [] } }), /不完整或不一致/u);
   assert.throws(() => buildPayrollXlsx({ ...workbook(evidence), evidence: undefined }), /缺少完整双源快照/u);
@@ -138,4 +138,43 @@ test("repeated teacher-student lessons aggregate role hours, dates and attendanc
   assert.equal(result[0].rows.length, 4); assert.equal(result[0].rows[3][3], 3); assert.equal(result[0].rows[3][6], 3);
   assert.equal(result[1].rows.length, 3); assert.equal(result[1].rows[1][3], 2); assert.equal(result[1].rows[1][4], 2);
   assert.equal(result[1].rows[1][6], "2026-09-15 至 2026-09-22"); assert.equal(result[1].rows[1][7], "已到达 1；请假 1；未签到 0");
+});
+
+
+test("historical branch-less rows can show only explicitly pending candidate associations", async () => {
+  const evidence = fixture();
+  const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], branchId: "~" }] }));
+  assert.equal(result[0].rows[3][3], 1); assert.match(String(result[0].rows[3][2]), /关联待核对/u);
+  assert.match(String(result[1].rows[1][2]), /关联待核对/u);
+  assert.match(String(result[2].rows[1][7]), /关联待核对/u);
+  assert.match(String(result[2].rows[1][12]), /分校来源缺失.*候选/u);
+});
+
+test("conflicting metadata never assigns role hours to a learner", async () => {
+  const evidence = fixture();
+  for (const change of [{ lessonDate: "2026-09-16" }, { timeTitle: "11:00-12:00" }, { courseTitle: "Different" }, { teamTitle: "Different" }]) {
+    const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], ...change }] }));
+    const detail = result[1].rows.slice(1);
+    assert.equal(detail.find((row) => row[2] === "Learner One")?.[3], "待核对");
+    assert.equal(detail.find((row) => String(row[2]).includes("未分配老师课时"))?.[3], 1);
+    assert.equal(result[0].rows[3][6], 1);
+  }
+});
+
+test("distinct schedule sources sharing a calendar retain both credits without assigning them to the learner", async () => {
+  const evidence = fixture();
+  const result = await sheets(workbook({ ...evidence, schedules: [evidence.schedules[0], { ...evidence.schedules[0], sourceKey: "schedule-duplicate-calendar", teachers: [{ ...teacher, sourceTeacherHours: 2 }] }] }));
+  assert.equal(result[2].rows.length, 4);
+  assert.deepEqual(result[2].rows.slice(1).map((row) => row[5]).sort(), [1, 2, "待核对"]);
+  assert.equal(result[0].rows[3][6], 3);
+  assert.equal(result[1].rows.slice(1).find((row) => row[2] === "Learner One")?.[3], "待核对");
+});
+
+test("multiple branches and extra schedule teacher roles keep learner hours unallocated", async () => {
+  const evidence = fixture();
+  const other = { ...evidence.lessons[0], sourceKey: "lesson-other-branch", branchId: "other", memberId: "member-2", displayStudentName: "Other Learner" };
+  const branches = await sheets(workbook({ ...evidence, lessons: [evidence.lessons[0], other] }));
+  assert.ok(branches[1].rows.slice(1).filter((row) => !String(row[2]).includes("未分配老师课时")).every((row) => row[3] === "待核对"));
+  const roles = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [...evidence.schedules[0].teachers, { ...teacher, role: "assistant", sourceTeacherId: "assistant", teacherId: "assistant", sourceTeacherHours: 0.5 }] }] }));
+  assert.ok(roles[1].rows.slice(1).filter((row) => row[2] === "Learner One").every((row) => row[3] === "待核对"));
 });

@@ -6,8 +6,11 @@ type Cell = Readonly<{ value: Value; style: number }>;
 type Sheet = { name: string; rows: Cell[][]; widths: number[]; merges?: string[]; rowHeights: Map<number, number> };
 const cell = (value: Value, style = typeof value === "number" ? 19 : 18): Cell => ({ value, style });
 const hours = (value: number | null, style = 16) => cell(value === null ? "待核对" : Math.abs(value) > 1_000_000_000_000 ? String(value) : value, style);
-const total = (records: readonly CompleteHourRecord[]) => completeHourSum(records.map((record) => record.hours));
-const count = (records: readonly CompleteHourRecord[]) => new Set(records.map((record) => record.calendarId)).size;
+function total(records: readonly CompleteHourRecord[]) {
+  const credits = records.filter((record) => record.credit);
+  return credits.length ? completeHourSum(credits.map((record) => record.hours)) : null;
+}
+const count = (records: readonly CompleteHourRecord[]) => new Set(records.map((record) => record.eventKey)).size;
 const issues = (records: readonly CompleteHourRecord[]) => [...new Set(records.flatMap((record) => record.issues))].join("；");
 const header = (labels: string[], style = 1) => labels.map((label) => cell(label, style));
 
@@ -99,6 +102,7 @@ function sourceSheet(input: PayrollWorkbookExport, records: CompleteHourRecord[]
     ["试听/测试账号或课程标识课节", count(records.filter((record) => record.trial))],
     ["汇总规则", "按老师角色课时逐节汇总到老师—学生；小组课合列学生且只计一次角色课时，不按学生人数重复或拆分。缺失、冲突待核对，不用学生课时或排课时长代替。"],
     ["试听规则", "保留来源试听标记、共享试听账号或课程中的试听/测试标识。共享账号解析姓名是待核对候选；原始账号保留在《课节原始明细》。"],
+    ["历史关联", "历史消课未提供分校时，只有唯一课节编号且日期、时间、课程、班级及老师角色资料一致，才展示待核对的候选学生关联；角色课时是来源值，不是已核准的学生分摊课时。其他来源冲突将角色课时与学生证据分行保留。"],
     ["核验结果", roleHours === null ? "存在未知老师课时，汇总待核对；不得据此锁定薪资。" : `老师明细合计 ${roleHours.toFixed(2)} 小时 = 老师角色课时合计 ${roleHours.toFixed(2)} 小时；工资待补。`],
     ["学生消课来源行数", evidence.lessonRowCount], ["老师角色明细行数", records.length],
     ["异常学生来源课时数", evidence.lessons.filter((lesson) => lesson.hoursIssue || lesson.hours === null).length],
