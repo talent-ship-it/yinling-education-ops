@@ -307,10 +307,16 @@ function planner(value: unknown): TrialPlanner | null {
 
 // Keep the generic-account prefix exact, while allowing only the known
 // descriptive suffixes used by 教务宝 labels (for example, 校长号1️⃣ 2026).
-const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:(?:试听|视听)(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?<=a)tara龙)?(?:(?:校长号|账号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
+const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:(?:试听|视听)(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|账号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
+
+function sharedTrialAccountLetter(value: unknown) {
+  const key = normalize(value);
+  if (key === "试听学员atara龙2026") return "a";
+  return key.match(GENERIC_TRIAL_ACCOUNT_LABEL)?.[1] ?? null;
+}
 
 export function isJiaowubaoSharedTrialAccountLabel(value: unknown) {
-  return Boolean(normalize(value).match(GENERIC_TRIAL_ACCOUNT_LABEL));
+  return Boolean(sharedTrialAccountLetter(value));
 }
 
 /** Converts the extended browser form into the separately persisted manual intake. */
@@ -353,9 +359,7 @@ export function trialPlannerHintFromParticipants(
 ): JiaowubaoTrialPlannerHint {
   const hints = new Set<TrialPlanner>();
   for (const participant of participants) {
-    const key = normalize(participant.label);
-    if (!key) continue;
-    const accountLetter = key.match(GENERIC_TRIAL_ACCOUNT_LABEL)?.[1];
+    const accountLetter = sharedTrialAccountLetter(participant.label);
     if (accountLetter === "a") hints.add("Tara");
     if (accountLetter === "b") hints.add("Eileen");
     if (accountLetter === "c") hints.add("Abby");

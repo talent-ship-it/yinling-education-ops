@@ -93,6 +93,8 @@ test("rejects ambiguous account labels and letters inside ordinary student names
     "试听学员B（未知说明） 2026",
     "试听学员B(Tara龙) 2026",
     "试听学员A(Tara未知) 2026",
+    "trial account A(Tara龙) 2026",
+    "试听学员A(Tara龙) 2027",
     "正式学员B account 2026",
   ]) {
     assert.equal(trialPlannerHintFromParticipants([{ label }]), null, label);
