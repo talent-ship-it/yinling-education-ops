@@ -10,7 +10,10 @@ function total(records: readonly CompleteHourRecord[]) {
   const credits = records.filter((record) => record.credit);
   return credits.length ? completeHourSum(credits.map((record) => record.hours)) : null;
 }
-const count = (records: readonly CompleteHourRecord[]) => new Set(records.map((record) => record.eventKey)).size;
+function count(records: readonly CompleteHourRecord[]) {
+  const credits = records.filter((record) => record.credit);
+  return credits.length ? new Set(credits.map((record) => record.eventKey)).size : new Set(records.map((record) => record.calendarId)).size;
+}
 const issues = (records: readonly CompleteHourRecord[]) => [...new Set(records.flatMap((record) => record.issues))].join("；");
 const header = (labels: string[], style = 1) => labels.map((label) => cell(label, style));
 

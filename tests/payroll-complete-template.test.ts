@@ -178,3 +178,26 @@ test("multiple branches and extra schedule teacher roles keep learner hours unal
   const roles = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [...evidence.schedules[0].teachers, { ...teacher, role: "assistant", sourceTeacherId: "assistant", teacherId: "assistant", sourceTeacherHours: 0.5 }] }] }));
   assert.ok(roles[1].rows.slice(1).filter((row) => row[2] === "Learner One").every((row) => row[3] === "待核对"));
 });
+
+
+test("absent schedule metadata cannot hide contradictory learner facts", async () => {
+  const evidence = fixture();
+  const other = { ...evidence.lessons[0], sourceKey: "lesson-2", memberId: "member-2", studentId: "student-2", displayStudentName: "Learner Two", timeTitle: "11:00-12:00", courseTitle: "Maths", teamTitle: "Another class" };
+  const result = await sheets(workbook({ ...evidence, lessons: [evidence.lessons[0], other], schedules: [{ ...evidence.schedules[0], timeTitle: null, courseTitle: null, teamTitle: null }] }));
+  assert.equal(result[2].rows.length, 4);
+  assert.ok(result[1].rows.slice(1).filter((row) => !String(row[2]).includes("未分配老师课时")).every((row) => row[3] === "待核对"));
+  assert.equal(result[0].rows[3][6], 1);
+});
+
+test("conflicting learners retain each source date, time, course, name and attendance", async () => {
+  const evidence = fixture();
+  const other = { ...evidence.lessons[0], sourceKey: "lesson-2", memberId: "member-2", studentId: "student-2", memberName: "Learner Two", displayStudentName: "Learner Two", lessonDate: "2026-09-16", timeTitle: "11:00-12:00", courseTitle: "Maths", attendanceTitle: "请假" };
+  const result = await sheets(workbook({ ...evidence, lessons: [evidence.lessons[0], other] }));
+  const raw = result[2].rows.slice(1);
+  assert.equal(raw.length, 3);
+  assert.deepEqual(raw.filter((row) => row[5] === "待核对").map((row) => [row[1], row[2], row[6], row[8], row[9]]), [
+    ["2026-09-15", "16:00-18:00", "Learner One", "English", "已到达"],
+    ["2026-09-16", "11:00-12:00", "Learner Two", "Maths", "请假"],
+  ]);
+  assert.equal(raw.filter((row) => typeof row[5] === "number").reduce((sum, row) => sum + Number(row[5]), 0), 1);
+});

@@ -121,9 +121,14 @@ function indexLessons(lessons: readonly Lesson[], month: string) {
   return result;
 }
 
+function contradictoryLearners(lessons: readonly Lesson[]) {
+  return (["lessonDate", "timeTitle", "courseTitle", "teamTitle"] as const).some((field) =>
+    new Set(lessons.map((lesson) => lesson[field]).filter((value) => value !== null)).size > 1);
+}
+
 function associationIssue(schedule: PayrollExportScheduleEvidence, lessons: readonly Lesson[], duplicateCalendar: boolean) {
   if (duplicateCalendar || new Set(lessons.map((lesson) => lesson.branchId)).size !== 1) return "课节编号或分校关联冲突待核对";
-  if (!scheduleMatchesGroup(schedule, lessons)) return "双源课节资料冲突待核对";
+  if (contradictoryLearners(lessons) || !scheduleMatchesGroup(schedule, lessons)) return "双源课节资料冲突待核对";
   return null;
 }
 
@@ -167,20 +172,9 @@ function recordsForCalendar(schedules: readonly PayrollExportScheduleEvidence[],
   const records = schedules.flatMap((schedule) => scheduleRecords(schedule, lessons, schedules.length > 1));
   const matched = schedules.length === 1 && associationIssue(schedules[0], lessons, false) === null;
   if (lessons.length && !matched) {
-    const branches = completeHourGroupsByBranch(lessons);
-    records.push(...branches.flatMap((group) => learnerOnlyRecords(group, schedules)));
+    records.push(...lessons.flatMap((lesson) => learnerOnlyRecords([lesson], schedules)));
   }
   return records;
-}
-
-function completeHourGroupsByBranch(lessons: readonly Lesson[]) {
-  const groups = new Map<string, Lesson[]>();
-  for (const lesson of lessons) {
-    const group = groups.get(lesson.branchId) ?? [];
-    group.push(lesson);
-    groups.set(lesson.branchId, group);
-  }
-  return [...groups.values()];
 }
 
 export function completeHourRecords(evidence: PayrollExportEvidence, month: string) {
