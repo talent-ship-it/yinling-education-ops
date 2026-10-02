@@ -681,3 +681,59 @@ test("stored OOXML ZIP writer rejects unsafe, duplicate and aggregate-oversized 
   const half = "x".repeat(16 * 1024 * 1024);
   assert.throws(() => createStoredOpenXmlZip([{ name: "a.xml", xml: half }, { name: "b.xml", xml: half }]), /大小上限/);
 });
+
+
+test("hours-only review displays complete raw role totals when historical branch evidence is unresolved", () => {
+  for (const [hours, issue, expected] of [
+    [2.5, undefined, 2.5],
+    [0, undefined, 0],
+    [58.53, "out_of_range", 58.53],
+    [null, "missing", "待核对"],
+    [1e13, "out_of_range", "待核对"],
+  ] as const) {
+    const sample = sampleWorkbook();
+    const lesson = sample.evidence!.lessons[1]!;
+    const row = { ...sample.rows[0]!, paymentMode: "review_only" as const,
+      sourceHours: null, lines: [sample.rows[0]!.lines[1]!] };
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only", rows: [row],
+      evidence: { ...sample.evidence!, lessonRowCount: 1, scheduleRowCount: 1,
+        lessons: [lesson], teacherLessonSourceKeys: [{ teacherKey: row.teacherKey, sourceKeys: [lesson.sourceKey] }],
+        schedules: [{ ...sample.evidence!.schedules[0]!, calendarId: lesson.calendarId,
+          teachers: [{ ...primary, sourceTeacherHours: hours, sourceTeacherHoursIssue: issue }] }],
+      },
+    };
+    const [main, , review] = readXlsx(buildPayrollXlsx(input)).worksheets;
+    assert.equal(cell(main!, "G4"), expected);
+    assert.equal(cell(review!, "G2"), expected);
+    assert.equal(cell(review!, "E2"), "课时待核对");
+    assert.match(String(cell(main!, "I4")), /待核对/u);
+    for (const reference of ["E4", "F4", "H4", "K4", "L4"]) assert.equal(cell(main!, reference), null);
+    assert.equal(row.sourceHours, null, "display totals must not change payroll authority");
+    assert.throws(() => buildPayrollXlsx({ ...input, rows: [{ ...row, paymentMode: "payable" }] }), /缺失教务宝老师课时/u);
+  }
+});
+
+test("hours-only raw role totals remain unknown when a teacher lesson has no matching schedule role", () => {
+  for (const missing of ["schedule", "role", "hours", "identity"] as const) {
+    const sample = sampleWorkbook();
+    const lesson = sample.evidence!.lessons[1]!;
+    const row = { ...sample.rows[0]!, paymentMode: "review_only" as const,
+      sourceHours: null, lines: [sample.rows[0]!.lines[1]!] };
+    const schedule = { ...sample.evidence!.schedules[0]!,
+      calendarId: missing === "schedule" ? "other-calendar" : lesson.calendarId,
+      teachers: missing === "role" ? [] : [{ ...primary,
+        teacherId: missing === "identity" ? "other-teacher" : primary.teacherId,
+        sourceTeacherHours: missing === "hours" ? null : 2.5 }],
+    };
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only", rows: [row],
+      evidence: { ...sample.evidence!, lessonRowCount: 1, scheduleRowCount: 1,
+        lessons: [lesson], schedules: [schedule],
+        teacherLessonSourceKeys: [{ teacherKey: row.teacherKey, sourceKeys: [lesson.sourceKey] }],
+      },
+    };
+    const [main] = readXlsx(buildPayrollXlsx(input)).worksheets;
+    assert.equal(cell(main!, "G4"), "待核对");
+  }
+});
