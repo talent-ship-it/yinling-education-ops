@@ -10071,7 +10071,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           downloadPayrollExcel({
             month,
             generatedAt: new Date().toISOString(),
-            exportMode: "hours_only",
+            exportMode: "hours_complete",
             rows: exportRows,
             evidence: {
               revision: freshFeed.revision,

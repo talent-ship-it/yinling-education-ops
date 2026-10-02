@@ -133,7 +133,10 @@ function sameNullableText(expected: string | null, values: readonly (string | nu
   return values.every((value) => value === null || value === expected);
 }
 
-function sameTeacher(left: JiaowubaoCompletedLessonTeacherLink, right: JiaowubaoCompletedLessonTeacherLink) {
+type SourceTeacherIdentity = Pick<JiaowubaoCompletedLessonTeacherLink, "role" | "sourceTeacherId" | "sourceTeacherName">;
+type SourceEventDetails = Pick<JiaowubaoCompletedScheduleEventEvidence, "lessonDate" | "timeTitle" | "courseTitle" | "teamTitle"> & { teachers: readonly SourceTeacherIdentity[] };
+
+function sameTeacher(left: SourceTeacherIdentity, right: SourceTeacherIdentity) {
   if (left.role !== right.role) return false;
   if (left.sourceTeacherId !== null || right.sourceTeacherId !== null) {
     if (left.sourceTeacherId !== right.sourceTeacherId) return false;
@@ -144,7 +147,7 @@ function sameTeacher(left: JiaowubaoCompletedLessonTeacherLink, right: Jiaowubao
   return true;
 }
 
-function hasDuplicateSourceTeacherRoleIdentity(teachers: readonly JiaowubaoCompletedScheduleTeacherEvidence[]) {
+function hasDuplicateSourceTeacherRoleIdentity(teachers: readonly SourceTeacherIdentity[]) {
   const ids = new Set<string>();
   for (const teacher of teachers) {
     if (!teacher.sourceTeacherId) continue;
@@ -154,9 +157,9 @@ function hasDuplicateSourceTeacherRoleIdentity(teachers: readonly JiaowubaoCompl
   return false;
 }
 
-function scheduleMatchesGroup(
-  schedule: JiaowubaoCompletedScheduleEventEvidence,
-  members: readonly JiaowubaoCompletedLessonStudentEvidence[],
+export function scheduleMatchesGroup(
+  schedule: SourceEventDetails,
+  members: readonly SourceEventDetails[],
 ) {
   if (!members.length || hasDuplicateSourceTeacherRoleIdentity(schedule.teachers)) return false;
   if (!sameNullableText(schedule.lessonDate, members.map((member) => member.lessonDate))) return false;

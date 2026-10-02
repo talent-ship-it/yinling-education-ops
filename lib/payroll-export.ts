@@ -1,3 +1,4 @@
+import { completeHoursSheets, completeHoursStylesXml } from "@/lib/payroll-complete-template";
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
 import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
 import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
@@ -112,7 +113,7 @@ export type PayrollExportEvidence = Readonly<{
 export type PayrollWorkbookExport = Readonly<{
   month: string;
   generatedAt: string;
-  exportMode?: "hours_only";
+  exportMode?: "hours_only" | "hours_complete";
   rows: readonly PayrollExportRow[];
   evidence?: PayrollExportEvidence;
 }>;
@@ -343,8 +344,8 @@ function aggregateStudents(lines: readonly PayrollExportLine[]) {
 }
 
 function assertWorkbook(input: PayrollWorkbookExport) {
-  if (input.exportMode !== undefined && input.exportMode !== "hours_only") fail("导出模式无效。");
-  if (input.exportMode === "hours_only" && !input.evidence) fail("课时核对表缺少完整双源快照。");
+  if (input.exportMode !== undefined && input.exportMode !== "hours_only" && input.exportMode !== "hours_complete") fail("导出模式无效。");
+  if (input.exportMode !== undefined && !input.evidence) fail("课时核对表缺少完整双源快照。");
   const match = MONTH.exec(input.month);
   if (!match) fail("导出月份格式无效。");
   const generatedAt = new Date(input.generatedAt);
@@ -417,7 +418,7 @@ function assertWorkbook(input: PayrollWorkbookExport) {
     }
     number(row.payrollHours, "薪资课时");
     if (row.sourceHours != null) {
-      if (input.exportMode === "hours_only" && row.paymentMode === "review_only") {
+      if (input.exportMode !== undefined && row.paymentMode === "review_only") {
         if (!Number.isFinite(row.sourceHours)) fail("教务宝老师课时数值无效。");
       } else number(row.sourceHours, "教务宝老师课时");
     }
@@ -1171,9 +1172,10 @@ function workbookRelationshipsXml(sheetCount: number) {
 }
 
 function packageParts(input: PayrollWorkbookExport, year: number, month: number): OpenXmlPart[] {
-  const sheetNames = ["Sheet1", "学生明细", "薪资审核", "消课证据", "排课课时", "数据来源"] as const;
+  const completeSheets = input.exportMode === "hours_complete" ? completeHoursSheets(input, year, month) : null;
+  const sheetNames = completeSheets?.map((sheet) => sheet.name) ?? ["Sheet1", "学生明细", "薪资审核", "消课证据", "排课课时", "数据来源"];
   const hoursOnly = input.exportMode === "hours_only";
-  const sheets = [
+  const sheets = completeSheets?.map(worksheetXml) ?? [
     hoursOnly ? hoursOnlyMainSheet(input, year, month) : mainSheet(input, year, month),
     hoursOnly ? hoursOnlyStudentDetailSheet(input, year, month) : studentDetailSheet(input),
     hoursOnly ? hoursOnlyReviewSheet(input) : payrollReviewSheet(input),
@@ -1189,7 +1191,7 @@ function packageParts(input: PayrollWorkbookExport, year: number, month: number)
     { name: "docProps/app.xml", xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Yinling Operations</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop><HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>${sheetNames.length}</vt:i4></vt:variant></vt:vector></HeadingPairs><TitlesOfParts><vt:vector size="${sheetNames.length}" baseType="lpstr">${sheetNames.map((name) => `<vt:lpstr>${xml(name)}</vt:lpstr>`).join("")}</vt:vector></TitlesOfParts><Company>吟领教育</Company><AppVersion>1.0</AppVersion></Properties>` },
     { name: "xl/workbook.xml", xml: workbookXml(sheetNames) },
     { name: "xl/_rels/workbook.xml.rels", xml: workbookRelationshipsXml(sheetNames.length) },
-    { name: "xl/styles.xml", xml: stylesXml() },
+    { name: "xl/styles.xml", xml: completeSheets ? completeHoursStylesXml() : stylesXml() },
     ...sheets.map((sheet, index) => ({ name: `xl/worksheets/sheet${index + 1}.xml`, xml: sheet })),
   ];
 }
@@ -1223,8 +1225,9 @@ export function buildPayrollXlsx(input: PayrollWorkbookExport) {
   return createStoredOpenXmlZip(packageParts(displayed, year, month));
 }
 
-export function payrollXlsxFilename(month: string) {
+export function payrollXlsxFilename(month: string, exportMode?: PayrollWorkbookExport["exportMode"]) {
   if (!MONTH.test(month)) fail("导出月份格式无效。");
+  if (exportMode === "hours_complete") return `${month.slice(0, 4)}年${month.slice(5)}月教务宝课时表_完整版.xlsx`;
   return `吟领教育-${month}-教务宝课时表.xlsx`;
 }
 
@@ -1234,7 +1237,7 @@ export function downloadPayrollExcel(input: PayrollWorkbookExport) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = payrollXlsxFilename(input.month);
+  link.download = payrollXlsxFilename(input.month, input.exportMode);
   document.body.appendChild(link);
   link.click();
   link.remove();

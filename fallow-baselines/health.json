@@ -1077,9 +1077,6 @@
       },
       "crap_critical": {
         "count": 1
-      },
-      "crap_moderate": {
-        "count": 1
       }
     },
     "lib/jiaowubao-completed-lesson-resumable-sync.ts": {
@@ -4442,11 +4439,6 @@
     },
     "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000reconcileJiaowubaoCompletedLessonEvidence": {
       "complexity_critical": {
-        "count": 1
-      }
-    },
-    "lib/jiaowubao-completed-lesson-reconciliation.ts\u0000scheduleMatchesGroup": {
-      "crap_moderate": {
         "count": 1
       }
     },
