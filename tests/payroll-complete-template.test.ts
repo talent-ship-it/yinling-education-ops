@@ -76,6 +76,8 @@ test("missing and conflicting role sources remain unknown and never use student 
   const missing = await sheets(workbook({ ...evidence, schedules: [] }));
   assert.equal(missing[0].rows[3][3], "待核对"); assert.equal(missing[2].rows[1][5], "待核对");
   assert.match(String(missing[2].rows[1][12]), /缺少可核实的排课角色关联/u);
+  const missingSource = new Map(missing[3].rows.slice(2).map((row) => [row[0], row[1]]));
+  assert.equal(missingSource.get("待核对课节"), 1);
   const noRoles = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [] }] }));
   const noRoleSource = new Map(noRoles[3].rows.slice(2).map((row) => [row[0], row[1]]));
   assert.equal(noRoleSource.get("老师角色明细行数"), 0);
@@ -152,6 +154,12 @@ test("historical branch-less rows can show only explicitly pending candidate ass
   assert.match(String(result[1].rows[1][2]), /关联待核对/u);
   assert.match(String(result[2].rows[1][7]), /关联待核对/u);
   assert.match(String(result[2].rows[1][12]), /分校来源缺失.*候选/u);
+  const other = { ...evidence.lessons[0], sourceKey: "lesson-2", memberId: "member-2", studentId: "student-2", displayStudentName: "Learner Two", branchId: "~" };
+  const grouped = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], branchId: "~" }, other] }));
+  for (const [sheet, column] of [[0, 2], [1, 2], [2, 7]]) {
+    const name = String(grouped[sheet].rows[sheet === 0 ? 3 : 1][column]);
+    assert.equal(name, "Learner One（关联待核对）、Learner Two（关联待核对）");
+  }
 });
 
 test("conflicting metadata never assigns role hours to a learner", async () => {
@@ -233,6 +241,10 @@ test("unallocated trial schedule credits keep the course flag without student al
       const source = new Map(result[3].rows.slice(2).map((row) => [row[0], row[1]]));
       assert.equal(source.get("试听/测试账号或课程标识课节"), 1);
       assert.equal(source.get("老师角色明细行数"), 1);
+      if (!lessons.length) {
+        assert.match(String(rawCredit[12]), /缺少学生消课记录/u);
+        assert.doesNotMatch(String(rawCredit[12]), /冲突/u);
+      }
     }
   }
 });

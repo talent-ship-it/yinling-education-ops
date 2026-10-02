@@ -110,7 +110,7 @@ function sourceSheet(input: PayrollWorkbookExport, records: CompleteHourRecord[]
     ["学生消课来源行数", evidence.lessonRowCount], ["老师角色明细行数", evidence.schedules.reduce((sum, schedule) => sum + schedule.teachers.length, 0)],
     ["异常学生来源课时数", evidence.lessons.filter((lesson) => lesson.hoursIssue || lesson.hours === null).length],
     ["异常老师角色课时数", evidence.schedules.flatMap((schedule) => schedule.teachers).filter((teacher) => teacher.sourceTeacherHoursIssue || teacher.sourceTeacherHours === null).length],
-    ["待核对课节", count(records.filter((record) => record.issues.length > 0))],
+    ["待核对课节", new Set(records.filter((record) => record.issues.length > 0).map((record) => record.calendarId)).size],
     ["核对边界", "异常有限课时保留原值并计入来源合计，仍须核对，不代表已核准工资。来源未知或合计超出安全数值范围时显示待核对；单价、工资及银行资料不导出。"],
     ["来源发布时间", evidence.publishedAt], ["来源修订", evidence.revision],
     ["映射修订", evidence.projectionRevision], ["导出时间", input.generatedAt],

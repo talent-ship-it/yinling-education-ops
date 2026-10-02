@@ -46,7 +46,8 @@ function studentIdentity(lesson: Lesson) {
 function recordLearners(lessons: readonly Lesson[]) {
   const students = new Map(lessons.map((lesson) => {
     const student = studentIdentity(lesson);
-    return [student.key, student] as const;
+    const name = isJiaowubaoCompletedLessonUnknownBranchId(lesson.branchId) ? `${student.name}（关联待核对）` : student.name;
+    return [student.key, { ...student, name }] as const;
   }));
   const sorted = [...students.values()].sort((a, b) => a.key.localeCompare(b.key));
   return {
@@ -128,6 +129,7 @@ function contradictoryLearners(lessons: readonly Lesson[]) {
 }
 
 function associationIssue(schedule: PayrollExportScheduleEvidence, lessons: readonly Lesson[], duplicateCalendar: boolean) {
+  if (!lessons.length) return "缺少学生消课记录，关联待核对";
   if (duplicateCalendar || new Set(lessons.map((lesson) => lesson.branchId)).size !== 1) return "课节编号或分校关联冲突待核对";
   if (contradictoryLearners(lessons) || !scheduleMatchesGroup(schedule, lessons)) return "双源课节资料冲突待核对";
   return null;
@@ -141,7 +143,7 @@ function scheduleRecords(schedule: PayrollExportScheduleEvidence, lessons: reado
   return (schedule.teachers.length ? schedule.teachers : [null]).map((role) => {
     const record = roleRecord(schedule, role, members, "教务宝开放 API 双源", issue);
     if (conflict) return { ...record, studentKey: "unallocated", studentName: "未分配老师课时（关联待核对）" };
-    if (historical) return { ...record, studentKey: JSON.stringify(["historical", record.studentKey]), studentName: `${record.studentName}（关联待核对）` };
+    if (historical) return { ...record, studentKey: JSON.stringify(["historical", record.studentKey]) };
     return record;
   });
 }
