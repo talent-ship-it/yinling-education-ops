@@ -406,6 +406,22 @@ test("hours-only trial names include shared accounts whose source lesson flag is
   assert.ok(input.evidence!.lessons.every((lesson) => !lesson.isTrial));
 });
 
+test("hours-only course titles fit wrapped words and explicit line breaks", () => {
+  for (const title of ["CRIM1010 - Criminology: An Introduction", "First\nSecond\nThird"]) {
+    const sample = sampleWorkbook();
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only",
+      evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+        ? { ...lesson, courseTitle: title } : lesson) },
+    };
+    const bytes = buildPayrollXlsx(input);
+    assert.equal(cell(readXlsx(bytes).worksheets[1]!, "H4"), title);
+    const row = storedParts(bytes).get("xl/worksheets/sheet2.xml")!.match(/<row r="4"[^>]*>/u)![0];
+    const height = Number(row.match(/ht="([\d.]+)"/u)![1]);
+    assert.ok(height >= 61, "three rendered lines must fit without clipping the course title");
+  }
+});
+
 test("hours-only export keeps role hours separate, leaves missing role hours unknown, and never doubles student hours", () => {
   const sample = sampleWorkbook();
   const assistant = sample.evidence!.schedules[0]!.teachers[1]!;

@@ -493,8 +493,26 @@ function visualUnits(value: string) {
   return [...value].reduce((total, character) => total + (/[^\u0000-\u007f]/u.test(character) ? 2 : 1), 0);
 }
 
+function wrappedLineCount(value: string, width: number) {
+  let lines = 0;
+  for (const paragraph of value.split(/\r?\n/u)) {
+    let used = 0;
+    lines += 1;
+    for (const word of paragraph.match(/\S+/gu) ?? []) {
+      const units = visualUnits(word);
+      if (used && used + 1 + units > width) {
+        lines += 1;
+        used = 0;
+      }
+      lines += Math.max(0, Math.ceil(units / width) - 1);
+      used = units > width ? units % width || width : used + units + Number(used > 0);
+    }
+  }
+  return lines;
+}
+
 function fittedHeight(cells: readonly Readonly<{ value: string; width: number }>[]) {
-  const lines = Math.max(1, ...cells.map(({ value, width }) => Math.ceil(visualUnits(value) / width)));
+  const lines = Math.max(1, ...cells.map(({ value, width }) => wrappedLineCount(value, width)));
   return Math.min(409.5, Math.max(31.5, lines * 19 + 4));
 }
 
