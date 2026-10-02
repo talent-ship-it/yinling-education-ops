@@ -1167,9 +1167,33 @@ function packageParts(input: PayrollWorkbookExport, year: number, month: number)
   ];
 }
 
+function hoursOnlySourceRows(input: PayrollWorkbookExport) {
+  const lessons = lessonEvidenceBySourceKey(input);
+  const totals = new Map<string, { hours: number | null; calendars: Set<string> }>();
+  for (const schedule of input.evidence?.schedules ?? []) {
+    for (const teacher of schedule.teachers) {
+      const key = jiaowubaoCompletedLessonTeacherIdentityKey(teacher);
+      const total = totals.get(key) ?? { hours: 0, calendars: new Set<string>() };
+      total.hours = safeSourceSum(total.hours, teacher.sourceTeacherHours);
+      total.calendars.add(schedule.calendarId);
+      totals.set(key, total);
+    }
+  }
+  return input.rows.map((row) => {
+    if (row.sourceHours != null) return row;
+    const total = totals.get(row.teacherKey);
+    if (!total || row.lines.some((line) => {
+      const lesson = line.sourceKey ? lessons.get(line.sourceKey) : undefined;
+      return !lesson || !total.calendars.has(lesson.calendarId);
+    })) return row;
+    return { ...row, sourceHours: total.hours };
+  });
+}
+
 export function buildPayrollXlsx(input: PayrollWorkbookExport) {
   const { year, month } = assertWorkbook(input);
-  return createStoredOpenXmlZip(packageParts(input, year, month));
+  const displayed = input.exportMode === "hours_only" ? { ...input, rows: hoursOnlySourceRows(input) } : input;
+  return createStoredOpenXmlZip(packageParts(displayed, year, month));
 }
 
 export function payrollXlsxFilename(month: string) {
