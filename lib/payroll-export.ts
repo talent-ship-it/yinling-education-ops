@@ -498,14 +498,15 @@ function wrappedLineCount(value: string, width: number) {
   for (const paragraph of value.split(/\r?\n/u)) {
     let used = 0;
     lines += 1;
-    for (const word of paragraph.match(/\S+/gu) ?? []) {
-      const units = visualUnits(word);
-      if (used && used + 1 + units > width) {
+    for (const token of paragraph.match(/\s+|\S+/gu) ?? []) {
+      const units = visualUnits(token);
+      if (/\S/u.test(token) && used && used + units > width) {
         lines += 1;
         used = 0;
       }
-      lines += Math.max(0, Math.ceil(units / width) - 1);
-      used = units > width ? units % width || width : used + units + Number(used > 0);
+      const occupied = used + units;
+      lines += Math.max(0, Math.ceil(occupied / width) - 1);
+      used = occupied % width || width;
     }
   }
   return lines;
@@ -577,16 +578,20 @@ function attendanceSummary(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMa
   return [...counts].map(([label, count]) => `${label} ${count}`).join("；");
 }
 
+function trialStudentLabel(lesson: PayrollExportLessonEvidence) {
+  const sharedAccount = isJiaowubaoSharedTrialAccountLabel(lesson.memberName);
+  if (!lesson.isTrial && !sharedAccount) return null;
+  const name = sharedAccount ? lesson.displayStudentName : lesson.displayStudentName ?? lesson.memberName;
+  if (!name || isJiaowubaoSharedTrialAccountLabel(name)) return null;
+  return sharedAccount || lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name;
+}
+
 function trialStudents(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
   const names = new Set<string>();
   for (const sourceKey of sourceKeys) {
     const lesson = evidence.get(sourceKey);
-    if (!lesson) continue;
-    const sharedAccount = isJiaowubaoSharedTrialAccountLabel(lesson.memberName);
-    if (!lesson.isTrial && !sharedAccount) continue;
-    const name = sharedAccount ? lesson.displayStudentName : lesson.displayStudentName ?? lesson.memberName;
-    if (!name || isJiaowubaoSharedTrialAccountLabel(name)) continue;
-    names.add(sharedAccount || lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
+    const name = lesson ? trialStudentLabel(lesson) : null;
+    if (name) names.add(name);
   }
   return joined(names);
 }
