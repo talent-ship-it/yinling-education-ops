@@ -11,11 +11,11 @@ test("defaults to the previous Melbourne calendar month across UTC and year boun
   assert.equal(previousMelbournePayrollMonth(new Date("2027-01-01T00:00:00.000Z")), "2026-12");
 });
 
-test("payroll view keeps a manually selected month and exports hours only", async () => {
+test("payroll view keeps a manually selected month and exports the complete hours template", async () => {
   const source = await readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
   assert.match(source, /const activePayrollMonth = payrollMonthSelection \|\| previousMelbournePayrollMonth\(new Date\(\)\)/u);
   assert.match(source, /onChange=\{\(event\) => \{\s*setPayrollMonthSelection\(event\.target\.value\)/u);
-  assert.match(source, /downloadPayrollExcel\(\{[\s\S]*exportMode: "hours_only"/u);
+  assert.match(source, /downloadPayrollExcel\(\{[\s\S]*exportMode: "hours_complete"/u);
 });
 
 test("absent-month refresh is read-only and discards a response after month cleanup", async () => {

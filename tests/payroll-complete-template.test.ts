@@ -1,0 +1,141 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildPayrollXlsx, payrollXlsxFilename, type PayrollExportEvidence, type PayrollWorkbookExport } from "../lib/payroll-export";
+import { readXlsx } from "../lib/xlsx-reader";
+import { completeHourRecords } from "../lib/payroll-complete-hours";
+import { jiaowubaoCompletedLessonTeacherIdentityKey as teacherKey } from "../lib/jiaowubao-completed-lesson-reconciliation";
+
+const teacher = { role: "primary" as const, sourceTeacherId: "source-1", sourceTeacherName: "Teacher One", teacherId: "teacher-1", teacherName: "Teacher One", teacherMatch: "source_id" };
+function fixture(): PayrollExportEvidence {
+  return {
+    revision: `sha256:${"a".repeat(64)}`, projectionRevision: `sha256:${"b".repeat(64)}`, publishedAt: "2026-10-02T00:00:00.000Z",
+    lessonRowCount: 1, scheduleRowCount: 1, teacherLessonSourceKeys: [],
+    matchCounts: { matchedStudents: 1, unmatchedStudents: 0, ambiguousStudents: 0, matchedTeachers: 1, unmatchedTeachers: 0, ambiguousTeachers: 0 },
+    lessons: [{ sourceKey: "lesson-1", branchId: "branch-1", calendarId: "cal-1", memberId: "member-1", memberName: "Learner One",
+      displayStudentName: "Learner One", studentId: "student-1", studentName: "Learner One", studentMatch: "source_id", lessonDate: "2026-09-15",
+      timeTitle: "16:00-18:00", hours: 1.75, isTrial: false, attendanceCode: 1, attendanceTitle: "已到达", courseTitle: "English", teamTitle: "One", teachers: [teacher] }],
+    schedules: [{ sourceKey: "schedule-1", calendarId: "cal-1", lessonDate: "2026-09-15", timeTitle: "16:00-18:00", courseTitle: "English", teamTitle: "One", teachers: [{ ...teacher, sourceTeacherHours: 1 }] }],
+  };
+}
+function workbook(evidence: PayrollExportEvidence, month = "2026-09"): PayrollWorkbookExport {
+  const roles = new Map([...evidence.lessons.flatMap((lesson) => lesson.teachers), ...evidence.schedules.flatMap((schedule) => schedule.teachers)].map((role) => [teacherKey(role), role]));
+  const rows = [...roles].map(([key, role]) => {
+    const lessons = evidence.lessons.filter((lesson) => lesson.teachers.some((link) => teacherKey(link) === key));
+    return {
+      teacherKey: key, teacherId: role.teacherId, teacherName: role.teacherName ?? "Pending", month, section: "Teachers", currency: "AUD" as const,
+      status: "需核对", payrollHours: 0, sourceHours: null, amount: 987654, bankName: "PRIVATE BANK", bankAccount: "PRIVATE ACCOUNT", paymentNote: "PRIVATE PAYMENT",
+      paymentMode: "review_only" as const,
+      lines: lessons.map((lesson) => ({ studentName: lesson.displayStudentName ?? `${lesson.memberName ?? lesson.memberId}（待核对姓名）`,
+        hours: lesson.hours, hoursIssue: lesson.hoursIssue, sourceKey: lesson.sourceKey, sourceMemberId: lesson.memberId, studentId: lesson.studentId,
+        studentMatch: lesson.studentMatch, isTrial: lesson.isTrial, evidenceOnly: true, rate: 0, subtotal: 0 })),
+    };
+  });
+  return { month, generatedAt: "2026-10-02T01:00:00.000Z", exportMode: "hours_complete", rows,
+    evidence: { ...evidence, lessonRowCount: evidence.lessons.length, scheduleRowCount: evidence.schedules.length,
+      teacherLessonSourceKeys: rows.map((row) => ({ teacherKey: row.teacherKey, sourceKeys: row.lines.map((line) => line.sourceKey) })) } };
+}
+async function sheets(input: PayrollWorkbookExport) {
+  const result = await readXlsx(buildPayrollXlsx(input));
+  return result.worksheets.map((sheet) => ({ name: sheet.name, rows: sheet.rows.map((row) => row.cells.map((cell) => cell.value)) }));
+}
+
+test("complete export preserves the four reference sheets and uses teacher role hours", async () => {
+  const input = workbook(fixture());
+  const result = await sheets(input);
+  assert.deepEqual(result.map((sheet) => sheet.name), ["Sheet1", "学生明细", "课节原始明细", "数据说明"]);
+  assert.equal(result[0].rows[0][0], "2026年9月教务宝课时表");
+  assert.deepEqual(result[0].rows[2], ["序号", "教师姓名", "学生姓名", "课时（小时）", "课时费单价（小时）", "合计（待补费率）", "老师总课时（小时）", "老师总薪资（待补）", "老师薪资备注"]);
+  assert.equal(result[0].rows[3][3], 1); assert.equal(result[0].rows[3][6], 1);
+  for (const index of [4, 5, 7]) assert.ok(!result[0].rows[3][index]);
+  assert.equal(result[1].rows[1][3], 1); assert.equal(result[1].rows[1][4], 1);
+  assert.equal(result[1].rows[1][6], "2026-09-15 至 2026-09-15");
+  assert.equal(result[1].rows[1][7], "已到达 1；请假 0；未签到 0");
+  assert.equal(result[2].rows[1][5], 1);
+  const source = new Map(result[3].rows.slice(2).map((row) => [row[0], row[1]]));
+  assert.equal(source.get("教师总课时"), 1); assert.equal(source.get("学员总课时"), 1.75);
+  assert.equal(source.get("来源修订"), input.evidence!.revision);
+  assert.equal(source.get("映射修订"), input.evidence!.projectionRevision);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|987654|api\/cal\/list/u);
+  assert.equal(payrollXlsxFilename("2027-01", "hours_complete"), "2027年01月教务宝课时表_完整版.xlsx");
+});
+
+test("a group lesson counts each teacher role once and does not allocate group hours to individual students", async () => {
+  const evidence = fixture();
+  const assistant = { ...teacher, role: "assistant" as const, teacherId: "teacher-2", sourceTeacherId: "source-2", teacherName: "Assistant" };
+  const lessons = [evidence.lessons[0], { ...evidence.lessons[0], sourceKey: "lesson-2", memberId: "member-2", studentId: "student-2", memberName: "Learner Two", displayStudentName: "Learner Two" }].map((lesson) => ({ ...lesson, teachers: [teacher, assistant] }));
+  const result = await sheets(workbook({ ...evidence, lessons, schedules: [{ ...evidence.schedules[0], teachers: [...evidence.schedules[0].teachers, { ...assistant, sourceTeacherHours: 0.5 }] }] }));
+  assert.equal(result[2].rows.length, 3);
+  assert.equal(result[2].rows.slice(1).reduce((sum, row) => sum + Number(row[5]), 0), 1.5);
+  assert.equal(result[1].rows.slice(1).reduce((sum, row) => sum + Number(row[3]), 0), 1.5);
+  assert.match(String(result[1].rows[1][2]), /Learner One.*Learner Two/u);
+  assert.match(String(result[1].rows[1][9]), /小组课合列/u);
+});
+
+test("missing and conflicting role sources remain unknown and never use student hours or scheduled duration", async () => {
+  const evidence = fixture();
+  const missing = await sheets(workbook({ ...evidence, schedules: [] }));
+  assert.equal(missing[0].rows[3][3], "待核对"); assert.equal(missing[2].rows[1][5], "待核对");
+  assert.match(String(missing[2].rows[1][12]), /缺少排课角色来源/u);
+  const mismatch = { ...teacher, teacherId: "teacher-2", sourceTeacherId: "source-2", teacherName: "Other Teacher", sourceTeacherHours: 1 };
+  const conflict = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [mismatch] }] }));
+  assert.equal(conflict[2].rows.length, 3);
+  assert.ok(conflict[2].rows.slice(1).some((row) => row[5] === "待核对"));
+  assert.match(JSON.stringify(conflict), /双源老师角色冲突待核对/u);
+});
+
+test("finite outliers retain their source value while unsafe totals stay unknown", async () => {
+  const evidence = fixture();
+  const anomalous = (hours: number) => workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [{ ...teacher, sourceTeacherHours: hours, sourceTeacherHoursIssue: "out_of_range" }] }] });
+  const result = await sheets(anomalous(58.53));
+  assert.equal(result[2].rows[1][5], 58.53); assert.equal(result[0].rows[3][6], 58.53);
+  assert.match(String(result[2].rows[1][12]), /老师角色课时待核对/u);
+  const unsafe = await sheets(anomalous(1e13));
+  assert.equal(unsafe[2].rows[1][5], "10000000000000"); assert.equal(unsafe[0].rows[3][6], "待核对");
+  assert.throws(() => buildPayrollXlsx(anomalous(Infinity)), /课时格式无效/u);
+});
+
+test("shared trial candidates and unknown names retain raw accounts without becoming confirmed identities", async () => {
+  const evidence = fixture();
+  const lesson = { ...evidence.lessons[0], memberName: "试听学员B", displayStudentName: "Candidate One", studentMatch: "trial_course_title" };
+  const result = await sheets(workbook({ ...evidence, lessons: [lesson] }));
+  assert.equal(result[2].rows[1][6], "试听学员B"); assert.equal(result[2].rows[1][7], "Candidate One（试听）");
+  assert.equal(result[2].rows[1][10], "是"); assert.match(String(result[2].rows[1][12]), /候选待核对/u);
+  const unknown = await sheets(workbook({ ...evidence, lessons: [{ ...lesson, displayStudentName: null }] }));
+  assert.match(String(unknown[0].rows[3][8]), /待核对/u);
+  assert.equal(unknown[2].rows[1][6], "试听学员B");
+});
+
+test("complete export rejects duplicate schedule evidence, invalid dates and incomplete source mapping", () => {
+  const evidence = fixture();
+  assert.throws(() => buildPayrollXlsx(workbook({ ...evidence, schedules: [evidence.schedules[0], { ...evidence.schedules[0], sourceKey: "duplicate" }] })), /重复排课/u);
+  assert.throws(() => completeHourRecords({ ...evidence, lessons: [{ ...evidence.lessons[0], lessonDate: "2026-09-31" }] }, "2026-09"), /无效的课节日期/u);
+  assert.throws(() => buildPayrollXlsx({ ...workbook(evidence), evidence: { ...workbook(evidence).evidence!, teacherLessonSourceKeys: [] } }), /不完整或不一致/u);
+  assert.throws(() => buildPayrollXlsx({ ...workbook(evidence), evidence: undefined }), /缺少完整双源快照/u);
+});
+
+test("complete template follows selected month across years and treats spreadsheet formulas as plain names", async () => {
+  const evidence = fixture();
+  const name = '=HYPERLINK("https://example.invalid")';
+  const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], displayStudentName: name, lessonDate: "2027-01-02" }], schedules: [{ ...evidence.schedules[0], lessonDate: "2027-01-02" }] }, "2027-01"));
+  assert.equal(result[0].rows[0][0], "2027年1月教务宝课时表"); assert.equal(result[1].rows[1][2], name);
+  assert.match(JSON.stringify(result[3].rows), /2027-01-01 至 2027-01-31/u);
+});
+
+test("zero hours stay numeric and test teacher accounts remain explicitly pending", async () => {
+  const evidence = fixture();
+  const role = { ...teacher, sourceTeacherName: "测试老师账号", teacherName: "测试老师账号", sourceTeacherHours: 0 };
+  const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], hours: 0, teachers: [role] }], schedules: [{ ...evidence.schedules[0], teachers: [role] }] }));
+  assert.equal(result[0].rows[3][3], 0); assert.equal(result[0].rows[3][6], 0);
+  assert.equal(result[2].rows[1][5], 0); assert.match(String(result[2].rows[1][12]), /测试老师账号待核对/u);
+});
+
+test("repeated teacher-student lessons aggregate role hours, dates and attendance across courses", async () => {
+  const evidence = fixture();
+  const lessons = [evidence.lessons[0], { ...evidence.lessons[0], sourceKey: "lesson-2", calendarId: "cal-2", lessonDate: "2026-09-22", attendanceTitle: "请假" },
+    { ...evidence.lessons[0], sourceKey: "lesson-3", calendarId: "cal-3", lessonDate: "2026-09-23", courseTitle: "Maths" }];
+  const schedules = lessons.map((lesson) => ({ ...evidence.schedules[0], sourceKey: `schedule-${lesson.calendarId}`, calendarId: lesson.calendarId, lessonDate: lesson.lessonDate, courseTitle: lesson.courseTitle }));
+  const result = await sheets(workbook({ ...evidence, lessons, schedules }));
+  assert.equal(result[0].rows.length, 4); assert.equal(result[0].rows[3][3], 3); assert.equal(result[0].rows[3][6], 3);
+  assert.equal(result[1].rows.length, 3); assert.equal(result[1].rows[1][3], 2); assert.equal(result[1].rows[1][4], 2);
+  assert.equal(result[1].rows[1][6], "2026-09-15 至 2026-09-22"); assert.equal(result[1].rows[1][7], "已到达 1；请假 1；未签到 0");
+});
