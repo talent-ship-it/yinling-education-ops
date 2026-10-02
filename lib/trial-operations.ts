@@ -310,9 +310,9 @@ function planner(value: unknown): TrialPlanner | null {
 const GENERIC_TRIAL_ACCOUNT_LABEL = /^(?:(?:试听|视听)(?:学员|学生|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|账号|account)[\p{N}\p{M}]*|year(?:19|20)\d{2}|(?:19|20)\d{2})*$/u;
 
 function sharedTrialAccountLetter(value: unknown) {
-  const key = normalize(value);
-  if (key === "试听学员atara龙2026") return "a";
-  return key.match(GENERIC_TRIAL_ACCOUNT_LABEL)?.[1] ?? null;
+  const label = typeof value === "string" ? value.normalize("NFKC").trim() : "";
+  if (/^试听学员A\(Tara龙\)\s*2026$/iu.test(label)) return "a";
+  return normalize(value).match(GENERIC_TRIAL_ACCOUNT_LABEL)?.[1] ?? null;
 }
 
 export function isJiaowubaoSharedTrialAccountLabel(value: unknown) {
