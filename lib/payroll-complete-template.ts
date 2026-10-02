@@ -107,7 +107,7 @@ function sourceSheet(input: PayrollWorkbookExport, records: CompleteHourRecord[]
     ["试听规则", "保留来源试听标记、共享试听账号或课程中的试听/测试标识。共享账号解析姓名是待核对候选；原始账号保留在《课节原始明细》。"],
     ["历史关联", "历史消课未提供分校时，只有唯一课节编号且日期、时间、课程、班级及老师角色资料一致，才展示待核对的候选学生关联；角色课时是来源值，不是已核准的学生分摊课时。其他来源冲突将角色课时与学生证据分行保留。"],
     ["核验结果", roleHours === null ? "存在未知老师课时，汇总待核对；不得据此锁定薪资。" : `老师明细合计 ${roleHours.toFixed(2)} 小时 = 老师角色课时合计 ${roleHours.toFixed(2)} 小时；工资待补。`],
-    ["学生消课来源行数", evidence.lessonRowCount], ["老师角色明细行数", records.length],
+    ["学生消课来源行数", evidence.lessonRowCount], ["老师角色明细行数", evidence.schedules.reduce((sum, schedule) => sum + schedule.teachers.length, 0)],
     ["异常学生来源课时数", evidence.lessons.filter((lesson) => lesson.hoursIssue || lesson.hours === null).length],
     ["异常老师角色课时数", evidence.schedules.flatMap((schedule) => schedule.teachers).filter((teacher) => teacher.sourceTeacherHoursIssue || teacher.sourceTeacherHours === null).length],
     ["待核对课节", count(records.filter((record) => record.issues.length > 0))],

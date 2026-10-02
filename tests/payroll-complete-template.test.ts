@@ -76,6 +76,10 @@ test("missing and conflicting role sources remain unknown and never use student 
   const missing = await sheets(workbook({ ...evidence, schedules: [] }));
   assert.equal(missing[0].rows[3][3], "待核对"); assert.equal(missing[2].rows[1][5], "待核对");
   assert.match(String(missing[2].rows[1][12]), /缺少可核实的排课角色关联/u);
+  const noRoles = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [] }] }));
+  const noRoleSource = new Map(noRoles[3].rows.slice(2).map((row) => [row[0], row[1]]));
+  assert.equal(noRoleSource.get("老师角色明细行数"), 0);
+  assert.equal(noRoleSource.get("教师总课时"), "待核对");
   const mismatch = { ...teacher, teacherId: "teacher-2", sourceTeacherId: "source-2", teacherName: "Other Teacher", sourceTeacherHours: 1 };
   const conflict = await sheets(workbook({ ...evidence, schedules: [{ ...evidence.schedules[0], teachers: [mismatch] }] }));
   assert.equal(conflict[2].rows.length, 3);
@@ -209,8 +213,26 @@ test("learner-only teachers do not obscure known schedule totals or add physical
   const result = await sheets(workbook({ ...evidence, lessons: [{ ...evidence.lessons[0], teachers: [otherTeacher] }] }));
   const source = new Map(result[3].rows.slice(2).map((row) => [row[0], row[1]]));
   assert.equal(source.get("教师总课时"), 1);
+  assert.equal(source.get("老师角色明细行数"), 1);
   const pendingTeacher = result[0].rows.slice(3).find((row) => row[1] === "Pending Teacher")!;
   assert.equal(pendingTeacher[6], "待核对"); assert.match(String(pendingTeacher[8]), /课节 待核对/u);
   const detail = result[1].rows.slice(1).find((row) => row[1] === "Pending Teacher")!;
   assert.equal(detail[3], "待核对"); assert.equal(detail[4], "待核对");
+});
+
+
+test("unallocated trial schedule credits keep the course flag without student allocation", async () => {
+  const evidence = fixture();
+  for (const courseTitle of ["试听 English", "测试 English"]) {
+    for (const lessons of [[], evidence.lessons]) {
+      const result = await sheets(workbook({ ...evidence, lessons, schedules: [{ ...evidence.schedules[0], courseTitle }] }));
+      const rawCredit = result[2].rows.slice(1).find((row) => row[5] === 1)!;
+      assert.equal(rawCredit[10], "是"); assert.match(String(rawCredit[7]), /未分配老师课时/u);
+      const detailCredit = result[1].rows.slice(1).find((row) => row[3] === 1)!;
+      assert.equal(detailCredit[8], "试听"); assert.match(String(result[0].rows[3][8]), /试听 1/u);
+      const source = new Map(result[3].rows.slice(2).map((row) => [row[0], row[1]]));
+      assert.equal(source.get("试听/测试账号或课程标识课节"), 1);
+      assert.equal(source.get("老师角色明细行数"), 1);
+    }
+  }
 });

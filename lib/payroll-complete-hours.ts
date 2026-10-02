@@ -87,6 +87,7 @@ function roleRecord(input: {
   return {
     calendarId: input.calendarId, eventKey: input.sourceKey, credit: true, date: input.lessonDate, time: input.timeTitle ?? "",
     course: course ?? input.courseTitle ?? "", ...roleFields(role), ...learners,
+    trial: learners.trial || /试听|测试/u.test(course ?? input.courseTitle ?? ""),
     issues: [...learners.issues, ...roleIssues(role), ...(extraIssue ? [extraIssue] : [])],
     lessons, source,
   };
