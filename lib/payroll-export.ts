@@ -750,7 +750,7 @@ function appendHoursOnlyUnallocatedMainRows(
       stringCell(note, 22), stringCell(attendanceSummary(new Set([lesson.sourceKey]), evidence), 22),
       stringCell(null, 18), stringCell(null, 18), stringCell(candidate, 22),
     ]);
-    heights.set(rowNumber, fittedHeight([{ value: note, width: 29 }, { value: candidate, width: 104 }]));
+    heights.set(rowNumber, fittedHeight([{ value: lesson.courseTitle ?? "", width: 21 }, { value: note, width: 29 }, { value: candidate, width: 104 }]));
   }
   return total;
 }

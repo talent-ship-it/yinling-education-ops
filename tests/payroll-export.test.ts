@@ -450,6 +450,33 @@ test("hours-only course titles fit wrapped words and explicit line breaks", () =
   }
 });
 
+test("hours-only unallocated course titles fit the main template", () => {
+  for (const title of ["CRIM1010 - Criminology: An Introduction", "First\nSecond\nThird"]) {
+    const sample = sampleWorkbook();
+    const sharedLine = sample.rows[0]!.lines[0]!;
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only",
+      rows: [sample.rows[0]!, { ...sample.rows[1]!, lines: [sharedLine] }],
+      evidence: {
+        ...sample.evidence!,
+        teacherLessonSourceKeys: sample.evidence!.teacherLessonSourceKeys.map((mapping, index) => index === 1
+          ? { ...mapping, sourceKeys: [sharedLine.sourceKey!] } : mapping),
+        lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+          ? { ...lesson, courseTitle: title, teachers: [] } : lesson),
+      },
+    };
+    const bytes = buildPayrollXlsx(input);
+    const main = readXlsx(bytes).worksheets[0]!;
+    const titleCell = main.rows.flatMap((row) => row.cells).find((entry) => entry.value === title)!;
+    assert.ok(titleCell.reference.startsWith("H"));
+    const rowNumber = titleCell.reference.slice(1);
+    const row = storedParts(bytes).get("xl/worksheets/sheet1.xml")!
+      .match(new RegExp(`<row r="${rowNumber}"[^>]*>`, "u"))![0];
+    assert.ok(Number(row.match(/ht="([\d.]+)"/u)![1]) >= 61, "unallocated course text must fit without clipping");
+    assert.equal(cell(main, `D${rowNumber}`), 1);
+  }
+});
+
 test("hours-only export keeps role hours separate, leaves missing role hours unknown, and never doubles student hours", () => {
   const sample = sampleWorkbook();
   const assistant = sample.evidence!.schedules[0]!.teachers[1]!;
