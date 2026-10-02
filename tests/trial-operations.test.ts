@@ -66,6 +66,9 @@ test("maps only one unambiguous 教务宝 trial account to its planner", () => {
 test("maps verified generic accounts with known descriptive suffixes", () => {
   const verifiedLabels = [
     ["试听学员A（校长号1️⃣） 2026", "Tara"],
+    ["试听学员A(Tara龙) 2026", "Tara"],
+    ["试听学员Ａ（Tara龙）　2026", "Tara"],
+    ["试听学员a(tara龙)2026", "Tara"],
     ["试听学员B（校长号2️⃣） 2026", "Eileen"],
     ["试听学员C（校长号3️⃣） 2026", "Abby"],
     ["trial student B account 2026", "Eileen"],
@@ -90,6 +93,12 @@ test("rejects ambiguous account labels and letters inside ordinary student names
     "试听学员Bobby",
     "试听学员AB 2026",
     "试听学员B（未知说明） 2026",
+    "试听学员B(Tara龙) 2026",
+    "试听学员A(Tara未知) 2026",
+    "trial account A(Tara龙) 2026",
+    "试听学员A(Tara龙) 2027",
+    "试听学员A Tara龙 2026",
+    "试听学员A(Tara)龙2026",
     "正式学员B account 2026",
   ]) {
     assert.equal(trialPlannerHintFromParticipants([{ label }]), null, label);

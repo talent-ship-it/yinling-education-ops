@@ -72,6 +72,19 @@ test("shared A/B/C account resolves only from a narrow course-title name, never 
   assert.equal(projection.items[0].teachers[0]?.teacherMatch, "unique_name");
 });
 
+test("verified A-account planner suffix remains shared with a regular lesson flag", () => {
+  for (const courseTitle of ["English - Fiona周雨霏 试听", null]) {
+    const lesson = projectJiaowubaoCompletedLessonRecord(sourceRecord({
+      mem_title: "试听学员A(Tara龙) 2026", type: 1, course_title: courseTitle,
+    }), { start: "2026-08-01", end: "2026-08-31" });
+    const projected = projectJiaowubaoCompletedLessonRecords({ records: [lesson], stateRows: stateRows() }).items[0];
+    assert.equal(projected.studentId, courseTitle ? "stu-fiona" : null);
+    assert.equal(projected.studentMatch, courseTitle ? "trial_course_title" : "unmatched");
+    assert.notEqual(projected.studentId, "stu-wrong");
+    assert.equal(projected.isTrial, false);
+  }
+});
+
 test("server projections satisfy the browser contract for lesson and schedule teacher fields", () => {
   const lesson = projectJiaowubaoCompletedLessonRecord(sourceRecord(), { start: "2026-08-01", end: "2026-08-31" });
   const schedule = projectJiaowubaoCompletedScheduleRecord(scheduleSourceRecord(), { start: "2026-08-01", end: "2026-08-31" });

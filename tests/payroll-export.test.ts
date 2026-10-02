@@ -389,6 +389,94 @@ test("hours-only export follows the 13/9-column template and excludes every paym
   assert.match(allXml, /&lt;Tutor&gt;/u);
 });
 
+test("hours-only trial names include shared accounts whose source lesson flag is regular", () => {
+  const sample = sampleWorkbook();
+  const input: PayrollWorkbookExport = {
+    ...sample, exportMode: "hours_only",
+    rows: sample.rows.map((row) => ({ ...row, lines: row.lines.map((line) => ({ ...line, isTrial: false })) })),
+    evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson) => ({ ...lesson, isTrial: false })) },
+  };
+  const [main, detail, , lessons] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "M4"), "");
+  assert.equal(cell(main!, "M5"), '=HYPERLINK("https://example.invalid")（课程标题候选，待核对）');
+  assert.equal(cell(main!, "M6"), "Trial Two（课程标题候选，待核对）");
+  assert.equal(cell(main!, "D8"), 4.5);
+  assert.equal(cell(detail!, "D6"), 1);
+  assert.equal(cell(lessons!, "N4"), "否");
+  assert.ok(input.evidence!.lessons.every((lesson) => !lesson.isTrial));
+});
+
+test("hours-only trial names omit unnamed shared accounts and mark unresolved title candidates", () => {
+  const sample = sampleWorkbook();
+  const input: PayrollWorkbookExport = {
+    ...sample, exportMode: "hours_only",
+    rows: sample.rows.map((row, rowIndex) => rowIndex ? row : {
+      ...row, lines: row.lines.map((line, index) => index < 2 ? line : {
+        ...line, isTrial: false, studentId: null, studentMatch: index === 2 ? "unmatched" : "ambiguous",
+        studentName: index === 2 ? "试听学员B（待核对姓名）" : line.studentName,
+      }),
+    }),
+    evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson, index) => index < 2 ? lesson : {
+      ...lesson, isTrial: false, studentId: null, studentName: null,
+      studentMatch: index === 2 ? "unmatched" : "ambiguous",
+      displayStudentName: index === 2 ? null : lesson.displayStudentName,
+    }) },
+  };
+  const [main, , , evidence] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "M5"), "");
+  assert.equal(cell(main!, "M6"), "Trial Two（课程标题候选，待核对）");
+  assert.equal(cell(main!, "D8"), 4.5);
+  assert.equal(cell(evidence!, "G4"), "试听学员B");
+  assert.equal(cell(evidence!, "L4"), 1);
+});
+
+test("hours-only course titles fit wrapped words and explicit line breaks", () => {
+  for (const [title, minimumHeight] of [
+    ["CRIM1010 - Criminology: An Introduction", 61],
+    ["First\nSecond\nThird", 61],
+    ["First            Second", 42],
+  ] as const) {
+    const sample = sampleWorkbook();
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only",
+      evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+        ? { ...lesson, courseTitle: title } : lesson) },
+    };
+    const bytes = buildPayrollXlsx(input);
+    assert.equal(cell(readXlsx(bytes).worksheets[1]!, "H4"), title);
+    const row = storedParts(bytes).get("xl/worksheets/sheet2.xml")!.match(/<row r="4"[^>]*>/u)![0];
+    const height = Number(row.match(/ht="([\d.]+)"/u)![1]);
+    assert.ok(height >= minimumHeight, "preserved course text must fit without clipping");
+  }
+});
+
+test("hours-only unallocated course titles fit the main template", () => {
+  for (const title of ["CRIM1010 - Criminology: An Introduction", "First\nSecond\nThird"]) {
+    const sample = sampleWorkbook();
+    const sharedLine = sample.rows[0]!.lines[0]!;
+    const input: PayrollWorkbookExport = {
+      ...sample, exportMode: "hours_only",
+      rows: [sample.rows[0]!, { ...sample.rows[1]!, lines: [sharedLine] }],
+      evidence: {
+        ...sample.evidence!,
+        teacherLessonSourceKeys: sample.evidence!.teacherLessonSourceKeys.map((mapping, index) => index === 1
+          ? { ...mapping, sourceKeys: [sharedLine.sourceKey!] } : mapping),
+        lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
+          ? { ...lesson, courseTitle: title, teachers: [] } : lesson),
+      },
+    };
+    const bytes = buildPayrollXlsx(input);
+    const main = readXlsx(bytes).worksheets[0]!;
+    const titleCell = main.rows.flatMap((row) => row.cells).find((entry) => entry.value === title)!;
+    assert.ok(titleCell.reference.startsWith("H"));
+    const rowNumber = titleCell.reference.slice(1);
+    const row = storedParts(bytes).get("xl/worksheets/sheet1.xml")!
+      .match(new RegExp(`<row r="${rowNumber}"[^>]*>`, "u"))![0];
+    assert.ok(Number(row.match(/ht="([\d.]+)"/u)![1]) >= 61, "unallocated course text must fit without clipping");
+    assert.equal(cell(main, `D${rowNumber}`), 1);
+  }
+});
+
 test("hours-only export keeps role hours separate, leaves missing role hours unknown, and never doubles student hours", () => {
   const sample = sampleWorkbook();
   const assistant = sample.evidence!.schedules[0]!.teachers[1]!;
@@ -525,7 +613,7 @@ test("hours-only export retains ambiguous multi-teacher student hours once in bo
         sample.evidence!.teacherLessonSourceKeys[1]!,
       ],
       lessons: sample.evidence!.lessons.map((lesson, index) => index === 0
-        ? { ...lesson, teachers: [assistant, third] }
+        ? { ...lesson, memberName: "试听学员A", teachers: [assistant, third] }
         : lesson),
     },
   };
@@ -536,6 +624,7 @@ test("hours-only export retains ambiguous multi-teacher student hours once in bo
   assert.equal(cell(main!, "G8"), 0.25);
   assert.equal(cell(main!, "D10"), 3.5);
   assert.equal(cell(main!, "D14"), 1);
+  assert.equal(cell(main!, "M14"), "Olivia & Co（课程标题候选，待核对）");
   assert.equal(cell(main!, "D15"), 1);
   assert.equal(cell(detail!, "D7"), null);
   assert.equal(cell(detail!, "D8"), null);

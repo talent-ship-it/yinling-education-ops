@@ -3,6 +3,7 @@ import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed
 import type { JiaowubaoHourIssue } from "@/lib/jiaowubao-hour-evidence";
 import { snapshotJiaowubaoHour, snapshotJiaowubaoOptionalHour } from "@/lib/jiaowubao-hour-evidence";
 import { jiaowubaoCompletedLessonTeacherIdentityKey } from "@/lib/jiaowubao-completed-lesson-reconciliation";
+import { isJiaowubaoSharedTrialAccountLabel } from "@/lib/trial-operations";
 
 export const PAYROLL_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -492,8 +493,27 @@ function visualUnits(value: string) {
   return [...value].reduce((total, character) => total + (/[^\u0000-\u007f]/u.test(character) ? 2 : 1), 0);
 }
 
+function wrappedLineCount(value: string, width: number) {
+  let lines = 0;
+  for (const paragraph of value.split(/\r?\n/u)) {
+    let used = 0;
+    lines += 1;
+    for (const token of paragraph.match(/\s+|\S+/gu) ?? []) {
+      const units = visualUnits(token);
+      if (/\S/u.test(token) && used && used + units > width) {
+        lines += 1;
+        used = 0;
+      }
+      const occupied = used + units;
+      lines += Math.max(0, Math.ceil(occupied / width) - 1);
+      used = occupied % width || width;
+    }
+  }
+  return lines;
+}
+
 function fittedHeight(cells: readonly Readonly<{ value: string; width: number }>[]) {
-  const lines = Math.max(1, ...cells.map(({ value, width }) => Math.ceil(visualUnits(value) / width)));
+  const lines = Math.max(1, ...cells.map(({ value, width }) => wrappedLineCount(value, width)));
   return Math.min(409.5, Math.max(31.5, lines * 19 + 4));
 }
 
@@ -558,13 +578,20 @@ function attendanceSummary(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMa
   return [...counts].map(([label, count]) => `${label} ${count}`).join("；");
 }
 
+function trialStudentLabel(lesson: PayrollExportLessonEvidence) {
+  const sharedAccount = isJiaowubaoSharedTrialAccountLabel(lesson.memberName);
+  if (!lesson.isTrial && !sharedAccount) return null;
+  const name = sharedAccount ? lesson.displayStudentName : lesson.displayStudentName ?? lesson.memberName;
+  if (!name || isJiaowubaoSharedTrialAccountLabel(name)) return null;
+  return sharedAccount || lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name;
+}
+
 function trialStudents(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<string, PayrollExportLessonEvidence>) {
   const names = new Set<string>();
   for (const sourceKey of sourceKeys) {
     const lesson = evidence.get(sourceKey);
-    if (!lesson?.isTrial) continue;
-    const name = lesson.displayStudentName ?? lesson.memberName;
-    if (name) names.add(lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
+    const name = lesson ? trialStudentLabel(lesson) : null;
+    if (name) names.add(name);
   }
   return joined(names);
 }
@@ -713,7 +740,7 @@ function appendHoursOnlyUnallocatedMainRows(
   let total: number | null = 0;
   for (const [index, lesson] of lessons.entries()) {
     total = safeSourceSum(total, lesson.hours);
-    const candidate = lesson.isTrial ? trialStudents(new Set([lesson.sourceKey]), evidence) : "";
+    const candidate = trialStudents(new Set([lesson.sourceKey]), evidence);
     const note = lesson.hours === null || lesson.hoursIssue
       ? lesson.hours === null ? "多教师学生课时归属待核对；课时缺失，合计不完整" : "多教师学生课时归属待核对；来源课时越界，待核对"
       : "多教师学生课时归属待核对";
@@ -723,7 +750,7 @@ function appendHoursOnlyUnallocatedMainRows(
       stringCell(note, 22), stringCell(attendanceSummary(new Set([lesson.sourceKey]), evidence), 22),
       stringCell(null, 18), stringCell(null, 18), stringCell(candidate, 22),
     ]);
-    heights.set(rowNumber, fittedHeight([{ value: note, width: 29 }, { value: candidate, width: 104 }]));
+    heights.set(rowNumber, fittedHeight([{ value: lesson.courseTitle ?? "", width: 21 }, { value: note, width: 29 }, { value: candidate, width: 104 }]));
   }
   return total;
 }
