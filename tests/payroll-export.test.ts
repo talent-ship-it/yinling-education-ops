@@ -406,6 +406,30 @@ test("hours-only trial names include shared accounts whose source lesson flag is
   assert.ok(input.evidence!.lessons.every((lesson) => !lesson.isTrial));
 });
 
+test("hours-only trial names omit unnamed shared accounts and mark unresolved title candidates", () => {
+  const sample = sampleWorkbook();
+  const input: PayrollWorkbookExport = {
+    ...sample, exportMode: "hours_only",
+    rows: sample.rows.map((row, rowIndex) => rowIndex ? row : {
+      ...row, lines: row.lines.map((line, index) => index < 2 ? line : {
+        ...line, isTrial: false, studentId: null, studentMatch: index === 2 ? "unmatched" : "ambiguous",
+        studentName: index === 2 ? "试听学员B（待核对姓名）" : line.studentName,
+      }),
+    }),
+    evidence: { ...sample.evidence!, lessons: sample.evidence!.lessons.map((lesson, index) => index < 2 ? lesson : {
+      ...lesson, isTrial: false, studentId: null, studentName: null,
+      studentMatch: index === 2 ? "unmatched" : "ambiguous",
+      displayStudentName: index === 2 ? null : lesson.displayStudentName,
+    }) },
+  };
+  const [main, , , evidence] = readXlsx(buildPayrollXlsx(input)).worksheets;
+  assert.equal(cell(main!, "M5"), "");
+  assert.equal(cell(main!, "M6"), "Trial Two（课程标题候选，待核对）");
+  assert.equal(cell(main!, "D8"), 4.5);
+  assert.equal(cell(evidence!, "G4"), "试听学员B");
+  assert.equal(cell(evidence!, "L4"), 1);
+});
+
 test("hours-only course titles fit wrapped words and explicit line breaks", () => {
   for (const title of ["CRIM1010 - Criminology: An Introduction", "First\nSecond\nThird"]) {
     const sample = sampleWorkbook();
@@ -569,7 +593,7 @@ test("hours-only export retains ambiguous multi-teacher student hours once in bo
   assert.equal(cell(main!, "G8"), 0.25);
   assert.equal(cell(main!, "D10"), 3.5);
   assert.equal(cell(main!, "D14"), 1);
-  assert.equal(cell(main!, "M14"), "Olivia & Co");
+  assert.equal(cell(main!, "M14"), "Olivia & Co（课程标题候选，待核对）");
   assert.equal(cell(main!, "D15"), 1);
   assert.equal(cell(detail!, "D7"), null);
   assert.equal(cell(detail!, "D8"), null);

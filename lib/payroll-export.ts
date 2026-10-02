@@ -581,9 +581,12 @@ function trialStudents(sourceKeys: ReadonlySet<string>, evidence: ReadonlyMap<st
   const names = new Set<string>();
   for (const sourceKey of sourceKeys) {
     const lesson = evidence.get(sourceKey);
-    if (!lesson || (!lesson.isTrial && !isJiaowubaoSharedTrialAccountLabel(lesson.memberName))) continue;
-    const name = lesson.displayStudentName ?? lesson.memberName;
-    if (name) names.add(lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
+    if (!lesson) continue;
+    const sharedAccount = isJiaowubaoSharedTrialAccountLabel(lesson.memberName);
+    if (!lesson.isTrial && !sharedAccount) continue;
+    const name = sharedAccount ? lesson.displayStudentName : lesson.displayStudentName ?? lesson.memberName;
+    if (!name || isJiaowubaoSharedTrialAccountLabel(name)) continue;
+    names.add(sharedAccount || lesson.studentMatch === "trial_course_title" ? `${name}（课程标题候选，待核对）` : name);
   }
   return joined(names);
 }
