@@ -327,3 +327,209 @@ begin
   execute definition;
 end;
 $reuse_normalized_authority$;
+
+do $reuse_authority_name_keys$
+declare
+  target_oid regprocedure := 'public.project_jiaowubao_open_api_authority_read_model(text,text,text)'::regprocedure;
+  definition text := pg_catalog.pg_get_functiondef(target_oid);
+  name_expression text;
+  anchor text;
+  replacement text;
+begin
+  foreach name_expression in array array[
+    $$item_row.item -> 'record' ->> 'course_title'$$,
+    $$student_value.value ->> 'name'$$,
+    $$grouped.latest_payload ->> 'name'$$,
+    $$teacher_value.identity_label$$,
+    $$grouped.latest_payload ->> 'teacher_title'$$,
+    $$dimension.identity_label$$,
+    $$grouped.latest_payload ->> 'title'$$,
+    $$item_value.value ->> 'name'$$
+  ] loop
+    anchor := 'internal.student_import_name_key(' || name_expression || ')';
+    if position(anchor in definition) = 0 then
+      raise exception using errcode = '55000', message = 'jiaowubao_authority_name_cache_anchor_mismatch';
+    end if;
+    definition := replace(definition, anchor,
+      '(normalized_names ->> coalesce(' || name_expression || ', ''''))');
+  end loop;
+  if position('internal.student_import_name_key(' in definition) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_name_cache_anchor_mismatch';
+  end if;
+  anchor := $anchor$  normalized_projection_id uuid;$anchor$;
+  replacement := $replacement$  normalized_projection_id uuid;
+  normalized_names jsonb;$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_name_cache_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$  select existing_projection.id into normalized_projection_id$anchor$;
+  replacement := $replacement$  with source_records as materialized (
+    select item -> 'record' as record
+    from internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+    where run_id = current_row.run_id
+  ), name_candidates as (
+    select item.value ->> 'name' as name
+    from (values ('students'::text), ('teachers'::text), ('courses'::text)) state(entity)
+    cross join lateral jsonb_array_elements(native_state_payloads_value -> state.entity) item(value)
+    union all
+    select dimension.name
+    from source_records source
+    cross join lateral (values
+      (source.record ->> 'course_title'), (source.record ->> 'teacher_title'),
+      (source.record ->> 'teacher_s_title'), (source.record ->> 'teacher_t_title'),
+      (source.record ->> 'team_title'), (source.record ->> 'room_title')
+    ) dimension(name)
+    union all
+    select student.value ->> 'name'
+    from source_records source
+    cross join lateral jsonb_array_elements(case
+      when jsonb_typeof(source.record -> 'stu_list') = 'array'
+      then source.record -> 'stu_list' else '[]'::jsonb end) student(value)
+  ), distinct_names as materialized (
+    select distinct variant.name
+    from name_candidates candidate
+    cross join lateral (values (coalesce(candidate.name, '')), (coalesce(btrim(candidate.name), ''))) variant(name)
+  )
+  select jsonb_object_agg(name, internal.student_import_name_key(name))
+  into normalized_names from distinct_names;
+
+  select existing_projection.id into normalized_projection_id$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_name_cache_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, replacement);
+end;
+$reuse_authority_name_keys$;
+
+do $insert_authority_schedule_matches$
+declare
+  target_oid regprocedure := 'public.project_jiaowubao_open_api_authority_read_model(text,text,text)'::regprocedure;
+  definition text := pg_catalog.pg_get_functiondef(target_oid);
+  anchor text;
+  replacement text;
+begin
+  anchor := $anchor$  normalized_names jsonb;$anchor$;
+  replacement := $replacement$  normalized_names jsonb;
+  native_schedule_matches jsonb;$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$  select existing_projection.id into normalized_projection_id$anchor$;
+  replacement := $replacement$  with booking_ids as materialized (
+    select nullif(btrim(booking.value ->> 'sourceLessonId'), '') as source_lesson_id,
+      count(*)::integer as match_count, min(booking.value ->> 'id') as entity_id
+    from jsonb_array_elements(native_state_payloads_value -> 'bookings') booking(value)
+    where nullif(btrim(booking.value ->> 'id'), '') is not null
+    group by nullif(btrim(booking.value ->> 'sourceLessonId'), '')
+  ), source_ids as materialized (
+    select distinct item -> 'record' ->> 'cal_id' as source_native_id
+    from internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+    where run_id = current_row.run_id and item -> 'record' ->> 'cal_id' is not null
+  ), matches as (
+    select source.source_native_id,
+      coalesce(direct.match_count, 0) + coalesce(prefixed.match_count, 0) as match_count,
+      least(direct.entity_id, prefixed.entity_id) as entity_id
+    from source_ids source
+    left join booking_ids direct on direct.source_lesson_id = source.source_native_id
+    left join booking_ids prefixed on prefixed.source_lesson_id = 'jwb-open-api:schedule:' || source.source_native_id
+  )
+  select coalesce(jsonb_object_agg(source_native_id, jsonb_build_object(
+    'match_status', case when match_count = 1 then 'matched' when match_count > 1 then 'conflict' else 'unmatched' end,
+    'match_strategy', case when match_count = 1 then 'source_id' else null end,
+    'matched_entity_id', case when match_count = 1 then entity_id else null end,
+    'conflict_type', case when match_count > 1 then 'source_id_matches_multiple' when match_count = 0 then 'not_found' else null end
+  )), '{}'::jsonb) into native_schedule_matches from matches;
+
+  select existing_projection.id into normalized_projection_id$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$      match_status, match_strategy, conflict_type
+    )
+    select projection_id, entity_type, source_key, source_native_id, source_id_present,
+      identity_label, identity_key, payload, evidence_count, identity_variant_count,
+      case when entity_type in ('class','room') then 'source_only' else 'unmatched' end,
+      case when entity_type in ('class','room') then 'source_only' else null end,
+      case when entity_type in ('class','room') then null else 'not_found' end$anchor$;
+  replacement := $replacement$      match_status, match_strategy, matched_entity_id, conflict_type
+    )
+    select projection_id, entity_type, source_key, source_native_id, source_id_present,
+      identity_label, identity_key, payload, evidence_count, identity_variant_count,
+      case when entity_type = 'schedule' then native_schedule_matches -> source_native_id ->> 'match_status'
+        when entity_type in ('class','room') then 'source_only' else 'unmatched' end,
+      case when entity_type = 'schedule' then native_schedule_matches -> source_native_id ->> 'match_strategy'
+        when entity_type in ('class','room') then 'source_only' else null end,
+      case when entity_type = 'schedule' then native_schedule_matches -> source_native_id ->> 'matched_entity_id' else null end,
+      case when entity_type = 'schedule' then native_schedule_matches -> source_native_id ->> 'conflict_type'
+        when entity_type in ('class','room') then null else 'not_found' end$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$    match_status, conflict_type
+  )
+  select projection_id, 'schedule',$anchor$;
+  replacement := $replacement$    match_status, match_strategy, matched_entity_id, conflict_type
+  )
+  select projection_id, 'schedule',$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$    item_row.item -> 'record', 1, 1, 'unmatched', 'not_found'$anchor$;
+  replacement := $replacement$    item_row.item -> 'record', 1, 1,
+    native_schedule_matches -> (item_row.item -> 'record' ->> 'cal_id') ->> 'match_status',
+    native_schedule_matches -> (item_row.item -> 'record' ->> 'cal_id') ->> 'match_strategy',
+    native_schedule_matches -> (item_row.item -> 'record' ->> 'cal_id') ->> 'matched_entity_id',
+    native_schedule_matches -> (item_row.item -> 'record' ->> 'cal_id') ->> 'conflict_type'$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$  with system_bookings as materialized (
+    select booking_value.value ->> 'id' as entity_id,
+      nullif(btrim(booking_value.value ->> 'sourceLessonId'), '') as source_lesson_id
+    from jsonb_array_elements(native_state_payloads_value -> 'bookings') booking_value(value)
+    where nullif(btrim(booking_value.value ->> 'id'), '') is not null
+  ), booking_ids as materialized (
+    select source_lesson_id, count(*)::integer as match_count, min(entity_id) as entity_id
+    from system_bookings group by source_lesson_id
+  ), stats as materialized (
+    select source_entity.source_key,
+      coalesce(direct.match_count, 0) + coalesce(prefixed.match_count, 0) as match_count,
+      least(direct.entity_id, prefixed.entity_id) as entity_id
+    from internal.jiaowubao_authority_projection_entities source_entity
+    left join booking_ids direct on direct.source_lesson_id = source_entity.source_native_id
+    left join booking_ids prefixed on prefixed.source_lesson_id = 'jwb-open-api:schedule:' || source_entity.source_native_id
+    where source_entity.projection_run_id = projection_id and source_entity.entity_type = 'schedule'
+  )
+  update internal.jiaowubao_authority_projection_entities source_entity
+  set match_status = case when stats.match_count = 1 then 'matched'
+      when stats.match_count > 1 then 'conflict' else 'unmatched' end,
+    match_strategy = case when stats.match_count = 1 then 'source_id' else null end,
+    matched_entity_id = case when stats.match_count = 1 then stats.entity_id else null end,
+    conflict_type = case when stats.match_count > 1 then 'source_id_matches_multiple'
+      when stats.match_count = 0 then 'not_found' else null end
+  from stats
+  where source_entity.projection_run_id = projection_id
+    and source_entity.entity_type = 'schedule'
+    and source_entity.source_key = stats.source_key;
+
+$anchor$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_schedule_insert_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, '');
+end;
+$insert_authority_schedule_matches$;

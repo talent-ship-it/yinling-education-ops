@@ -203,5 +203,31 @@ begin
   where entity = 'students';
   update public.ops_state set payload = payload || '[{"id":"duplicate-teacher-1","name":"Teacher 1"}]' where entity = 'teachers';
   update public.ops_state set payload = payload || '[{"id":"duplicate-course-1","name":"Course 1"}]' where entity = 'courses';
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+  set item = jsonb_set(jsonb_set(item, '{record,stu_list,0,mem_id}', '"s1"'),
+    '{record,stu_list,0,name}', to_jsonb(' Ｓｔｕｄｅｎｔ' || chr(160) || '1' || chr(8203) || ' '))
+  where source_key = 'jwb-open-api:schedule:9';
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+  set item = jsonb_set(jsonb_set(item, '{record,stu_list,0,mem_id}', '"s1"'),
+    '{record,stu_list,0,name}', '"Different Student 1"')
+  where source_key = 'jwb-open-api:schedule:10';
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+  set item = jsonb_set(jsonb_set(jsonb_set(item,
+    '{record,teacher_title}', to_jsonb(' Ｔｅａｃｈｅｒ' || chr(160) || '6 ')),
+    '{record,course_title}', to_jsonb(' Course' || chr(12288) || '6' || chr(8203) || ' ')),
+    '{record,stu_list,0,name}', to_jsonb(' Student' || chr(160) || '6 '))
+  where source_key = 'jwb-open-api:schedule:6';
+end;
+$$;
+
+create function internal.fixture_authority_native_edit()
+returns void language plpgsql as $$
+begin
+  update public.ops_state set payload = (
+    select jsonb_agg(case when item ->> 'id' = 'book7'
+      then item || '{"id":"renamed-book7","sourceLessonId":"jwb-open-api:schedule:7"}'::jsonb
+      else item end order by ordinality)
+    from jsonb_array_elements(payload) with ordinality source(item, ordinality)
+  ), version = version + 1 where entity = 'bookings';
 end;
 $$;

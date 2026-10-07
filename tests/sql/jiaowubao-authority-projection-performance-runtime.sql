@@ -4,7 +4,7 @@ set statement_timeout = '3s';
 select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
-  assert internal.fixture_authority_result() = (select result from internal.fixture_authority_expected),
+  assert internal.fixture_authority_result() = (select result from internal.fixture_authority_expected where phase = 'initial'),
     'Grouped matching must exactly preserve native state, mappings, ambiguity and quarantine';
   assert (select count(*) from internal.jiaowubao_authority_native_quarantine where active) = 2;
   assert not has_function_privilege('anon', 'public.apply_jiaowubao_open_api_authority_native(text,uuid,text)', 'execute');
@@ -12,6 +12,28 @@ begin
   assert has_function_privilege('anon', 'public.project_jiaowubao_open_api_authority(text,text,text)', 'execute');
   assert (select proconfig @> array['statement_timeout=110s'] from pg_proc
     where oid = 'public.project_jiaowubao_open_api_authority(text,text,text)'::regprocedure);
+end;
+$$;
+
+select internal.fixture_authority_native_edit();
+select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+do $$
+declare rejected boolean := false;
+begin
+  assert internal.fixture_authority_result() = (select result from internal.fixture_authority_expected where phase = 'native_edit'),
+    'A changed native version must refresh exact schedule matches without reusing old matches';
+  assert (select projection.native_state_versions
+    from internal.jiaowubao_authority_projection_runs projection
+    join internal.jiaowubao_authority_current current_projection on current_projection.projection_run_id = projection.id)
+    = (select jsonb_object_agg(entity, version) from public.ops_state);
+  begin
+    update internal.jiaowubao_authority_projection_entities set
+      match_status = 'unmatched', match_strategy = null, matched_entity_id = null, conflict_type = 'not_found'
+    where projection_run_id = (select projection_run_id from internal.jiaowubao_authority_current)
+      and entity_type = 'schedule' and source_native_id = '7';
+  exception when sqlstate '55000' then rejected := true;
+  end;
+  assert rejected, 'Inserting finalized schedule matches must not weaken completed projection immutability';
 end;
 $$;
 
