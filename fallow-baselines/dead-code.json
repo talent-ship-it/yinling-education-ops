@@ -380,7 +380,6 @@
     "lib/ops-store.ts:TrialPaymentCompletionCommandResult",
     "lib/ops-store.ts:TrialPaymentLifecycleResult",
     "lib/ops-store.ts:TrialPaymentLifecycleCommandResult",
-    "lib/ops-store.ts:JiaowubaoOpenApiAuthorityProjectionReceipt",
     "lib/ops-store.ts:JiaowubaoOpenApiScheduleSyncLease",
     "lib/ops-store.ts:JiaowubaoCompletedLessonSnapshotReceipt",
     "lib/ops-store.ts:JiaowubaoCompletedLessonSnapshotPreflight",
