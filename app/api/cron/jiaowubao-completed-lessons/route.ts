@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { parseJiaowubaoCompletedLessonCronOperation } from "@/lib/jiaowubao-completed-lesson-cron-request";
+import { parseJiaowubaoCompletedLessonCronOperation, readJiaowubaoCompletedLessonPendingMonth } from "@/lib/jiaowubao-completed-lesson-cron-request";
 import { syncJiaowubaoCompletedLessonMonth } from "@/lib/jiaowubao-completed-lesson-resumable-sync";
 import { safeJiaowubaoCompletedLessonSyncFailure } from "@/lib/jiaowubao-completed-lesson-safe-failure";
 import { getJiaowubaoCompletedLessonPendingMonth } from "@/lib/ops-store";
@@ -54,10 +54,7 @@ export async function GET(request: Request) {
   let month = operation.month ?? previousMelbourneMonth();
   try {
     if (!operation.force) {
-      const pending = await getJiaowubaoCompletedLessonPendingMonth({ actor: "Ops Admin" });
-      if (!pending || (pending.month !== null && (typeof pending.month !== "string" || !/^\d{4}-\d{2}$/u.test(pending.month)))) {
-        throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
-      }
+      const pending = readJiaowubaoCompletedLessonPendingMonth(await getJiaowubaoCompletedLessonPendingMonth({ actor: "Ops Admin" }));
       if (pending.month === null) return noStore({ outcome: "no_change", month });
       month = pending.month;
     }

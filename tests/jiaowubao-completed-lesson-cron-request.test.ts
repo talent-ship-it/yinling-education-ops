@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseJiaowubaoCompletedLessonCronOperation } from "../lib/jiaowubao-completed-lesson-cron-request";
+import { parseJiaowubaoCompletedLessonCronOperation, readJiaowubaoCompletedLessonPendingMonth } from "../lib/jiaowubao-completed-lesson-cron-request";
 
 const NOW = new Date("2026-09-04T08:00:00.000Z");
 
@@ -36,5 +36,14 @@ test("completed-lesson scheduler rejects incomplete, duplicate, extra, malformed
   ];
   for (const url of invalid) {
     assert.equal(parseJiaowubaoCompletedLessonCronOperation(url, NOW), null, url);
+  }
+});
+
+test("pending monthly collection accepts only an explicit empty queue or a valid month", () => {
+  assert.deepEqual(readJiaowubaoCompletedLessonPendingMonth({ month: null }), { month: null });
+  assert.deepEqual(readJiaowubaoCompletedLessonPendingMonth({ month: "2026-10" }), { month: "2026-10" });
+  for (const value of [undefined, null, {}, "2026-10", { month: 202610 }, { month: ["2026-10"] },
+    { month: "2026-13" }, { month: "2026-1" }, { month: "" }]) {
+    assert.throws(() => readJiaowubaoCompletedLessonPendingMonth(value), /pending_month_invalid/);
   }
 });
