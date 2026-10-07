@@ -1,4 +1,12 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "jiaowubao-schedule-reader-performance", source: "tests/sql/jiaowubao-schedule-reader-performance-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-reader-performance-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20260822000600_optimize_bilingual_jwb_name_key.sql" },
+    { kind: "sql", file: "supabase/migrations/20260822001100_read_jiaowubao_open_api_schedule_snapshot.sql" },
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-reader-performance-baseline.sql" },
+    { kind: "sql", file: "supabase/migrations/20261008000100_reduce_jiaowubao_schedule_reader_materialization.sql" },
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-reader-performance-runtime.sql" },
+  ] },
   { id: "monthly-hours-automatic-refresh", source: "tests/sql/monthly-hours-automatic-refresh-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/monthly-hours-automatic-refresh-setup.sql" },
     { kind: "sql-fragment", file: "supabase/migrations/20260813013935_operational_atomic_contracts.sql",
