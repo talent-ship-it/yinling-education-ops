@@ -533,3 +533,165 @@ $anchor$;
   execute replace(definition, anchor, '');
 end;
 $insert_authority_schedule_matches$;
+
+do $reuse_native_validation$
+declare
+  target_oid regprocedure := 'public.apply_jiaowubao_open_api_authority_native(text,uuid,text)'::regprocedure;
+  definition text := pg_catalog.pg_get_functiondef(target_oid);
+  anchor text;
+  replacement text;
+begin
+  anchor := $anchor$      type_map.native_entity_type, type_map.prefix, type_map.native_payload$anchor$;
+  replacement := $replacement$      type_map.native_entity_type, type_map.prefix$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0
+     or position('source.native_payload' in definition) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_native_validation_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$      and internal.jiaowubao_authority_native_schedule_skip_reason(
+        projection_run.id,
+        source_entity.source_key,
+        source_entity.source_native_id,
+        source_entity.payload
+      ) is null$anchor$;
+  replacement := $replacement$      and not exists (
+        select 1 from internal.jiaowubao_authority_native_quarantine quarantine
+        where quarantine.projection_run_id = projection_run.id
+          and quarantine.source_revision = projection_run.snapshot_revision
+          and quarantine.entity_type = source_entity.entity_type
+          and quarantine.source_key = source_entity.source_key
+          and quarantine.active
+      )$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_native_validation_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, replacement);
+end;
+$reuse_native_validation$;
+
+do $group_authority_validation$
+declare
+  definition text;
+  anchor text;
+  replacement text;
+begin
+  definition := pg_catalog.pg_get_functiondef('internal.jiaowubao_authority_native_schedule_skip_reason(uuid,text,text,jsonb)'::regprocedure);
+  anchor := 'p_record jsonb)';
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_group_validation_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, 'p_record jsonb, p_has_duplicate_source boolean)');
+  anchor := $anchor$  if exists (
+    select 1
+    from internal.jiaowubao_authority_projection_entities peer
+    where peer.projection_run_id = p_projection_run_id
+      and peer.entity_type = 'schedule'
+      and peer.source_native_id = p_source_native_id
+      and peer.source_key <> p_source_key
+  ) then$anchor$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_group_validation_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, '  if p_has_duplicate_source then');
+
+  definition := pg_catalog.pg_get_functiondef('public.apply_jiaowubao_open_api_authority_native(text,uuid,text)'::regprocedure);
+  anchor := $anchor$  with candidates as materialized (
+    select source_entity.*,
+      case
+        when source_entity.entity_type = 'schedule' then
+          internal.jiaowubao_authority_native_schedule_skip_reason(
+            projection_run.id,
+            source_entity.source_key,
+            source_entity.source_native_id,
+            source_entity.payload
+          )
+        when source_entity.source_native_id is null then 'missing_source_id'
+        else null
+      end as skip_reason
+    from internal.jiaowubao_authority_projection_entities source_entity
+    where source_entity.projection_run_id = projection_run.id
+  )$anchor$;
+  replacement := $replacement$  with source_counts as materialized (
+    select source_native_id, count(*) > 1 as has_duplicate_source
+    from internal.jiaowubao_authority_projection_entities
+    where projection_run_id = projection_run.id and entity_type = 'schedule'
+    group by source_native_id
+  ), candidates as materialized (
+    select source_entity.*,
+      case
+        when source_entity.entity_type = 'schedule' then
+          internal.jiaowubao_authority_native_schedule_skip_reason(
+            projection_run.id,
+            source_entity.source_key,
+            source_entity.source_native_id,
+            source_entity.payload,
+            coalesce(source_counts.has_duplicate_source, false)
+          )
+        when source_entity.source_native_id is null then 'missing_source_id'
+        else null
+      end as skip_reason
+    from internal.jiaowubao_authority_projection_entities source_entity
+    left join source_counts on source_entity.entity_type = 'schedule'
+      and source_counts.source_native_id = source_entity.source_native_id
+    where source_entity.projection_run_id = projection_run.id
+  )$replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_group_validation_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, replacement);
+end;
+$group_authority_validation$;
+
+revoke all on function internal.jiaowubao_authority_native_schedule_skip_reason(uuid,text,text,jsonb,boolean)
+  from public, anon, authenticated, service_role;
+
+alter function public.project_jiaowubao_open_api_authority_read_model(text,text,text)
+  set work_mem = '16MB';
+alter function public.apply_jiaowubao_open_api_authority_native(text,uuid,text)
+  set work_mem = '16MB';
+
+do $skip_reused_source_names$
+declare
+  target_oid regprocedure := 'public.project_jiaowubao_open_api_authority_read_model(text,text,text)'::regprocedure;
+  definition text := pg_catalog.pg_get_functiondef(target_oid);
+  anchor text;
+  projection_lookup text;
+  replacement text;
+begin
+  projection_lookup := $lookup$  select existing_projection.id into normalized_projection_id
+  from internal.jiaowubao_authority_projection_runs existing_projection
+  where existing_projection.snapshot_run_id = current_row.run_id
+    and existing_projection.snapshot_revision = p_revision
+    and existing_projection.api_source_key = current_row.api_source_key
+    and existing_projection.summary <> '{}'::jsonb
+  order by existing_projection.projected_at desc, existing_projection.id
+  limit 1;
+
+$lookup$;
+  if position(projection_lookup in definition) = 0
+     or position(projection_lookup in substr(definition, position(projection_lookup in definition) + char_length(projection_lookup))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_source_names_anchor_mismatch';
+  end if;
+  definition := replace(definition, projection_lookup, '');
+  anchor := $anchor$  with source_records as materialized (
+    select item -> 'record' as record
+    from internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+    where run_id = current_row.run_id
+  ), name_candidates as ($anchor$;
+  replacement := projection_lookup || $replacement$  with source_records as materialized (
+    select item -> 'record' as record
+    from internal.jiaowubao_open_api_schedule_snapshot_ingest_items
+    where run_id = current_row.run_id and normalized_projection_id is null
+  ), name_candidates as ($replacement$;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_source_names_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, replacement);
+end;
+$skip_reused_source_names$;

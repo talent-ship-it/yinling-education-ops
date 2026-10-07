@@ -1,6 +1,7 @@
 \ir assert-disposable-database.sql
 
 set statement_timeout = '3s';
+set work_mem = '4MB';
 select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
@@ -12,6 +13,70 @@ begin
   assert has_function_privilege('anon', 'public.project_jiaowubao_open_api_authority(text,text,text)', 'execute');
   assert (select proconfig @> array['statement_timeout=110s'] from pg_proc
     where oid = 'public.project_jiaowubao_open_api_authority(text,text,text)'::regprocedure);
+end;
+$$;
+
+do $$
+declare
+  source_row internal.jiaowubao_authority_projection_entities%rowtype;
+  validation_case record;
+  legacy_reason text;
+  grouped_reason text;
+begin
+  select entity.* into strict source_row
+  from internal.jiaowubao_authority_projection_entities entity
+  where entity.projection_run_id = (select projection_run_id from internal.jiaowubao_authority_current)
+    and entity.entity_type = 'schedule' and entity.source_native_id = '7';
+  assert internal.jiaowubao_authority_native_schedule_skip_reason(
+    source_row.projection_run_id, source_row.source_key, '7', source_row.payload) is null;
+  assert internal.jiaowubao_authority_native_schedule_skip_reason(
+    source_row.projection_run_id, source_row.source_key, '7', source_row.payload, false) is null,
+    'The current source key alone is not a duplicate';
+  begin
+    insert into internal.jiaowubao_authority_projection_entities
+    select (jsonb_populate_record(null::internal.jiaowubao_authority_projection_entities,
+      to_jsonb(source_row) || jsonb_build_object('source_key', 'sha256:' || repeat('d', 64)))).*;
+    assert (select count(*) from internal.jiaowubao_authority_projection_entities
+      where projection_run_id = source_row.projection_run_id and entity_type = 'schedule' and source_native_id = '7') = 2;
+    for validation_case in
+      select * from (values
+        ('7'::text, source_row.payload, 'duplicate_source_id'::text),
+        (null, source_row.payload, 'missing_source_id'),
+        (' 7', source_row.payload, 'invalid_source_id'),
+        ('7', '[]'::jsonb, 'invalid_payload'),
+        ('7', jsonb_set(jsonb_set(source_row.payload, '{dated}', '"invalid"'), '{teacher_id}', 'null'), 'invalid_date'),
+        ('7', jsonb_set(source_row.payload, '{time_start}', '"25:00"'), 'invalid_start_time'),
+        ('7', jsonb_set(source_row.payload, '{stu_list}', '{}'), 'invalid_student_list'),
+        ('7', jsonb_set(source_row.payload, '{stu_list}', '[]'), 'participant_count_not_one'),
+        ('7', jsonb_set(source_row.payload, '{stu_list,0,mem_id}', 'null'), 'missing_student_id'),
+        ('7', jsonb_set(source_row.payload, '{teacher_id}', 'null'), 'missing_teacher_id'),
+        ('7', jsonb_set(source_row.payload, '{course_id}', 'null'), 'missing_course_id')
+      ) cases(source_id, payload, reason)
+    loop
+      legacy_reason := internal.jiaowubao_authority_native_schedule_skip_reason(
+        source_row.projection_run_id, source_row.source_key, validation_case.source_id, validation_case.payload);
+      grouped_reason := internal.jiaowubao_authority_native_schedule_skip_reason(
+        source_row.projection_run_id, source_row.source_key, validation_case.source_id, validation_case.payload, true);
+      assert legacy_reason = validation_case.reason and grouped_reason = legacy_reason,
+        'Grouped duplicate lookup must preserve every earlier invalid-field reason';
+    end loop;
+    perform public.apply_jiaowubao_open_api_authority_native(
+      'projection-job-fixture-secret', source_row.projection_run_id, 'Ops Admin');
+    assert (select count(*) from internal.jiaowubao_authority_native_quarantine
+      where projection_run_id = source_row.projection_run_id and entity_type = 'schedule'
+        and source_native_id = '7' and reason = 'duplicate_source_id' and active) = 2;
+    assert not exists (select 1 from internal.jiaowubao_authority_native_links
+      where entity_type = 'schedule' and source_native_id = '7' and active),
+      'Both conflicting source keys must remain quarantined rather than become native bookings';
+    raise exception using errcode = 'Z0003';
+  exception when sqlstate 'Z0003' then null;
+  end;
+  assert (select count(*) from internal.jiaowubao_authority_projection_entities
+    where projection_run_id = source_row.projection_run_id and entity_type = 'schedule' and source_native_id = '7') = 1;
+  assert not has_function_privilege('anon', 'internal.jiaowubao_authority_native_schedule_skip_reason(uuid,text,text,jsonb,boolean)', 'execute');
+  assert not has_function_privilege('authenticated', 'internal.jiaowubao_authority_native_schedule_skip_reason(uuid,text,text,jsonb,boolean)', 'execute');
+  assert not has_function_privilege('service_role', 'internal.jiaowubao_authority_native_schedule_skip_reason(uuid,text,text,jsonb,boolean)', 'execute');
+  assert current_setting('work_mem') = '4MB', 'Function-local working memory must restore the caller setting';
 end;
 $$;
 
@@ -122,3 +187,4 @@ begin
 end;
 $$;
 reset statement_timeout;
+reset work_mem;
