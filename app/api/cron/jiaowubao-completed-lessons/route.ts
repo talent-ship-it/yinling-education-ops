@@ -40,7 +40,6 @@ function currentMelbourneMonth(now = new Date()) {
   return month;
 }
 
-/** Sync the last fully completed Melbourne calendar month, never a partial one. */
 function previousMelbourneMonth(now = new Date()) {
   const current = currentMelbourneMonth(now);
   const date = new Date(`${current}-01T00:00:00.000Z`);
@@ -59,7 +58,8 @@ export async function GET(request: Request) {
       if (!pending || (pending.month !== null && (typeof pending.month !== "string" || !/^\d{4}-\d{2}$/u.test(pending.month)))) {
         throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
       }
-      month = pending.month ?? month;
+      if (pending.month === null) return noStore({ outcome: "no_change", month });
+      month = pending.month;
     }
     const sync = await syncJiaowubaoCompletedLessonMonth({
       month,

@@ -1,5 +1,7 @@
 "use client";
 
+import { melbourneHourDate, monthlyHourCoverage } from "@/lib/monthly-hour-period";
+
 import {
   reconcileJiaowubaoCompletedLessonEvidence,
   type JiaowubaoCompletedLessonMatch,
@@ -31,6 +33,8 @@ type PageMetadata = Readonly<{
   pageIndex: number;
   pageCount: number;
   publishedAt: string | null;
+  dataThrough?: string | null;
+  provisional?: boolean;
   /** Hash of the student/teacher mapping state used for this projection. */
   projectionRevision: string | null;
 }>;
@@ -54,6 +58,8 @@ export type JiaowubaoCompletedLessonFeed = Readonly<{
   rowCount: number;
   scheduleRowCount: number;
   publishedAt: string | null;
+  dataThrough?: string | null;
+  provisional?: boolean;
   /** Source revision and this mapping revision must both match across pages. */
   projectionRevision: string | null;
   items: readonly JiaowubaoCompletedLessonFeedItem[];
@@ -68,8 +74,7 @@ export type JiaowubaoCompletedLessonFeed = Readonly<{
   ambiguousTeacherCount: number;
 }>;
 
-/** A payroll lock requires a fully read, current dual-source month. */
-export function jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(input: Readonly<{
+export function jiaowubaoCompletedMonthEvidenceReadyForExport(input: Readonly<{
   feed: JiaowubaoCompletedLessonFeed | null;
   month: string;
   loading: boolean;
@@ -81,6 +86,14 @@ export function jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(input: Readon
     && !input.syncing
     && input.feed?.state === "complete"
     && input.feed.month === input.month;
+}
+
+export function jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(
+  input: Parameters<typeof jiaowubaoCompletedMonthEvidenceReadyForExport>[0],
+) {
+  return jiaowubaoCompletedMonthEvidenceReadyForExport(input)
+    && !monthlyHourCoverage(input.month, input.feed?.dataThrough, input.feed?.provisional).provisional
+    && input.month < melbourneHourDate().slice(0, 7);
 }
 
 /**
@@ -105,11 +118,13 @@ export function jiaowubaoCompletedMonthEvidenceMatchesExportVersion(input: Reado
     && current.revision === fresh.revision
     && current.projectionRevision === fresh.projectionRevision
     && current.rowCount === fresh.rowCount
-    && current.scheduleRowCount === fresh.scheduleRowCount;
+    && current.scheduleRowCount === fresh.scheduleRowCount
+    && current.dataThrough === fresh.dataThrough
+    && current.provisional === fresh.provisional;
 }
 
 const PAGE_FIELDS = new Set([
-  "state", "source", "month", "revision", "rowCount", "pageIndex", "pageCount", "publishedAt", "projectionRevision", "items",
+  "state", "source", "month", "revision", "rowCount", "pageIndex", "pageCount", "publishedAt", "projectionRevision", "items", "dataThrough", "provisional",
 ]);
 const LESSON_FIELDS = new Set([
   "sourceKey", "branchId", "calendarId", "memberId", "memberName", "lessonDate", "timeTitle", "hours", "hoursIssue", "isTrial",
@@ -342,6 +357,11 @@ export function parseJiaowubaoCompletedMonthEvidencePage(value: unknown): Jiaowu
   if (typeof page.revision !== "string" || !SHA256.test(page.revision)
     || typeof page.publishedAt !== "string" || !Number.isFinite(new Date(page.publishedAt).valueOf())
     || pageCount !== expectedPageCount(rowCount)) throw new Error("教务宝完成月度快照分页元资料无效。");
+  if (page.dataThrough !== undefined && typeof page.dataThrough !== "string"
+    || page.provisional !== undefined && typeof page.provisional !== "boolean") throw new Error("课时截止日期无效。");
+  const coverage = monthlyHourCoverage(page.month, page.dataThrough as string | undefined, page.provisional as boolean | undefined);
+  const metadata = { dataThrough: coverage.end, provisional: coverage.provisional };
+  if (items.some((item) => item.lessonDate < coverage.start || item.lessonDate > coverage.end)) throw new Error("课时明细超出截止日期。");
   const publishedAt = new Date(page.publishedAt).toISOString();
   const projectionRevision = page.projectionRevision === null
     ? null
@@ -350,12 +370,12 @@ export function parseJiaowubaoCompletedMonthEvidencePage(value: unknown): Jiaowu
       : (() => { throw new Error("教务宝完成月度映射版本无效。"); })();
   if (page.state === "reset") {
     if (items.length || projectionRevision !== null) throw new Error("教务宝完成月度重置分页不应含有明细。");
-    return Object.freeze({ state: "reset", source, month: page.month, revision: page.revision, rowCount, pageIndex, pageCount, publishedAt, projectionRevision: null, items: [] }) as JiaowubaoCompletedMonthEvidencePage;
+    return Object.freeze({ ...metadata, state: "reset", source, month: page.month, revision: page.revision, rowCount, pageIndex, pageCount, publishedAt, projectionRevision: null, items: [] }) as JiaowubaoCompletedMonthEvidencePage;
   }
   if (!projectionRevision) throw new Error("教务宝完成月度映射版本无效。");
   const expectedItems = expectedPageItems(rowCount, pageIndex, pageCount);
   if (expectedItems === null || items.length !== expectedItems) throw new Error("教务宝完成月度分页行数不一致。");
-  return Object.freeze({ state: "complete", source, month: page.month, revision: page.revision, rowCount, pageIndex, pageCount, publishedAt, projectionRevision, items: Object.freeze(items) }) as JiaowubaoCompletedMonthEvidencePage;
+  return Object.freeze({ ...metadata, state: "complete", source, month: page.month, revision: page.revision, rowCount, pageIndex, pageCount, publishedAt, projectionRevision, items: Object.freeze(items) }) as JiaowubaoCompletedMonthEvidencePage;
 }
 
 function completeSourcePages<T extends JiaowubaoCompletedMonthEvidencePage>(pages: readonly T[], source: Source) {
@@ -372,6 +392,7 @@ function completeSourcePages<T extends JiaowubaoCompletedMonthEvidencePage>(page
   const sourceKeys = new Set<string>();
   for (const page of pages) {
     if (page.source !== source || page.state !== "complete" || page.month !== first.month || page.revision !== first.revision
+      || page.dataThrough !== first.dataThrough || page.provisional !== first.provisional
       || page.rowCount !== first.rowCount || page.pageCount !== first.pageCount || page.projectionRevision !== first.projectionRevision || byIndex.has(page.pageIndex)
       || expectedPageItems(page.rowCount, page.pageIndex, page.pageCount) !== page.items.length) {
       throw new Error("教务宝完成月度分页不是同一份完整快照。");
@@ -392,7 +413,7 @@ function completeSourcePages<T extends JiaowubaoCompletedMonthEvidencePage>(page
     if (!page) throw new Error("教务宝完成月度分页缺失。");
     items.push(...page.items);
   }
-  return Object.freeze({ state: "complete" as const, month: first.month, revision: first.revision, rowCount: first.rowCount, publishedAt: first.publishedAt, projectionRevision: first.projectionRevision, items: Object.freeze(items) });
+  return Object.freeze({ state: "complete" as const, dataThrough: first.dataThrough, provisional: first.provisional, month: first.month, revision: first.revision, rowCount: first.rowCount, publishedAt: first.publishedAt, projectionRevision: first.projectionRevision, items: Object.freeze(items) });
 }
 
 /** Fails closed unless both source feeds are complete for the exact same revision. */
@@ -408,7 +429,8 @@ export function completeJiaowubaoCompletedMonthEvidencePages(input: Readonly<{
     }
     return Object.freeze({ state: "absent", month: lessons.month, revision: null, rowCount: 0, scheduleRowCount: 0, publishedAt: null, projectionRevision: null, items: [], scheduleEvents: [], teachers: [], teacherEvidenceSourceKeys: new Map(), matchedStudentCount: 0, unmatchedStudentCount: 0, ambiguousStudentCount: 0, matchedTeacherCount: 0, unmatchedTeacherCount: 0, ambiguousTeacherCount: 0 });
   }
-  if (lessons.month !== schedules.month || lessons.revision !== schedules.revision || lessons.projectionRevision !== schedules.projectionRevision) {
+  if (lessons.month !== schedules.month || lessons.revision !== schedules.revision || lessons.projectionRevision !== schedules.projectionRevision
+    || lessons.dataThrough !== schedules.dataThrough || lessons.provisional !== schedules.provisional) {
     throw new Error("教务宝完成月度来源版本不一致。");
   }
   const items = lessons.items as readonly JiaowubaoCompletedLessonFeedItem[];
@@ -417,6 +439,8 @@ export function completeJiaowubaoCompletedMonthEvidencePages(input: Readonly<{
   const countStudents = (value: JiaowubaoCompletedLessonMatch) => items.filter((item) => item.studentMatch === value).length;
   return Object.freeze({
     state: "complete",
+    dataThrough: lessons.dataThrough,
+    provisional: lessons.provisional,
     month: lessons.month,
     revision: lessons.revision,
     rowCount: lessons.rowCount,

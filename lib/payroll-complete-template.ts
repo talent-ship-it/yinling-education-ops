@@ -1,3 +1,4 @@
+import { monthlyHourCoverage } from "@/lib/monthly-hour-period";
 import type { PayrollWorkbookExport } from "@/lib/payroll-export";
 import { completeHourAttendance, completeHourGroups, completeHourRecords, completeHourSum, type CompleteHourRecord } from "@/lib/payroll-complete-hours";
 
@@ -96,9 +97,9 @@ function sourceSheet(input: PayrollWorkbookExport, records: CompleteHourRecord[]
   const evidence = input.evidence!;
   const roleHours = total(records);
   const studentHours = completeHourSum(evidence.lessons.map((lesson) => lesson.hours));
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const coverage = monthlyHourCoverage(input.month, evidence.dataThrough, evidence.provisional);
   const summary: [string, Value][] = [
-    ["数据来源", `教务宝｜${input.month}-01 至 ${input.month}-${lastDay}｜已结课双源快照`],
+    ["数据来源", `教务宝｜${coverage.start} 至 ${coverage.end}｜${coverage.provisional ? "月中核对版，不用于锁定薪资" : "完整月份"}｜已结课双源快照`],
     ["提取方式", "教务宝开放 API：query_schedule_list 老师角色课时；query_lesson_list 学生、课程与签到记录。"],
     ["课节记录", evidence.scheduleRowCount], ["教师人数", groups.length],
     ["教师总课时", roleHours ?? "待核对"], ["学员总课时", studentHours ?? "待核对"],

@@ -31,12 +31,13 @@ test("absent-month refresh is read-only and discards a response after month clea
   assert.doesNotMatch(refresh, /syncJiaowubaoCompletedLessons|method:\s*"POST"/u);
 });
 
-test("absent-month refresh requires a closed month, absent feed and idle payroll view", () => {
+test("absent-month refresh requires a non-future month, absent feed and idle payroll view", () => {
   const ready = {
     canView: true, active: "payroll", month: "2026-09", currentMonth: "2026-10",
     feed: { state: "absent", month: "2026-09" }, loading: false, syncing: false, exporting: false,
   };
   assert.equal(canPollAbsentPayrollMonth(ready), true);
+  assert.equal(canPollAbsentPayrollMonth({ ...ready, month: "2026-10", feed: { state: "absent", month: "2026-10" } }), true);
   assert.equal(canPollAbsentPayrollMonth({ ...ready, month: "2026-10" }), false);
   assert.equal(canPollAbsentPayrollMonth({ ...ready, feed: { state: "complete", month: "2026-09" } }), false);
   assert.equal(canPollAbsentPayrollMonth({ ...ready, feed: { state: "absent", month: "2026-08" } }), false);

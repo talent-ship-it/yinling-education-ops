@@ -969,7 +969,6 @@ export const JIAOWUBAO_COMPLETED_LESSON_LEASE_CLAIM_RPC = "claim_jiaowubao_compl
 export const JIAOWUBAO_COMPLETED_LESSON_LEASE_RELEASE_RPC = "release_jiaowubao_completed_lesson_sync_lease";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_GET_RPC = "get_jiaowubao_completed_lesson_member_collection";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_PENDING_RPC = "get_jiaowubao_completed_lesson_pending_month";
-export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_BEGIN_RPC = "begin_jiaowubao_completed_lesson_member_collection";
 export const JIAOWUBAO_COMPLETED_LESSON_MEMBER_RESERVE_RPC = "reserve_jiaowubao_completed_lesson_api_request";
 export const JIAOWUBAO_OPEN_API_SCHEDULE_RESERVE_RPC = "reserve_jiaowubao_open_api_schedule_request";
 const JIAOWUBAO_SCHEDULE_HORIZON_BEGIN_RPC = "begin_jiaowubao_schedule_horizon_collection";
@@ -1256,6 +1255,8 @@ export type JiaowubaoCompletedLessonSnapshotPage = Readonly<{
   pageCount: number;
   publishedAt: string | null;
   items: readonly Readonly<{ sourceKey: string; record: Readonly<Record<string, unknown>> }>[];
+  dataThrough?: string | null;
+  provisional?: boolean;
 }>;
 
 export type JiaowubaoCompletedLessonSyncLease = Readonly<{
@@ -1284,6 +1285,8 @@ export type JiaowubaoCompletedLessonMemberCollection = Readonly<{
   nextPage?: number | null;
   expectedTotal?: number | null;
   targetVersion?: number | null;
+  dataThrough?: string;
+  publishedAt?: string | null;
 }>;
 
 export type JiaowubaoCompletedLessonMemberItemsPage = Readonly<{
@@ -2334,6 +2337,7 @@ export function getJiaowubaoCompletedLessonPendingMonth(input: { actor: "Ops Adm
 
 export function beginJiaowubaoCompletedLessonMemberCollection(input: {
   month: string;
+  dataThrough: string;
   runKey: string;
   scheduleRevision: string;
   scheduleMemberIds: readonly number[];
@@ -2343,9 +2347,10 @@ export function beginJiaowubaoCompletedLessonMemberCollection(input: {
   actor: "Ops Admin";
 }) {
   const { secret } = configuration();
-  return rpc<JiaowubaoCompletedLessonMemberCollection>(JIAOWUBAO_COMPLETED_LESSON_MEMBER_BEGIN_RPC, {
+  return rpc<JiaowubaoCompletedLessonMemberCollection>("begin_jiaowubao_completed_lesson_member_collection_window", {
     p_secret: secret,
     p_month: input.month,
+    p_data_through: input.dataThrough,
     p_run_key: input.runKey,
     p_schedule_revision: input.scheduleRevision,
     p_schedule_member_ids: input.scheduleMemberIds,

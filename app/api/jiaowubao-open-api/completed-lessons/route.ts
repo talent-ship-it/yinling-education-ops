@@ -1,10 +1,10 @@
+import { monthlyHourCollectionPeriod, monthlyHourCoverage } from "@/lib/monthly-hour-period";
 import { createHash } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
   readJiaowubaoCompletedLessonSnapshotRecord,
-  validateJiaowubaoClosedCompletedLessonMonth,
   validateJiaowubaoCompletedLessonMonth,
 } from "@/lib/jiaowubao-completed-lessons";
 import { readJiaowubaoCompletedScheduleSnapshotRecord } from "@/lib/jiaowubao-completed-schedule";
@@ -185,6 +185,8 @@ async function currentProjectionPage(input: Readonly<{
     }
     return Object.freeze({ state: "absent" as const, source: input.source, month: input.month, items: [], revision: null, rowCount: 0, pageIndex: 0, pageCount: 0, publishedAt: null, projectionRevision: null });
   }
+  const coverage = monthlyHourCoverage(input.month, snapshot.dataThrough, snapshot.provisional);
+  const coverageMetadata = { dataThrough: coverage.end, provisional: coverage.provisional };
   const revision = validRevision(snapshot.revision);
   const rowCount = typeof snapshot.rowCount === "number" ? snapshot.rowCount : null;
   const pageIndex = typeof snapshot.pageIndex === "number" ? snapshot.pageIndex : null;
@@ -204,6 +206,7 @@ async function currentProjectionPage(input: Readonly<{
   if (snapshot.state === "reset") {
     if (snapshot.items.length !== 0) throw new CompletedLessonSnapshotResponseError("reset_snapshot_has_items");
     return Object.freeze({
+      ...coverageMetadata,
       state: "reset" as const,
       source: input.source,
       month: input.month,
@@ -226,6 +229,7 @@ async function currentProjectionPage(input: Readonly<{
     // `reset` is deliberately returned instead of remapping one continuation
     // page with newer identities. The browser restarts both feeds together.
     return Object.freeze({
+      ...coverageMetadata,
       state: "reset" as const,
       source: input.source,
       month: input.month,
@@ -250,6 +254,7 @@ async function currentProjectionPage(input: Readonly<{
     });
     const projection = projectJiaowubaoCompletedLessonRecords({ records, stateRows });
     return Object.freeze({
+      ...coverageMetadata,
       state: "complete" as const,
       source: input.source,
       month: input.month,
@@ -273,6 +278,7 @@ async function currentProjectionPage(input: Readonly<{
   });
   const projection = projectJiaowubaoCompletedLessonRecords({ records: [], scheduleRecords: records, stateRows });
   return Object.freeze({
+    ...coverageMetadata,
     state: "complete" as const,
     source: input.source,
     month: input.month,
@@ -332,9 +338,9 @@ export async function POST(request: Request) {
   const force = payload.force === undefined ? false : payload.force === true;
   if (payload.force !== undefined && !force) return noStore({ error: "force 必须为 true。" }, 400);
   try {
-    validateJiaowubaoClosedCompletedLessonMonth(month);
+    monthlyHourCollectionPeriod(month);
   } catch {
-    return noStore({ error: "只能同步已完整结束的墨尔本自然月。" }, 400);
+    return noStore({ error: "只能同步截至墨尔本昨日的已消课资料。" }, 400);
   }
   if (!consumeManualSync(access.actor)) {
     return noStore({ error: "已消课同步请求过于频繁，请稍后再试。", code: "jiaowubao_completed_lesson_rate_limited" }, 429);
