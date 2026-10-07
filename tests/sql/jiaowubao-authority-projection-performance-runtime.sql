@@ -2,7 +2,77 @@
 
 set statement_timeout = '3s';
 set work_mem = '4MB';
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+create temporary table fixture_preparation_receipt(receipt jsonb not null);
+create temporary table fixture_visible_before as
+select internal.fixture_authority_result() as result,
+  (select jsonb_agg(to_jsonb(c)) from internal.jiaowubao_authority_current c) as current_pointer,
+  (select jsonb_agg(to_jsonb(s)) from public.ops_source_snapshots s) as health;
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+do $$
+declare
+  repeated jsonb;
+  original_id uuid := (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt);
+  run_count integer := (select count(*) from internal.jiaowubao_authority_projection_runs);
+  entity_count integer := (select count(*) from internal.jiaowubao_authority_projection_entities);
+  rejected boolean;
+  bad_input record;
+begin
+  assert internal.fixture_authority_result() = (select result from fixture_visible_before);
+  assert (select jsonb_agg(to_jsonb(c)) from internal.jiaowubao_authority_current c)
+    is not distinct from (select current_pointer from fixture_visible_before);
+  assert (select jsonb_agg(to_jsonb(s)) from public.ops_source_snapshots s)
+    is not distinct from (select health from fixture_visible_before),
+    'Preparation must leave native documents, links, quarantine, public health and current projection untouched';
+  repeated := public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+  assert (repeated ->> 'projectionRunId')::uuid = original_id and (repeated ->> 'replayed')::boolean;
+  assert run_count = (select count(*) from internal.jiaowubao_authority_projection_runs)
+    and entity_count = (select count(*) from internal.jiaowubao_authority_projection_entities),
+    'An interrupted worker must reuse the exact immutable preparation';
+  assert (select count(*) from internal.jiaowubao_authority_current) = 0;
+  assert (select count(*) from public.ops_source_snapshots) = 0;
+  for bad_input in select * from (values
+    ('wrong'::text, 'Ops Admin'::text), (null, 'Ops Admin'),
+    ('projection-job-fixture-secret', 'Nixon'), ('projection-job-fixture-secret', null)
+  ) inputs(secret, actor)
+  loop
+    rejected := false;
+    begin
+      perform public.prepare_jiaowubao_open_api_authority(bad_input.secret, 'sha256:' || repeat('a', 64), bad_input.actor);
+    exception when insufficient_privilege then rejected := true;
+    end;
+    assert rejected;
+    rejected := false;
+    begin
+      perform public.complete_jiaowubao_open_api_authority(bad_input.secret, 'sha256:' || repeat('a', 64), original_id, bad_input.actor);
+    exception when insufficient_privilege then rejected := true;
+    end;
+    assert rejected;
+  end loop;
+  rejected := false;
+  begin
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), gen_random_uuid(), 'Ops Admin');
+  exception when serialization_failure then
+    assert sqlerrm = 'jiaowubao_authority_prepare_stale'; rejected := true;
+  end;
+  assert rejected;
+  rejected := false;
+  begin
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('b', 64), original_id, 'Ops Admin');
+  exception when serialization_failure then
+    assert sqlerrm = 'jiaowubao_authority_snapshot_revision_changed'; rejected := true;
+  end;
+  assert rejected;
+  assert not has_function_privilege('anon', 'public.project_jiaowubao_open_api_authority_read_model(text,text,text,boolean)', 'execute');
+  assert not has_function_privilege('authenticated', 'public.project_jiaowubao_open_api_authority_read_model(text,text,text,boolean)', 'execute');
+  assert not has_function_privilege('service_role', 'public.project_jiaowubao_open_api_authority_read_model(text,text,text,boolean)', 'execute');
+  assert has_function_privilege('anon', 'public.prepare_jiaowubao_open_api_authority(text,text,text)', 'execute');
+  assert has_function_privilege('authenticated', 'public.complete_jiaowubao_open_api_authority(text,text,uuid,text)', 'execute');
+end;
+$$;
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
   assert internal.fixture_authority_result() = (select result from internal.fixture_authority_expected where phase = 'initial'),
@@ -81,7 +151,31 @@ end;
 $$;
 
 select internal.fixture_authority_native_edit();
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+do $$
+declare before_result jsonb := internal.fixture_authority_result(); rejected boolean := false;
+  before_runs integer := (select count(*) from internal.jiaowubao_authority_projection_runs);
+  before_pointer jsonb := (select to_jsonb(c) from internal.jiaowubao_authority_current c);
+  before_health jsonb := (select to_jsonb(s) from public.ops_source_snapshots s);
+begin
+  begin
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+      (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin');
+  exception when serialization_failure then
+    assert sqlerrm = 'jiaowubao_authority_prepare_stale'; rejected := true;
+  end;
+  assert rejected;
+  assert before_runs = (select count(*) from internal.jiaowubao_authority_projection_runs);
+  assert before_result = internal.fixture_authority_result();
+  assert before_pointer = (select to_jsonb(c) from internal.jiaowubao_authority_current c);
+  assert before_health = (select to_jsonb(s) from public.ops_source_snapshots s),
+    'Native-version drift must require preparation again without recomputing or publishing inside completion';
+end;
+$$;
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 declare rejected boolean := false;
 begin
@@ -103,7 +197,11 @@ end;
 $$;
 
 select internal.fixture_seed_authority(4470, 6503, 754, 271, 2183);
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
   assert (select count(*) from internal.jiaowubao_authority_native_links where entity_type = 'schedule' and active) = 4470;
@@ -113,8 +211,16 @@ begin
 end;
 $$;
 
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 declare before_result jsonb := internal.fixture_authority_result(); rejected boolean := false;
 begin
@@ -135,7 +241,11 @@ end;
 $$;
 
 select internal.fixture_seed_authority(6000, 12000, 1109, 271, 2183);
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
   assert (select count(*) from internal.jiaowubao_authority_native_links where entity_type = 'schedule' and active) = 6000;
@@ -152,7 +262,30 @@ select '10000000-0000-4000-8000-000000000002', source_key,
 from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
 update internal.jiaowubao_open_api_schedule_snapshot_current set
   run_id = '10000000-0000-4000-8000-000000000002', revision = 'sha256:' || repeat('b', 64);
-select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('b', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('b', 64), 'Ops Admin');
+do $$
+declare rejected boolean := false;
+  before_pointer jsonb := (select to_jsonb(c) from internal.jiaowubao_authority_current c);
+  before_health jsonb := (select to_jsonb(s) from public.ops_source_snapshots s);
+  prior_id uuid := (select projection_run_id from internal.jiaowubao_authority_current);
+begin
+  assert before_pointer ->> 'snapshot_revision' = 'sha256:' || repeat('a', 64);
+  assert before_health #>> '{payload,snapshotRevision}' = 'sha256:' || repeat('a', 64),
+    'Preparing a new source revision must keep the previous published revision visible';
+  begin
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('b', 64), prior_id, 'Ops Admin');
+  exception when serialization_failure then
+    assert sqlerrm = 'jiaowubao_authority_prepare_stale'; rejected := true;
+  end;
+  assert rejected, 'A prepared ID from another snapshot must never be applied';
+  assert before_pointer = (select to_jsonb(c) from internal.jiaowubao_authority_current c);
+  assert before_health = (select to_jsonb(s) from public.ops_source_snapshots s);
+end;
+$$;
+select public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('b', 64),
+  (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin') #> '{nativeApply,nativeCounts}';
 do $$
 begin
   assert (select item ->> 'date' from public.ops_state,
@@ -163,6 +296,9 @@ end;
 $$;
 
 select internal.fixture_seed_authority(16, 20, 16, 16, 16);
+truncate fixture_preparation_receipt;
+insert into fixture_preparation_receipt
+select public.prepare_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
 create function internal.fixture_reject_teacher_write() returns trigger language plpgsql as $$
 begin
   if new.entity = 'teachers' then raise exception using errcode = 'Z0002'; end if;
@@ -175,15 +311,56 @@ do $$
 declare before_result jsonb := internal.fixture_authority_result(); rejected boolean := false;
 begin
   begin
-    perform public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin');
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+      (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin');
   exception when sqlstate 'Z0002' then rejected := true;
   end;
   assert rejected;
   assert internal.fixture_authority_result() = before_result, 'A late write failure must roll back projection, links, quarantine and native documents together';
-  assert (select count(*) from internal.operational_contract_audit) = 0;
-  assert (select count(*) from internal.jiaowubao_authority_projection_runs) = 0;
+  assert (select count(*) from internal.operational_contract_audit) = 1;
+  assert (select count(*) from internal.jiaowubao_authority_projection_runs) = 1;
+  assert (select summary <> '{}'::jsonb from internal.jiaowubao_authority_projection_runs),
+    'A failed completion must preserve the earlier committed immutable preparation';
   assert (select count(*) from internal.jiaowubao_authority_current) = 0;
   assert (select count(*) from public.ops_source_snapshots) = 0;
+end;
+$$;
+drop trigger fixture_reject_teacher_write on public.ops_state;
+create function internal.fixture_reject_final_authority_health() returns trigger language plpgsql as $$
+begin
+  if new.payload ? 'nativeApply' then
+    assert exists (select 1 from public.ops_state where version > 1),
+      'The final publication failure must occur after native writes';
+    raise exception using errcode = 'Z0004';
+  end if;
+  return new;
+end;
+$$;
+create trigger fixture_reject_final_authority_health before update on public.ops_source_snapshots
+for each row execute function internal.fixture_reject_final_authority_health();
+do $$
+declare before_result jsonb := internal.fixture_authority_result(); rejected boolean := false;
+begin
+  begin
+    perform public.complete_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64),
+      (select (receipt ->> 'projectionRunId')::uuid from fixture_preparation_receipt), 'Ops Admin');
+  exception when sqlstate 'Z0004' then rejected := true;
+  end;
+  assert rejected;
+  assert internal.fixture_authority_result() = before_result,
+    'A final publication failure must roll back already written native data and the final projection together';
+  assert (select count(*) from internal.operational_contract_audit) = 1;
+  assert (select count(*) from internal.jiaowubao_authority_projection_runs) = 1;
+  assert (select count(*) from internal.jiaowubao_authority_current) = 0;
+  assert (select count(*) from public.ops_source_snapshots) = 0;
+end;
+$$;
+drop trigger fixture_reject_final_authority_health on public.ops_source_snapshots;
+select public.project_jiaowubao_open_api_authority('projection-job-fixture-secret', 'sha256:' || repeat('a', 64), 'Ops Admin') #> '{nativeApply,nativeCounts}';
+do $$
+begin
+  assert (select count(*) from internal.jiaowubao_authority_current) = 1,
+    'The original monolithic RPC must remain compatible';
 end;
 $$;
 reset statement_timeout;

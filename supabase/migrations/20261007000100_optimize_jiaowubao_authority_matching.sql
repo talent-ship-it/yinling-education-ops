@@ -695,3 +695,131 @@ $lookup$;
   execute replace(definition, anchor, replacement);
 end;
 $skip_reused_source_names$;
+
+do $split_authority_preparation$
+declare
+  target_oid regprocedure := 'public.project_jiaowubao_open_api_authority_read_model(text,text,text)'::regprocedure;
+  definition text := pg_catalog.pg_get_functiondef(target_oid);
+  anchor text;
+  replacement text;
+begin
+  anchor := 'public.project_jiaowubao_open_api_authority_read_model(p_secret text, p_revision text, p_actor text)';
+  if position(anchor in definition) = 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_preparation_signature_mismatch';
+  end if;
+  definition := replace(definition, anchor,
+    'public.project_jiaowubao_open_api_authority_read_model(p_secret text, p_revision text, p_actor text, p_publish boolean)');
+  anchor := $anchor$    insert into internal.jiaowubao_authority_current(api_source_key, projection_run_id, snapshot_revision, checked_at)$anchor$;
+  replacement := $replacement$    if p_publish is not true then return summary_value; end if;
+$replacement$ || anchor;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_preparation_replay_anchor_mismatch';
+  end if;
+  definition := replace(definition, anchor, replacement);
+  anchor := $anchor$
+  insert into internal.jiaowubao_authority_current(api_source_key, projection_run_id, snapshot_revision, checked_at)$anchor$;
+  replacement := $replacement$
+  if p_publish is not true then return summary_value || jsonb_build_object('replayed', false); end if;
+$replacement$ || anchor;
+  if position(anchor in definition) = 0
+     or position(anchor in substr(definition, position(anchor in definition) + char_length(anchor))) <> 0 then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_preparation_publish_anchor_mismatch';
+  end if;
+  execute replace(definition, anchor, replacement);
+end;
+$split_authority_preparation$;
+
+revoke all on function public.project_jiaowubao_open_api_authority_read_model(text,text,text,boolean)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.project_jiaowubao_open_api_authority_read_model(
+  p_secret text, p_revision text, p_actor text
+)
+returns jsonb language sql security definer set search_path = '' set statement_timeout = '110s' as $$
+  select public.project_jiaowubao_open_api_authority_read_model(p_secret, p_revision, p_actor, true)
+$$;
+revoke all on function public.project_jiaowubao_open_api_authority_read_model(text,text,text)
+  from public, anon, authenticated, service_role;
+
+create or replace function public.prepare_jiaowubao_open_api_authority(
+  p_secret text, p_revision text, p_actor text
+)
+returns jsonb language plpgsql security definer set search_path = '' set statement_timeout = '110s' as $$
+begin
+  if not coalesce(internal.verify_ops_secret(p_secret), false) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if p_actor is distinct from 'Ops Admin' or p_revision is null or p_revision !~ '^sha256:[a-f0-9]{64}$' then
+    raise exception using errcode = '42501', message = 'jiaowubao_authority_projection_forbidden';
+  end if;
+  return public.project_jiaowubao_open_api_authority_read_model(p_secret, p_revision, p_actor, false);
+end;
+$$;
+revoke all on function public.prepare_jiaowubao_open_api_authority(text,text,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.prepare_jiaowubao_open_api_authority(text,text,text) to anon, authenticated;
+
+create or replace function public.complete_jiaowubao_open_api_authority(
+  p_secret text, p_revision text, p_prepared_projection_run_id uuid, p_actor text
+)
+returns jsonb language plpgsql security definer set search_path = '' set statement_timeout = '110s' as $$
+declare
+  current_row internal.jiaowubao_open_api_schedule_snapshot_current%rowtype;
+  native_versions jsonb;
+  native_sha256 text;
+begin
+  if not coalesce(internal.verify_ops_secret(p_secret), false) then
+    raise exception using errcode = '42501', message = 'invalid_ops_secret';
+  end if;
+  if p_actor is distinct from 'Ops Admin' or p_revision is null or p_revision !~ '^sha256:[a-f0-9]{64}$' then
+    raise exception using errcode = '42501', message = 'jiaowubao_authority_projection_forbidden';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('jiaowubao-authority-projection:jwb-open-api-schedule', 0)
+  );
+  select * into current_row
+  from internal.jiaowubao_open_api_schedule_snapshot_current current_snapshot
+  where current_snapshot.api_source_key = 'jwb-open-api-schedule'
+  for update;
+  if not found or current_row.revision is distinct from p_revision then
+    raise exception using errcode = '40001', message = 'jiaowubao_authority_snapshot_revision_changed';
+  end if;
+  if not exists (
+    select 1 from internal.jiaowubao_open_api_schedule_snapshot_ingest_runs source_run
+    where source_run.id = current_row.run_id and source_run.state = 'complete'
+      and source_run.revision = p_revision and source_run.api_source_key = current_row.api_source_key
+  ) then
+    raise exception using errcode = '55000', message = 'jiaowubao_authority_snapshot_invalid';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('jiaowubao-authority-native-apply:jwb-open-api-schedule', 0)
+  );
+  perform 1 from public.ops_state state
+  where state.entity in ('bookings','courses','students','teachers')
+  order by state.entity
+  for update;
+  select jsonb_object_agg(state.entity, state.version order by state.entity) into native_versions
+  from public.ops_state state
+  where state.entity in ('bookings','courses','students','teachers');
+  native_sha256 := 'sha256:' || encode(extensions.digest(
+    pg_catalog.convert_to(native_versions::text, 'UTF8'), 'sha256'
+  ), 'hex');
+  if not exists (
+    select 1 from internal.jiaowubao_authority_projection_runs prepared
+    where prepared.id = p_prepared_projection_run_id
+      and prepared.api_source_key = current_row.api_source_key
+      and prepared.snapshot_run_id = current_row.run_id
+      and prepared.snapshot_revision = p_revision
+      and prepared.native_state_versions = native_versions
+      and prepared.native_state_sha256 = native_sha256
+      and prepared.summary <> '{}'::jsonb
+  ) then
+    raise exception using errcode = '40001', message = 'jiaowubao_authority_prepare_stale';
+  end if;
+  return public.project_jiaowubao_open_api_authority(p_secret, p_revision, p_actor);
+end;
+$$;
+revoke all on function public.complete_jiaowubao_open_api_authority(text,text,uuid,text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.complete_jiaowubao_open_api_authority(text,text,uuid,text) to anon, authenticated;
