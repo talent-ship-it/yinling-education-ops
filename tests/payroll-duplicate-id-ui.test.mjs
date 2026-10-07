@@ -27,7 +27,7 @@ test("payroll export and locking fail closed on stale or missing current JWB evi
   assert.match(source, /setJiaowubaoCompletedLessonFeed\(freshFeed\);[\s\S]*return;/);
   assert.match(source, /const currentEvidence = currentJiaowubaoPayrollExportEvidence\(source\)/);
   assert.match(source, /const sourceVersionIsCurrent = jiaowubaoPayrollSourceVersionIsCurrent\(\{[\s\S]*persistedSourceRevision: row\.sourceRevision,[\s\S]*currentSourceRevision: freshFeed\.revision/);
-  assert.match(source, /paymentMode = row\.paymentReviewOnly \|\| !source \|\| !sourceVersionIsCurrent[\s\S]*!jiaowubaoCompletedLessonCanGeneratePayroll\(source\.summary\) \|\| row\.status === "需核对"/);
+  assert.match(source, /paymentMode = freshFeed\.provisional \|\| row\.paymentReviewOnly \|\| !source \|\| !sourceVersionIsCurrent[\s\S]*!jiaowubaoCompletedLessonCanGeneratePayroll\(source\.summary\) \|\| row\.status === "需核对"/);
   assert.match(source, /sourceHours: currentEvidence\.sourceHours,[\s\S]*sourceLessonCount: currentEvidence\.sourceLessonCount,[\s\S]*lines: currentEvidence\.lines/);
   assert.doesNotMatch(source, /source\?\.summary\.sourceHours \?\? row\.sourceHours/);
   assert.doesNotMatch(source, /lines: \(row\.lines \?\? \[\]\)\.map/);
@@ -35,7 +35,7 @@ test("payroll export and locking fail closed on stale or missing current JWB evi
   assert.match(source, /if \(!jiaowubaoPayrollSourceVersionIsCurrent\(\{[\s\S]*persistedSourceRevision: row\.sourceRevision,[\s\S]*currentSourceRevision: feed\.revision/);
   assert.match(source, /const sourceReviewReason = currentFeedForRow && sourceEvidence[\s\S]*!source[\s\S]*当前月份没有教务宝来源资料[\s\S]*!jiaowubaoPayrollSourceVersionIsCurrent[\s\S]*JIAOWUBAO_PAYROLL_SOURCE_VERSION_REVIEW_REASON/);
   assert.match(source, /currentFeedForRow \? \{[\s\S]*sourceHours: null,[\s\S]*sourceLessonCount: null,[\s\S]*lines: \[\] as PayrollLine\[\]/);
-  assert.match(source, /const canExportCurrentPayroll = hasReadyJiaowubaoEvidenceForPayrollMonth[\s\S]*&& !jiaowubaoCompletedLessonExporting/);
+  assert.match(source, /const canExportCurrentPayroll = jiaowubaoCompletedMonthEvidenceReadyForExport[\s\S]*&& !jiaowubaoCompletedLessonExporting/);
   assert.match(source, /jiaowubaoCompletedLessonExporting \? "校验来源…" : "导出本月 Excel"/);
 });
 

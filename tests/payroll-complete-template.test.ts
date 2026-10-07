@@ -248,3 +248,16 @@ test("unallocated trial schedule credits keep the course flag without student al
     }
   }
 });
+
+
+test("partial months export the same four sheets with exact cutoff and blank salary fields", async () => {
+  const evidence = { ...fixture(), dataThrough: "2026-09-20", provisional: true };
+  const input = workbook(evidence);
+  const result = await sheets(input);
+  assert.deepEqual(result.map((sheet) => sheet.name), ["Sheet1", "学生明细", "课节原始明细", "数据说明"]);
+  assert.match(JSON.stringify(result[3].rows), /2026-09-01 至 2026-09-20/u);
+  assert.match(JSON.stringify(result[3].rows), /月中核对版/u);
+  for (const index of [4, 5, 7]) assert.ok(!result[0].rows[3][index]);
+  assert.throws(() => buildPayrollXlsx({ ...input, exportMode: undefined }), /月中/u);
+  assert.throws(() => buildPayrollXlsx(workbook({ ...evidence, dataThrough: "2026-09-14" })), /截止/u);
+});

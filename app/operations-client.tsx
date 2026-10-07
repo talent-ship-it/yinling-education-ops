@@ -204,6 +204,7 @@ import {
   completeJiaowubaoCompletedMonthEvidencePages,
   jiaowubaoCompletedMonthEvidenceMatchesExportVersion,
   jiaowubaoCompletedMonthEvidenceReadyForPayrollLock,
+  jiaowubaoCompletedMonthEvidenceReadyForExport,
   parseJiaowubaoCompletedMonthEvidencePage,
   type JiaowubaoCompletedLessonFeed,
   type JiaowubaoCompletedLessonFeedItem,
@@ -9705,7 +9706,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       error: jiaowubaoCompletedLessonError,
       syncing: jiaowubaoCompletedLessonSyncing,
     });
-    const canExportCurrentPayroll = hasReadyJiaowubaoEvidenceForPayrollMonth
+    const hasCollectablePayrollDates = activePayrollMonth < melbourneExamMonth
+      || activePayrollMonth === melbourneExamMonth && !isoDateInTimezone(new Date(), "Australia/Melbourne").endsWith("-01");
+    const canExportCurrentPayroll = jiaowubaoCompletedMonthEvidenceReadyForExport({
+      feed: jiaowubaoCompletedLessonFeed, month: activePayrollMonth,
+      loading: jiaowubaoCompletedLessonLoading, error: jiaowubaoCompletedLessonError,
+      syncing: jiaowubaoCompletedLessonSyncing,
+    })
       && !jiaowubaoCompletedLessonExporting
       && (monthPayroll.length > 0 || unmatchedJiaowubaoPayrollExportRows.length > 0);
     const cnyTotal = monthPayroll
@@ -9962,7 +9969,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
     const exportCurrentPayroll = async () => {
       if (jiaowubaoCompletedLessonExportRunRef.current) return;
-      if (!hasReadyJiaowubaoEvidenceForPayrollMonth || !jiaowubaoCompletedLessonFeed) {
+      if (!canExportCurrentPayroll || !jiaowubaoCompletedLessonFeed) {
         notify("该月份的教务宝双源资料尚未完整读取，不能导出完整版。");
         return;
       }
@@ -10019,7 +10026,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 currentSourceRevision: freshFeed.revision,
                 currentProjectionRevision: freshFeed.projectionRevision,
               });
-              const paymentMode = row.paymentReviewOnly || !source || !sourceVersionIsCurrent
+              const paymentMode = freshFeed.provisional || row.paymentReviewOnly || !source || !sourceVersionIsCurrent
                 || !jiaowubaoCompletedLessonCanGeneratePayroll(source.summary) || row.status === "需核对"
                 ? "review_only"
                 : "payable";
@@ -10077,6 +10084,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               revision: freshFeed.revision,
               projectionRevision: freshFeed.projectionRevision,
               publishedAt: freshFeed.publishedAt,
+              dataThrough: freshFeed.dataThrough,
+              provisional: freshFeed.provisional,
               lessonRowCount: freshFeed.rowCount,
               scheduleRowCount: freshFeed.scheduleRowCount,
               teacherLessonSourceKeys,
@@ -10129,8 +10138,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <button
                 className="secondary-button"
                 type="button"
-                disabled={jiaowubaoCompletedLessonLoading || jiaowubaoCompletedLessonSyncing || jiaowubaoCompletedLessonExporting || activePayrollMonth >= melbourneExamMonth}
-                title={activePayrollMonth >= melbourneExamMonth ? "只能同步已完整结束的墨尔本自然月" : undefined}
+                disabled={jiaowubaoCompletedLessonLoading || jiaowubaoCompletedLessonSyncing || jiaowubaoCompletedLessonExporting || !hasCollectablePayrollDates}
+                title={!hasCollectablePayrollDates ? "该月份暂无截至昨日的课时" : undefined}
                 onClick={() => void syncJiaowubaoCompletedLessons()}
               >
                 <RefreshCw size={17} /> {jiaowubaoCompletedLessonSyncing ? "正在同步已消课…" : "同步教务宝已消课"}
@@ -10151,9 +10160,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ) : jiaowubaoCompletedLessonError ? (
           <div className="form-notice" role="status"><CircleAlert size={16} /> 教务宝已消课快照暂时不可用；不会用空资料覆盖现有薪资记录。</div>
         ) : jiaowubaoCompletedLessonFeed?.state === "complete" ? (
-          <div className="form-notice" role="status"><Database size={16} /> 已接入 {jiaowubaoCompletedLessonFeed.rowCount} 条学生已消课明细和 {jiaowubaoCompletedLessonFeed.scheduleRowCount} 条已消课排课角色资料（均为 over=1）。学生明细补齐姓名；老师课时只取排课角色字段。{jiaowubaoCompletedLessonFeed.unmatchedStudentCount + jiaowubaoCompletedLessonFeed.ambiguousStudentCount} 条学生待核对，{jiaowubaoCompletedLessonFeed.teachers.reduce((count, teacher) => count + teacher.unresolvedLessonCount + teacher.unresolvedTrialLessonCount, 0)} 个老师来源项目待核对；待核对项目会作为只读来源明细附在 Excel 中，不写入薪资或付款资料。</div>
+          <div className="form-notice" role="status"><Database size={16} /> 截至 {jiaowubaoCompletedLessonFeed.dataThrough}（{jiaowubaoCompletedLessonFeed.provisional ? "月中核对版" : "完整月份"}）。已接入 {jiaowubaoCompletedLessonFeed.rowCount} 条学生已消课明细和 {jiaowubaoCompletedLessonFeed.scheduleRowCount} 条已消课排课角色资料（均为 over=1）。学生明细补齐姓名；老师课时只取排课角色字段。{jiaowubaoCompletedLessonFeed.unmatchedStudentCount + jiaowubaoCompletedLessonFeed.ambiguousStudentCount} 条学生待核对，{jiaowubaoCompletedLessonFeed.teachers.reduce((count, teacher) => count + teacher.unresolvedLessonCount + teacher.unresolvedTrialLessonCount, 0)} 个老师来源项目待核对；待核对项目会作为只读来源明细附在 Excel 中，不写入薪资或付款资料。</div>
         ) : jiaowubaoCompletedLessonFeed?.state === "absent" ? (
-          <div className="form-notice" role="status"><CircleAlert size={16} /> {activePayrollMonth} 尚未同步已发布的教务宝已消课快照；点击“同步教务宝已消课”开始。</div>
+          <div className="form-notice" role="status"><CircleAlert size={16} /> {activePayrollMonth} 尚无已发布的课时资料。</div>
         ) : null}
         {sourceOnlyPayrollTeachers.length > 0 ? (
           <section className="panel" aria-label="教务宝待核对老师">

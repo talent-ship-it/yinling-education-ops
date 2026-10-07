@@ -28,7 +28,12 @@ function dependencies(
   return {
     canStartProjection: () => options.canStart ?? true,
     assertAuthorityTime: () => { calls.push("assert_authority_time"); },
-    projectAuthority: async (value) => {
+    prepareAuthority: async (value) => {
+      calls.push(`prepare:${value.revision}:${value.rowCount}`);
+      return "prepared_receipt";
+    },
+    projectAuthority: async (value, prepared) => {
+      assert.equal(prepared, "prepared_receipt");
       calls.push(`authority:${value.revision}:${value.rowCount}`);
       return "authority_receipt";
     },
@@ -58,8 +63,10 @@ test("pending projections execute authority then trials and persist both transit
     authorityProjection: "authority_receipt",
     trialProjection: "trial_receipt",
   });
-  assert.deepEqual(phases, ["project_authority", "project_trials"]);
+  assert.deepEqual(phases, ["prepare_authority", "project_authority", "project_trials"]);
   assert.deepEqual(calls, [
+    "assert_authority_time",
+    `prepare:${REVISION}:12`,
     "assert_authority_time",
     `authority:${REVISION}:12`,
     "advance:pending:authority_done",
@@ -120,4 +127,40 @@ test("transition receipts are revision-bound", async () => {
     }, () => undefined),
     /projection_transition_invalid/,
   );
+});
+
+test("failed preparation leaves the target pending without publication or transitions", async () => {
+  const calls: string[] = [];
+  await assert.rejects(runJiaowubaoScheduleProjectionTarget(target("pending"), {
+    ...dependencies(calls),
+    prepareAuthority: async () => { throw new Error("preparation_failed"); },
+  }, () => undefined), /preparation_failed/);
+  assert.deepEqual(calls, ["assert_authority_time"]);
+});
+
+test("budget expiry after preparation defers completion and can resume on the next run", async () => {
+  const calls: string[] = [];
+  let budgetChecks = 0;
+  await assert.rejects(runJiaowubaoScheduleProjectionTarget(target("pending"), {
+    ...dependencies(calls),
+    assertAuthorityTime: () => {
+      budgetChecks += 1;
+      if (budgetChecks === 2) throw new Error("deadline_exceeded");
+    },
+  }, () => undefined), /deadline_exceeded/);
+  assert.deepEqual(calls, [`prepare:${REVISION}:12`]);
+  const result = await runJiaowubaoScheduleProjectionTarget(
+    target("pending"), dependencies(calls), () => undefined,
+  );
+  assert.equal(result.authorityProjection, "authority_receipt");
+  assert.equal(calls.filter((call) => call === "advance:pending:authority_done").length, 1);
+});
+
+test("stale prepared evidence cannot advance authority or start trials", async () => {
+  const calls: string[] = [];
+  await assert.rejects(runJiaowubaoScheduleProjectionTarget(target("pending"), {
+    ...dependencies(calls),
+    projectAuthority: async () => { throw new Error("prepare_stale"); },
+  }, () => undefined), /prepare_stale/);
+  assert.deepEqual(calls, ["assert_authority_time", `prepare:${REVISION}:12`, "assert_authority_time"]);
 });

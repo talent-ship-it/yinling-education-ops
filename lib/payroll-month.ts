@@ -15,8 +15,8 @@ export function previousMelbournePayrollMonth(now: Date) {
 export const PAYROLL_ABSENT_POLL_DELAY_MS = 60_000;
 export const PAYROLL_ABSENT_ERROR_DELAY_MS = 120_000;
 
-function isClosedAbsentMonth(month: string, currentMonth: string, feed: { state: string; month: string } | null) {
-  return month < currentMonth && feed?.state === "absent" && feed.month === month;
+function isAvailableAbsentMonth(month: string, currentMonth: string, feed: { state: string; month: string } | null) {
+  return month <= currentMonth && feed?.state === "absent" && feed.month === month;
 }
 
 export function canPollAbsentPayrollMonth(input: Readonly<{
@@ -30,7 +30,7 @@ export function canPollAbsentPayrollMonth(input: Readonly<{
   exporting: boolean;
 }>) {
   return input.canView && input.active === "payroll"
-    && isClosedAbsentMonth(input.month, input.currentMonth, input.feed)
+    && isAvailableAbsentMonth(input.month, input.currentMonth, input.feed)
     && !input.loading && !input.syncing && !input.exporting;
 }
 

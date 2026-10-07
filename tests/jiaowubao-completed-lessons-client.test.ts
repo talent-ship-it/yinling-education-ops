@@ -5,6 +5,7 @@ import {
   completeJiaowubaoCompletedMonthEvidencePages,
   jiaowubaoCompletedMonthEvidenceMatchesExportVersion,
   jiaowubaoCompletedMonthEvidenceReadyForPayrollLock,
+  jiaowubaoCompletedMonthEvidenceReadyForExport,
   parseJiaowubaoCompletedMonthEvidencePage,
 } from "../app/jiaowubao-completed-month-evidence";
 
@@ -339,4 +340,23 @@ test("canonicalizes valid pages by page index before handing evidence to Excel",
   });
   assert.equal(completed.items[0]?.memberId, "member-1");
   assert.equal(completed.items.at(-1)?.memberId, "member-251");
+});
+
+
+test("partial evidence stays exportable but cannot lock payroll, including after month close", () => {
+  const coverage = { dataThrough: "2026-08-20", provisional: true };
+  const feed = completeJiaowubaoCompletedMonthEvidencePages({
+    lessonPages: [parseJiaowubaoCompletedMonthEvidencePage({ ...lessonFeed(), ...coverage })],
+    schedulePages: [parseJiaowubaoCompletedMonthEvidencePage({ ...scheduleFeed(), ...coverage })],
+  });
+  const input = { feed, month: "2026-08", loading: false, error: false, syncing: false };
+  assert.equal(jiaowubaoCompletedMonthEvidenceReadyForExport(input), true);
+  assert.equal(jiaowubaoCompletedMonthEvidenceReadyForPayrollLock(input), false);
+  assert.equal(jiaowubaoCompletedMonthEvidenceReadyForPayrollLock({ ...input, feed: { ...feed, provisional: undefined } }), false);
+  assert.equal(jiaowubaoCompletedMonthEvidenceMatchesExportVersion({ current: feed, fresh: { ...feed, dataThrough: "2026-08-21" }, month: "2026-08" }), false);
+  assert.throws(() => parseJiaowubaoCompletedMonthEvidencePage({ ...lessonFeed(), dataThrough: "2026-08-04", provisional: true }), /截止/);
+  assert.throws(() => completeJiaowubaoCompletedMonthEvidencePages({
+    lessonPages: [parseJiaowubaoCompletedMonthEvidencePage({ ...lessonFeed(), ...coverage })],
+    schedulePages: [parseJiaowubaoCompletedMonthEvidencePage({ ...scheduleFeed(), ...coverage, dataThrough: "2026-08-21" })],
+  }), /来源版本/);
 });

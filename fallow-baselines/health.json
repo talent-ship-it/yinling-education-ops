@@ -2358,7 +2358,7 @@
         "count": 1
       }
     },
-    "app/api/cron/jiaowubao-schedule/route.ts\u0000projectAuthority": {
+    "app/api/cron/jiaowubao-schedule/route.ts\u0000authorityReceipt": {
       "complexity_critical": {
         "count": 1
       },

@@ -147,7 +147,7 @@ test("a legacy pointer is rebuilt once and only a matching published member run 
   assert.match(migration, /run_state = 'aborted' and run_reason = 'source_conflict'[\s\S]*published_run\.state = 'published'[\s\S]*published_run\.final_revision = current_pointer\.revision/);
   assert.match(migration, /if run_id is null then[\s\S]*'state', 'absent'/);
   assert.match(sync, /collection\.state === "published"/);
-  assert.match(sync, /!force && collection\.finalRevision && collection\.finalRevision === currentRevision/);
+  assert.match(sync, /!force && !monthlyHourRefreshDue\([\s\S]*collection\.finalRevision && collection\.finalRevision === currentRevision/);
   assert.match(sync, /legacy pointer without this[\s\S]*rebuilt once/);
 });
 
@@ -286,7 +286,7 @@ test("both server routes use the resumable sync and expose progress without sour
   assert.match(browserRoute, /completedMemberCount/);
   assert.match(browserRoute, /sourcePageCount/);
   assert.match(cronRoute, /getJiaowubaoCompletedLessonPendingMonth/);
-  assert.match(cronRoute, /pending\.month \?\? month/);
+  assert.match(cronRoute, /pending\.month === null[\s\S]*outcome: "no_change"[\s\S]*month = pending\.month/);
   assert.match(migration, /latest\.state = 'aborted'[\s\S]*latest\.abort_reason in \('schedule_changed', 'catalog_changed'\)[\s\S]*not exists[\s\S]*jiaowubao_completed_lesson_snapshot_current[\s\S]*published_run\.state = 'published'[\s\S]*published_run\.final_revision = current_pointer\.revision/);
   assert.match(migration, /latest\.period_month < date_trunc\('month', timezone\('Australia\/Melbourne', clock_timestamp\(\)\)\)::date/);
   assert.match(migration, /month_value >= date_trunc\('month', timezone\('Australia\/Melbourne', clock_timestamp\(\)\)\)::date[\s\S]*snapshot_month_not_closed/);

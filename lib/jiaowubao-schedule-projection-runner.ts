@@ -1,5 +1,5 @@
 export type JiaowubaoScheduleProjectionState = "pending" | "authority_done" | "complete";
-export type JiaowubaoScheduleProjectionPhase = "project_authority" | "project_trials";
+export type JiaowubaoScheduleProjectionPhase = "prepare_authority" | "project_authority" | "project_trials";
 
 export type JiaowubaoScheduleProjectionTarget = Readonly<{
   revision: string;
@@ -18,7 +18,11 @@ type ProjectionTransitionReceipt = Readonly<{
 export type JiaowubaoScheduleProjectionDependencies<AuthorityReceipt, TrialReceipt> = Readonly<{
   canStartProjection: () => boolean;
   assertAuthorityTime: () => void;
-  projectAuthority: (target: JiaowubaoScheduleProjectionTarget) => Promise<AuthorityReceipt>;
+  prepareAuthority: (target: JiaowubaoScheduleProjectionTarget) => Promise<AuthorityReceipt>;
+  projectAuthority: (
+    target: JiaowubaoScheduleProjectionTarget,
+    prepared: AuthorityReceipt,
+  ) => Promise<AuthorityReceipt>;
   projectTrials: (
     target: JiaowubaoScheduleProjectionTarget,
     allowStalePinnedRevision: boolean,
@@ -79,9 +83,12 @@ export async function runJiaowubaoScheduleProjectionTarget<AuthorityReceipt, Tri
   let trialProjection: TrialReceipt | null = null;
 
   if (state === "pending") {
+    setPhase("prepare_authority");
+    dependencies.assertAuthorityTime();
+    const prepared = await dependencies.prepareAuthority(target);
     setPhase("project_authority");
     dependencies.assertAuthorityTime();
-    authorityProjection = await dependencies.projectAuthority(target);
+    authorityProjection = await dependencies.projectAuthority(target, prepared);
     state = transitionState(await dependencies.advance({
       revision: target.revision,
       expectedState: "pending",

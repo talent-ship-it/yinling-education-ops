@@ -1,3 +1,4 @@
+import { monthlyHourCoverage } from "@/lib/monthly-hour-period";
 import { completeHoursSheets, completeHoursStylesXml } from "@/lib/payroll-complete-template";
 import { createStoredOpenXmlZip, type OpenXmlPart } from "@/lib/openxml-xlsx";
 import { jiaowubaoCompletedLessonBranchDisplay } from "@/lib/jiaowubao-completed-lesson-branch";
@@ -88,6 +89,8 @@ export type PayrollExportScheduleEvidence = Readonly<{
 }>;
 
 export type PayrollExportEvidence = Readonly<{
+  dataThrough?: string | null;
+  provisional?: boolean;
   revision: string | null;
   projectionRevision: string | null;
   publishedAt: string | null;
@@ -354,6 +357,9 @@ function assertWorkbook(input: PayrollWorkbookExport) {
   const evidenceBySourceKey = new Map<string, PayrollExportLessonEvidence>();
   const expectedSourceKeysByTeacher = new Map<string, ReadonlySet<string>>();
   if (input.evidence) {
+    const coverage = monthlyHourCoverage(input.month, input.evidence.dataThrough, input.evidence.provisional);
+    if ([...input.evidence.lessons, ...input.evidence.schedules].some((row) => row.lessonDate < coverage.start || row.lessonDate > coverage.end)) fail("课时明细超出截止日期。");
+    if (coverage.provisional && input.exportMode === undefined) fail("月中课时资料不能导出付款表。");
     integer(input.evidence.lessonRowCount, "消课来源行数", MAX_EVIDENCE_ROWS);
     integer(input.evidence.scheduleRowCount, "排课来源行数", MAX_EVIDENCE_ROWS);
     if (input.evidence.lessonRowCount !== input.evidence.lessons.length

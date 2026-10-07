@@ -1,3 +1,4 @@
+import { monthlyHourCollectionPeriod, monthlyHourCoverage, monthlyHourRefreshDue } from "@/lib/monthly-hour-period";
 import {
   JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_SOURCE_KEY,
   JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT,
@@ -5,7 +6,6 @@ import {
   buildJiaowubaoCompletedLessonSnapshot,
   collectJiaowubaoCompletedLessonMemberPage,
   readJiaowubaoCompletedLessonSnapshotRecord,
-  validateJiaowubaoClosedCompletedLessonMonth,
   type JiaowubaoCompletedLessonRecord,
 } from "@/lib/jiaowubao-completed-lessons";
 import {
@@ -70,6 +70,8 @@ export type JiaowubaoCompletedLessonSyncResult = Readonly<{
 type ActiveMemberCollection = Readonly<{
   state: "collecting" | "ready" | "published" | "aborted" | "blocked";
   month: string;
+  dataThrough: string;
+  publishedAt: string | null;
   runId: string;
   scheduleRevision: string;
   scheduleMemberSetSha256: string;
@@ -110,6 +112,9 @@ function exactInteger(value: unknown, minimum: number, maximum: number) {
 function readCollection(value: JiaowubaoCompletedLessonMemberCollection, month: string): ActiveMemberCollection | null {
   if (!value || value.month !== month) throw new Error("jiaowubao_completed_lesson_member_collection_invalid");
   if (value.state === "absent") return null;
+  const coverage = monthlyHourCoverage(month, value.dataThrough);
+  const publishedAt = value.publishedAt ?? null;
+  if (publishedAt !== null && !Number.isFinite(Date.parse(publishedAt))) throw new Error("jiaowubao_completed_lesson_member_collection_invalid");
   const runId = exactRunId(value.runId);
   const scheduleRevision = exactRevision(value.scheduleRevision);
   const scheduleMemberSetSha256 = exactRevision(value.scheduleMemberSetSha256);
@@ -155,6 +160,8 @@ function readCollection(value: JiaowubaoCompletedLessonMemberCollection, month: 
   return Object.freeze({
     state: value.state,
     month,
+    dataThrough: coverage.end,
+    publishedAt,
     runId,
     scheduleRevision,
     scheduleMemberSetSha256,
@@ -400,7 +407,7 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
   if (forceIfBlockedOnly && !force) {
     throw new Error("jiaowubao_completed_lesson_blocked_force_invalid");
   }
-  const period = validateJiaowubaoClosedCompletedLessonMonth(input.month, new Date(now));
+  let period = monthlyHourCollectionPeriod(input.month, new Date(now));
   const runKey = `jwb-completed-lessons-sync:${now}:${period.month}`;
   const workerStartedAt = Date.now();
   let acquired = false;
@@ -419,6 +426,9 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       await getJiaowubaoCompletedLessonMemberCollection({ month: period.month, runKey, actor: ACTOR }),
       period.month,
     );
+    if (collection && ["collecting", "ready"].includes(collection.state)) {
+      period = monthlyHourCollectionPeriod(input.month, new Date(now), collection.dataThrough);
+    }
     // This check runs only after the same-month lease is acquired. A delayed
     // bearer replay therefore cannot force a second rebuild after another
     // recovery has already advanced the month beyond its blocked run.
@@ -448,6 +458,7 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       const capture = await collectCompletedScheduleWithMemberIds(period);
       collection = readCollection(await beginJiaowubaoCompletedLessonMemberCollection({
         month: period.month,
+        dataThrough: period.end,
         runKey,
         scheduleRevision: capture.snapshot.manifest.revision,
         scheduleMemberIds: capture.memberIds,
@@ -464,7 +475,8 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
     // member-run proves that exact revision. A legacy pointer without this
     // proof is rebuilt once instead of permanently short-circuiting the fix.
     if (collection.state === "published") {
-      if (!force && collection.finalRevision && collection.finalRevision === currentRevision && preflight.current) {
+      if (!force && !monthlyHourRefreshDue({ month: period.month, dataThrough: collection.dataThrough, publishedAt: collection.publishedAt, now: new Date(now) })
+        && collection.finalRevision && collection.finalRevision === currentRevision && preflight.current) {
         return Object.freeze({
           outcome: "no_change", month: period.month, revision: currentRevision!,
           rowCount: currentRowCount!, scheduleRowCount: currentScheduleRowCount!,
@@ -475,6 +487,7 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       const capture = await collectCompletedScheduleWithMemberIds(period);
       collection = readCollection(await beginJiaowubaoCompletedLessonMemberCollection({
         month: period.month,
+        dataThrough: period.end,
         runKey,
         scheduleRevision: capture.snapshot.manifest.revision,
         scheduleMemberIds: capture.memberIds,

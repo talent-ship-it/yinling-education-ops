@@ -49,6 +49,7 @@ import {
   confirmJiaowubaoOpenApiScheduleSnapshotCurrent,
   getJiaowubaoOpenApiScheduleProjectionTarget,
   OpsStoreError,
+  prepareJiaowubaoOpenApiAuthority,
   projectJiaowubaoOpenApiAuthority,
   readJiaowubaoScheduleHorizonPages,
   releaseJiaowubaoOpenApiScheduleSyncLease,
@@ -56,6 +57,7 @@ import {
   stageJiaowubaoScheduleHorizonPage,
   stageJiaowubaoOpenApiScheduleSnapshotPage,
   type JiaowubaoScheduleHorizonCollectionReceipt,
+  type JiaowubaoOpenApiAuthorityProjectionReceipt,
   type JiaowubaoOpenApiScheduleProjectionTarget,
   type OpsRpcOptions,
 } from "@/lib/ops-store";
@@ -461,8 +463,11 @@ async function collectResumableHorizon(
   }
 }
 
-async function projectAuthority(revision: string, rowCount: number, options: OpsRpcOptions) {
-  const receipt = await projectJiaowubaoOpenApiAuthority({ revision, actor: ACTOR }, options);
+function authorityReceipt(
+  receipt: JiaowubaoOpenApiAuthorityProjectionReceipt,
+  revision: string,
+  rowCount: number,
+) {
   const coverage = receipt?.coverage;
   const checkedAt = typeof receipt?.checkedAt === "string" ? new Date(receipt.checkedAt) : null;
   if (receipt?.schemaVersion !== 1
@@ -481,6 +486,27 @@ async function projectAuthority(revision: string, rowCount: number, options: Ops
     throw new Error("authority_projection_receipt_invalid");
   }
   return receipt;
+}
+
+async function prepareAuthority(revision: string, rowCount: number, options: OpsRpcOptions) {
+  return authorityReceipt(
+    await prepareJiaowubaoOpenApiAuthority({ revision, actor: ACTOR }, options),
+    revision,
+    rowCount,
+  );
+}
+
+async function projectAuthority(
+  revision: string,
+  rowCount: number,
+  preparedProjectionRunId: string,
+  options: OpsRpcOptions,
+) {
+  return authorityReceipt(
+    await projectJiaowubaoOpenApiAuthority({ revision, preparedProjectionRunId, actor: ACTOR }, options),
+    revision,
+    rowCount,
+  );
 }
 
 async function projectTrialHorizon(
@@ -510,9 +536,15 @@ function projectionDependencies(deadlineAt: number) {
       15_000,
       JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS,
     ),
-    projectAuthority: (target: ProjectionTarget) => projectAuthority(
+    prepareAuthority: (target: ProjectionTarget) => prepareAuthority(
       target.revision,
       target.rowCount,
+      jiaowubaoScheduleRpcOptions(deadlineAt, JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS),
+    ),
+    projectAuthority: (target: ProjectionTarget, prepared: AuthorityProjectionReceipt) => projectAuthority(
+      target.revision,
+      target.rowCount,
+      prepared.projectionRunId,
       jiaowubaoScheduleRpcOptions(deadlineAt, JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS),
     ),
     projectTrials: (target: ProjectionTarget, allowStalePinnedRevision: boolean) => projectTrialHorizon(

@@ -33,3 +33,11 @@ export function parseJiaowubaoCompletedLessonCronOperation(
     return null;
   }
 }
+
+export function readJiaowubaoCompletedLessonPendingMonth(value: unknown) {
+  const month = (value as { month?: unknown } | null)?.month;
+  if (month === null || typeof month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/u.test(month)) {
+    return Object.freeze({ month });
+  }
+  throw new Error("jiaowubao_completed_lesson_pending_month_invalid");
+}
