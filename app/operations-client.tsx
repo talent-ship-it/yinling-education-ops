@@ -10160,9 +10160,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         ) : jiaowubaoCompletedLessonError ? (
           <div className="form-notice" role="status"><CircleAlert size={16} /> 教务宝已消课快照暂时不可用；不会用空资料覆盖现有薪资记录。</div>
         ) : jiaowubaoCompletedLessonFeed?.state === "complete" ? (
-          <div className="form-notice" role="status"><Database size={16} /> 截至 {jiaowubaoCompletedLessonFeed.dataThrough}（{jiaowubaoCompletedLessonFeed.provisional ? "月中核对版" : "完整月份"}）。已接入 {jiaowubaoCompletedLessonFeed.rowCount} 条学生已消课明细和 {jiaowubaoCompletedLessonFeed.scheduleRowCount} 条已消课排课角色资料（均为 over=1）。学生明细补齐姓名；老师课时只取排课角色字段。{jiaowubaoCompletedLessonFeed.unmatchedStudentCount + jiaowubaoCompletedLessonFeed.ambiguousStudentCount} 条学生待核对，{jiaowubaoCompletedLessonFeed.teachers.reduce((count, teacher) => count + teacher.unresolvedLessonCount + teacher.unresolvedTrialLessonCount, 0)} 个老师来源项目待核对；待核对项目会作为只读来源明细附在 Excel 中，不写入薪资或付款资料。</div>
+          <div className="form-notice" role="status"><Database size={16} /><span><strong>最近成功更新：{jiaowubaoCompletedLessonFeed.publishedAt ? <time dateTime={jiaowubaoCompletedLessonFeed.publishedAt}>{formatInstant(new Date(jiaowubaoCompletedLessonFeed.publishedAt), "Australia/Melbourne", displayPreferences)}</time> : "待确认"}（墨尔本时间）</strong><br />数据截至 {jiaowubaoCompletedLessonFeed.dataThrough}（{jiaowubaoCompletedLessonFeed.provisional ? "月中核对版" : "完整月份"}）。已接入 {jiaowubaoCompletedLessonFeed.rowCount} 条学生已消课明细和 {jiaowubaoCompletedLessonFeed.scheduleRowCount} 条已消课排课角色资料（均为 over=1）。学生明细补齐姓名；老师课时只取排课角色字段。{jiaowubaoCompletedLessonFeed.unmatchedStudentCount + jiaowubaoCompletedLessonFeed.ambiguousStudentCount} 条学生待核对，{jiaowubaoCompletedLessonFeed.teachers.reduce((count, teacher) => count + teacher.unresolvedLessonCount + teacher.unresolvedTrialLessonCount, 0)} 个老师来源项目待核对；待核对项目会作为只读来源明细附在 Excel 中，不写入薪资或付款资料。</span></div>
         ) : jiaowubaoCompletedLessonFeed?.state === "absent" ? (
-          <div className="form-notice" role="status"><CircleAlert size={16} /> {activePayrollMonth} 尚无已发布的课时资料。</div>
+          <div className="form-notice" role="status"><CircleAlert size={16} /> {activePayrollMonth} 尚未成功更新，暂无已发布的课时资料。</div>
         ) : null}
         {sourceOnlyPayrollTeachers.length > 0 ? (
           <section className="panel" aria-label="教务宝待核对老师">
