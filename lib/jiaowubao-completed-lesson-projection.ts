@@ -165,7 +165,7 @@ function buildLookup(rows: readonly JsonRecord[]): EntityLookup {
   const idsByNameKey = new Map<string, string[]>();
   for (const item of rows) {
     const entityId = id(item.id);
-    const name = text(item.name);
+    const name = text(item.name)?.replace(/[\t\r\n]+/gu, " ");
     if (!entityId || !name) continue;
     namesById.set(entityId, name);
     sourceIds(item).forEach((sourceId) => addCandidate(idsBySourceId, sourceId, entityId));
