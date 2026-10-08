@@ -385,3 +385,30 @@ test("conflicting exact source-id and name proofs stay unresolved", () => {
   assert.equal(projection.items[0].studentId, null);
   assert.equal(projection.items[0].studentMatch, "ambiguous");
 });
+
+
+test("stored roster line breaks remain readable without changing source identity or hours", () => {
+  const rows = stateRows();
+  const student = rows[0].payload.find((item) => item.id === "stu-rita");
+  student.name = "Rita\nWu";
+  rows[1].payload[0].name = "Crystal\r\nWong";
+  const lesson = projectJiaowubaoCompletedLessonRecord(sourceRecord({
+    mem_id: 702, mem_title: "Rita Wu", type: 1, course_title: "English",
+  }), { start: "2026-08-01", end: "2026-08-31" });
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [lesson], stateRows: rows });
+  const page = parseJiaowubaoCompletedMonthEvidencePage({
+    state: "complete", source: "lessons", month: "2026-08",
+    revision: `sha256:${"a".repeat(64)}`, projectionRevision: `sha256:${"b".repeat(64)}`,
+    rowCount: 1, pageIndex: 0, pageCount: 1, publishedAt: "2026-09-01T00:00:00.000Z",
+    items: projection.items,
+  });
+  assert.equal(page.items[0].studentId, "stu-rita");
+  assert.equal(page.items[0].studentName, "Rita Wu");
+  assert.equal(page.items[0].displayStudentName, "Rita Wu");
+  assert.equal(page.items[0].studentMatch, "source_id");
+  assert.equal(page.items[0].teachers[0].teacherId, "teacher-crystal");
+  assert.equal(page.items[0].teachers[0].teacherName, "Crystal Wong");
+  assert.equal(page.items[0].sourceKey, lesson.sourceKey);
+  assert.equal(page.items[0].hours, lesson.hours);
+  assert.equal(student.name, "Rita\nWu");
+});
