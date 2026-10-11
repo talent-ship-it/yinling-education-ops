@@ -246,7 +246,6 @@
     "lib/ops-store.ts:WECOM_BOT_INGEST_RPC",
     "lib/ops-store.ts:OPS_RPC_TIMEOUT_MS",
     "lib/ops-store.ts:getTencentTrialLedgerSyncStatus",
-    "lib/ops-store.ts:getOpsVersions",
     "lib/ops-store.ts:completeTrialPaymentTaskAtomic",
     "lib/ops-store.ts:completeJiaowubaoTrialPaymentTaskAtomic",
     "lib/ops-store.ts:getJiaowubaoOpenApiScheduleSnapshotStatus",
