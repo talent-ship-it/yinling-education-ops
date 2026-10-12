@@ -1,4 +1,5 @@
 import type { JiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
+import { assertAvaCalendarReadAuthority } from "./ava-calendar-read-authority";
 
 export type AvaCalendarWindow = { start: string; end: string };
 export type AvaCalendarSnapshot = {
@@ -146,6 +147,7 @@ export async function readAvaCalendarSnapshot(window: AvaCalendarWindow, fetchPa
   const events: AvaCalendarSnapshot["events"] = [];
   const seen = new Set<string>();
   for (let pageIndex = 0; pageIndex < 40; pageIndex += 1) {
+    assertAvaCalendarReadAuthority();
     const page = await fetchPage({ cursor, revision: first?.revision ?? null, limit: 250 });
     validatePage(page, window);
     first ??= page;
