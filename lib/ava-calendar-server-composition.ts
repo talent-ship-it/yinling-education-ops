@@ -1,0 +1,121 @@
+import { createHash } from "node:crypto";
+import type { OpsStateRow, OpsVersionRow, JiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
+import type { AvaCalendarSnapshot, AvaCalendarWindow, AvaCalendarPageFetcher } from "./ava-calendar-snapshot";
+import { AvaCalendarReadError } from "./ava-calendar-snapshot";
+import type { AvaCalendarProjection, AvaCoordinatorAccount } from "./ava-calendar-projection";
+import type { AvaCalendarAvailabilitySnapshot } from "./ava-calendar-health";
+import { evaluateAvaCalendarHealth } from "./ava-calendar-health";
+import { projectCalendarAvailability } from "./ava-calendar-availability";
+import { localTimeToInstant } from "./teacher-availability";
+import { shiftScheduleDate } from "./schedule-calendar";
+import { assertAvaCalendarReadAuthority } from "./ava-calendar-read-authority";
+
+export type AvaCalendarPublicationInput = {
+  snapshot: AvaCalendarSnapshot;
+  rows: OpsStateRow[];
+  currentVersions: OpsVersionRow[];
+  window: AvaCalendarWindow;
+  identity: unknown;
+  accounts: readonly AvaCoordinatorAccount[];
+  projection: AvaCalendarProjection;
+};
+export type AvaCalendarPublicationComposition = {
+  sourceEvents: (snapshot: AvaCalendarSnapshot) => AvaCalendarSnapshot["events"];
+  readMetadata: (snapshot: AvaCalendarSnapshot, assertAuthority: () => Promise<void>) => Promise<void>;
+  compose: (input: AvaCalendarPublicationInput) => ReturnType<typeof composePublication>;
+};
+type Capture = { snapshot: AvaCalendarAvailabilitySnapshot; target: unknown; sources: unknown };
+type CompositionDependencies = {
+  collectSnapshot: (window: AvaCalendarWindow, fetchPage: AvaCalendarPageFetcher) => Promise<AvaCalendarSnapshot>;
+  fetchPage: (window: AvaCalendarWindow, input: Parameters<AvaCalendarPageFetcher>[0]) => Promise<JiaowubaoOpenApiScheduleSnapshotWindow>;
+  readSources: () => Promise<unknown>;
+  readTarget: () => Promise<unknown>;
+  now: () => number;
+};
+type RouteCompositionGetters = Pick<typeof import("./ops-store"), "getOpsSources" | "getJiaowubaoOpenApiScheduleSnapshotWindow" | "getJiaowubaoOpenApiScheduleProjectionTarget">;
+
+export function createAvaCalendarRouteComposition(collectSnapshot: CompositionDependencies["collectSnapshot"], getters: RouteCompositionGetters, deadlineAt: number, now: () => number) {
+  return createAvaCalendarServerComposition({
+    collectSnapshot,
+    fetchPage: (window, page) => getters.getJiaowubaoOpenApiScheduleSnapshotWindow({
+      windowStart: window.start, windowEnd: window.end, scope: "all", teacherLabels: null, studentMemberIds: null, studentNameKeys: null, ...page,
+    }, { deadlineAt }),
+    readSources: () => getters.getOpsSources(),
+    readTarget: () => getters.getJiaowubaoOpenApiScheduleProjectionTarget({ actor: "Ops Admin" }, { deadlineAt }),
+    now,
+  });
+}
+
+async function healthRead(read: () => Promise<unknown>) {
+  try { return await read(); } catch { return null; }
+}
+
+function nativeVersions(rows: OpsVersionRow[]) {
+  const core = Object.fromEntries(["students", "teachers", "bookings", "lpItems"].map((entity) => [entity, rows.find((row) => row.entity === entity)!.version]));
+  const courses = rows.filter((row) => row.entity === "courses");
+  return courses.length === 1 && Number.isSafeInteger(courses[0]!.version) && courses[0]!.version >= 0 ? { ...core, courses: courses[0]!.version } : core;
+}
+
+function sourceCoverage(window: NonNullable<AvaCalendarAvailabilitySnapshot["sourceWindow"]>) {
+  return {
+    start: localTimeToInstant(window.start, "00:00", "Australia/Melbourne", "earlier").toISOString(),
+    end: localTimeToInstant(shiftScheduleDate(window.end, 1), "00:00", "Australia/Melbourne", "earlier").toISOString(),
+  };
+}
+
+function capturedCoverage(sourceWindow: JiaowubaoOpenApiScheduleSnapshotWindow["sourceWindow"] | undefined, request: AvaCalendarWindow): AvaCalendarSnapshot["coverage"] {
+  if (!sourceWindow) return "partial";
+  const source = sourceCoverage(sourceWindow);
+  return Date.parse(request.start) >= Date.parse(source.start) && Date.parse(request.end) <= Date.parse(source.end) ? "complete" : "partial";
+}
+
+function composePublication(input: AvaCalendarPublicationInput, capture: Capture, now: number) {
+  const snapshot = capture.snapshot;
+  const health = evaluateAvaCalendarHealth({ snapshot, window: input.window, sources: capture.sources, target: capture.target, currentVersions: input.currentVersions, now });
+  const availability = projectCalendarAvailability({ rows: input.rows, snapshot, window: input.window, health, visibleTeacherIds: new Set(input.projection.teachers.map(({ id }) => id)) });
+  const versions = nativeVersions(input.currentVersions);
+  const accountIdentity = input.accounts.map(({ account_id, account_name, account_role, status }) => [account_id, account_name, account_role, status]).sort((left, right) => left[0]!.localeCompare(right[0]!));
+  const sourceWindow = snapshot.sourceWindow ? [snapshot.sourceWindow.start, snapshot.sourceWindow.end] : null;
+  const consistencyKey = createHash("sha256").update(JSON.stringify([snapshot.revision, snapshot.publishedAt, sourceWindow, versions, input.identity, accountIdentity])).digest("hex");
+  return { ...availability, nativeVersions: versions, consistencyKey, source: {
+    revision: snapshot.revision, publishedAt: snapshot.publishedAt, freshness: snapshot.freshness, coverage: snapshot.coverage,
+    ...(snapshot.sourceWindow ? { window: sourceCoverage(snapshot.sourceWindow) } : {}),
+  } };
+}
+
+function createAvaCalendarServerComposition(dependencies: CompositionDependencies) {
+  const captures = new WeakMap<AvaCalendarSnapshot, Capture>();
+  const captureFor = (snapshot: AvaCalendarSnapshot) => {
+    const capture = captures.get(snapshot);
+    if (!capture) throw new AvaCalendarReadError("source_unavailable");
+    return capture;
+  };
+  return {
+    readSnapshot: async (window: AvaCalendarWindow) => {
+      let first: JiaowubaoOpenApiScheduleSnapshotWindow | undefined;
+      const events: AvaCalendarSnapshot["events"] = [];
+      const snapshot = await dependencies.collectSnapshot(window, async (input) => {
+        const page = await dependencies.fetchPage(window, input);
+        first ??= page;
+        events.push(...page.events);
+        return page;
+      });
+      if (!first) throw new AvaCalendarReadError("source_unavailable");
+      captures.set(snapshot, { snapshot: { ...snapshot, events, publishedAt: first.publishedAt!, coverage: capturedCoverage(first.sourceWindow, window), ...(first.sourceWindow ? { sourceWindow: { ...first.sourceWindow } } : {}), paginationComplete: true, invalidTimeEventCount: 0 }, sources: null, target: null });
+      return snapshot;
+    },
+    publication: {
+      sourceEvents: (snapshot: AvaCalendarSnapshot) => captureFor(snapshot).snapshot.events,
+      readMetadata: async (snapshot: AvaCalendarSnapshot, assertAuthority: () => Promise<void>) => {
+        const capture = captureFor(snapshot);
+        await assertAuthority();
+        assertAvaCalendarReadAuthority();
+        capture.sources = await healthRead(dependencies.readSources);
+        await assertAuthority();
+        assertAvaCalendarReadAuthority();
+        capture.target = await healthRead(dependencies.readTarget);
+      },
+      compose: (input: AvaCalendarPublicationInput) => composePublication(input, captureFor(input.snapshot), dependencies.now()),
+    } satisfies AvaCalendarPublicationComposition,
+  };
+}

@@ -6,6 +6,8 @@ import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "./
 import { TRIAL_OPERATIONS } from "./lp-workflows";
 import { isJiaowubaoSharedTrialAccountLabel } from "./trial-operations";
 import { AvaCalendarReadError } from "./ava-calendar-snapshot";
+import type { AvaCalendarMachineCapability } from "./ava-calendar-machine-auth";
+import { parseAvaCalendarInstant } from "./ava-calendar-health";
 
 export type AvaCoordinatorAccount = Pick<AccountDirectoryRow, "account_id" | "account_name" | "account_role" | "status">;
 export type AvaCalendarStudent = { studentId: string; studentName: string; owner: string | null; ownerId: string | null; color: string };
@@ -14,9 +16,11 @@ export type AvaCalendarProjection = { events: AvaCalendarEvent[]; teachers: { id
 export type AvaCalendarProjectionInput = {
   rows: OpsStateRow[];
   events: JiaowubaoOpenApiScheduleSnapshotWindow["events"];
-  access: OpsAccessContext;
+  access: OpsAccessContext | AvaCalendarMachineCapability;
   accounts: readonly AvaCoordinatorAccount[];
   revision?: string;
+  strictSourceIdentity?: boolean;
+  sourceEvents?: JiaowubaoOpenApiScheduleSnapshotWindow["events"];
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -65,7 +69,9 @@ function candidateMap(items: Record<string, unknown>[], keys: (item: Record<stri
 
 type SnapshotEvent = JiaowubaoOpenApiScheduleSnapshotWindow["events"][number];
 type EventProjectionContext = {
-  access: OpsAccessContext;
+  activeStudentIds: ReadonlySet<string>;
+  teacherIds: ReadonlySet<string> | null;
+  unrestricted: boolean;
   accounts: readonly AvaCoordinatorAccount[];
   revision?: string;
   lookup: JiaowubaoSnapshotStudentLookup;
@@ -74,34 +80,65 @@ type EventProjectionContext = {
   teacherById: Map<string, Record<string, unknown>>;
   teacherCandidates: Map<string, string[]>;
   visibleTeacherIds: Set<string>;
+  strictSourceIdentity: boolean;
+  sourceEvents: ReadonlyMap<string, SnapshotEvent>;
 };
 
-function resolveTeacherId(event: SnapshotEvent, candidates: Map<string, string[]>) {
-  const ids = candidates.get(key(event.sourceTeacherLabel)) ?? [];
-  return ids.length === 1 ? ids[0]! : null;
+function teacherSourceKey(value: unknown) {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value) ? value : "";
+}
+
+function resolveTeacherId(event: SnapshotEvent, context: EventProjectionContext) {
+  const candidate = context.strictSourceIdentity ? teacherSourceKey(event.sourceTeacherId) : key(event.sourceTeacherLabel);
+  const ids = context.teacherCandidates.get(candidate) ?? [];
+  if (ids.length !== 1) return null;
+  if (!context.strictSourceIdentity) return ids[0]!;
+  return teacherProof(context.teacherById.get(ids[0]!)!, context.revision) ? ids[0]! : null;
+}
+
+function teacherProof(teacher: Record<string, unknown>, revision: string | undefined) {
+  const metadata = record(teacher.jiaowubaoOpenApi);
+  return metadata !== null && metadata.snapshotRevision === revision && /^sha256:[a-f0-9]{64}$/.test(revision ?? "")
+    && ["stable_source_id", "created"].includes(metadata.resolution as string) && metadata.confidence === "exact";
 }
 
 function currentTrialRevision(link: Record<string, unknown> | null, revision: string | undefined): link is Record<string, unknown> {
   return link?.source === "jiaowubao-open-api" && /^sha256:[a-f0-9]{64}$/.test(revision ?? "") && link.sourceRevision === revision;
 }
 
-function exactTrialLink(item: Record<string, unknown>, event: SnapshotEvent, teacherId: string | null, revision: string | undefined) {
+function sameTrialInstant(left: unknown, right: string) {
+  const first = parseAvaCalendarInstant(left);
+  const second = parseAvaCalendarInstant(right);
+  return first !== null && second !== null && first.microseconds === second.microseconds;
+}
+
+function trialTimesMatch(link: Record<string, unknown>, event: SnapshotEvent, strict: boolean) {
+  return strict ? sameTrialInstant(link.startsAt, event.startsAt) && sameTrialInstant(link.endsAt, event.endsAt) : link.startsAt === event.startsAt && link.endsAt === event.endsAt;
+}
+
+function exactTrialLink(item: Record<string, unknown>, event: SnapshotEvent, teacherId: string | null, context: EventProjectionContext) {
   const link = record(item.trialSchedule);
-  return ["试听 LP", "换老师试听"].includes(text(item.workflowType)) && currentTrialRevision(link, revision)
-    && link.eventId === event.eventId && link.startsAt === event.startsAt && link.endsAt === event.endsAt
+  return ["试听 LP", "换老师试听"].includes(text(item.workflowType)) && currentTrialRevision(link, context.revision)
+    && link.eventId === event.eventId && trialTimesMatch(link, event, context.strictSourceIdentity)
     && teacherId !== null && link.teacherId === teacherId;
 }
 
 function resolveTrialStudent(event: SnapshotEvent, teacherId: string | null, context: EventProjectionContext) {
-  const trialLinks = context.lpItems.filter((item) => exactTrialLink(item, event, teacherId, context.revision));
-  return trialLinks.length === 1 && context.studentById.has(text(trialLinks[0]!.studentId))
-    && context.access.activeStudentIds.has(text(trialLinks[0]!.studentId)) ? text(trialLinks[0]!.studentId) : null;
+  const source = context.strictSourceIdentity ? context.sourceEvents.get(event.eventId) : event;
+  if (!source) return null;
+  const trialLinks = context.lpItems.filter((item) => exactTrialLink(item, source, teacherId, context));
+  if (trialLinks.length !== 1) return null;
+  const id = trialLinks[0]!.studentId;
+  if (context.strictSourceIdentity && (typeof id !== "string" || id !== text(id))) return null;
+  const studentId = text(id);
+  return context.studentById.has(studentId) && context.activeStudentIds.has(studentId) ? studentId : null;
 }
 
 function resolveEventStudents(event: SnapshotEvent, teacherId: string | null, context: EventProjectionContext) {
   const shared = event.sourceParticipants.some((participant) => isJiaowubaoSharedTrialAccountLabel(participant.label));
   const participants = event.sourceParticipants.filter((participant) => !isJiaowubaoSharedTrialAccountLabel(participant.label));
   const ids = [...new Set(participants.flatMap((participant) => {
+    if (context.strictSourceIdentity && (!teacherSourceKey(participant.memberId) || !context.lookup.internalByMember.has(participant.memberId!))) return [];
     const id = mapJiaowubaoSnapshotParticipant(participant, context.lookup);
     return id ? [id] : [];
   }))];
@@ -131,31 +168,36 @@ function publicCalendarEvent(event: SnapshotEvent, teacherId: string | null, ide
 }
 
 function projectCalendarEvent(event: SnapshotEvent, context: EventProjectionContext): AvaCalendarEvent[] {
-  const teacherId = resolveTeacherId(event, context.teacherCandidates);
-  if (context.access.teacher && (!teacherId || !context.access.teacherIds.has(teacherId))) return [];
+  const teacherId = resolveTeacherId(event, context);
+  if (context.teacherIds && (!teacherId || !context.teacherIds.has(teacherId))) return [];
   const identity = resolveEventStudents(event, teacherId, context);
-  if (!context.access.teacher && !canReadUnrestrictedOpsData(context.access) && !identity.ids.length) return [];
+  if (!context.teacherIds && !context.unrestricted && !identity.ids.length) return [];
   return [publicCalendarEvent(event, teacherId, identity, context)];
 }
 
 export function projectAvaCalendarEvents(input: AvaCalendarProjectionInput): AvaCalendarProjection {
   const { rows, access, accounts } = input;
-  if (!["bookings", "teachers", "students"].every((entity) => canReadOpsEntity(access, entity))) {
+  const machine = "kind" in access;
+  if (machine ? access.permission !== "calendar:read" || access.scope !== "company" : !["bookings", "teachers", "students"].every((entity) => canReadOpsEntity(access, entity))) {
     return { events: [], teachers: [] };
   }
-  const students = records(rows, "students").filter((student) => key(String(student.importArchived ?? "false")) !== "true" && !isJiaowubaoSharedTrialAccountLabel(student.name));
-  const memberCandidates = candidateMap(students, (item) => [sourceKey(item.jwbSourceRow)]);
-  const nameCandidates = candidateMap(students, (item) => [normalizeStudentImportName(text(item.name)), studentImportAutomaticJwbNameKey(text(item.name))]);
-  const allowed = (candidates: Map<string, string[]>) => new Map([...candidates].flatMap(([name, ids]) => ids.length === 1 && access.activeStudentIds.has(ids[0]!) ? [[name, ids[0]!] as const] : []));
+  const allStudents = records(rows, "students");
+  const students = allStudents.filter((student) => key(String(student.importArchived ?? "false")) !== "true" && !isJiaowubaoSharedTrialAccountLabel(student.name));
+  const candidates = input.strictSourceIdentity ? allStudents : students;
+  const studentIds = new Set(students.map((student) => text(student.id)));
+  const activeStudentIds = machine ? studentIds : access.activeStudentIds;
+  const memberCandidates = candidateMap(candidates, (item) => [sourceKey(item.jwbSourceRow)]);
+  const nameCandidates = candidateMap(candidates, (item) => [normalizeStudentImportName(text(item.name)), studentImportAutomaticJwbNameKey(text(item.name))]);
+  const allowed = (candidates: Map<string, string[]>) => new Map([...candidates].flatMap(([name, ids]) => ids.length === 1 && studentIds.has(ids[0]!) && activeStudentIds.has(ids[0]!) ? [[name, ids[0]!] as const] : []));
   const lookup = { memberCandidates, nameCandidates, internalByMember: allowed(memberCandidates), internalByNameKey: allowed(nameCandidates) };
   const teachers = records(rows, "teachers");
-  const teacherCandidates = candidateMap(teachers, (teacher) => [key(teacher.name)]);
+  const teacherCandidates = candidateMap(teachers, (teacher) => [input.strictSourceIdentity ? teacherSourceKey(record(teacher.jiaowubaoOpenApi)?.sourceId) : key(teacher.name)]);
   const studentById = new Map(students.map((student) => [text(student.id), student]));
   const teacherById = new Map(teachers.map((teacher) => [text(teacher.id), teacher]));
   const lpItems = records(rows, "lpItems");
-  const visibleTeachers = records(filterOpsStateRows(rows, access), "teachers").flatMap((teacher) => text(teacher.id) && text(teacher.name) ? [{ id: text(teacher.id), name: text(teacher.name) }] : []);
+  const visibleTeachers = records(machine ? rows : filterOpsStateRows(rows, access), "teachers").flatMap((teacher) => text(teacher.id) && text(teacher.name) ? [{ id: text(teacher.id), name: text(teacher.name) }] : []);
   const visibleTeacherIds = new Set(visibleTeachers.map((teacher) => teacher.id));
-  const context: EventProjectionContext = { access, accounts, revision: input.revision, lookup, lpItems, studentById, teacherById, teacherCandidates, visibleTeacherIds };
+  const context: EventProjectionContext = { activeStudentIds, teacherIds: !machine && access.teacher ? access.teacherIds : null, unrestricted: machine || canReadUnrestrictedOpsData(access), accounts, revision: input.revision, lookup, lpItems, studentById, teacherById, teacherCandidates, visibleTeacherIds, strictSourceIdentity: input.strictSourceIdentity === true, sourceEvents: new Map((input.sourceEvents ?? input.events).map((event) => [event.eventId, event])) };
   const events = input.events.flatMap((event) => projectCalendarEvent(event, context));
   return { events, teachers: visibleTeachers };
 }

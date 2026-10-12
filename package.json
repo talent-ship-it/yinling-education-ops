@@ -20,8 +20,14 @@
     "typecheck:scripts": "tsc --project tsconfig.scripts.json"
   },
   "dependencies": {
+    "@fullcalendar/core": "6.1.21",
+    "@fullcalendar/daygrid": "6.1.21",
+    "@fullcalendar/interaction": "6.1.21",
+    "@fullcalendar/luxon3": "6.1.21",
+    "@fullcalendar/timegrid": "6.1.21",
     "fast-xml-parser": "^5.10.1",
     "lucide-react": "^1.25.0",
+    "luxon": "3.7.2",
     "next": "16.3.8",
     "react": "19.2.6",
     "react-dom": "19.2.6"
@@ -29,6 +35,7 @@
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.2.1",
+    "@types/luxon": "3.7.6",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

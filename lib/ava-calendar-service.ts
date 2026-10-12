@@ -11,6 +11,8 @@ import { mapJiaowubaoSnapshotParticipant } from "./jiaowubao-open-api-schedule-r
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "./student-import";
 import { TRIAL_OPERATIONS } from "./lp-workflows";
 import { isJiaowubaoSharedTrialAccountLabel } from "./trial-operations";
+import type { AvaCalendarPublicationComposition } from "./ava-calendar-server-composition";
+export { createAvaCalendarRouteComposition } from "./ava-calendar-server-composition";
 
 export type AvaCalendarDependencies = {
   readSession: () => Promise<{ session: DemoSessionIdentity; fullAdmin: boolean } | { error: string; status: number }>;
@@ -18,6 +20,8 @@ export type AvaCalendarDependencies = {
   readVersions: () => Promise<OpsVersionRow[]>;
   readAccounts: () => Promise<readonly AvaCoordinatorAccount[]>;
   readSnapshot: (window: AvaCalendarWindow) => Promise<AvaCalendarSnapshot>;
+  strictSourceIdentity?: boolean;
+  publication?: AvaCalendarPublicationComposition;
 };
 type CalendarReadDependencies = Omit<AvaCalendarDependencies, "readSession">;
 type CalendarDenial = { error: string; status: number };
@@ -75,17 +79,32 @@ function errorResponse(error: unknown, vary = "Cookie") {
   return json({ error: "课表暂时无法完整读取，请稍后重试。" }, 503, vary);
 }
 
-async function readCalendarPublication<Authority extends object>(dependencies: CalendarReadDependencies, window: AvaCalendarWindow, initialVersions: number[], initial: Authority, readAuthority: () => Promise<Authority | CalendarDenial>, project: (snapshot: AvaCalendarSnapshot, accounts: readonly AvaCoordinatorAccount[]) => AvaCalendarProjection, guard?: () => CalendarDenial | undefined) {
-  const denied = guard?.();
+async function readCalendarPublication<Authority extends object>(dependencies: CalendarReadDependencies, rows: OpsStateRow[], window: AvaCalendarWindow, initialVersions: number[], initial: Authority, readAuthority: () => Promise<Authority | CalendarDenial>, project: (snapshot: AvaCalendarSnapshot, accounts: readonly AvaCoordinatorAccount[]) => AvaCalendarProjection, guard?: () => CalendarDenial | undefined) {
+  const check = guard ?? (() => undefined);
+  const denied = check();
   if (denied) return denied;
   const [snapshot, accounts] = await Promise.all([dependencies.readSnapshot(window), dependencies.readAccounts()]);
-  const revoked = guard?.();
+  const revoked = check();
   if (revoked) return revoked;
+  await dependencies.publication?.readMetadata(snapshot, async () => {
+    if (guard) {
+      const denied = guard();
+      if (denied) throw new CalendarAuthorityDenied(denied);
+      return;
+    }
+    const current = await readAuthority();
+    if ("error" in current) throw new CalendarAuthorityDenied(current);
+    if (JSON.stringify(current) !== JSON.stringify(initial)) throw new AvaCalendarReadError("source_changed");
+  });
+  const metadataRevoked = check();
+  if (metadataRevoked) return metadataRevoked;
   const [currentVersions, currentIdentity, currentAccounts] = await Promise.all([dependencies.readVersions(), readAuthority(), dependencies.readAccounts()]);
   if ("error" in currentIdentity) return currentIdentity;
   validateCurrentAuthority({ versions: initialVersions, identity: initial, accounts }, { versions: currentVersions, identity: currentIdentity, accounts: currentAccounts });
-  const publication = { ...project(snapshot, accounts), source: { revision: snapshot.revision, publishedAt: snapshot.publishedAt, freshness: snapshot.freshness, coverage: snapshot.coverage } };
-  return guard?.() ?? publication;
+  const projection = project(snapshot, accounts);
+  const publication = { ...projection, source: { revision: snapshot.revision, publishedAt: snapshot.publishedAt, freshness: snapshot.freshness, coverage: snapshot.coverage },
+    ...dependencies.publication?.compose({ snapshot, rows, window, accounts, identity: initial, currentVersions, projection }) };
+  return check() ?? publication;
 }
 
 function calendarText(value: unknown) {
@@ -216,7 +235,9 @@ export function createAvaCalendarMachineHandler(dependencies: CalendarReadDepend
       const publication = await withAvaCalendarReadAuthority(() => {
         const denied = guard();
         if (denied) throw new CalendarAuthorityDenied(denied);
-      }, () => readCalendarPublication(dependencies, window, initialVersions, capability, authorize, (snapshot, accounts) => projectMachineCalendar(rows, capability, snapshot, accounts), guard));
+      }, () => readCalendarPublication(dependencies, rows, window, initialVersions, capability, authorize, (snapshot, accounts) => dependencies.strictSourceIdentity
+        ? projectAvaCalendarEvents({ rows, access: capability, accounts, events: snapshot.events, revision: snapshot.revision, strictSourceIdentity: true, sourceEvents: dependencies.publication?.sourceEvents(snapshot) })
+        : projectMachineCalendar(rows, capability, snapshot, accounts), guard));
       if ("error" in publication) return json({ error: publication.error }, publication.status, "Authorization");
       const denied = guard();
       return denied ? json({ error: denied.error }, denied.status, "Authorization") : json(publication, 200, "Authorization");
@@ -237,10 +258,10 @@ export function createAvaCalendarHandler(dependencies: AvaCalendarDependencies) 
       validateRowPayloads(rows);
       const access = buildOpsAccessContext(rows, resolved.session.user, resolved.fullAdmin, resolved.session);
       if (!["students", "teachers", "bookings"].every((entity) => canReadOpsEntity(access, entity))) return json({ error: "当前账号无权查看日历。" }, 403);
-      const publication = await readCalendarPublication(dependencies, window, initialVersions, resolved, dependencies.readSession, (snapshot, accounts) => projectAvaCalendarEvents({ rows, access, accounts, events: snapshot.events, revision: snapshot.revision }));
+      const publication = await readCalendarPublication(dependencies, rows, window, initialVersions, resolved, dependencies.readSession, (snapshot, accounts) => projectAvaCalendarEvents({ rows, access, accounts, events: snapshot.events, revision: snapshot.revision, strictSourceIdentity: dependencies.strictSourceIdentity, sourceEvents: dependencies.publication?.sourceEvents(snapshot) }));
       return "error" in publication ? json({ error: publication.error }, publication.status) : json(publication);
     } catch (error) {
-      return errorResponse(error);
+      return error instanceof CalendarAuthorityDenied ? json({ error: error.denial.error }, error.denial.status) : errorResponse(error);
     }
   };
 }

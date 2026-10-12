@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type RefObject, type UIEvent } from "react";
 import type { AvaCalendarEvent, AvaCalendarProjection } from "@/lib/ava-calendar-projection";
 import styles from "./calendar.module.css";
+import { useAvaCalendarVisibleRefresh } from "@/lib/ava-calendar-visible-refresh";
 
 type CalendarData = AvaCalendarProjection & { source: { revision: string; publishedAt: string; freshness: "fresh" | "stale"; coverage: "complete" | "partial" } };
 type CalendarResponse = CalendarData & { error?: string };
@@ -61,18 +62,6 @@ function readFailure(error: unknown) {
   return error instanceof Error && error.name !== "AbortError" ? error.message : "读取超时，请重试。";
 }
 
-function useVisibleRefresh(loading: boolean, refreshCalendar: () => void) {
-  useEffect(() => {
-    if (loading) return;
-    let timer: ReturnType<typeof setTimeout>;
-    function refreshWhenVisible() {
-      if (document.visibilityState === "visible") refreshCalendar();
-      timer = setTimeout(refreshWhenVisible, 60000);
-    }
-    timer = setTimeout(refreshWhenVisible, 60000);
-    return () => clearTimeout(timer);
-  }, [loading, refreshCalendar]);
-}
 
 function useCalendarData(week: string) {
   const [refresh, setRefresh] = useState(0);
@@ -107,7 +96,7 @@ function useCalendarData(week: string) {
     return () => { mounted = false; clearTimeout(timer); abort.abort(); };
   }, [week, refresh]);
 
-  useVisibleRefresh(loading, refreshCalendar);
+  useAvaCalendarVisibleRefresh(loading, refreshCalendar);
   return { calendar, failure, loading, refreshCalendar };
 }
 
