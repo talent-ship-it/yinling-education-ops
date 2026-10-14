@@ -42,7 +42,9 @@ function calendarDto() {
   };
 }
 
-function sliceReply(data: ReturnType<typeof calendarDto>, url: string) {
+type CalendarFixture = Omit<ReturnType<typeof calendarDto>, "availabilityStatus"> & { availabilityStatus: { teacherId: string; reason: string }[] };
+
+function sliceReply(data: CalendarFixture, url: string) {
   const params = new URL(url).searchParams;
   const start = Date.parse(params.get("start")!);
   const end = Date.parse(params.get("end")!);
@@ -53,16 +55,40 @@ function sliceReply(data: ReturnType<typeof calendarDto>, url: string) {
   }) };
 }
 
-async function fixture(page: Page, data = calendarDto()) {
-  await page.clock.install({ time: new Date("2026-10-12T02:00:00.000Z") });
-  await page.clock.pauseAt(new Date("2026-10-12T02:00:01.000Z"));
-  await page.route("**/api/demo-session", (route) => route.fulfill({ json: { ok: true, user: "Synthetic Teacher", role: "teacher", mustChangePassword: false } }));
+function workspaceSnapshot() {
+  const versions = { students: 1, teachers: 2, tasks: 3, bookings: 4, lpItems: 5 };
+  return {
+    students: [{ id: "SYNTH-STU-1", name: "合成主系统学生", initials: "合", status: "试听", owner: "Abby", course: "VCE English", timezone: "Australia/Melbourne", teacher: "Amelia Brown", next: "待安排", nextTone: "blue", files: 0, grade: "Year 10", examSubject: "VCE English", location: "VIC" }],
+    teachers: [{ id: "SYNTH-TEA-1", name: "Amelia Brown", initials: "AB", subjects: ["Year 10 English", "VCE English"], timezone: "Australia/Melbourne · UTC+10", availability: "周六 15:00-20:00", load: 8, capacity: 12, acceptsStudents: true, note: "Playwright 合成快照", departments: ["中小学"], location: "VIC", availabilityTimezone: "Australia/Melbourne", availabilityStatus: "可接新生", availabilityUpdated: "测试", availabilitySlots: [{ day: 6, start: "15:00", end: "20:00" }] }],
+    versions,
+    managedExamSnapshot: { versions: { students: versions.students, tasks: versions.tasks }, students: [] },
+    managedTrialPaymentSnapshot: { versions: { bookings: versions.bookings, students: versions.students, lpItems: versions.lpItems, tasks: versions.tasks }, students: [] },
+  };
+}
+
+async function fixture(
+  page: Page,
+  data: CalendarFixture = calendarDto(),
+  session: { user: string; role: "admin" | "limited-admin" | "staff" | "teacher" } = { user: "Amelia Brown", role: "teacher" },
+) {
+  const scopedData = () => session.role === "teacher" ? {
+    ...data,
+    teachers: data.teachers.slice(0, 1),
+    events: data.events.filter((event) => event.teacherId === data.teachers[0]?.id),
+    remainingAVA: data.remainingAVA.filter((interval) => interval.teacherId === data.teachers[0]?.id),
+    availabilityStatus: data.availabilityStatus.filter((status) => status.teacherId === data.teachers[0]?.id),
+  } : data;
+  await page.route("**/api/demo-session", (route) => route.fulfill({ json: { ok: true, ...session, mustChangePassword: false } }));
   await page.route("**/api/demo-logout", (route) => route.fulfill({ json: { serverSessionRevoked: true } }));
-  await page.route("**/api/ava-calendar?**", (route) => route.fulfill({ json: sliceReply(data, route.request().url()) }));
+  await page.route("**/api/app-snapshot", (route) => route.fulfill({ json: workspaceSnapshot() }));
+  await page.route("**/api/nixon-session", (route) => route.fulfill({ json: { ok: session.user === "Nixon" && session.role === "admin" } }));
+  await page.route("**/api/ava-calendar?**", (route) => route.fulfill({ json: sliceReply(scopedData(), route.request().url()) }));
   return data;
 }
 
 async function openLive(page: Page) {
+  await page.clock.install({ time: new Date("2026-10-12T02:00:00.000Z") });
+  await page.clock.pauseAt(new Date("2026-10-12T02:00:01.000Z"));
   await page.goto("/ava-calendar/live");
   await expect(page.locator(".fc")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
@@ -70,6 +96,85 @@ async function openLive(page: Page) {
   await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
   await page.getByLabel("日期", { exact: true }).fill("2026-10-12");
 }
+
+test("teacher discovers the live calendar and returns to the existing monthly submission flow", async ({ page }, info) => {
+  await fixture(page, calendarDto(), { user: "Amelia Brown", role: "teacher" });
+  await page.goto("/");
+  const nav = page.locator("#primary-navigation");
+  const entry = nav.locator('a[href="/ava-calendar/live"]');
+  await expect(entry).toHaveAttribute("aria-label", /AVA(?:日历| calendar)/);
+  await expect(entry).toHaveAttribute("href", "/ava-calendar/live");
+  await entry.click();
+  await expect(page).toHaveURL(/\/ava-calendar\/live$/);
+  await expect(page.locator(".fc")).toHaveCount(1);
+  await page.screenshot({ path: info.outputPath("teacher-live-calendar-desktop.png"), fullPage: true });
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  const submitAvailability = page.getByRole("button", { name: /提交月度 AVA|Submit availability/ });
+  await expect(submitAvailability).toBeVisible();
+  await submitAvailability.click();
+  const submission = page.getByRole("dialog");
+  await expect(submission).toContainText("提交下月 AVA 与可接人数");
+  await expect(submission.getByRole("textbox", { name: /老师|Teacher/ })).toHaveValue("Amelia Brown");
+  await expect(submission.getByRole("button", { name: "提交教务审核", exact: true })).toBeVisible();
+  await submission.getByRole("button", { name: /取消|Cancel/, exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.getByRole("button", { name: /更多|More/ }).click();
+  const drawer = page.getByRole("dialog", { name: /全部功能|All functions/ });
+  await expect(drawer.getByRole("button", { name: /AVA(?:日历| calendar)/ })).toBeVisible();
+  await drawer.getByRole("button", { name: /AVA(?:日历| calendar)/ }).click();
+  await expect(page).toHaveURL(/\/ava-calendar\/live$/);
+  await expect(page.locator(".fc")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: info.outputPath("teacher-live-calendar-mobile320.png"), fullPage: true });
+});
+
+test("administrator discovers live AVA and returns to the existing pending-review controls", async ({ page }) => {
+  await fixture(page, calendarDto(), { user: "Nixon", role: "admin" });
+  await page.route("**/api/teacher-availability/review", (route) => route.fulfill({ json: {
+    teacherVersion: 1,
+    submissions: [{
+      submission: { id: "SYNTHETIC-AVA-1", teacherId: "SYNTH-TEA-1", month: "2026-11", timezone: "Australia/Melbourne", slots: [{ day: 1, start: "16:00", end: "17:00" }] },
+      submittedAt: "2026-10-12T00:00:00.000Z", teacherName: "Amelia Brown", additionalStudents: 1, notes: "仅浏览器合成审核样本",
+    }],
+  } }));
+  await page.goto("/");
+  const nav = page.locator("#primary-navigation");
+  const entry = nav.locator('a[href="/ava-calendar/live"]');
+  await expect(entry).toHaveAttribute("aria-label", /AVA(?:日历| calendar)/);
+  await expect(entry).toHaveAttribute("href", "/ava-calendar/live");
+  await entry.click();
+  await expect(page).toHaveURL(/\/ava-calendar\/live$/);
+  await expect(page.locator(".fc")).toHaveCount(1);
+  await page.getByRole("link", { name: "工作台", exact: true }).click();
+  await page.getByRole("navigation", { name: "主要导航" }).getByRole("button", { name: /老师资源|Teachers/ }).click();
+  const availability = page.getByRole("region", { name: "Amelia Brown 月度 AVA" });
+  await expect(availability.getByRole("heading", { name: "待审核提交" })).toBeVisible();
+  await expect(availability.getByRole("button", { name: "通过", exact: true })).toBeVisible();
+  await expect(availability.getByRole("button", { name: "拒绝", exact: true })).toBeVisible();
+});
+
+test("a verified empty calendar differs from unready data and neither state paints green AVA", async ({ page }, info) => {
+  const base = calendarDto();
+  const empty: CalendarFixture = {
+    ...base,
+    teachers: [base.teachers[0]!],
+    events: [],
+    remainingAVA: [],
+    availabilityStatus: [{ teacherId: base.teachers[0]!.id, reason: "no_current_availability" }],
+  };
+  await fixture(page, empty);
+  await openLive(page);
+  await expect(page.getByText("当前范围无可用 AVA", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-ava-id]")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("empty-ava-state.png"), fullPage: true });
+
+  const unready = { ...empty, availabilityStatus: empty.teachers.map(({ id }) => ({ teacherId: id, reason: "health_not_ready" })) };
+  await page.route("**/api/ava-calendar?**", (route) => route.fulfill({ json: sliceReply(unready, route.request().url()) }));
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.getByText("AVA 数据暂未就绪", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-ava-id]")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("unready-ava-state.png"), fullPage: true });
+});
 
 test("automatic reads wait sixty seconds and pause while the document is hidden", async ({ page }) => {
   const data = await fixture(page);
@@ -455,7 +560,7 @@ test("revocation also clears the selected teacher ID and closes private details 
 test("273 visible teacher options use one calendar and one window payload, never a hardcoded six-column grid", async ({ page }) => {
   const data = calendarDto();
   data.teachers = Array.from({ length: 273 }, (_, index) => ({ id: `T${index + 1}`, name: `Synthetic Teacher ${index + 1}` }));
-  await fixture(page, data);
+  await fixture(page, data, { user: "Nixon", role: "admin" });
   await openLive(page);
   await expect(page.getByRole("combobox", { name: "老师", exact: true }).locator("option")).toHaveCount(274);
   let reads = 0;

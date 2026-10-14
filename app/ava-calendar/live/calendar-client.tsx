@@ -177,8 +177,38 @@ function CalendarControls({ calendar, data, teacher, setTeacher, zone, setZone, 
   </div>;
 }
 
-function ReadStatus({ loading, failure }: { loading: boolean; failure: string }) {
-  return <>{loading && <p role="status" className={styles.status}>正在读取…</p>}{failure && <p role="alert" className={styles.status}>{failure}{failure.startsWith("登录已失效") && <> <a href="/ava-calendar/live">重新登录</a></>}</p>}</>;
+function hasRemainingAvailability(data: AvaCalendarLiveData, teacher: string) {
+  return data.remainingAVA.some((interval) => !teacher || interval.teacherId === teacher);
+}
+
+function availabilityMessageForTeachers(data: AvaCalendarLiveData, teacher: string, teachers: AvaCalendarLiveData["teachers"]) {
+  if (!teachers.length) return "AVA 数据暂未就绪";
+  if (hasRemainingAvailability(data, teacher)) return "";
+  const states = new Map(data.availabilityStates.map((item) => [item.teacherId, item.state]));
+  return teachers.every((item) => states.get(item.id) === "empty") ? "当前范围无可用 AVA" : "AVA 数据暂未就绪";
+}
+
+function availabilityMessage(data: AvaCalendarLiveData | null, teacher: string) {
+  return data ? availabilityMessageForTeachers(data, teacher, teacher ? data.teachers.filter((item) => item.id === teacher) : data.teachers) : "";
+}
+
+function LoadingStatus({ loading }: { loading: boolean }) {
+  if (!loading) return null;
+  return <p role="status" className={styles.status}>正在读取…</p>;
+}
+
+function FailureStatus({ failure }: { failure: string }) {
+  if (!failure) return null;
+  return <p role="alert" className={styles.status}>{failure}{failure.startsWith("登录已失效") && <> <a href="/ava-calendar/live">重新登录</a></>}</p>;
+}
+
+function MessageStatus({ loading, failure, message }: { loading: boolean; failure: string; message: string }) {
+  if (loading || failure || !message) return null;
+  return <p role="status" className={styles.status}>{message}</p>;
+}
+
+function ReadStatus({ loading, failure, message }: { loading: boolean; failure: string; message: string }) {
+  return <><LoadingStatus loading={loading} /><FailureStatus failure={failure} /><MessageStatus loading={loading} failure={failure} message={message} /></>;
 }
 
 function detailTime(event: AvaCalendarEvent, zone: string) {
@@ -238,7 +268,7 @@ export default function AvaCalendarLiveClient() {
     <section className={styles.stage} aria-label="老师课程日历">
       <div className={styles.toolbar}><DateNavigation calendar={calendar} date={date} /><CalendarControls calendar={calendar} data={data} teacher={teacher} setTeacher={setTeacher} zone={zone} setZone={setZone} view={view} loading={loading} refreshCalendar={refreshCalendar} /></div>
       <div className={styles.legend} aria-label="日历图例"><span><i className={styles.freeSwatch} />AVA</span><span className={styles.trialTag}>试听</span>{TRIAL_OPERATIONS.map((owner, index) => <span key={owner}><i className={styles.swatch} data-owner-color={`owner-${index + 1}`} />{owner}</span>)}</div>
-      <ReadStatus loading={loading} failure={failure} />
+      <ReadStatus loading={loading} failure={failure} message={availabilityMessage(data, teacher)} />
       <div className={styles.viewport} aria-label="日历滚动区域"><div ref={host} className={styles.calendar} /></div>
     </section>
     <dialog ref={dialog} className={styles.dialog} aria-labelledby="live-detail-title">

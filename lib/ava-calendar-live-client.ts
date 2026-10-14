@@ -3,7 +3,8 @@ import { TRIAL_OPERATIONS } from "./lp-workflows";
 
 export type AvaCalendarLiveWindow = { start: string; end: string };
 export type AvaCalendarRemaining = { id: string; teacherId: string; startsAt: string; endsAt: string };
-export type AvaCalendarLiveData = AvaCalendarProjection & { remainingAVA: AvaCalendarRemaining[] };
+export type AvaCalendarAvailabilityState = { teacherId: string; state: "empty" | "unready" };
+export type AvaCalendarLiveData = AvaCalendarProjection & { remainingAVA: AvaCalendarRemaining[]; availabilityStates: AvaCalendarAvailabilityState[] };
 type CalendarSlice = AvaCalendarProjection & { remainingAVA?: AvaCalendarRemaining[]; availabilityStatus?: { teacherId: string; reason: string }[]; nativeVersions?: Record<string, number>; consistencyKey?: string; source?: { revision: string; publishedAt: string; freshness: string; coverage: string; window?: AvaCalendarLiveWindow } };
 
 class CalendarReadError extends Error {
@@ -147,11 +148,26 @@ function safeRemaining(values: AvaCalendarRemaining[], lessons: AvaCalendarEvent
   return [...distinct.values()];
 }
 
+function verifiedEmptyStates(bodies: CalendarSlice[], approved: (AvaCalendarRemaining[] | null)[]): AvaCalendarAvailabilityState[] {
+  const teachers = bodies[0]?.teachers ?? [];
+  const emptyReasons = new Set(["no_current_availability", "no_remaining_availability"]);
+  return teachers.map(({ id }) => ({
+    teacherId: id,
+    state: bodies.length > 0 && bodies.every((body, index) => {
+      if (approved[index] === null) return false;
+      const unavailable = new Set(unavailableTeachers(body));
+      const statuses = (body.availabilityStatus ?? []).filter((status) => status.teacherId === id);
+      return !unavailable.has(id) && statuses.length === 1 && emptyReasons.has(statuses[0]!.reason)
+        && !(body.remainingAVA ?? []).some((item) => item.teacherId === id);
+    }) ? "empty" : "unready",
+  }));
+}
+
 function mergeSlices(bodies: CalendarSlice[], windows: AvaCalendarLiveWindow[], events: Map<string, AvaCalendarEvent>): AvaCalendarLiveData {
   const approved = bodies.map((body, index) => approvedRemaining(body, windows[index]!));
   const lessons = [...events.values()];
   const remaining = approved.every((values) => values !== null) ? safeRemaining(approved.flatMap((values) => values!), lessons, new Set(bodies.flatMap(unavailableTeachers))) : [];
-  return { events: lessons, teachers: bodies[0]!.teachers, remainingAVA: remaining };
+  return { events: lessons, teachers: bodies[0]!.teachers, remainingAVA: remaining, availabilityStates: verifiedEmptyStates(bodies, approved) };
 }
 
 async function readGroup(window: AvaCalendarLiveWindow, signal: AbortSignal, fetchImpl: typeof fetch): Promise<AvaCalendarLiveData> {

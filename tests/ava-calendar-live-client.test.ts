@@ -231,3 +231,34 @@ test("unsafe and unknown AVA statuses in either slice still deny the teacher's e
     }
   }
 });
+
+test("verified empty AVA requires normal empty reasons for every teacher in every date slice", async () => {
+  const range = { start: "2026-10-12T01:00:00.000Z", end: "2026-10-27T01:00:00.000Z" };
+  const result = await live.fetchAvaCalendarWindow(range, new AbortController().signal, async () => Response.json({
+    ...approvedDto(), events: [], remainingAVA: [],
+    availabilityStatus: [{ teacherId: "T1", reason: "no_current_availability" }],
+  }));
+  assert.deepEqual(result.availabilityStates, [{ teacherId: "T1", state: "empty" }]);
+});
+
+test("unknown or incomplete empty AVA evidence is classified as unready", async () => {
+  const range = { start: "2026-10-12T01:00:00.000Z", end: "2026-10-27T01:00:00.000Z" };
+  const cases = [
+    { availabilityStatus: [{ teacherId: "T1", reason: "health_not_ready" }] },
+    { availabilityStatus: [{ teacherId: "T1", reason: "unknown_reason" }] },
+    { availabilityStatus: [] },
+    { availabilityStatus: undefined },
+    { availabilityStatus: [{ teacherId: "T1", reason: "no_current_availability" }], source: { ...approvedDto().source, freshness: "stale" } },
+    { availabilityStatus: [{ teacherId: "T1", reason: "no_current_availability" }], remainingAVA: approvedDto().remainingAVA },
+    { availabilityStatus: [{ teacherId: "T1", reason: "no_current_availability" }], events: [{ ...lesson, identityPending: true }] },
+  ];
+  for (const values of cases) {
+    let reads = 0;
+    const result = await live.fetchAvaCalendarWindow(range, new AbortController().signal, async () => {
+      reads += 1;
+      return Response.json({ ...approvedDto(), events: [], remainingAVA: values.remainingAVA ?? [], ...values });
+    });
+    assert.equal(reads, 2);
+    assert.deepEqual(result.availabilityStates, [{ teacherId: "T1", state: "unready" }], JSON.stringify(values));
+  }
+});

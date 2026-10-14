@@ -3896,6 +3896,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     : []), [bookings, currentTeacher, currentTeacherIds]);
   const visibleNavigation = useMemo(() => isAdminView ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id)) : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)), [canViewPayroll, isAdminView, isTeacherView, navigation]);
   const visibleMobileNavigation = useMemo(() => visibleNavigation.filter((item) => isTeacherView ? ["dashboard", "students", "schedule", "classroom"].includes(item.id) : ["dashboard", "students", "schedule", "messages"].includes(item.id)), [isTeacherView, visibleNavigation]);
+  const canOpenAvaCalendar = visibleNavigation.some((item) => item.id === "schedule");
+  const avaCalendarLabel = displayPreferences.language === "en-AU" ? "AVA calendar" : "AVA日历";
   const scopedStudents = useMemo(() => {
     if (isAdminView) return recordStudents;
     if (isTeacherView) {
@@ -14412,6 +14414,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
+          {canOpenAvaCalendar ? <a className="nav-item" href="/ava-calendar/live" aria-label={avaCalendarLabel} title={avaCalendarLabel} style={{ textDecoration: "none" }}><CalendarDays size={18} /><span>{avaCalendarLabel}</span></a> : null}
           <p>{displayTerm("运营与系统", displayPreferences.language)}</p>
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;
@@ -14480,6 +14483,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               const Icon = item.icon;
               return <button className={active === item.id ? "active" : ""} type="button" aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{displayTerm(item.group === "work" ? "学生与教务" : "运营与系统", displayPreferences.language)}</small></span><ChevronRight size={16} /></button>;
             })}
+            {canOpenAvaCalendar ? <button type="button" aria-label={avaCalendarLabel} onClick={() => { setMobileMenuOpen(false); window.location.assign("/ava-calendar/live"); }}><CalendarDays size={20} /><span><strong>{avaCalendarLabel}</strong><small>{displayTerm("学生与教务", displayPreferences.language)}</small></span><ChevronRight size={16} /></button> : null}
           </div>
           <button className="mobile-password-button" type="button" onClick={() => { setModal("accountPasswordChange"); setMobileMenuOpen(false); }}><KeyRound size={18} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
           <button className="mobile-preferences-button" type="button" onClick={() => { setDisplayPreferencesOpen(true); setMobileMenuOpen(false); }}><Settings size={18} aria-hidden="true" />{interfaceText.profilePreferences}</button>
