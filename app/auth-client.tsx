@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, type ReactNode } from "react";
 import { AuthStatusScreen } from "@/app/auth-status-screen";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import { fetchJsonWithTimeout, type SharedStateFetch } from "@/lib/shared-state-recovery";
@@ -89,7 +89,7 @@ function AuthLoginScreen({
   );
 }
 
-export default function AuthClient() {
+export default function AuthClient({ authenticatedContent }: { authenticatedContent?: ReactNode } = {}) {
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -178,5 +178,6 @@ export default function AuthClient() {
 
   if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
   if (!session) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} mfaRequired={loginMfaRequired} />;
+  if (!session.mustChangePassword && authenticatedContent) return authenticatedContent;
   return <OperationsApp initialSession={session} />;
 }
