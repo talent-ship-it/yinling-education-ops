@@ -168,6 +168,20 @@ test("keeps each owner's tasks together and preserves deadline ordering inside e
   assert.doesNotMatch(ellaGroup, /任务 abby-/);
 });
 
+test("renders legacy tasks with missing or invalid owners as unassigned", () => {
+  const source = [undefined, null, 17].map((owner, index) => ({
+    ...task(`missing-owner-${index}`, "LP", "today", "今天"),
+    owner,
+  })) as unknown as OpsTask[];
+  const groups = groupTasksByOwner(source);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].owner, "待分配");
+  assert.deepEqual(groups[0].tasks, source);
+  const html = render(source);
+  assert.match(html, /<h3[^>]*>待分配<\/h3>/);
+  for (let index = 0; index < source.length; index++) assert.match(html, new RegExp(`任务 missing-owner-${index}`));
+});
+
 test("lists only task-scoped owners in the filter and uses unique accessible section labels", () => {
   const html = render([
     task("abby-today", "排课", "today", "今天"),

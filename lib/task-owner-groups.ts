@@ -18,7 +18,8 @@ function ownerMark(owner: string) {
 export function groupTasksByOwner(tasks: readonly OpsTask[]): TaskOwnerGroup[] {
   const groups = new Map<string, TaskOwnerGroup>();
   for (const task of tasks) {
-    const owner = (resolveDemoOperationsName(task.owner) ?? task.owner.trim()) || "待分配";
+    const rawOwner = typeof task.owner === "string" ? task.owner : "";
+    const owner = (resolveDemoOperationsName(rawOwner) ?? rawOwner.trim()) || "待分配";
     const key = normaliseDemoUserName(owner);
     const group = groups.get(key);
     if (group) group.tasks.push(task);
