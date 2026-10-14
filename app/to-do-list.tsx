@@ -4,6 +4,7 @@ import React from "react";
 import { Pencil, RotateCcw, X } from "lucide-react";
 
 import { formatCompactTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
+import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
 export type ToDoFilter = (typeof TO_DO_FILTERS)[number];
@@ -227,15 +228,39 @@ function TaskSection({
   tasks: OpsTask[];
   view: TaskListView;
 }) {
+  const headingId = React.useId();
   return (
-    <section className={`to-do-section ${className}`} aria-labelledby={`to-do-${className}`}>
+    <section className={`to-do-section ${className}`} aria-labelledby={headingId}>
       <header className="panel-header to-do-section-header">
-        <h2 id={`to-do-${className}`}>{title}</h2>
+        <h4 id={headingId}>{title}</h4>
         <strong>{props.tasks.length}</strong>
       </header>
       <TaskRows {...props} />
     </section>
   );
+}
+
+function TaskOwnerSection({ group, ...props }: Omit<Parameters<typeof TaskRows>[0], "tasks"> & { group: TaskOwnerGroup }) {
+  const headingId = React.useId();
+  const pendingDeadline = sortTasksByDueAt(group.tasks.filter((task) => props.view === "todo" && !isExecutableOpenTask(task)));
+  const actionable = props.view === "todo" ? group.tasks.filter(isExecutableOpenTask) : group.tasks;
+  const today = sortTasksByDueAt(actionable.filter((task) => props.view !== "todo" || task.status === "today"));
+  const overdue = sortTasksByDueAt(actionable.filter((task) => props.view === "todo" && task.status === "overdue"));
+  const remaining = sortTasksByDueAt(actionable.filter((task) => props.view === "todo" && task.status !== "today" && task.status !== "overdue"));
+
+  return <section className="to-do-owner-group" aria-labelledby={headingId}>
+    <header className="task-owner-group-header">
+      <span className="task-owner-mark" aria-hidden="true">{group.mark}</span>
+      <h3 id={headingId}>{group.owner}</h3>
+      <strong>{group.tasks.length}</strong>
+    </header>
+    {props.view === "todo" ? <>
+      {today.length > 0 && <TaskSection title="今日到期" className="today" tasks={today} {...props} />}
+      {overdue.length > 0 && <TaskSection title="已逾期" className="overdue" tasks={overdue} {...props} />}
+      {remaining.length > 0 && <TaskSection title="其余任务" className="remaining" tasks={remaining} {...props} />}
+      {pendingDeadline.length > 0 && <TaskSection title="待补截止时间" className="pending-deadline" tasks={pendingDeadline} {...props} />}
+    </> : <TaskSection title={props.view === "done" ? "已完成" : "无法完成"} className={props.view} tasks={today} {...props} />}
+  </section>;
 }
 
 export function ToDoList({
@@ -259,12 +284,16 @@ export function ToDoList({
   taskTitle,
 }: ToDoListProps) {
   const [view, setView] = React.useState<TaskListView>("todo");
-  const filtered = filterTasks(tasks, filter, view, deadlineTimeZone);
-  const pendingDeadline = sortTasksByDueAt(filtered.filter((task) => view === "todo" && !isExecutableOpenTask(task)));
-  const actionable = view === "todo" ? filtered.filter(isExecutableOpenTask) : filtered;
-  const today = sortTasksByDueAt(actionable.filter((task) => view !== "todo" || task.status === "today"));
-  const overdue = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status === "overdue"));
-  const remaining = sortTasksByDueAt(actionable.filter((task) => view === "todo" && task.status !== "today" && task.status !== "overdue"));
+  const [ownerFilter, setOwnerFilter] = React.useState("");
+  const ownerGroups = groupTasksByOwner(tasks);
+  const selectedOwner = ownerGroups.find((group) => group.key === ownerFilter);
+  if (ownerFilter && !selectedOwner) setOwnerFilter("");
+  const ownerTasks = selectedOwner?.tasks ?? tasks;
+  const filtered = filterTasks(ownerTasks, filter, view, deadlineTimeZone);
+  const filteredTasks = new Set(filtered);
+  const visibleOwnerGroups = ownerGroups
+    .map((group) => ({ ...group, tasks: group.tasks.filter((task) => filteredTasks.has(task)) }))
+    .filter((group) => group.tasks.length > 0);
   const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
 
   return (
@@ -279,8 +308,14 @@ export function ToDoList({
               aria-pressed={view === value}
               key={value}
               onClick={() => setView(value)}
-            >{VIEW_LABELS[value]} <strong>{filterTasks(tasks, "all", value, deadlineTimeZone).length}</strong></button>)}
+            >{VIEW_LABELS[value]} <strong>{filterTasks(ownerTasks, "all", value, deadlineTimeZone).length}</strong></button>)}
           </div>
+          <label className="to-do-owner-filter">负责人
+            <select aria-label="按负责人筛选任务" value={selectedOwner?.key ?? ""} onChange={(event) => setOwnerFilter(event.target.value)}>
+              <option value="">全部负责人</option>
+              {ownerGroups.map((group) => <option value={group.key} key={group.key}>{group.owner}</option>)}
+            </select>
+          </label>
           <div className="segmented to-do-filters" role="group" aria-label="任务类别">
             {TO_DO_FILTERS.map((value) => (
               <button
@@ -296,12 +331,7 @@ export function ToDoList({
       </header>
 
       <div id="to-do-list-content">
-        {view === "todo" ? <>
-          {today.length > 0 && <TaskSection title="今日到期" className="today" tasks={today} {...rowProps} />}
-          {overdue.length > 0 && <TaskSection title="已逾期" className="overdue" tasks={overdue} {...rowProps} />}
-          {remaining.length > 0 && <TaskSection title="其余任务" className="remaining" tasks={remaining} {...rowProps} />}
-          {pendingDeadline.length > 0 && <TaskSection title="待补截止时间" className="pending-deadline" tasks={pendingDeadline} {...rowProps} />}
-        </> : today.length > 0 ? <TaskSection title={view === "done" ? "已完成" : "无法完成"} className={view} tasks={today} {...rowProps} /> : null}
+        {visibleOwnerGroups.map((group) => <TaskOwnerSection group={group} key={group.key} {...rowProps} />)}
         {filtered.length === 0 && <div className="empty-inline" role="status" aria-live="polite">{view === "todo" ? "没有待处理事项" : view === "done" ? "还没有已完成任务" : "没有无法完成的任务"}</div>}
       </div>
     </section>

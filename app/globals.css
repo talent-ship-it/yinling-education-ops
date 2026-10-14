@@ -1611,18 +1611,25 @@ body {
 .dashboard-grid > * { min-width:0; }
 .to-do-header-actions { align-items:center; display:flex; flex:1 1 310px; gap:8px; justify-content:flex-end; max-width:100%; min-width:0; }
 .to-do-filters { flex-wrap:wrap; min-width:0; }
+.to-do-owner-filter { align-items:center; color:var(--muted); display:flex; font-size:12px; gap:8px; max-width:100%; }
+.to-do-owner-filter select { background:var(--surface); border:1px solid var(--line); border-radius:8px; color:var(--ink); font:inherit; max-width:100%; min-height:40px; min-width:0; padding:7px 10px; }
+.to-do-owner-group + .to-do-owner-group { border-top:1px solid var(--line); }
+.task-owner-group-header { align-items:center; background:var(--surface); display:flex; gap:10px; padding:14px 15px; }
+.task-owner-mark { align-items:center; background:var(--brand-soft); border-radius:8px; color:var(--brand-ink); display:inline-flex; flex:0 1 auto; font-size:12px; font-weight:700; justify-content:center; min-height:32px; min-width:32px; overflow-wrap:anywhere; padding:5px 7px; }
+.task-owner-group-header h3 { font-size:15px; margin:0; overflow-wrap:anywhere; }
+.task-owner-group-header > strong { color:var(--muted); font-size:12px; margin-left:auto; }
 .to-do-collapse-button { align-items:center; background:#fff; border:1px solid #cad6cf; border-radius:5px; color:#43584d; cursor:pointer; display:inline-flex; flex:0 0 auto; font-size:11px; font-weight:700; gap:4px; justify-content:center; min-height:32px; padding:5px 8px; white-space:nowrap; }
 .to-do-collapse-button:hover { background:#f4f8f6; border-color:var(--brand-line); color:var(--brand-ink); }
 .to-do-section { border-top:1px solid var(--line); }
 .to-do-section-header { align-items:center; background:#f8fbfa; min-height:42px; padding:10px 15px; }
-.to-do-section-header h2 { font-size:13px; margin:0; }
+.to-do-section-header h4 { font-size:13px; margin:0; }
 .to-do-section-header > strong { background:#edf2ef; border-radius:999px; color:#56685e; font-size:10px; min-width:24px; padding:4px 7px; text-align:center; }
 .to-do-section.today .to-do-section-header { background:var(--amber-soft); }
-.to-do-section.today .to-do-section-header h2 { color:#86550c; }
+.to-do-section.today .to-do-section-header h4 { color:#86550c; }
 .to-do-section.overdue .to-do-section-header { background:var(--red-soft); }
-.to-do-section.overdue .to-do-section-header h2 { color:#9c3f3b; }
+.to-do-section.overdue .to-do-section-header h4 { color:#9c3f3b; }
 .to-do-section.pending-deadline .to-do-section-header { background:#f2f4f2; }
-.to-do-section.pending-deadline .to-do-section-header h2 { color:#68766e; }
+.to-do-section.pending-deadline .to-do-section-header h4 { color:#68766e; }
 .task-dot.neutral { background:#98a49d; }
 .to-do-row .task-copy strong { font-size:13px; }
 .to-do-row .task-copy span,.to-do-row .due-label { font-size:11px; }

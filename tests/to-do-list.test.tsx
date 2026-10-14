@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "../app/to-do-list";
 import { timezoneLabelFor } from "../lib/display-preferences";
 import { OpsTask, TaskCategory, TaskStatus } from "../lib/ops-tasks";
+import { groupTasksByOwner } from "../lib/task-owner-groups";
 
 function task(
   id: string,
@@ -77,7 +78,7 @@ function renderWithOpenPolicy(tasks: OpsTask[], canOpen: (task: OpsTask) => bool
   );
 }
 
-test("renders the today and category tabs, marks the controlled filter, and exposes the collapse control", () => {
+test("renders the today and category tabs, marks the controlled filter, and keeps collapse removed", () => {
   const html = render([], "考试");
   for (const label of ["全部", "今日", "LP", "考试", "续课", "请假代课"]) assert.match(html, new RegExp(`>${label}<`));
   assert.match(html, /aria-label="任务类别"/);
@@ -124,7 +125,87 @@ test("shows the canonical deadline as a compact date, not legacy workflow copy",
   assert.doesNotMatch(html, /不应渲染的解释文字/);
   assert.doesNotMatch(html, /<small/);
   assert.match(html, /学生 STU-due/);
-  assert.doesNotMatch(html, /Abby/);
+  assert.match(html, /<h3[^>]*>Abby<\/h3>/);
+});
+
+test("groups tasks by their actual responsible owner without dropping historical or unassigned tasks", () => {
+  const source = [
+    { ...task("abby", "排课", "today", "今天"), owner: " Abby " },
+    { ...task("abby-case", "LP", "today", "今天"), owner: "ＡＢＢＹ" },
+    { ...task("planner", "考试", "today", "今天"), owner: "Ops Admin" },
+    { ...task("historical", "排课", "overdue", "昨天"), owner: "思佳" },
+    { ...task("unknown", "LP", "waiting", "等待回复"), owner: "新教务" },
+    { ...task("unassigned", "LP", "today", "今天"), owner: " " },
+  ];
+  const groups = groupTasksByOwner(source);
+  assert.deepEqual(groups.find((group) => group.owner === "Abby")?.tasks, source.slice(0, 2));
+  for (const owner of ["Ops Admin", "思佳", "新教务", "待分配"]) assert.ok(groups.some((group) => group.owner === owner));
+  const groupedTasks = groups.flatMap((group) => group.tasks);
+  assert.equal(groupedTasks.length, source.length);
+  assert.ok(source.every((candidate) => groupedTasks.includes(candidate)));
+  assert.equal(source[0].owner, " Abby ");
+});
+
+test("keeps each owner's tasks together and preserves deadline ordering inside each group", () => {
+  const html = render([
+    { ...task("ella-today", "排课", "today", "今天"), owner: "Ella" },
+    task("abby-later", "LP", "today", "今天", "2026-08-12T08:00:00.000Z"),
+    { ...task("ella-overdue", "LP", "overdue", "昨天"), owner: "Ella" },
+    task("abby-earlier", "排课", "today", "今天", "2026-08-12T00:00:00.000Z"),
+    task("abby-pending", "LP", "waiting", "等待回复"),
+  ]);
+  assert.equal((html.match(/class="to-do-owner-group"/g) ?? []).length, 2);
+  const abbyAt = html.indexOf(">Abby</h3>");
+  const ellaAt = html.indexOf(">Ella</h3>");
+  assert.ok(abbyAt >= 0 && ellaAt > abbyAt);
+  const abbyGroup = html.slice(abbyAt, ellaAt);
+  const ellaGroup = html.slice(ellaAt);
+  assert.ok(abbyGroup.indexOf("任务 abby-earlier") < abbyGroup.indexOf("任务 abby-later"));
+  assert.match(abbyGroup, /任务 abby-pending/);
+  assert.doesNotMatch(abbyGroup, /任务 ella-/);
+  assert.match(ellaGroup, /任务 ella-today/);
+  assert.match(ellaGroup, /任务 ella-overdue/);
+  assert.doesNotMatch(ellaGroup, /任务 abby-/);
+});
+
+test("renders legacy tasks with missing or invalid owners as unassigned", () => {
+  const source = [undefined, null, 17].map((owner, index) => ({
+    ...task(`missing-owner-${index}`, "LP", "today", "今天"),
+    owner,
+  })) as unknown as OpsTask[];
+  const groups = groupTasksByOwner(source);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].owner, "待分配");
+  assert.deepEqual(groups[0].tasks, source);
+  const html = render(source);
+  assert.match(html, /<h3[^>]*>待分配<\/h3>/);
+  for (let index = 0; index < source.length; index++) assert.match(html, new RegExp(`任务 missing-owner-${index}`));
+});
+
+test("lists only task-scoped owners in the filter and uses unique accessible section labels", () => {
+  const html = render([
+    task("abby-today", "排课", "today", "今天"),
+    task("abby-overdue", "LP", "overdue", "昨天"),
+    { ...task("ella-today", "排课", "today", "今天"), owner: "Ella" },
+    { ...task("ella-overdue", "LP", "overdue", "昨天"), owner: "Ella" },
+  ]);
+  assert.match(html, /aria-label="按负责人筛选任务"/);
+  assert.match(html, /<option value="abby">Abby<\/option>/);
+  assert.match(html, /<option value="ella">Ella<\/option>/);
+  assert.doesNotMatch(html, /Tiffany|Molly|思佳/);
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const [, reference] of html.matchAll(/aria-labelledby="([^"]+)"/g)) assert.ok(ids.includes(reference));
+});
+
+test("keeps name marks distinct when responsible owners share initials", () => {
+  const groups = groupTasksByOwner([
+    { ...task("one", "LP", "today", "今天"), owner: "Alice Brown" },
+    { ...task("two", "LP", "today", "今天"), owner: "Andrew Bell" },
+    { ...task("three", "LP", "today", "今天"), owner: "Ella" },
+  ]);
+  assert.equal(new Set(groups.map((group) => group.mark)).size, groups.length);
+  assert.equal(groups.find((group) => group.owner === "Ella")?.mark, "EL");
 });
 
 test("renders the deadline after the task action buttons", () => {
