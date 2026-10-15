@@ -40,6 +40,7 @@ export interface OpsTask {
   completionOutcome?: "done" | "cannot_do";
   /** Operator note; required when completionOutcome is `cannot_do`. */
   completionNote?: string;
+  completionNoteUpdatedAt?: string;
   ruleKey?: string;
   dueAt?: string;
   /**
@@ -376,8 +377,8 @@ export function formatCompactTaskDeadline(
   if (!isCanonicalTaskDueAt(dueAt)) return undefined;
   const instant = new Date(dueAt);
   if (!Number.isFinite(instant.getTime())) return undefined;
-  const { month, day } = localParts(instant, timeZone);
-  return `${month}月${day}日`;
+  const { year, month, day } = localParts(instant, timeZone);
+  return `${year}年${month}月${day}日`;
 }
 
 export type TaskTitlePresentation = Readonly<{
@@ -498,6 +499,10 @@ export function upsertTaskByRule<T extends OpsTask>(tasks: readonly T[], incomin
     ? ({
         ...incoming,
         id: existing.id,
+        ...(existing.completionNote ? {
+          completionNote: existing.completionNote,
+          completionNoteUpdatedAt: existing.completionNoteUpdatedAt,
+        } : {}),
         ...(existing.status === "done"
           ? { status: existing.status, tone: existing.tone, result: existing.result, closedAt: existing.closedAt }
           : {}),

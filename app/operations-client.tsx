@@ -376,6 +376,7 @@ import {
 import {
   fetchJsonWithTimeout,
   recoverSharedStateAfterUnknownWrite,
+  matchesCommittedSharedPayload,
   SHARED_STATE_REQUEST_TIMEOUT_MS,
   type SharedStateRow,
 } from "@/lib/shared-state-recovery";
@@ -1670,7 +1671,7 @@ function useSharedState<T>(
         // the current committed version back.  A different payload is a real
         // conflict and must stay visible to the caller.
         const currentCommittedPayload = JSON.parse(committedRef.current) as T;
-        if (JSON.stringify(currentCommittedPayload) === payloadSerialized) {
+        if (matchesCommittedSharedPayload(entity, currentCommittedPayload, payload)) {
           const hasNewerLocalChanges = JSON.stringify(valueRef.current) !== committedRef.current;
           pendingWriteRef.current = hasNewerLocalChanges;
           onSync(
@@ -1734,7 +1735,7 @@ function useSharedState<T>(
       });
       if (remoteGenerationRef.current !== recoveryGeneration) throw error;
       const recoveredRow = recovery.row as RemoteStateRow<T>;
-      const matchesDesired = JSON.stringify(recoveredRow.payload) === payloadSerialized;
+      const matchesDesired = matchesCommittedSharedPayload(entity, recoveredRow.payload, next);
       committedRef.current = JSON.stringify(recoveredRow.payload);
       valueRef.current = recoveredRow.payload;
       versionRef.current = recoveredRow.version;

@@ -104,3 +104,19 @@ export async function recoverSharedStateAfterUnknownWrite<T>(input: Readonly<{
     };
   }
 }
+
+export function matchesCommittedSharedPayload(entity: string, actual: unknown, desired: unknown) {
+  if (entity !== "tasks") return JSON.stringify(actual) === JSON.stringify(desired);
+  const withoutNoteDates = (value: unknown) => Array.isArray(value)
+    ? value.map((task: unknown) => task && typeof task === "object" && !Array.isArray(task)
+      ? Object.fromEntries(Object.entries(task).filter(([field]) => field !== "completionNoteUpdatedAt"))
+      : task)
+    : value;
+  const canonical = (value: unknown) => JSON.stringify(withoutNoteDates(value), (_key, item) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)));
+    }
+    return item;
+  });
+  return canonical(actual) === canonical(desired);
+}

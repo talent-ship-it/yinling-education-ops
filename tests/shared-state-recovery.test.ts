@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   fetchJsonWithTimeout,
+  matchesCommittedSharedPayload,
   fetchWithTimeout,
   recoverSharedStateAfterUnknownWrite,
   type SharedStateFetch,
@@ -141,4 +142,28 @@ test("a failed GET rolls the UI back to the sent baseline instead of re-merging 
   assert.equal(result.outcome, "baseline");
   assert.deepEqual(result.row.payload, baseline.payload);
   assert.notDeepEqual(result.row.payload, localUnconfirmed);
+});
+
+test("task save confirmation tolerates only the server-owned note date", () => {
+  const desired = [{ id: "TSK-1", completionNote: "已联系", status: "today" }];
+  const actual = [{ ...desired[0], completionNoteUpdatedAt: "2026-10-15T00:00:00.000Z" }];
+  assert.equal(matchesCommittedSharedPayload("tasks", actual, desired), true);
+  assert.equal(matchesCommittedSharedPayload("students", actual, desired), false);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ ...actual[0], completionNote: "别人的修改" }], desired), false);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ ...actual[0], status: "done" }], desired), false);
+  assert.equal(matchesCommittedSharedPayload("tasks", [...actual, { id: "TSK-2" }], desired), false);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ ...desired[0], metadata: { completionNoteUpdatedAt: "different" } }], desired), false);
+});
+
+
+test("task save confirmation follows JSON semantics across JSONB key ordering and note clearing", () => {
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ status: "today", metadata: { z: 1, a: 2 }, id: "TSK-1", completionNote: "已联系", completionNoteUpdatedAt: "2026-10-15T00:00:00.000Z" }], [{ id: "TSK-1", completionNote: "已联系", metadata: { a: 2, z: 1 }, status: "today" }]), true);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ id: "TSK-1" }], [{ id: "TSK-1", completionNote: undefined, completionNoteUpdatedAt: "old" }]), true);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ id: "TSK-1", metadata: { z: 1, a: 3 } }], [{ id: "TSK-1", metadata: { a: 2, z: 1 } }]), false);
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ id: "TSK-2" }, { id: "TSK-1" }], [{ id: "TSK-1" }, { id: "TSK-2" }]), false);
+});
+
+
+test("task confirmation does not ignore dates nested under an empty object key", () => {
+  assert.equal(matchesCommittedSharedPayload("tasks", [{ id: "TSK-1", metadata: { "": [{ completionNoteUpdatedAt: "new" }] } }], [{ id: "TSK-1", metadata: { "": [{ completionNoteUpdatedAt: "old" }] } }]), false);
 });

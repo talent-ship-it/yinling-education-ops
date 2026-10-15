@@ -33,7 +33,7 @@ test("an old PUT receipt cannot roll back a newer authoritative version", () => 
   const commit = hook.slice(hook.indexOf("const mutateAndCommit"), hook.indexOf("return [value"));
   assert.match(commit, /if \(row\.version <= versionRef\.current\)/);
   assert.match(commit, /currentCommittedPayload/);
-  assert.match(commit, /JSON\.stringify\(currentCommittedPayload\) === payloadSerialized/);
+  assert.match(commit, /matchesCommittedSharedPayload\(entity, currentCommittedPayload, payload\)/);
   assert.match(commit, /version: versionRef\.current/);
   assert.match(commit, /sharedKnownConflict/);
   assert.match(commit, /当前权威版本未被覆盖/);

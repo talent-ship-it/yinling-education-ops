@@ -769,7 +769,7 @@ export function completeTrialTaskWithHandbookFollowUps(
     const existing = completed.find((item) => item.id === candidate.id);
     preserved.push(existing?.status === "done"
       ? existing
-      : existing?.completionNote ? { ...candidate, completionNote: existing.completionNote } : candidate);
+      : existing?.completionNote ? { ...candidate, completionNote: existing.completionNote, completionNoteUpdatedAt: existing.completionNoteUpdatedAt } : candidate);
   }
   return sortTasksByDueAt(preserved);
 }
@@ -984,7 +984,7 @@ export function replaceRuleTasks(
   for (const candidate of generated) {
     const existing = current.find((item) => item.id === candidate.id);
     const candidateWithNote = existing?.completionNote
-      ? { ...candidate, completionNote: existing.completionNote }
+      ? { ...candidate, completionNote: existing.completionNote, completionNoteUpdatedAt: existing.completionNoteUpdatedAt }
       : candidate;
     next.push(existing?.status === "done" ? existing : candidateWithNote);
   }
