@@ -36,6 +36,19 @@ create function internal.append_operational_contract_audit(p_action text,p_actor
 \ir ../../supabase/migrations/20260827000200_enforce_complete_lp_submission.sql
 \ir ../../supabase/migrations/20260914000100_align_operations_staff_contracts.sql
 
+do $current_staff$
+declare owner_name text;
+begin
+  foreach owner_name in array array['Abby','Thea','Tiffany','Erin','Ella','Molly'] loop
+    perform internal.validate_student_creation_fields(jsonb_build_object(
+      'name','Roster Fixture','course','English','segment','试听','guardianWechat','',
+      'lpNeed','试听LP','owner',owner_name,'planner','Tara','grade','待确认',
+      'location','VIC','timezone','Australia/Melbourne','notes',''
+    ));
+  end loop;
+end;
+$current_staff$;
+
 insert into public.ops_state(entity,payload,version,updated_by) values
  ('bookings','[{"id":"B-LEGACY","studentId":"S-LEGACY","teacherId":"T-1","date":"2026-08-21","start":"17:00","duration":60,"timezone":"Australia/Melbourne","kind":"常规课","teacherSubjectId":"Maths"}]',1,'fixture'),
  ('students','[{"id":"S-LEGACY","name":"Legacy Student","owner":"Erin","planner":"Tara","status":"在读"}]',1,'fixture'),

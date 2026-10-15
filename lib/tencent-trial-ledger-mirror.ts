@@ -1,3 +1,4 @@
+import { TRIAL_OPERATIONS } from "./lp-workflows";
 import {
   effectiveTrialResultStatus,
   isTrialLedgerWorkflow,
@@ -47,7 +48,7 @@ export const TENCENT_TRIAL_LEDGER_FIELD_KINDS: Readonly<Record<TencentTrialLedge
 
 const TENCENT_TRIAL_LEDGER_OPTIONS = {
   workflowType: ["试听 LP", "换老师试听"],
-  operationsOwner: ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"],
+  operationsOwner: TRIAL_OPERATIONS,
   planner: ["Tara", "Eileen", "Abby"],
   resultStatus: ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"],
 } as const;

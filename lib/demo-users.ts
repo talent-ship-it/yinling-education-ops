@@ -64,6 +64,29 @@ export function isRetiredOperationsIdentity(value: string) {
   return normaliseDemoUserName(value) === normaliseDemoUserName("思佳");
 }
 
-export const ASSIGNABLE_DEMO_STAFF_USERS = DEMO_STAFF_USERS.filter(
-  (staff) => !isRetiredOperationsIdentity(staff),
-);
+export const ASSIGNABLE_DEMO_STAFF_USERS = ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"] as const;
+
+export function resolveAssignableOperationsOwner(candidate: unknown) {
+  if (typeof candidate !== "string") return null;
+  const normalized = normaliseDemoUserName(resolveDemoStaffAlias(candidate) ?? candidate);
+  return ASSIGNABLE_DEMO_STAFF_USERS.find((owner) => normaliseDemoUserName(owner) === normalized) ?? null;
+}
+
+export function operationsOwnerFormOptions(retainedOwner?: string) {
+  return Array.from(new Set<string>([
+    ...ASSIGNABLE_DEMO_STAFF_USERS,
+    ...(retainedOwner?.trim() ? [retainedOwner] : []),
+  ])).sort();
+}
+
+export function operationsOwnerFilterOptions(owners: readonly string[]) {
+  return Array.from(new Set<string>([
+    ...ASSIGNABLE_DEMO_STAFF_USERS,
+    ...owners.map((owner) => resolveAssignableOperationsOwner(owner) ?? owner.trim()).filter(Boolean),
+  ])).sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+}
+
+export function matchesOperationsOwnerFilter(filter: string, owner: string) {
+  return filter === "all"
+    || (resolveAssignableOperationsOwner(filter) ?? filter.trim()) === (resolveAssignableOperationsOwner(owner) ?? owner.trim());
+}

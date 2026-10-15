@@ -184,3 +184,18 @@ test("LP revision accepts only a valid document URL and preserves OCC versions",
     expectedVersions: versions,
   }));
 });
+
+test("all six operations staff can submit trial LP through the server contract", () => {
+  for (const owner of ["Abby", "Thea", "Tiffany", "Erin", "Ella", "Molly"]) {
+    const command = parseLpAtomicCommand({
+      commandKey: "99999999-9999-4999-8999-999999999999",
+      operation: "create",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields: { ...fields, responsibleOperations: owner },
+      expectedVersions: versions,
+    });
+    const prepared = prepareLpAtomicCommand({ command, rows: stateRows({ id: "STU-1", owner, planner: "Tara" }), canOperateStudent: true, actor: owner, fullAdmin: false });
+    assert.equal(prepared.authorizedAssignment.owner, owner);
+  }
+});

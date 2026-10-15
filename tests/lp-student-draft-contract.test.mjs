@@ -17,7 +17,8 @@ test("LP form student selection is an observable draft and remounts student-deri
   assert.match(dialog, /name="studentId"[^>]*value=\{lpDraftStudentId\}/);
   assert.match(dialog, /onChange=\{\(event\) => setLpDraftStudentId/);
   assert.match(dialog, /key=\{lpDraftStudentId\}/);
-  assert.match(dialog, /lpDraftStudent\?\.owner/);
+  assert.match(dialog, /responsibleOperations: lpDraftOwner/);
+  assert.match(client, /const lpDraftOwner = isAdminView \? resolveAssignableOperationsOwner\(lpDraftStudent\?\.owner\) \?\? "" : lpDraftStudent\?\.owner \?\? ""/);
   assert.match(dialog, /lpDraftStudent\?\.planner/);
   assert.match(dialog, /lpDraftStudent\?\.lessonPackages/);
   assert.match(dialog, /studentId: lpDraftStudentId/);

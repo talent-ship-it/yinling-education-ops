@@ -11,6 +11,7 @@ import {
   lpRevisionDocumentUrl,
   parseLpWorkflowFormData,
 } from "../app/lp-workflow-fields.tsx";
+import { operationsOwnerFormOptions, resolveAssignableOperationsOwner } from "../lib/demo-users";
 import type { LpRevision } from "../lib/lp-workflows.ts";
 
 function revision(documentUrl: unknown): LpRevision {
@@ -433,4 +434,46 @@ test("renders the exact trial operations list and seven customisable location su
   }
   assert.match(html, /<input(?=[^>]*name="locationTimezone")(?=[^>]*list="lp-options-locationTimezone")[^>]*>/);
   assert.doesNotMatch(locations, /Australia\/Melbourne/);
+});
+
+test("non-trial LP forms retain the exact existing owner instead of selecting another coordinator", () => {
+  for (const owner of ["Tara", "Eileen", "ELLA 教务", " Ｅｌｌａ ", "思佳", "Historical Owner"]) {
+    const html = renderToStaticMarkup(<LpWorkflowFields
+      initialType="老师新 LP"
+      initialValues={{ responsibleOperations: owner }}
+      responsibleOperationsOptions={operationsOwnerFormOptions(owner).map((value) => ({ value }))}
+    />);
+    const operations = html.match(/<select name="responsibleOperations"[\s\S]*?<\/select>/)?.[0] ?? "";
+    assert.ok(operations.includes(`value="${owner}" selected=""`), owner);
+  }
+});
+
+
+test("admin LP forms canonicalize current aliases and require an explicit owner for historical assignments", () => {
+  for (const owner of ["ELLA 教务", " Ｅｌｌａ ", "Tara", "Eileen", "思佳", "Historical Owner"]) {
+    const selectedOwner = resolveAssignableOperationsOwner(owner) ?? "";
+    for (const initialType of ["老师新 LP", "试听 LP"] as const) {
+      const html = renderToStaticMarkup(<LpWorkflowFields
+        initialType={initialType}
+        initialValues={{ responsibleOperations: selectedOwner }}
+        responsibleOperationsOptions={operationsOwnerFormOptions(selectedOwner).map((value) => ({ value }))}
+      />);
+      const operations = html.match(/<select name="responsibleOperations"[\s\S]*?<\/select>/)?.[0] ?? "";
+      assert.ok(operations.includes(`value="${selectedOwner}" selected=""`), owner);
+      assert.doesNotMatch(operations, /value="(?:Tara|Eileen|思佳|Historical Owner)"/);
+      assert.match(operations, /required=""/);
+    }
+  }
+});
+
+test("LP forms do not silently select the first coordinator for an absent owner", () => {
+  for (const owner of ["", "Nixon", "Historical Owner"]) {
+    const html = renderToStaticMarkup(<LpWorkflowFields
+      initialType="试听 LP"
+      initialValues={{ responsibleOperations: owner }}
+    />);
+    const operations = html.match(/<select name="responsibleOperations"[\s\S]*?<\/select>/)?.[0] ?? "";
+    assert.match(operations, /value="" selected="">请选择教务/);
+    assert.doesNotMatch(operations, /value="Tiffany" selected/);
+  }
 });
