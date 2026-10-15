@@ -59,6 +59,21 @@ export const sqlRuntimeFixtures = Object.freeze([
   { id: "business-lifecycle", source: "tests/sql/business-lifecycle-runtime.ts", steps: [
     { kind: "typescript", file: "tests/sql/business-lifecycle-runtime.ts", databaseArgument: true },
   ] },
+  { id: "temporary-classroom-claim", source: "tests/sql/temporary-classroom-claim-runtime.sql", steps: [
+    { kind: "sql-fragment", file: "tests/sql/temporary-classroom-claim-runtime.sql",
+      start: "\\set ON_ERROR_STOP on", end: "do $original_claim$" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260824000500_harden_temporary_classroom_identity.sql",
+      start: "create table if not exists internal.temporary_classroom_requests (",
+      end: "create or replace function internal.booking_projection_occurrence_exists(" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260824000500_harden_temporary_classroom_identity.sql",
+      start: "create or replace function public.claim_temporary_classroom_request(",
+      end: "-- Add the same occurrence boundary check inside the atomic projection wrapper." },
+    { kind: "sql-fragment", file: "tests/sql/temporary-classroom-claim-runtime.sql",
+      start: "do $original_claim$", end: "do $fixed_claim$" },
+    { kind: "sql", file: "supabase/migrations/20261015045612_fix_temporary_classroom_claim_conflict.sql" },
+    { kind: "sql", file: "supabase/migrations/20261015045612_fix_temporary_classroom_claim_conflict.sql" },
+    { kind: "sql-fragment", file: "tests/sql/temporary-classroom-claim-runtime.sql", start: "do $fixed_claim$" },
+  ] },
   { id: "classroom-end-recovery", source: "tests/sql/classroom-end-recovery-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/classroom-end-recovery-runtime.sql" },
   ] },
