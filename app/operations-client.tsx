@@ -4111,7 +4111,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     && (modal === "studentRecords"
       || Boolean(studentModalTargetStudent && scopedActiveStudentIds.has(studentModalTargetStudent.id)));
   const lpDraftStudent = readableScopedStudents.find((student) => student.id === lpDraftStudentId);
-  const lpDraftOwner = isAdminView ? resolveAssignableOperationsOwner(lpDraftStudent?.owner) ?? "" : lpDraftStudent?.owner ?? "";
+  const lpDraftOwner = isFullAdminSession && isAdminView ? resolveAssignableOperationsOwner(lpDraftStudent?.owner) ?? "" : lpDraftStudent?.owner ?? "";
   const selectedMessageState = scopedMessages.find((message) => message.id === selectedMessageId);
   const selectedBookingSeries = scopedBookings.find((booking) => booking.id === selectedBookingId);
   const selectedBookingByStableKey = selectedBookingSeries && selectedBookingOccurrenceKey
