@@ -11868,8 +11868,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ?? (selectedBookingOccurrenceKey || !selectedBookingDate
         ? pageClassrooms[0]
         : undefined);
-    const roomMeetingId = roomBooking?.classroom?.meetingId
-      ?? (roomBooking ? provisionedClassrooms[roomBooking.occurrenceKey] : undefined);
+    const classroomMeetingIdFor = (booking: BookingOccurrence) => booking.classroom?.meetingId ?? provisionedClassrooms[booking.occurrenceKey];
+    const roomMeetingId = roomBooking ? classroomMeetingIdFor(roomBooking) : undefined;
     const roomRuntime = roomMeetingId && roomMeetingId === classroomRuntime?.meetingId
       ? classroomRuntime : null;
     const roomClosed = roomBooking?.classroom?.status === "ended" || roomRuntime?.closing || roomRuntime?.ended;
@@ -12015,7 +12015,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       ? "进行中"
                       : booking.classroom?.status === "ended"
                         ? "已结束"
-                        : booking.classroom?.meetingId || provisionedClassrooms[booking.occurrenceKey]
+                        : classroomMeetingIdFor(booking)
                           ? "待开课"
                           : "未创建";
                   return (
