@@ -1,8 +1,11 @@
 import { displayTerm, type InterfaceLanguage } from "@/lib/display-preferences";
 
 const englishInterfacePhrases: Record<string, string> = {
+  "课堂记录尚未同步": "Classroom record is not yet synced",
+  "课堂已创建，排课记录暂未同步": "Classroom created. The schedule record is pending sync.",
+  "课堂已打开，排课记录暂未同步": "Classroom opened. The schedule record is pending sync.",
   "课堂记录": "Classroom record",
-  "仅开课堂，不登记课时": "Open classroom without recording lesson hours",
+  "仅开课堂（不登记课时、不录播）": "Open classroom only (no lesson hours or recording)",
   "开课堂并登记课时": "Open classroom and record lesson hours",
   "参与者链接": "Participant link",
   "参与者链接已复制": "Participant link copied",
