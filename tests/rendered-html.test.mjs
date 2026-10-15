@@ -431,7 +431,7 @@ test("connects scoped bookings to real BiggerBlueButton classrooms", async () =>
   assert.match(client, /\/api\/classroom\/temporary/);
   assert.doesNotMatch(client, /以上选项全部可留空/);
   assert.doesNotMatch(client, /不记录排课、课时、薪资、出勤或录播/);
-  assert.match(client, /测试参与者链接/);
+  assert.match(client, /参与者链接/);
   assert.match(client, /endClassroom/);
   assert.match(client, /occurrenceId: occurrence\.occurrenceKey/);
   assert.match(client, /occurrenceId: booking\.occurrenceKey/);

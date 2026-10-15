@@ -125,13 +125,13 @@ function meetingLinks(meetingId: string, requestKey: string) {
     meetingId,
     moderatorUrl: createJoinUrl({
       meetingId,
-      fullName: "管理员测试",
+      fullName: "管理员",
       role: "MODERATOR",
       userId: `temporary-moderator-${suffix}`,
     }),
     viewerUrl: createJoinUrl({
       meetingId,
-      fullName: "测试参与者",
+      fullName: "参与者",
       role: "VIEWER",
       userId: `temporary-viewer-${suffix}`,
     }),

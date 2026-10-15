@@ -2995,6 +2995,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [sessionOperator]);
   const [temporaryClassroomStudentId, setTemporaryClassroomStudentId] = useState("");
   const [temporaryClassroomSubjectId, setTemporaryClassroomSubjectId] = useState("");
+  const [temporaryClassroomRecordLesson, setTemporaryClassroomRecordLesson] = useState(false);
+  const [temporaryClassroomTeacherId, setTemporaryClassroomTeacherId] = useState("");
+  const [temporaryClassroomTeacherSubjectId, setTemporaryClassroomTeacherSubjectId] = useState("");
   const [lessonSettlementDraft, setLessonSettlementDraft] = useState<BookingOccurrence | null>(null);
   const [lessonSettlementBusy, setLessonSettlementBusy] = useState(false);
   const [lessonSettlementError, setLessonSettlementError] = useState("");
@@ -7558,9 +7561,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const subjectId = String(data.get("subjectId") ?? "").trim();
     const teacherSubjectId = String(data.get("teacherSubjectId") ?? "").trim();
     const packageId = String(data.get("packageId") ?? "").trim();
-    const hasRecordDetails = [studentId, selectedTeacherId, subjectId, teacherSubjectId, packageId].some(Boolean);
+    const hasRecordDetails = temporaryClassroomRecordLesson;
 
-    if (studentId && !scopedActiveStudentIds.has(studentId)) {
+    if (hasRecordDetails && studentId && !scopedActiveStudentIds.has(studentId)) {
       notify("当前身份只能为当前范围的活跃学生创建临时课堂。");
       return;
     }
@@ -7572,7 +7575,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify("要保存课堂记录，请完整选择学生和老师。");
         return;
       }
-      if (!teacherSubjectId || !teacher.subjects.includes(teacherSubjectId)) {
+      if (!teacherSubjectId || !teacher.subjects.some((subject) => subject.trim() === teacherSubjectId)) {
         notify(`要保存课堂记录，请选择 ${teacher.name} 可教的老师科目。`);
         return;
       }
@@ -7761,7 +7764,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const meetingId = String(result.meetingId ?? "");
       const moderatorUrl = String(result.moderatorUrl ?? "");
       const viewerUrl = String(result.viewerUrl ?? "");
-      if (!meetingId || !moderatorUrl || !viewerUrl) throw new Error("临时课堂没有返回完整的测试链接。");
+      if (!meetingId || !moderatorUrl || !viewerUrl) throw new Error("临时课堂没有返回完整的进入链接。");
       setTemporaryTestClassroom({ meetingId, viewerUrl });
       clearTemporaryClassroomPending(sessionOperator, requestIntent ?? undefined);
       temporaryClassroomPendingRef.current = temporaryClassroomPendingRef.current.filter((entry) => entry.intent !== requestIntent);
@@ -7772,7 +7775,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       } else {
         window.location.assign(moderatorUrl);
       }
-      notify("临时测试课堂已打开；复制下方链接即可测试参与者进入。");
+      notify("临时课堂已打开；复制下方链接即可邀请参与者进入。");
     } catch (error) {
       popup?.close();
       notify(error instanceof Error ? error.message : "临时课堂创建失败");
@@ -11876,6 +11879,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 onClick={() => {
                   setTemporaryClassroomStudentId("");
                   setTemporaryClassroomSubjectId("");
+                  setTemporaryClassroomRecordLesson(false);
+                  setTemporaryClassroomTeacherId("");
+                  setTemporaryClassroomTeacherSubjectId("");
                   setTemporaryTestClassroom(null);
                   setModal("temporaryClassroom");
                 }}
@@ -14783,23 +14789,26 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "temporaryClassroom" && <Dialog title="立即开临时课堂" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitTemporaryClassroom}>
+          <label className="span-2">课堂记录<select value={temporaryClassroomRecordLesson ? "recorded" : "direct"} disabled={classroomBusy} onChange={(event) => setTemporaryClassroomRecordLesson(event.target.value === "recorded")}><option value="direct">仅开课堂，不登记课时</option><option value="recorded">开课堂并登记课时</option></select></label>
+          {temporaryClassroomRecordLesson && <>
           <label>学生<select name="studentId" value={temporaryClassroomStudentId} onChange={(event) => { const student = studentById(event.target.value); setTemporaryClassroomStudentId(event.target.value); setTemporaryClassroomSubjectId(student?.course || student?.lessonPackages?.flatMap((entry) => entry.subjectIds)[0] || ""); }}><option value="">请选择学生</option>{scopedActiveStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</select></label>
-          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<select name="teacherId" defaultValue=""><option value="">请选择老师</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>}
-          <label>教学科目<select name="teacherSubjectId" defaultValue=""><option value="">请选择科目</option>{teacherSubjectOptions.map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
+          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<select name="teacherId" value={temporaryClassroomTeacherId} onChange={(event) => { setTemporaryClassroomTeacherId(event.target.value); setTemporaryClassroomTeacherSubjectId(""); }}><option value="">请选择老师</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>}
+          <label>教学科目<select name="teacherSubjectId" value={temporaryClassroomTeacherSubjectId} onChange={(event) => setTemporaryClassroomTeacherSubjectId(event.target.value)}><option value="">请选择科目</option>{Array.from(new Set((teacherById(isTeacherView ? currentTeacher?.id ?? "" : temporaryClassroomTeacherId)?.subjects ?? []).map((subject) => subject.trim()).filter(Boolean))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课程科目<select name="subjectId" value={temporaryClassroomSubjectId} onChange={(event) => setTemporaryClassroomSubjectId(event.target.value)}><option value="">请选择科目</option>{Array.from(new Set([studentById(temporaryClassroomStudentId)?.course, ...(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).flatMap((entry) => entry.subjectIds)].filter((subject): subject is string => Boolean(subject)))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课包<select key={`${temporaryClassroomStudentId}:${temporaryClassroomSubjectId}`} name="packageId"><option value="">请选择有余额的课包</option>{(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).filter((entry) => entry.subjectIds.includes(temporaryClassroomSubjectId)).map((entry) => { const balance = getLessonPackageBalance(entry).remainingHours; return <option value={entry.id} key={entry.id} disabled={balance <= 0}>{entry.name} · 剩余 {balance} 小时{balance <= 0 ? " · 不可开课" : ""}</option>; })}</select></label>
           <label>课程时长<select name="duration" defaultValue="60"><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
+          </>}
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={classroomBusy}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建并生成链接"}</button></footer>
           {temporaryTestClassroom && <div className="classroom-share-link span-2">
             <label>
-              测试参与者链接
-              <input aria-label="测试参与者链接" value={temporaryTestClassroom.viewerUrl} readOnly />
+              参与者链接
+              <input aria-label="参与者链接" value={temporaryTestClassroom.viewerUrl} readOnly />
             </label>
             <button
               className="secondary-button"
               type="button"
               onClick={() => void navigator.clipboard.writeText(temporaryTestClassroom.viewerUrl)
-                .then(() => notify("测试参与者链接已复制"))
+                .then(() => notify("参与者链接已复制"))
                 .catch(() => notify("复制失败，请手动选择并复制链接"))}
             ><Copy size={16} /> 复制链接</button>
             <a className="secondary-button" href={temporaryTestClassroom.viewerUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 打开参与者端</a>

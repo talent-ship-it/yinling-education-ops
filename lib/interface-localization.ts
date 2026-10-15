@@ -1,6 +1,13 @@
 import { displayTerm, type InterfaceLanguage } from "@/lib/display-preferences";
 
 const englishInterfacePhrases: Record<string, string> = {
+  "课堂记录": "Classroom record",
+  "仅开课堂，不登记课时": "Open classroom without recording lesson hours",
+  "开课堂并登记课时": "Open classroom and record lesson hours",
+  "参与者链接": "Participant link",
+  "参与者链接已复制": "Participant link copied",
+  "临时课堂没有返回完整的进入链接。": "The temporary classroom did not return complete entry links.",
+  "临时课堂已打开；复制下方链接即可邀请参与者进入。": "The temporary classroom is open. Copy the link below to invite participants.",
   "超级管理员": "Super administrator",
   "全部资料、薪资和系统设置": "All records, payroll and system settings",
   "运营管理员": "Operations administrator",
