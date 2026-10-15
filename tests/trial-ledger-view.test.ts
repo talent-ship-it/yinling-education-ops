@@ -5,6 +5,7 @@ import {
   defaultTrialLedgerViewState,
   filterAndSortTrialLedgerRows,
   parseTrialLedgerViewState,
+  trialLedgerViewFilterOptions,
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
@@ -117,4 +118,22 @@ test("reports every filtered status and calculates success rate only from resolv
   assert.equal(stats.successRate, 66.7);
   assert.equal(stats.byStatus["有希望报名"], 1);
   assert.equal(stats.byStatus["试听未进行"], 0);
+});
+
+test("trial operations filters remain complete with no or partial ledger records", () => {
+  const state = defaultTrialLedgerViewState();
+  const staff = ["Abby", "Ella", "Erin", "Molly", "Thea", "Tiffany"];
+  assert.deepEqual(trialLedgerViewFilterOptions([], state, "operationsOwner"), staff);
+  const savedAlias = parseTrialLedgerViewState({ ...state, operationsOwner: "ELLA 教务" });
+  assert.equal(savedAlias.operationsOwner, "Ella");
+  assert.ok(trialLedgerViewFilterOptions([], savedAlias, "operationsOwner").includes(savedAlias.operationsOwner));
+  assert.deepEqual(trialLedgerViewFilterOptions(rows, state, "operationsOwner"), staff);
+  assert.deepEqual(trialLedgerViewFilterOptions([], state, "planner"), ["Abby", "Eileen", "Tara"]);
+  assert.deepEqual(trialLedgerViewFilterOptions(rows, state, "planner"), ["Abby", "Eileen", "Tara"]);
+  assert.ok(trialLedgerViewFilterOptions([], { ...state, operationsOwner: "Nixon" }, "operationsOwner").includes("Nixon"));
+  assert.equal(filterAndSortTrialLedgerRows(rows, { ...state, operationsOwner: "Molly" }).length, 0);
+  const alias = { ...rows[0]!, operationsOwner: "ELLA 教务" };
+  const historic = { ...rows[0]!, id: "LP-OLD", operationsOwner: "Nixon" };
+  assert.deepEqual(filterAndSortTrialLedgerRows([alias, historic], { ...state, operationsOwner: "Ella" }), [alias]);
+  assert.deepEqual(filterAndSortTrialLedgerRows([alias, historic], { ...state, operationsOwner: "Nixon" }), [historic]);
 });

@@ -89,3 +89,28 @@ test("report filenames identify the report and owner scope without reusing the s
   );
   assert.equal(operationsReportFilename("Abby", GENERATED_AT).includes("ops-data"), false);
 });
+
+
+test("report exports reconcile canonical staff filters with aliases and retain historical scopes", () => {
+  const input = {
+    generatedAt: GENERATED_AT,
+    tasks: [
+      { id: "TASK-1", owner: "Ella", status: "waiting" },
+      { id: "TASK-2", owner: "ELLA 教务", status: "waiting" },
+      { id: "TASK-3", owner: "Historical Owner", status: "waiting" },
+    ],
+    students: [
+      { id: "STU-1", owner: " ＥＬＬＡ 教务 ", segment: "试听", files: 1 },
+      { id: "STU-2", owner: "Historical Owner", segment: "试听", files: 1 },
+    ],
+    teachers: [], bookings: [], filesIndexed: true,
+  };
+  for (const ownerFilter of ["Ella", "ELLA 教务"]) {
+    const report = buildOperationsReportExport({ ...input, ownerFilter });
+    assert.deepEqual(report.scope, { ownerFilter: "Ella", taskCount: 2, studentCount: 1 });
+    assert.deepEqual(report.breakdowns.pendingTasksByOwner, { Ella: 2 });
+    assert.equal(report.records.students[0].owner, " ＥＬＬＡ 教务 ");
+  }
+  assert.deepEqual(buildOperationsReportExport({ ...input, ownerFilter: "all" }).breakdowns.pendingTasksByOwner, { Ella: 2, "Historical Owner": 1 });
+  assert.deepEqual(buildOperationsReportExport({ ...input, ownerFilter: "Historical Owner" }).scope, { ownerFilter: "Historical Owner", taskCount: 1, studentCount: 1 });
+});

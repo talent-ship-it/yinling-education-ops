@@ -1,3 +1,5 @@
+import { ASSIGNABLE_DEMO_STAFF_USERS } from "./demo-users";
+
 export const LP_WORKFLOW_TYPES = [
   "试听 LP",
   "老师新 LP",
@@ -19,7 +21,7 @@ export type PreparationFollowUp = (typeof PREPARATION_FOLLOW_UP_OPTIONS)[number]
 export const LP_CONTACT_OPTIONS = ["家长", "学生本人"] as const;
 export type LpContact = (typeof LP_CONTACT_OPTIONS)[number];
 
-export const TRIAL_OPERATIONS = ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"] as const;
+export const TRIAL_OPERATIONS = ASSIGNABLE_DEMO_STAFF_USERS;
 export type TrialOperations = (typeof TRIAL_OPERATIONS)[number];
 
 export const TRIAL_LOCATION_OPTIONS = ["VIC", "NSW", "QLD", "WA", "SA", "NZ", "国内"] as const;

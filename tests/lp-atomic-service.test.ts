@@ -184,3 +184,34 @@ test("LP revision accepts only a valid document URL and preserves OCC versions",
     expectedVersions: versions,
   }));
 });
+
+test("all six operations staff can submit trial LP through the server contract", () => {
+  for (const owner of ["Abby", "Thea", "Tiffany", "Erin", "Ella", "Molly"]) {
+    const command = parseLpAtomicCommand({
+      commandKey: "99999999-9999-4999-8999-999999999999",
+      operation: "create",
+      studentId: "STU-1",
+      workflowType: "试听 LP",
+      fields: { ...fields, responsibleOperations: owner },
+      expectedVersions: versions,
+    });
+    const prepared = prepareLpAtomicCommand({ command, rows: stateRows({ id: "STU-1", owner, planner: "Tara" }), canOperateStudent: true, actor: owner, fullAdmin: false });
+    assert.equal(prepared.authorizedAssignment.owner, owner);
+  }
+});
+
+
+test("limited admins preserve locked historical owners when creating non-trial LP", () => {
+  for (const owner of ["Tara", "Eileen", "Nixon", "Historical Owner"]) {
+    const command = parseLpAtomicCommand({
+      commandKey: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      operation: "create",
+      studentId: "STU-1",
+      workflowType: "学生报名交接",
+      fields: { responsibleOperations: owner, specifiedContentStatus: "无需指定", preparationFollowUp: "否", isUniversityStudent: false, planner: "Tara", coursePackage: "20h", subject: "English", purchasedHours: 20, bonusHours: 0, lessonFrequency: "每周一次", preferredTime: "周六上午", coursesAndTeachers: "English / Helen", enrollmentHandoverNotes: "已完成报名交接" },
+      expectedVersions: versions,
+    });
+    const prepared = prepareLpAtomicCommand({ command, rows: stateRows({ id: "STU-1", owner, planner: "Tara" }), canOperateStudent: true, actor: "Ops Admin", fullAdmin: false });
+    assert.deepEqual(prepared.authorizedAssignment, { owner, planner: "Tara", mayReassign: false });
+  }
+});

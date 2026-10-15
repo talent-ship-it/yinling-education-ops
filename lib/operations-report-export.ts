@@ -1,3 +1,5 @@
+import { matchesOperationsOwnerFilter, resolveAssignableOperationsOwner } from "./demo-users";
+
 export const OPERATIONS_REPORT_EXPORT_SCHEMA_VERSION = 1 as const;
 export const ALL_REPORT_OWNERS = "all" as const;
 
@@ -87,11 +89,7 @@ export type OperationsReportExport = Readonly<{
 
 function reportOwnerFilter(value: string) {
   const trimmed = value.trim();
-  return trimmed || ALL_REPORT_OWNERS;
-}
-
-function matchesOwner(ownerFilter: string, owner: string) {
-  return ownerFilter === ALL_REPORT_OWNERS || owner === ownerFilter;
+  return resolveAssignableOperationsOwner(trimmed) ?? (trimmed || ALL_REPORT_OWNERS);
 }
 
 function nonNegativeNumber(value: number | undefined) {
@@ -118,16 +116,16 @@ export function buildOperationsReportExport(
   input: OperationsReportExportInput,
 ): OperationsReportExport {
   const ownerFilter = reportOwnerFilter(input.ownerFilter);
-  const reportTasks = input.tasks.filter((task) => matchesOwner(ownerFilter, task.owner));
-  const reportStudents = input.students.filter((student) => matchesOwner(ownerFilter, student.owner));
+  const reportTasks = input.tasks.filter((task) => matchesOperationsOwnerFilter(ownerFilter, task.owner));
+  const reportStudents = input.students.filter((student) => matchesOperationsOwnerFilter(ownerFilter, student.owner));
   const completed = reportTasks.filter((task) => task.status === "done").length;
   const pending = reportTasks.length - completed;
   const pendingTasksByOwner = Object.fromEntries(
     Array.from(new Set([
-      ...(ownerFilter === ALL_REPORT_OWNERS ? reportTasks.map((task) => task.owner) : [ownerFilter]),
+      ...(ownerFilter === ALL_REPORT_OWNERS ? reportTasks.map((task) => resolveAssignableOperationsOwner(task.owner) ?? task.owner.trim()) : [ownerFilter]),
     ])).sort().map((owner) => [
       owner,
-      reportTasks.filter((task) => task.owner === owner && task.status !== "done").length,
+      reportTasks.filter((task) => matchesOperationsOwnerFilter(owner, task.owner) && task.status !== "done").length,
     ]),
   );
   const missingFiles = input.filesIndexed

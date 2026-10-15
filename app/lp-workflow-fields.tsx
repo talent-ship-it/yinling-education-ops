@@ -574,6 +574,8 @@ export function LpWorkflowFields({
   const showsTeacherChange = workflowType === "换老师试听";
   const showsSubstitute = workflowType === "代课 LP";
   const showsEnrollmentHandover = workflowType === "学生报名交接";
+  const operationsOptions = workflowType === "试听 LP" ? trialOperationsOptions : responsibleOperationsOptions;
+  const needsOperationsSelection = Boolean(operationsOptions?.length && !operationsOptions.some((option) => option.value === initialValues.responsibleOperations));
 
   const changeWorkflowType = (event: ChangeEvent<HTMLSelectElement>) => {
     const nextType = event.target.value as LpWorkflowType;
@@ -590,8 +592,8 @@ export function LpWorkflowFields({
     <label>所属教务
       <SelectOrInput
         name={LP_WORKFLOW_FORM_NAMES.responsibleOperations}
-        defaultValue={initialValues.responsibleOperations}
-        options={workflowType === "试听 LP" ? trialOperationsOptions : responsibleOperationsOptions}
+        defaultValue={needsOperationsSelection ? "" : initialValues.responsibleOperations}
+        options={needsOperationsSelection ? [{ value: "", label: "请选择教务" }, ...(operationsOptions ?? [])] : operationsOptions}
       />
     </label>
 

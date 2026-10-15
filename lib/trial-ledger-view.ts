@@ -1,4 +1,6 @@
+import { matchesOperationsOwnerFilter, operationsOwnerFilterOptions, resolveAssignableOperationsOwner } from "./demo-users";
 import { TRIAL_LEDGER_RESULT_STATUSES } from "./lp-workflows";
+import { TRIAL_LEDGER_PLANNERS } from "./trial-ledger";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -116,6 +118,7 @@ export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState 
   if (!record(candidate)) return fallback;
   const lessonMonth = boundedText(candidate.lessonMonth, ALL, 7);
   const resultStatus = boundedText(candidate.resultStatus, ALL, 40);
+  const operationsOwner = boundedText(candidate.operationsOwner, ALL, 120) || ALL;
   const sortKey = boundedText(candidate.sortKey, fallback.sortKey, 40);
   const sortDirection = boundedText(candidate.sortDirection, fallback.sortDirection, 8);
   const paid = boundedText(candidate.paid, fallback.paid, 8);
@@ -125,7 +128,7 @@ export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState 
     lessonMonth: lessonMonth === ALL || MONTH.test(lessonMonth) ? lessonMonth : ALL,
     scheduledFrom: candidate.scheduledFrom === "" ? "" : exactDate(candidate.scheduledFrom),
     scheduledTo: candidate.scheduledTo === "" ? "" : exactDate(candidate.scheduledTo),
-    operationsOwner: boundedText(candidate.operationsOwner, ALL, 120) || ALL,
+    operationsOwner: resolveAssignableOperationsOwner(operationsOwner) ?? operationsOwner,
     planner: boundedText(candidate.planner, ALL, 120) || ALL,
     subject: boundedText(candidate.subject, ALL, 160) || ALL,
     teacher: boundedText(candidate.teacher, ALL, 160) || ALL,
@@ -157,6 +160,17 @@ function normalizeSearch(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase("en-AU").replace(/[\s\p{P}\p{S}_]+/gu, "");
 }
 
+export function trialLedgerViewFilterOptions(
+  rows: readonly TrialLedgerViewRow[],
+  state: TrialLedgerViewState,
+  key: "lessonMonth" | "operationsOwner" | "planner" | "subject" | "teacher",
+) {
+  const values = [...(key === "planner" ? TRIAL_LEDGER_PLANNERS : []), ...rows.map((row) => row[key]), state[key] === ALL ? "" : state[key]];
+  return key === "operationsOwner"
+    ? operationsOwnerFilterOptions(values)
+    : Array.from(new Set(values.filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+}
+
 function matchesExact(filter: string, value: string) {
   return filter === ALL || filter === value;
 }
@@ -186,7 +200,7 @@ export function filterAndSortTrialLedgerRows(
     if (!queryTokens.every((token) => haystack.includes(token))) return false;
     if (!matchesExact(state.workflowType, row.workflowType)) return false;
     if (!matchesExact(state.lessonMonth, row.lessonMonth)) return false;
-    if (!matchesExact(state.operationsOwner, row.operationsOwner)) return false;
+    if (!matchesOperationsOwnerFilter(state.operationsOwner, row.operationsOwner)) return false;
     if (!matchesExact(state.planner, row.planner)) return false;
     if (!matchesExact(state.subject, row.subject)) return false;
     if (!matchesExact(state.teacher, row.teacher)) return false;

@@ -131,8 +131,10 @@ import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
   DEMO_STAFF_USERS,
-  ASSIGNABLE_DEMO_STAFF_USERS,
-  isRetiredOperationsIdentity,
+  matchesOperationsOwnerFilter,
+  operationsOwnerFilterOptions,
+  operationsOwnerFormOptions,
+  resolveAssignableOperationsOwner,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import {
@@ -405,6 +407,7 @@ import {
   defaultTrialLedgerViewState,
   filterAndSortTrialLedgerRows,
   parseTrialLedgerViewState,
+  trialLedgerViewFilterOptions,
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
@@ -4108,6 +4111,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     && (modal === "studentRecords"
       || Boolean(studentModalTargetStudent && scopedActiveStudentIds.has(studentModalTargetStudent.id)));
   const lpDraftStudent = readableScopedStudents.find((student) => student.id === lpDraftStudentId);
+  const lpDraftOwner = isFullAdminSession && isAdminView ? resolveAssignableOperationsOwner(lpDraftStudent?.owner) ?? "" : lpDraftStudent?.owner ?? "";
   const selectedMessageState = scopedMessages.find((message) => message.id === selectedMessageId);
   const selectedBookingSeries = scopedBookings.find((booking) => booking.id === selectedBookingId);
   const selectedBookingByStableKey = selectedBookingSeries && selectedBookingOccurrenceKey
@@ -4142,9 +4146,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const teacher = teachers.find((item) => item.id === booking.teacherId);
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
-  const ownerOptions = useMemo(() => Array.from(new Set(recordStudents.map((student) => student.owner).filter(Boolean))).sort(), [recordStudents]);
+  const ownerOptions = useMemo(() => operationsOwnerFilterOptions(recordStudents.map((student) => student.owner)), [recordStudents]);
   const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
-  const teamOwnerOptions = useMemo(() => Array.from(new Set([...ownerOptions, currentOperator, DEMO_LIMITED_ADMIN_USER, ...ASSIGNABLE_DEMO_STAFF_USERS])).filter((owner) => Boolean(owner) && !isRetiredOperationsIdentity(owner)).sort(), [currentOperator, ownerOptions]);
+  const teamOwnerOptions = useMemo(() => operationsOwnerFormOptions(isAdminView ? undefined : currentOperator), [currentOperator, isAdminView]);
   const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
   const jiaowubaoAuthorityStatus = useMemo(() => findJiaowubaoAuthorityStatus(syncSources), [syncSources]);
   const activeSources = sourceGroups.active;
@@ -5776,7 +5780,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const filteredStudents = useMemo(() => sortStudentsByName(studentListSource.filter((student) => {
     const haystack = `${student.name} ${student.course} ${student.grade ?? ""} ${student.location ?? ""} ${student.owner} ${student.planner ?? ""} ${student.teacher}`.toLowerCase();
     const matchesSearch = haystack.includes(search.trim().toLowerCase());
-    if (!matchesSearch || (studentOwner !== "all" && student.owner !== studentOwner)) return false;
+    if (!matchesSearch || !matchesOperationsOwnerFilter(studentOwner, student.owner)) return false;
     if (studentView === "mine") return isTeacherView || student.owner === currentOperator;
     if (studentView === "trial") return student.segment === "试听" || student.status === "在读 + 加课待排";
     if (studentView === "enrolled") return student.segment === "已报名" && isActiveStudent(student);
@@ -8676,10 +8680,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const trialLedgerStats = trialLedgerViewStats(filteredTrialLedgerRows);
     const trialLedgerFilterOptions = (
       key: "lessonMonth" | "operationsOwner" | "planner" | "subject" | "teacher",
-    ) => Array.from(new Set([
-      ...trialLedgerEntries.map((entry) => entry.row[key]),
-      activeTrialLedgerView[key] === "all" ? "" : activeTrialLedgerView[key],
-    ].filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+    ) => trialLedgerViewFilterOptions(trialLedgerEntries.map((entry) => entry.row), activeTrialLedgerView, key);
     const updateTrialLedgerView = (patch: Partial<TrialLedgerViewState>) => {
       setTrialLedgerView((current) => parseTrialLedgerViewState({ ...current, ...patch }));
     };
@@ -9573,7 +9574,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return [...structuredRows, ...legacyRows];
     });
     const businessStatusFor = (renewal: Renewal) => renewal.businessStatus ?? normalizeRenewalBusinessStatus(renewal.status);
-    const visibleRenewals = renewalRows.filter((renewal) => (!isAdminView || renewalOwnerFilter === "all" || renewal.owner === renewalOwnerFilter) && (renewalFilter === "attention"
+    const visibleRenewals = renewalRows.filter((renewal) => (!isAdminView || matchesOperationsOwnerFilter(renewalOwnerFilter, renewal.owner)) && (renewalFilter === "attention"
       ? businessStatusFor(renewal) !== "renewed"
       : renewalFilter === "renewed"
         ? businessStatusFor(renewal) === "renewed"
@@ -9669,7 +9670,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           onChange={(value) => { setRenewalFilter(value); setRenewalPage(1); }}
           label="续课保存视图"
         />
-        {isAdminView ? <div className="list-toolbar"><select className="filter-select" value={renewalOwnerFilter} onChange={(event) => { setRenewalOwnerFilter(event.target.value); setRenewalPage(1); }} aria-label="按负责教务筛选续课"><option value="all">全部负责教务</option>{ownerOptions.map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></div> : null}
+        {isAdminView ? <div className="list-toolbar"><select className="filter-select" value={renewalOwnerFilter} onChange={(event) => { setRenewalOwnerFilter(event.target.value); setRenewalPage(1); }} aria-label="按负责教务筛选续课"><option value="all">全部负责教务</option>{operationsOwnerFilterOptions(renewalRows.map((renewal) => renewal.owner)).map((owner) => <option value={owner} key={owner}>{owner}</option>)}</select></div> : null}
         <div className="collection-main">
           <div className="collection-head renewal-grid-row"><span>学生 / 课包</span><span>剩余课时</span><span>预计续课</span><span>老师</span><span>状态 / 时间</span><span>操作</span></div>
           <div className="collection-viewport">
@@ -11421,12 +11422,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>
   );
   const renderReports = () => {
-    const reportOwnerOptions = operationsReportOwnerOptions(teamOwnerOptions, tasks);
+    const reportOwnerOptions = operationsReportOwnerOptions(ownerOptions, tasks);
     const reportTasks = tasks.filter(
-      (task) => reportOwner === "all" || task.owner === reportOwner,
+      (task) => matchesOperationsOwnerFilter(reportOwner, task.owner),
     );
     const reportStudents = recordStudents.filter(
-      (student) => reportOwner === "all" || student.owner === reportOwner,
+      (student) => matchesOperationsOwnerFilter(reportOwner, student.owner),
     );
     const completed = reportTasks.filter(
       (task) => task.status === "done",
@@ -14599,7 +14600,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>学生姓名<input name="name" data-dialog-autofocus="true" defaultValue={studentModalTargetStudent.name} /></label>
           <label>课程 / 年级<input name="course" defaultValue={studentModalTargetStudent.course} required /></label>
           <label>当前年级<input name="grade" defaultValue={studentModalTargetStudent.grade ?? ""} /></label>
-          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{!teamOwnerOptions.includes(studentModalTargetStudent.owner) && <option value={studentModalTargetStudent.owner} disabled>{studentModalTargetStudent.owner}（已归档）</option>}{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
+          <label>负责人<select name="owner" defaultValue={studentModalTargetStudent.owner} disabled={!isAdminView}>{!teamOwnerOptions.includes(studentModalTargetStudent.owner) && <option value={studentModalTargetStudent.owner} disabled>{studentModalTargetStudent.owner}（历史负责人）</option>}{teamOwnerOptions.map((owner) => <option key={owner}>{owner}</option>)}</select>{!isAdminView && <small>负责人调整需由管理员处理</small>}</label>
           <label>规划老师<select name="planner" defaultValue={studentModalTargetStudent.planner ?? "待分配"}><option>待分配</option><option value="Tara">龙老师</option><option>Eileen</option><option>Abby</option></select></label>
           <label>所在地<select name="location" defaultValue={studentModalTargetStudent.location ?? "VIC"}><option value="VIC">VIC</option><option value="NSW">NSW</option><option value="SA">SA</option><option value="QLD">QLD</option><option value="WA">WA</option><option value="CHN">中国</option></select></label>
           <label>学生时区<select name="timezone" defaultValue={cleanTimezone(studentModalTargetStudent.timezone)}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
@@ -14707,8 +14708,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <LpWorkflowFields
             key={lpDraftStudentId}
             initialType={lpDraftType}
-            initialValues={{ responsibleOperations: lpDraftStudent?.owner ?? "", planner: lpDraftStudent?.planner === "Tara" || lpDraftStudent?.planner === "Eileen" || lpDraftStudent?.planner === "Abby" ? lpDraftStudent.planner : "Tara", assignedTeacher: lpDraftStudent?.teacher === "待匹配" ? "" : lpDraftStudent?.teacher, subject: lpDraftStudent?.course ?? "", locationTimezone: lpDraftStudent?.timezone ?? "", studentNameKnown: Boolean(lpDraftStudent?.name), studentName: lpDraftStudent?.name ?? "", contactParents: true, trialDurationMinutes: 60 }}
-            responsibleOperationsOptions={teamOwnerOptions.map((value) => ({ value }))}
+            initialValues={{ responsibleOperations: lpDraftOwner, planner: lpDraftStudent?.planner === "Tara" || lpDraftStudent?.planner === "Eileen" || lpDraftStudent?.planner === "Abby" ? lpDraftStudent.planner : "Tara", assignedTeacher: lpDraftStudent?.teacher === "待匹配" ? "" : lpDraftStudent?.teacher, subject: lpDraftStudent?.course ?? "", locationTimezone: lpDraftStudent?.timezone ?? "", studentNameKnown: Boolean(lpDraftStudent?.name), studentName: lpDraftStudent?.name ?? "", contactParents: true, trialDurationMinutes: 60 }}
+            responsibleOperationsOptions={operationsOwnerFormOptions(lpDraftOwner).map((value) => ({ value }))}
             teacherOptions={recordTeachers.map((teacher) => ({ value: teacher.name, label: teacher.name }))}
             subjectOptions={(lpDraftType === "学生直报（无试听）"
               ? getStudentSubjectOptions({

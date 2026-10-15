@@ -1,3 +1,5 @@
+import { operationsOwnerFilterOptions, resolveAssignableOperationsOwner } from "./demo-users";
+
 export interface OperationsReportTaskLike {
   owner: string;
   status: string;
@@ -13,10 +15,7 @@ export function operationsReportOwnerOptions(
   baseOwners: readonly string[],
   tasks: readonly Pick<OperationsReportTaskLike, "owner">[],
 ) {
-  return Array.from(new Set([
-    ...baseOwners,
-    ...tasks.map((task) => task.owner.trim()),
-  ].filter(Boolean))).sort();
+  return operationsOwnerFilterOptions([...baseOwners, ...tasks.map((task) => task.owner)]);
 }
 
 export function pendingOperationsTaskWorkload(
@@ -24,7 +23,7 @@ export function pendingOperationsTaskWorkload(
 ): OperationsReportWorkloadRow[] {
   const counts = new Map<string, number>();
   tasks.forEach((task) => {
-    const owner = task.owner.trim();
+    const owner = resolveAssignableOperationsOwner(task.owner) ?? task.owner.trim();
     if (!owner || task.status === "done") return;
     counts.set(owner, (counts.get(owner) ?? 0) + 1);
   });

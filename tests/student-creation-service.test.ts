@@ -39,3 +39,10 @@ test("retired owner remains replayable but cannot receive a new student", () => 
   assert.equal(canonicalizeStudentCreationCommand(retired).studentFields.owner, "思佳");
   assert.throws(() => normalizeStudentCreationCommand(retired, "Nixon", true), /已归档账号不能接收新学生/);
 });
+
+test("all six operations staff can create their own student records", () => {
+  for (const owner of ["Abby", "Thea", "Tiffany", "Erin", "Ella", "Molly"]) {
+    const parsed = parseStudentCreationCommand({ ...command, studentFields: { ...command.studentFields, owner } });
+    assert.equal(normalizeStudentCreationCommand(parsed, owner, false).studentFields.owner, owner);
+  }
+});
