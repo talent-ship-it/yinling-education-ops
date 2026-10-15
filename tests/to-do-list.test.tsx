@@ -86,6 +86,10 @@ test("renders the today and category tabs, marks the controlled filter, and keep
   assert.match(html, /aria-label="任务状态"/);
   assert.match(html, /class="active" type="button" aria-pressed="true">考试</);
   assert.match(html, /id="to-do-list-content">/);
+  for (const owner of ["Abby", "Thea", "Tiffany", "Erin", "Ella", "Molly"]) {
+    assert.match(html, new RegExp(`<option value="${owner.toLocaleLowerCase()}">${owner}</option>`));
+  }
+  assert.doesNotMatch(html, /<option[^>]*>(?:Tara|Eileen|思佳|Ops Admin)<\/option>/);
   assert.doesNotMatch(html, /to-do-collapse-button|收起/);
 });
 
@@ -128,10 +132,14 @@ test("shows the canonical deadline as a compact date, not legacy workflow copy",
   assert.match(html, /<h3[^>]*>Abby<\/h3>/);
 });
 
-test("groups tasks by their actual responsible owner without dropping historical or unassigned tasks", () => {
+test("groups only the six current coordinators and retains historical or unassigned tasks", () => {
   const source = [
-    { ...task("abby", "排课", "today", "今天"), owner: " Abby " },
+    { ...task("abby", "排课", "today", "今天"), owner: " Abby 教务 " },
     { ...task("abby-case", "LP", "today", "今天"), owner: "ＡＢＢＹ" },
+    ...["Thea", "Tiffany", "Erin", "Ella", "Molly"].map((owner) => ({
+      ...task(owner.toLocaleLowerCase(), "LP", "today", "今天"),
+      owner,
+    })),
     { ...task("planner", "考试", "today", "今天"), owner: "Ops Admin" },
     { ...task("historical", "排课", "overdue", "昨天"), owner: "思佳" },
     { ...task("unknown", "LP", "waiting", "等待回复"), owner: "新教务" },
@@ -139,11 +147,15 @@ test("groups tasks by their actual responsible owner without dropping historical
   ];
   const groups = groupTasksByOwner(source);
   assert.deepEqual(groups.find((group) => group.owner === "Abby")?.tasks, source.slice(0, 2));
-  for (const owner of ["Ops Admin", "思佳", "新教务", "待分配"]) assert.ok(groups.some((group) => group.owner === owner));
+  for (const [index, owner] of ["Thea", "Tiffany", "Erin", "Ella", "Molly"].entries()) {
+    assert.deepEqual(groups.find((group) => group.owner === owner)?.tasks, [source[index + 2]]);
+  }
+  assert.deepEqual(groups.find((group) => group.owner === "待分配")?.tasks, source.slice(7));
+  for (const owner of ["Ops Admin", "思佳", "新教务"]) assert.ok(!groups.some((group) => group.owner === owner));
   const groupedTasks = groups.flatMap((group) => group.tasks);
   assert.equal(groupedTasks.length, source.length);
   assert.ok(source.every((candidate) => groupedTasks.includes(candidate)));
-  assert.equal(source[0].owner, " Abby ");
+  assert.equal(source[0].owner, " Abby 教务 ");
 });
 
 test("keeps each owner's tasks together and preserves deadline ordering inside each group", () => {
@@ -174,15 +186,14 @@ test("renders legacy tasks with missing or invalid owners as unassigned", () => 
     owner,
   })) as unknown as OpsTask[];
   const groups = groupTasksByOwner(source);
-  assert.equal(groups.length, 1);
-  assert.equal(groups[0].owner, "待分配");
-  assert.deepEqual(groups[0].tasks, source);
+  assert.deepEqual(groups.filter((group) => group.tasks.length > 0).map((group) => group.owner), ["待分配"]);
+  assert.deepEqual(groups.find((group) => group.owner === "待分配")?.tasks, source);
   const html = render(source);
   assert.match(html, /<h3[^>]*>待分配<\/h3>/);
   for (let index = 0; index < source.length; index++) assert.match(html, new RegExp(`任务 missing-owner-${index}`));
 });
 
-test("lists only task-scoped owners in the filter and uses unique accessible section labels", () => {
+test("lists exactly the six current coordinators in the filter and uses unique accessible section labels", () => {
   const html = render([
     task("abby-today", "排课", "today", "今天"),
     task("abby-overdue", "LP", "overdue", "昨天"),
@@ -190,9 +201,10 @@ test("lists only task-scoped owners in the filter and uses unique accessible sec
     { ...task("ella-overdue", "LP", "overdue", "昨天"), owner: "Ella" },
   ]);
   assert.match(html, /aria-label="按负责人筛选任务"/);
-  assert.match(html, /<option value="abby">Abby<\/option>/);
-  assert.match(html, /<option value="ella">Ella<\/option>/);
-  assert.doesNotMatch(html, /Tiffany|Molly|思佳/);
+  for (const owner of ["Abby", "Thea", "Tiffany", "Erin", "Ella", "Molly"]) {
+    assert.match(html, new RegExp(`<option value="${owner.toLocaleLowerCase()}">${owner}</option>`));
+  }
+  assert.doesNotMatch(html, /<option[^>]*>(?:Tara|Eileen|思佳|Ops Admin)<\/option>/);
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
   assert.equal(new Set(ids).size, ids.length);
   for (const [, reference] of html.matchAll(/aria-labelledby="([^"]+)"/g)) assert.ok(ids.includes(reference));

@@ -1,4 +1,5 @@
-import { normaliseDemoUserName, resolveDemoOperationsName } from "./demo-users";
+import { normaliseDemoUserName, resolveDemoStaffAlias } from "./demo-users";
+import { TRIAL_OPERATIONS } from "./lp-workflows";
 import type { OpsTask } from "./ops-tasks";
 
 export interface TaskOwnerGroup {
@@ -17,9 +18,16 @@ function ownerMark(owner: string) {
 
 export function groupTasksByOwner(tasks: readonly OpsTask[]): TaskOwnerGroup[] {
   const groups = new Map<string, TaskOwnerGroup>();
+  for (const owner of TRIAL_OPERATIONS) {
+    const key = normaliseDemoUserName(owner);
+    groups.set(key, { key, owner, mark: ownerMark(owner), tasks: [] });
+  }
+
   for (const task of tasks) {
     const rawOwner = typeof task.owner === "string" ? task.owner : "";
-    const owner = (resolveDemoOperationsName(rawOwner) ?? rawOwner.trim()) || "待分配";
+    const alias = resolveDemoStaffAlias(rawOwner);
+    const normalizedOwner = normaliseDemoUserName(alias ?? rawOwner);
+    const owner = TRIAL_OPERATIONS.find((candidate) => normaliseDemoUserName(candidate) === normalizedOwner) ?? "待分配";
     const key = normaliseDemoUserName(owner);
     const group = groups.get(key);
     if (group) group.tasks.push(task);
