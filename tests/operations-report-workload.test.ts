@@ -35,6 +35,21 @@ test("report owner options include owners introduced by generated teacher tasks"
       { owner: "Teacher Handover" },
       { owner: "Abby" },
     ]),
-    ["Abby", "Teacher Handover", "Tiffany"],
+    ["Abby", "Ella", "Erin", "Molly", "Teacher Handover", "Thea", "Tiffany"],
   );
+});
+
+
+test("report filters retain student-only historical owners alongside all six current staff", () => {
+  const options = operationsReportOwnerOptions(["Tara", "Historical Owner", "ELLA 教务"], []);
+  for (const owner of ["Abby", "Ella", "Erin", "Molly", "Thea", "Tiffany", "Tara", "Historical Owner"]) {
+    assert.ok(options.includes(owner));
+  }
+  assert.ok(!options.includes("ELLA 教务"));
+});
+
+test("report workload groups current staff aliases without changing source task owners", () => {
+  const input = [...tasks("Ella", 1), ...tasks("ELLA 教务", 2)];
+  assert.deepEqual(pendingOperationsTaskWorkload(input), [{ owner: "Ella", count: 3, widthPercent: 100 }]);
+  assert.equal(input[1].owner, "ELLA 教务");
 });

@@ -11422,12 +11422,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>
   );
   const renderReports = () => {
-    const reportOwnerOptions = operationsReportOwnerOptions(teamOwnerOptions, tasks);
+    const reportOwnerOptions = operationsReportOwnerOptions(ownerOptions, tasks);
     const reportTasks = tasks.filter(
-      (task) => reportOwner === "all" || task.owner === reportOwner,
+      (task) => matchesOperationsOwnerFilter(reportOwner, task.owner),
     );
     const reportStudents = recordStudents.filter(
-      (student) => reportOwner === "all" || student.owner === reportOwner,
+      (student) => matchesOperationsOwnerFilter(reportOwner, student.owner),
     );
     const completed = reportTasks.filter(
       (task) => task.status === "done",
