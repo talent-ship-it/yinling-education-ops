@@ -247,7 +247,7 @@ export async function createTemporaryTestMeeting(input: {
 }) {
   const meetingId = normalizeMeetingId(input.meetingId);
   const result = await call("create", {
-    name: "吟领教育 · 临时测试课堂",
+    name: "吟领教育 · 临时课堂",
     meetingID: meetingId,
     moderatorPW: meetingPassword(meetingId, "moderator"),
     attendeePW: meetingPassword(meetingId, "viewer"),

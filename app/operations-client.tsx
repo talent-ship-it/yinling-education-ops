@@ -645,6 +645,8 @@ type Booking = {
 
 type ClassroomRuntime = {
   meetingId: string;
+  closing?: boolean;
+  ended?: boolean;
   running: boolean;
   participantCount: number;
   moderatorCount: number;
@@ -2976,6 +2978,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [bookingFormSubjectId, setBookingFormSubjectId] = useState("");
   const [operationDraft, setOperationDraft] = useState<Partial<Operation> | null>(null);
   const [classroomRuntime, setClassroomRuntime] = useState<ClassroomRuntime | null>(null);
+  const [provisionedClassrooms, setProvisionedClassrooms] = useState<Record<string, string>>({});
   const [classroomBusy, setClassroomBusy] = useState(false);
   const [classroomView, setClassroomView] = useState<"upcoming" | "history">("upcoming");
   const [temporaryClassroomLink, setTemporaryClassroomLink] = useState<{ occurrenceId: string; url: string } | null>(null);
@@ -2995,6 +2998,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [sessionOperator]);
   const [temporaryClassroomStudentId, setTemporaryClassroomStudentId] = useState("");
   const [temporaryClassroomSubjectId, setTemporaryClassroomSubjectId] = useState("");
+  const [temporaryClassroomRecordLesson, setTemporaryClassroomRecordLesson] = useState(false);
+  const [temporaryClassroomTeacherId, setTemporaryClassroomTeacherId] = useState("");
+  const [temporaryClassroomTeacherSubjectId, setTemporaryClassroomTeacherSubjectId] = useState("");
   const [lessonSettlementDraft, setLessonSettlementDraft] = useState<BookingOccurrence | null>(null);
   const [lessonSettlementBusy, setLessonSettlementBusy] = useState(false);
   const [lessonSettlementError, setLessonSettlementError] = useState("");
@@ -4114,7 +4120,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const selectedClassroomBookingId = selectedClassroomOccurrence?.id ?? null;
   const selectedClassroomOccurrenceKey = selectedClassroomOccurrence?.occurrenceKey ?? null;
   const selectedClassroomSourceDate = selectedClassroomOccurrence?.sourceDate ?? selectedBookingSourceDate;
-  const selectedClassroomMeetingId = selectedClassroomOccurrence?.classroom?.meetingId ?? null;
+  const selectedClassroomMeetingId = selectedClassroomOccurrence?.classroom?.meetingId
+    ?? (selectedClassroomOccurrenceKey ? provisionedClassrooms[selectedClassroomOccurrenceKey] : null)
+    ?? null;
   const selectedOperationState = scopedOperations.find((operation) => operation.id === selectedOperationId);
   const examReminderStudents = useMemo(() => {
     const now = new Date();
@@ -7422,16 +7430,18 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const result = receivedBody ?? {};
       if (!response.ok) throw new Error(result.error || "无法读取教室状态");
       const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-      const runtime: ClassroomRuntime = { ...result.status, recordings };
+      const runtime: ClassroomRuntime = { ...result.status, recordings, closing: result.closing === true, ended: result.ended === true };
       const nextStatus = runtime.running
         ? "running"
         : booking.classroom?.status === "running" || recordings.length
           ? "ended"
           : "ready";
-      if (!result.closing && !result.ended && (booking.classroom?.meetingId === runtime.meetingId || runtime.running || recordings.length)) {
-        await persistClassroom(booking, runtime.meetingId, nextStatus);
-      }
       setClassroomRuntime(runtime);
+      if (!result.closing && !result.ended && (booking.classroom?.meetingId === runtime.meetingId || provisionedClassrooms[booking.occurrenceKey] === runtime.meetingId || runtime.running || recordings.length)) {
+        void persistClassroom(booking, runtime.meetingId, nextStatus).catch(() => {
+          reportSharedSync("error", "课堂记录尚未同步");
+        });
+      }
       if (!quiet) notify(result.closing ? "结束请求已保存，系统正在确认教室关闭" : result.ended ? "课堂已结束，录播正在处理或已就绪" : runtime.running ? `教室进行中，当前 ${runtime.participantCount} 人在线` : recordings.length ? "课堂已结束，录播正在处理或已就绪" : "教室已创建，尚未开始");
       return runtime;
     } catch (error) {
@@ -7444,8 +7454,17 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const result = await classroomRequest({ action: "create", bookingId: booking.id, occurrenceId: booking.occurrenceKey, sourceDate: booking.sourceDate });
     const meetingId = String(result.meeting?.meetingId || "");
     if (!meetingId) throw new Error("在线教室没有返回会议 ID");
-    await persistClassroom(booking, meetingId, "ready");
-    if (!classroomRuntime?.running) setClassroomRuntime({ meetingId, running: false, participantCount: 0, moderatorCount: 0, recordings: classroomRuntime?.recordings ?? [] });
+    selectBookingRecord(booking);
+    setActive("classroom");
+    setMobilePreview(null);
+    setProvisionedClassrooms((current) => ({ ...current, [booking.occurrenceKey]: meetingId }));
+    setClassroomRuntime((current) => current?.meetingId === meetingId
+      ? current
+      : { meetingId, running: false, participantCount: 0, moderatorCount: 0, recordings: [] });
+    void persistClassroom(booking, meetingId, "ready").catch(() => {
+      reportSharedSync("error", "课堂记录尚未同步");
+      notify("课堂已创建，排课记录暂未同步");
+    });
     if (announce) {
       addAudit("创建在线教室", `${studentById(booking.studentId)?.name ?? booking.studentId} · ${booking.id}`, "green");
       notify(result.meeting?.duplicate ? "已读取现有在线教室" : "在线教室已创建，可发送学生链接");
@@ -7503,7 +7522,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const result = await classroomRequest({ action: "teacher-join", bookingId: booking.id, occurrenceId: booking.occurrenceKey, sourceDate: booking.sourceDate });
       if (!result.url) throw new Error("无法生成老师进入链接");
       const meetingId = String(result.meetingId || booking.classroom?.meetingId || "");
-      if (meetingId) await persistClassroom(booking, meetingId, "ready");
+      if (meetingId) {
+        setProvisionedClassrooms((current) => ({ ...current, [booking.occurrenceKey]: meetingId }));
+        void persistClassroom(booking, meetingId, "ready").catch(() => {
+          reportSharedSync("error", "课堂记录尚未同步");
+          notify("课堂已打开，排课记录暂未同步");
+        });
+      }
       if (popup) {
         popup.location.replace(result.url);
         notify("课堂已在新标签页打开；首次进入请允许浏览器使用麦克风和摄像头");
@@ -7558,9 +7583,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const subjectId = String(data.get("subjectId") ?? "").trim();
     const teacherSubjectId = String(data.get("teacherSubjectId") ?? "").trim();
     const packageId = String(data.get("packageId") ?? "").trim();
-    const hasRecordDetails = [studentId, selectedTeacherId, subjectId, teacherSubjectId, packageId].some(Boolean);
+    const hasRecordDetails = temporaryClassroomRecordLesson;
 
-    if (studentId && !scopedActiveStudentIds.has(studentId)) {
+    if (hasRecordDetails && studentId && !scopedActiveStudentIds.has(studentId)) {
       notify("当前身份只能为当前范围的活跃学生创建临时课堂。");
       return;
     }
@@ -7572,7 +7597,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         notify("要保存课堂记录，请完整选择学生和老师。");
         return;
       }
-      if (!teacherSubjectId || !teacher.subjects.includes(teacherSubjectId)) {
+      if (!teacherSubjectId || !teacher.subjects.some((subject) => subject.trim() === teacherSubjectId)) {
         notify(`要保存课堂记录，请选择 ${teacher.name} 可教的老师科目。`);
         return;
       }
@@ -7761,7 +7786,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const meetingId = String(result.meetingId ?? "");
       const moderatorUrl = String(result.moderatorUrl ?? "");
       const viewerUrl = String(result.viewerUrl ?? "");
-      if (!meetingId || !moderatorUrl || !viewerUrl) throw new Error("临时课堂没有返回完整的测试链接。");
+      if (!meetingId || !moderatorUrl || !viewerUrl) throw new Error("临时课堂没有返回完整的进入链接。");
       setTemporaryTestClassroom({ meetingId, viewerUrl });
       clearTemporaryClassroomPending(sessionOperator, requestIntent ?? undefined);
       temporaryClassroomPendingRef.current = temporaryClassroomPendingRef.current.filter((entry) => entry.intent !== requestIntent);
@@ -7772,7 +7797,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       } else {
         window.location.assign(moderatorUrl);
       }
-      notify("临时测试课堂已打开；复制下方链接即可测试参与者进入。");
+      notify("临时课堂已打开；复制下方链接即可邀请参与者进入。");
     } catch (error) {
       popup?.close();
       notify(error instanceof Error ? error.message : "临时课堂创建失败");
@@ -7872,7 +7897,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
       if (!response.ok || signal.aborted) return;
       const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-      const runtime: ClassroomRuntime = { ...result.status, recordings };
+      const runtime: ClassroomRuntime = { ...result.status, recordings, closing: result.closing === true, ended: result.ended === true };
       const currentClassroom = booking.classroom;
       const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
         ? "running"
@@ -7882,8 +7907,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       // Polling is also a persistence path. Keep the exact command in the
       // shared pending envelope when the response is unknown, and do not
       // manufacture a local createdAt/status before the atomic receipt.
-      await persistClassroom(booking, runtime.meetingId, nextStatus);
       if (!signal.aborted) setClassroomRuntime(runtime);
+      if (!result.closing && !result.ended) {
+        await persistClassroom(booking, runtime.meetingId, nextStatus);
+      }
     };
     const poller = createSharedStatePoller({
       canRun: () => selected,
@@ -11841,8 +11868,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ?? (selectedBookingOccurrenceKey || !selectedBookingDate
         ? pageClassrooms[0]
         : undefined);
-    const roomRuntime = roomBooking?.classroom?.meetingId === classroomRuntime?.meetingId
+    const classroomMeetingIdFor = (booking: BookingOccurrence) => booking.classroom?.meetingId ?? provisionedClassrooms[booking.occurrenceKey];
+    const roomMeetingId = roomBooking ? classroomMeetingIdFor(roomBooking) : undefined;
+    const roomRuntime = roomMeetingId && roomMeetingId === classroomRuntime?.meetingId
       ? classroomRuntime : null;
+    const roomClosed = roomBooking?.classroom?.status === "ended" || roomRuntime?.closing || roomRuntime?.ended;
     const historicalRoom = roomBooking ? isPastBooking(roomBooking) : false;
     const roomStudent = roomBooking
       ? studentById(roomBooking.studentId)
@@ -11854,9 +11884,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       ? { label: "课堂进行中", tone: "green" as Tone }
       : roomRuntime?.recordings.some((recording) => recording.playbackUrl)
         ? { label: "录播已就绪", tone: "blue" as Tone }
-        : roomBooking?.classroom?.status === "ended"
+        : roomClosed
           ? { label: "课堂已结束", tone: "neutral" as Tone }
-          : roomBooking?.classroom?.meetingId
+          : roomMeetingId
             ? { label: "待开课", tone: "amber" as Tone }
             : { label: "未创建", tone: "neutral" as Tone };
     const playback = roomRuntime?.recordings.find(
@@ -11876,6 +11906,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 onClick={() => {
                   setTemporaryClassroomStudentId("");
                   setTemporaryClassroomSubjectId("");
+                  setTemporaryClassroomRecordLesson(false);
+                  setTemporaryClassroomTeacherId("");
+                  setTemporaryClassroomTeacherSubjectId("");
                   setTemporaryTestClassroom(null);
                   setModal("temporaryClassroom");
                 }}
@@ -11894,7 +11927,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       <RefreshCw size={17} /> 刷新历史录播
                     </button>
                   ) : null
-                ) : !roomBooking.classroom?.meetingId ? (
+                ) : !roomMeetingId ? (
                   <button
                     className="primary-button"
                     type="button"
@@ -11904,7 +11937,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     <Video size={17} />{" "}
                     {classroomBusy ? "正在连接课堂…" : "创建在线教室"}
                   </button>
-                ) : roomBooking.classroom.status === "ended" ? (
+                ) : roomClosed ? (
                   <button
                     className="secondary-button"
                     type="button"
@@ -11982,7 +12015,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       ? "进行中"
                       : booking.classroom?.status === "ended"
                         ? "已结束"
-                        : booking.classroom?.meetingId
+                        : classroomMeetingIdFor(booking)
                           ? "待开课"
                           : "未创建";
                   return (
@@ -12093,7 +12126,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       {displayPreferences.language === "en-AU" ? "min" : "分钟"}
                     </p>
                   </div>
-                  {historicalRoom ? null : !roomBooking.classroom?.meetingId ? (
+                  {historicalRoom ? null : !roomMeetingId ? (
                     <button
                       className="primary-button full"
                       type="button"
@@ -12105,7 +12138,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     </button>
                   ) : (
                     <>
-                      {roomBooking.classroom.status !== "ended" && (
+                      {!roomClosed && (
                         <button
                           className="primary-button full"
                           type="button"
@@ -12116,7 +12149,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                           {classroomBusy ? "正在处理…" : canJoinTeacherClassroom ? "老师进入教室" : "等待授课老师进入"}
                         </button>
                       )}
-                      {roomBooking.classroom.status !== "ended" && (
+                      {!roomClosed && (
                         <button
                           className="secondary-button full"
                           type="button"
@@ -12140,11 +12173,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                         </button>
                       )}
                       {(roomRuntime?.running ||
-                        roomBooking.classroom.status === "running") && (
+                        roomBooking.classroom?.status === "running") && (
                         <button
                           className="danger-button full"
                           type="button"
-                          disabled={classroomBusy}
+                          disabled={classroomBusy || !roomBooking.classroom?.meetingId}
                           onClick={() => void endClassroom(roomBooking)}
                         >
                           <ShieldCheck size={16} /> 结束课堂
@@ -12161,7 +12194,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                         </a>
                       )}
                       {!playback?.playbackUrl &&
-                        roomBooking.classroom.status === "ended" && (
+                        roomClosed && (
                           <div className="classroom-recording-pending">
                             <Clock3 size={16} />
                             <span>
@@ -13415,7 +13448,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           clearBookingProjectionPendingCommands(storage, sessionOperator);
         }
         bookingProjectionBusyRef.current = false;
-        if (!cancelled) reportSharedSync("synced", "已恢复未确认的排课事务结果");
+        if (!cancelled && !bookingProjectionCommandKeysRef.current.size) {
+          reportSharedSync("synced", "已恢复未确认的排课事务结果");
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -14783,23 +14818,26 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {modal === "temporaryClassroom" && <Dialog title="立即开临时课堂" onClose={() => setModal(null)}>
         <form className="form-grid" onSubmit={submitTemporaryClassroom}>
+          <label className="span-2">课堂记录<select value={temporaryClassroomRecordLesson ? "recorded" : "direct"} disabled={classroomBusy} onChange={(event) => setTemporaryClassroomRecordLesson(event.target.value === "recorded")}><option value="direct">仅开课堂（不登记课时、不录播）</option><option value="recorded">开课堂并登记课时</option></select></label>
+          {temporaryClassroomRecordLesson && <>
           <label>学生<select name="studentId" value={temporaryClassroomStudentId} onChange={(event) => { const student = studentById(event.target.value); setTemporaryClassroomStudentId(event.target.value); setTemporaryClassroomSubjectId(student?.course || student?.lessonPackages?.flatMap((entry) => entry.subjectIds)[0] || ""); }}><option value="">请选择学生</option>{scopedActiveStudents.map((student) => <option value={student.id} key={student.id}>{student.name}</option>)}</select></label>
-          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<select name="teacherId" defaultValue=""><option value="">请选择老师</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>}
-          <label>教学科目<select name="teacherSubjectId" defaultValue=""><option value="">请选择科目</option>{teacherSubjectOptions.map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
+          {isTeacherView ? <label>老师<input value={currentTeacher?.name ?? currentOperator} disabled /><input name="teacherId" type="hidden" value={currentTeacher?.id ?? ""} /></label> : <label>老师<select name="teacherId" value={temporaryClassroomTeacherId} onChange={(event) => { setTemporaryClassroomTeacherId(event.target.value); setTemporaryClassroomTeacherSubjectId(""); }}><option value="">请选择老师</option>{recordTeachers.map((teacher) => <option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}</select></label>}
+          <label>教学科目<select name="teacherSubjectId" value={temporaryClassroomTeacherSubjectId} onChange={(event) => setTemporaryClassroomTeacherSubjectId(event.target.value)}><option value="">请选择科目</option>{Array.from(new Set((teacherById(isTeacherView ? currentTeacher?.id ?? "" : temporaryClassroomTeacherId)?.subjects ?? []).map((subject) => subject.trim()).filter(Boolean))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课程科目<select name="subjectId" value={temporaryClassroomSubjectId} onChange={(event) => setTemporaryClassroomSubjectId(event.target.value)}><option value="">请选择科目</option>{Array.from(new Set([studentById(temporaryClassroomStudentId)?.course, ...(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).flatMap((entry) => entry.subjectIds)].filter((subject): subject is string => Boolean(subject)))).map((subject) => <option value={subject} key={subject}>{subject}</option>)}</select></label>
           <label>课包<select key={`${temporaryClassroomStudentId}:${temporaryClassroomSubjectId}`} name="packageId"><option value="">请选择有余额的课包</option>{(studentById(temporaryClassroomStudentId)?.lessonPackages ?? []).filter((entry) => entry.subjectIds.includes(temporaryClassroomSubjectId)).map((entry) => { const balance = getLessonPackageBalance(entry).remainingHours; return <option value={entry.id} key={entry.id} disabled={balance <= 0}>{entry.name} · 剩余 {balance} 小时{balance <= 0 ? " · 不可开课" : ""}</option>; })}</select></label>
           <label>课程时长<select name="duration" defaultValue="60"><option value="60">60 分钟</option><option value="90">90 分钟</option><option value="120">120 分钟</option></select></label>
+          </>}
           <footer><button className="secondary-button" type="button" onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={classroomBusy}><Video size={16} /> {classroomBusy ? "正在创建…" : "创建并生成链接"}</button></footer>
           {temporaryTestClassroom && <div className="classroom-share-link span-2">
             <label>
-              测试参与者链接
-              <input aria-label="测试参与者链接" value={temporaryTestClassroom.viewerUrl} readOnly />
+              参与者链接
+              <input aria-label="参与者链接" value={temporaryTestClassroom.viewerUrl} readOnly />
             </label>
             <button
               className="secondary-button"
               type="button"
               onClick={() => void navigator.clipboard.writeText(temporaryTestClassroom.viewerUrl)
-                .then(() => notify("测试参与者链接已复制"))
+                .then(() => notify("参与者链接已复制"))
                 .catch(() => notify("复制失败，请手动选择并复制链接"))}
             ><Copy size={16} /> 复制链接</button>
             <a className="secondary-button" href={temporaryTestClassroom.viewerUrl} target="_blank" rel="noreferrer"><ExternalLink size={16} /> 打开参与者端</a>

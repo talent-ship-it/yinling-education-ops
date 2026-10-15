@@ -871,7 +871,7 @@
         "count": 30
       },
       "crap_moderate": {
-        "count": 38
+        "count": 37
       }
     },
     "app/schedule-month-view.tsx": {
@@ -3680,11 +3680,6 @@
       }
     },
     "app/operations-client.tsx\u0000promoteLegacyTeacherAvailability": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
-    "app/operations-client.tsx\u0000provisionClassroom": {
       "crap_moderate": {
         "count": 1
       }
