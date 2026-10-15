@@ -1,4 +1,22 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "task-note-save-dates", source: "tests/sql/task-note-save-dates-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/booking-projection-atomic-runtime.sql" },
+    { kind: "sql", file: "supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260815040000_exam_submission_atomic.sql",
+      start: "create or replace function internal.exam_submission_task_due_sort(p_value text)",
+      end: "create or replace function public.get_exam_submission_command_result(" },
+    { kind: "sql", file: "tests/sql/task-note-save-dates-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260819101500_add_exam_month_planning_task.sql",
+      start: "create or replace function internal.exam_submission_reconcile_tasks(",
+      end: "alter table internal.exam_follow_up_commands\n  drop constraint" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260819101800_enforce_task_canonical_deadlines.sql",
+      start: "set local lock_timeout = '1s';",
+      end: "-- The ordinary app-state writer never receives a managed thaw capability." },
+    { kind: "sql", file: "supabase/migrations/20260827000100_authoritative_generic_ops_audit.sql" },
+    { kind: "sql", file: "supabase/migrations/20261015114814_task_note_save_dates.sql" },
+    { kind: "sql", file: "supabase/migrations/20261015114814_task_note_save_dates.sql" },
+    { kind: "sql", file: "tests/sql/task-note-save-dates-runtime.sql" },
+  ] },
   { id: "jiaowubao-schedule-reader-performance", source: "tests/sql/jiaowubao-schedule-reader-performance-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/jiaowubao-schedule-reader-performance-setup.sql" },
     { kind: "sql", file: "supabase/migrations/20260822000600_optimize_bilingual_jwb_name_key.sql" },

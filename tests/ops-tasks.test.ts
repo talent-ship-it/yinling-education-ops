@@ -87,9 +87,9 @@ test("formats the canonical task deadline as an exact Melbourne date and time", 
   assert.equal(formatTaskDeadline(undefined), undefined);
 });
 
-test("formats a compact task-list deadline without year or time", () => {
-  assert.equal(formatCompactTaskDeadline("2026-08-19T08:00:00.000Z"), "8月19日");
-  assert.equal(formatCompactTaskDeadline("2026-08-19T14:30:00.000Z", "Asia/Shanghai"), "8月19日");
+test("formats a task-list deadline with the full year and without time", () => {
+  assert.equal(formatCompactTaskDeadline("2026-08-19T08:00:00.000Z"), "2026年8月19日");
+  assert.equal(formatCompactTaskDeadline("2026-08-19T14:30:00.000Z", "Asia/Shanghai"), "2026年8月19日");
   assert.equal(formatCompactTaskDeadline("not-a-deadline"), undefined);
 });
 
@@ -924,4 +924,12 @@ test("restores linked request tasks to their workflow anchor", () => {
     studentId: "STU-1",
   });
   assert.ok(restored.every((task) => task.anchorBookingId === "WORKFLOW-1"));
+});
+
+test("task recalculation keeps the operator note and its save date", () => {
+  const existing = ruleTask({ completionNote: "等待家长确认", completionNoteUpdatedAt: "2026-08-12T10:00:00.000Z" });
+  const next = upsertTaskByRule([existing], ruleTask({ title: "Updated task", dueAt: "2026-08-14T00:00:00.000Z" }));
+  assert.equal(next[0].completionNote, existing.completionNote);
+  assert.equal(next[0].completionNoteUpdatedAt, existing.completionNoteUpdatedAt);
+  assert.equal(next[0].title, "Updated task");
 });

@@ -3,7 +3,7 @@
 import React from "react";
 import { Pencil, RotateCcw, X } from "lucide-react";
 
-import { formatCompactTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
+import { formatCompactTaskDeadline, formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
@@ -94,8 +94,9 @@ function TaskRows({
   canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
+  deadlineTimeFormat = "24h",
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -118,10 +119,16 @@ function TaskRows({
         const supportingCopy = title.details.length === 0 || task.completionNote
           ? `${title.details.length === 0 ? studentName(task.studentId) ?? "未关联学生" : ""}${task.completionNote ? `${title.details.length === 0 ? " · " : ""}${task.completionNote}` : ""}`
           : "";
+        const noteDate = task.completionNote
+          ? formatTaskDeadline(task.completionNoteUpdatedAt, deadlineTimeZone, deadlineTimeFormat)
+          : undefined;
         const copy = <>
           <strong>{title.primary}</strong>
           {title.details.length > 0 ? <small className="task-title-details">{title.details.join(" · ")}</small> : null}
           {supportingCopy ? <span>{supportingCopy}</span> : null}
+          {noteDate ? <time className="task-note-date" dateTime={task.completionNoteUpdatedAt}
+            title={`备注于 ${noteDate} · ${deadlineTimeZoneLabel}`}
+          >备注于 {noteDate}</time> : null}
         </>;
         return <div className={`task-row to-do-row ${task.status} ${task.completionOutcome ?? ""}`} role="listitem" key={task.id}>
           <span className={`task-dot ${task.tone}`} aria-hidden="true" />
@@ -222,7 +229,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -281,6 +288,7 @@ export function ToDoList({
   canReopen,
   deadlineTimeZone,
   deadlineTimeZoneLabel,
+  deadlineTimeFormat = "24h",
   taskTitle,
 }: ToDoListProps) {
   const [view, setView] = React.useState<TaskListView>("todo");
@@ -294,7 +302,7 @@ export function ToDoList({
   const visibleOwnerGroups = ownerGroups
     .map((group) => ({ ...group, tasks: group.tasks.filter((task) => filteredTasks.has(task)) }))
     .filter((group) => group.tasks.length > 0);
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">

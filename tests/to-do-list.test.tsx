@@ -121,10 +121,10 @@ test("renders today, overdue, then remaining sections and sorts each section by 
 
 test("shows the canonical deadline as a compact date, not legacy workflow copy", () => {
   const html = render([task("due", "LP", "today", "试听前 N-3 · 18:00", "2026-08-12T08:00:00.000Z")]);
-  assert.match(html, /aria-label="截止 8月12日"[^>]*>8月12日</);
-  assert.doesNotMatch(html, />截止 8月12日</);
+  assert.match(html, /aria-label="截止 2026年8月12日"[^>]*>2026年8月12日</);
+  assert.doesNotMatch(html, />截止 2026年8月12日</);
   assert.match(html, /<time[^>]+dateTime="2026-08-12T08:00:00\.000Z"/);
-  assert.match(html, /title="截止：8月12日 · 墨尔本"/);
+  assert.match(html, /title="截止：2026年8月12日 · 墨尔本"/);
   assert.doesNotMatch(html, /试听前 N-3/);
   assert.doesNotMatch(html, /不应渲染的解释文字/);
   assert.doesNotMatch(html, /<small/);
@@ -235,12 +235,12 @@ test("renders the same deadline instant in Beijing for operations and Melbourne 
   const operations = render([task("beijing", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai");
   const teachingControl = render([task("melbourne", "试听", "today", "legacy", deadline)], "all", "Australia/Melbourne");
 
-  assert.match(operations, />8月12日</);
-  assert.match(operations, /title="截止：8月12日 · 北京时间（中国）"/);
-  assert.match(teachingControl, />8月13日</);
-  assert.match(teachingControl, /title="截止：8月13日 · 墨尔本"/);
+  assert.match(operations, />2026年8月12日</);
+  assert.match(operations, /title="截止：2026年8月12日 · 北京时间（中国）"/);
+  assert.match(teachingControl, />2026年8月13日</);
+  assert.match(teachingControl, /title="截止：2026年8月13日 · 墨尔本"/);
   const twelveHour = render([task("twelve-hour", "试听", "today", "legacy", deadline)], "all", "Asia/Shanghai", "12h");
-  assert.match(twelveHour, />8月12日</);
+  assert.match(twelveHour, />2026年8月12日</);
 });
 
 test("renders only the plain handbook action as the headline and demotes details", () => {
@@ -382,4 +382,23 @@ test("keeps pending scheduling editable and cancellable without a manual complet
   assert.match(html, /aria-label="编辑备注：任务 pending-scheduling"/);
   assert.match(html, /aria-label="无法完成：任务 pending-scheduling"/);
   assert.doesNotMatch(html, /aria-label="完成：任务 pending-scheduling"/);
+});
+
+test("shows the note save date separately from the deadline, with the local year and time", () => {
+  const saved = { ...task("noted", "LP", "today", "今天"), completionNote: "已联系家长", completionNoteUpdatedAt: "2026-12-31T14:30:00.000Z" };
+  const html = render([saved]);
+  assert.match(html, /class="task-note-date" dateTime="2026-12-31T14:30:00.000Z"/);
+  assert.match(html, /备注于 2027年1月1日 01:30/);
+  assert.match(html, />2026年8月12日<\/time>/);
+  const twelveHour = render([saved], "all", "Asia/Shanghai", "12h");
+  assert.match(twelveHour, /备注于 2026年12月31日 下午10:30/);
+});
+
+test("does not invent dates for legacy, cleared, or invalid task notes", () => {
+  const base = task("legacy-note", "LP", "today", "今天");
+  for (const note of [
+    { completionNote: "历史备注" },
+    { completionNote: undefined, completionNoteUpdatedAt: "2026-08-12T08:00:00.000Z" },
+    { completionNote: "历史备注", completionNoteUpdatedAt: "not-a-date" },
+  ]) assert.doesNotMatch(render([{ ...base, ...note }]), /task-note-date|备注于/);
 });

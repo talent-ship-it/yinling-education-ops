@@ -1633,7 +1633,8 @@ body {
 .task-dot.neutral { background:#98a49d; }
 .to-do-row .task-copy strong { font-size:13px; }
 .to-do-row .task-copy span,.to-do-row .due-label { font-size:11px; }
-.to-do-row .due-label { flex:0 0 58px; margin-left:auto; }
+.to-do-row .due-label { flex:0 0 100%; margin-left:auto; }
+.to-do-row .task-note-date { color:var(--muted); font-size:10px; line-height:1.5; }
 .to-do-row .due-label.pending { color:#78867e; font-family:inherit; font-weight:700; }
 .to-do-row .task-copy-static { cursor:default; }
 .to-do-row .complete-button { height:36px; width:36px; }

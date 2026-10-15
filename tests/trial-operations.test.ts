@@ -711,13 +711,14 @@ test("Jiaowubao task reconciliation preserves an operator note", () => {
     now: "2026-08-28T03:00:00.000Z",
   });
   const current = generated.map((task) => task.ruleKey === "trial.jiaowubao.payment-n2"
-    ? { ...task, completionNote: "等待家长确认" }
+    ? { ...task, completionNote: "等待家长确认", completionNoteUpdatedAt: "2026-08-28T04:00:00.000Z" }
     : task);
   const reconciled = replaceRuleTasks(current, generated, {
     anchor: "JWB:evt-note",
     rulePrefixes: [TRIAL_JWB_RULE_PREFIX],
   });
   assert.equal(reconciled.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.completionNote, "等待家长确认");
+  assert.equal(reconciled.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.completionNoteUpdatedAt, "2026-08-28T04:00:00.000Z");
 });
 
 test("omits the N-1 teacher-preparation task when the handover explicitly says no", () => {
