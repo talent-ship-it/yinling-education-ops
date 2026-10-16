@@ -13,6 +13,7 @@ import {
   generateTrialEscalationTasks,
   generateTrialRequestTasks,
   isTrialAcceptanceFixtureTask,
+  matchesTaskDeadlineDate,
   linkTrialRequestTasksToBooking,
   OpsTask,
   reconcileTrialBookingTasks,
@@ -66,6 +67,31 @@ test("status uses the Melbourne calendar date, including its midnight boundary",
 
   // Melbourne is UTC+11 in January, so these two UTC dates are one local day.
   assert.equal(statusForDueAt("2026-01-04T23:30:00.000Z", "2026-01-04T22:00:00.000Z"), "today");
+});
+
+test("filters task deadlines by the displayed calendar day, including midnight and DST", () => {
+  const beforeMidnight = { dueAt: "2026-10-14T12:59:59.999Z" };
+  const midnight = { dueAt: "2026-10-14T13:00:00.000Z" };
+  const endOfDay = { dueAt: "2026-10-15T12:59:59.999Z" };
+  const nextDay = { dueAt: "2026-10-15T13:00:00.000Z" };
+  assert.equal(matchesTaskDeadlineDate(beforeMidnight, "2026-10-15"), false);
+  assert.equal(matchesTaskDeadlineDate(midnight, "2026-10-15"), true);
+  assert.equal(matchesTaskDeadlineDate(endOfDay, "2026-10-15"), true);
+  assert.equal(matchesTaskDeadlineDate(nextDay, "2026-10-15"), false);
+  assert.equal(matchesTaskDeadlineDate(midnight, "2026-10-14", "Asia/Shanghai"), true);
+  assert.equal(matchesTaskDeadlineDate(midnight, "2026-10-15", "Asia/Shanghai"), false);
+  for (const dueAt of ["2026-10-03T14:00:00.000Z", "2026-10-04T12:59:59.999Z"]) {
+    assert.equal(matchesTaskDeadlineDate({ dueAt }, "2026-10-04"), true);
+  }
+  assert.equal(matchesTaskDeadlineDate({ dueAt: "2026-10-04T13:00:00.000Z" }, "2026-10-04"), false);
+  assert.equal(matchesTaskDeadlineDate({ dueAt: "2026-12-31T13:00:00.000Z" }, "2027-01-01"), true);
+});
+
+test("date filtering does not guess a day for missing or invalid deadlines and clearing restores all", () => {
+  for (const dueAt of [undefined, "not-a-date", "2026-10-15", "2026-02-30T08:00:00.000Z"]) {
+    assert.equal(matchesTaskDeadlineDate({ dueAt }, "2026-10-15"), false);
+    assert.equal(matchesTaskDeadlineDate({ dueAt }, ""), true);
+  }
 });
 
 test("formats the canonical task deadline as an exact Melbourne date and time", () => {

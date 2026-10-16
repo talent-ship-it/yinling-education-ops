@@ -3,7 +3,7 @@
 import React from "react";
 import { Pencil, RotateCcw, X } from "lucide-react";
 
-import { formatCompactTaskDeadline, formatTaskDeadline, isExecutableOpenTask, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
+import { formatCompactTaskDeadline, formatTaskDeadline, isExecutableOpenTask, matchesTaskDeadlineDate, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
@@ -293,10 +293,11 @@ export function ToDoList({
 }: ToDoListProps) {
   const [view, setView] = React.useState<TaskListView>("todo");
   const [ownerFilter, setOwnerFilter] = React.useState("");
+  const [dateFilter, setDateFilter] = React.useState("");
   const ownerGroups = groupTasksByOwner(tasks);
   const selectedOwner = ownerGroups.find((group) => group.key === ownerFilter);
   if (ownerFilter && !selectedOwner) setOwnerFilter("");
-  const ownerTasks = selectedOwner?.tasks ?? tasks;
+  const ownerTasks = (selectedOwner?.tasks ?? tasks).filter((task) => matchesTaskDeadlineDate(task, dateFilter, deadlineTimeZone));
   const filtered = filterTasks(ownerTasks, filter, view, deadlineTimeZone);
   const filteredTasks = new Set(filtered);
   const visibleOwnerGroups = ownerGroups
@@ -324,6 +325,13 @@ export function ToDoList({
               {ownerGroups.map((group) => <option value={group.key} key={group.key}>{group.owner}</option>)}
             </select>
           </label>
+          <label className="to-do-date-filter">截止日期
+            <input type="date" aria-label="按截止日期筛选任务" value={dateFilter} onChange={(event) => {
+              setDateFilter(event.target.value);
+              if (filter === "today") onFilterChange("all");
+            }} />
+          </label>
+          {dateFilter ? <button className="text-button" type="button" onClick={() => setDateFilter("")}>清除日期</button> : null}
           <div className="segmented to-do-filters" role="group" aria-label="任务类别">
             {TO_DO_FILTERS.map((value) => (
               <button
@@ -331,7 +339,10 @@ export function ToDoList({
                 type="button"
                 aria-pressed={filter === value}
                 key={value}
-                onClick={() => onFilterChange(value)}
+                onClick={() => {
+                  if (value === "today") setDateFilter("");
+                  onFilterChange(value);
+                }}
               >{FILTER_LABELS[value]}</button>
             ))}
           </div>

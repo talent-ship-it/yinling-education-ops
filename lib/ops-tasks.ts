@@ -302,6 +302,14 @@ function localDateKey(date: Date, timeZone: string) {
     .padStart(2, "0")}`;
 }
 
+export function matchesTaskDeadlineDate(
+  task: Pick<OpsTask, "dueAt">,
+  date: string,
+  timeZone = MELBOURNE_TIME_ZONE,
+) {
+  return !date || (isCanonicalTaskDueAt(task.dueAt) && localDateKey(new Date(task.dueAt), timeZone) === date);
+}
+
 function addLocalDays(date: LocalDate, days: number): LocalDate {
   const shifted = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
   return {
