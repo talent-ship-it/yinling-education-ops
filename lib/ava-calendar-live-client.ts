@@ -1,6 +1,7 @@
 import type { AvaCalendarEvent, AvaCalendarProjection } from "./ava-calendar-projection";
 import type { AvaCalendarSync } from "./ava-calendar-display";
 import { TRIAL_OPERATIONS } from "./lp-workflows";
+import { avaCalendarSourceStudentName } from "./ava-calendar-source-name";
 
 export type AvaCalendarLiveWindow = { start: string; end: string };
 export type AvaCalendarRemaining = { id: string; teacherId: string; startsAt: string; endsAt: string };
@@ -67,7 +68,19 @@ function decodeEvent(value: unknown): AvaCalendarEvent {
   if (!item || !eventFields(item)) throw new CalendarReadError(503);
   const students = item.students.map(decodeStudent);
   if (new Set(students.map((student) => student.studentId)).size !== students.length) throw new CalendarReadError(503);
-  return { eventId: item.eventId, startsAt: item.startsAt, endsAt: item.endsAt, teacherId: item.teacherId, teacherName: item.teacherName, trial: item.trial, identityPending: item.identityPending, students };
+  const sourceStudents = item.unresolvedSourceStudents === undefined ? undefined : decodeSourceStudents(item.unresolvedSourceStudents);
+  if (sourceStudents && !item.identityPending) throw new CalendarReadError(503);
+  return { eventId: item.eventId, startsAt: item.startsAt, endsAt: item.endsAt, teacherId: item.teacherId, teacherName: item.teacherName, trial: item.trial, identityPending: item.identityPending, students, ...(sourceStudents ? { unresolvedSourceStudents: sourceStudents } : {}) };
+}
+
+function decodeSourceStudents(value: unknown): NonNullable<AvaCalendarEvent["unresolvedSourceStudents"]> {
+  if (!Array.isArray(value) || value.length > 128) throw new CalendarReadError(503);
+  return value.map((value) => {
+    const item = object(value);
+    const studentName = avaCalendarSourceStudentName(item?.studentName);
+    if (!item || !studentName || studentName !== item.studentName || item.owner !== null) throw new CalendarReadError(503);
+    return { studentName, owner: null };
+  });
 }
 
 function decodeSlice(value: unknown): CalendarSlice {
