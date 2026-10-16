@@ -128,8 +128,8 @@ test("trial operations filters remain complete with no or partial ledger records
   assert.equal(savedAlias.operationsOwner, "Ella");
   assert.ok(trialLedgerViewFilterOptions([], savedAlias, "operationsOwner").includes(savedAlias.operationsOwner));
   assert.deepEqual(trialLedgerViewFilterOptions(rows, state, "operationsOwner"), staff);
-  assert.deepEqual(trialLedgerViewFilterOptions([], state, "planner"), ["Abby", "Eileen", "Tara"]);
-  assert.deepEqual(trialLedgerViewFilterOptions(rows, state, "planner"), ["Abby", "Eileen", "Tara"]);
+  assert.deepEqual(trialLedgerViewFilterOptions([], state, "planner"), ["Abby", "Eileen", "Tara龙"]);
+  assert.deepEqual(trialLedgerViewFilterOptions(rows, state, "planner"), ["Abby", "Eileen", "Tara龙"]);
   assert.ok(trialLedgerViewFilterOptions([], { ...state, operationsOwner: "Nixon" }, "operationsOwner").includes("Nixon"));
   assert.equal(filterAndSortTrialLedgerRows(rows, { ...state, operationsOwner: "Molly" }).length, 0);
   const alias = { ...rows[0]!, operationsOwner: "ELLA 教务" };
@@ -138,15 +138,14 @@ test("trial operations filters remain complete with no or partial ledger records
   assert.deepEqual(filterAndSortTrialLedgerRows([alias, historic], { ...state, operationsOwner: "Nixon" }), [historic]);
 });
 
-
-test("shows one Tara option and includes her canonical and legacy-name records without rewriting either", () => {
+test("removes the duplicate Tara option while retaining Tara龙 and both names’ records", () => {
   const state = defaultTrialLedgerViewState();
   const canonical = { ...rows[0]!, id: "LP-TARA", planner: "Tara" };
   const legacy = { ...rows[0]!, id: "LP-TARA-OLD", planner: " Tara龙 " };
   const other = { ...rows[0]!, id: "LP-OTHER", planner: "Other Planner" };
   const source = [canonical, legacy, other];
   const original = structuredClone(source);
-  assert.deepEqual(trialLedgerViewFilterOptions(source, state, "planner"), ["Abby", "Eileen", "Other Planner", "Tara"]);
+  assert.deepEqual(trialLedgerViewFilterOptions(source, state, "planner"), ["Abby", "Eileen", "Other Planner", "Tara龙"]);
   for (const planner of ["Tara", "Tara龙"]) {
     const filtered = filterAndSortTrialLedgerRows(source, { ...state, planner });
     assert.equal(filtered.length, 2);
@@ -154,9 +153,9 @@ test("shows one Tara option and includes her canonical and legacy-name records w
     assert.ok(filtered.includes(legacy));
     assert.ok(!filtered.includes(other));
     const restored = parseTrialLedgerViewState(JSON.stringify({ ...state, planner }));
-    assert.equal(restored.planner, "Tara");
-    assert.deepEqual(trialLedgerViewFilterOptions([], restored, "planner"), ["Abby", "Eileen", "Tara"]);
-    assert.deepEqual(trialLedgerViewFilterOptions([legacy], { ...state, planner }, "planner"), ["Abby", "Eileen", "Tara"]);
+    assert.equal(restored.planner, "Tara龙");
+    assert.deepEqual(trialLedgerViewFilterOptions([], restored, "planner"), ["Abby", "Eileen", "Tara龙"]);
+    assert.deepEqual(trialLedgerViewFilterOptions([legacy], { ...state, planner }, "planner"), ["Abby", "Eileen", "Tara龙"]);
   }
   assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...state, planner: "Other Planner" }), [other]);
   assert.equal(filterAndSortTrialLedgerRows(source, state).length, source.length);

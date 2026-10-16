@@ -106,7 +106,7 @@ function exactDate(value: unknown, fallback = "") {
 
 function plannerName(value: string) {
   const name = value.trim();
-  return name === "Tara龙" ? "Tara" : name;
+  return name === "Tara" ? "Tara龙" : name;
 }
 
 export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState {
