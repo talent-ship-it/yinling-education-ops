@@ -10,7 +10,7 @@ import luxonPlugin from "@fullcalendar/luxon3";
 import { DateTime } from "luxon";
 import type { AvaCalendarEvent } from "@/lib/ava-calendar-projection";
 import { fetchAvaCalendarRange as fetchAvaCalendarWindow, type AvaCalendarLiveData, type AvaCalendarLiveWindow } from "@/lib/ava-calendar-live-client";
-import { TRIAL_OPERATIONS } from "@/lib/lp-workflows";
+import { ASSIGNABLE_DEMO_STAFF_USERS as TRIAL_OPERATIONS } from "@/lib/demo-users";
 import styles from "./calendar.module.css";
 import { useAvaCalendarVisibleRefresh } from "@/lib/ava-calendar-visible-refresh";
 import type { AvaCalendarSync } from "@/lib/ava-calendar-display";
@@ -92,7 +92,11 @@ function node(tag: string, className: string, text?: string) {
   return element;
 }
 
-function studentNameNode(student: AvaCalendarEvent["students"][number]) {
+function lessonDisplayStudents(lesson: AvaCalendarEvent) {
+  return [...lesson.students, ...(lesson.unresolvedSourceStudents ?? []).map((student) => ({ ...student, color: "owner-unassigned" }))];
+}
+
+function studentNameNode(student: { studentName: string; color: string }) {
   const name = node("span", styles.studentName, student.studentName || "学生待确认");
   name.dataset.ownerColor = student.color;
   return name;
@@ -108,8 +112,9 @@ function lessonNames(lesson: AvaCalendarEvent) {
     const badge = node("b", styles.trialTag, "试听");
     badge.dataset.trial = "true"; names.append(badge);
   }
-  for (const student of lesson.students) names.append(studentNameNode(student));
-  if (!lesson.students.length) {
+  const students = lessonDisplayStudents(lesson);
+  for (const student of students) names.append(studentNameNode(student));
+  if (!students.length) {
     const name = node("span", styles.studentName, "学生待确认");
     name.dataset.ownerColor = "owner-unassigned"; names.append(name);
   }
@@ -117,7 +122,7 @@ function lessonNames(lesson: AvaCalendarEvent) {
 }
 
 function lessonOwnerNames(lesson: AvaCalendarEvent) {
-  return [...new Set(lesson.students.map((student) => student.owner || "教务待分配"))].join(" / ");
+  return [...new Set(lessonDisplayStudents(lesson).map((student) => student.owner || "教务待分配"))].join(" / ");
 }
 
 function renderLesson(info: EventContentArg) {
@@ -134,8 +139,9 @@ function renderLesson(info: EventContentArg) {
 function lessonInputs(data: AvaCalendarLiveData | null, teacher: string): EventInput[] {
   if (!data) return [];
   const lessons = data.events.filter((event) => !teacher || event.teacherId === teacher).map((lesson) => {
-    const colors = new Set(lesson.students.map((student) => student.color));
-    return { id: lesson.eventId, start: lesson.startsAt, end: lesson.endsAt, title: lesson.students.map((student) => student.studentName).join("、") || "学生待确认", classNames: [styles.lesson, ...(Date.parse(lesson.endsAt) - Date.parse(lesson.startsAt) < 3600000 ? [styles.compact] : [])], extendedProps: { lesson, ownerColor: colors.size === 1 ? [...colors][0] : "owner-unassigned" } };
+    const students = lessonDisplayStudents(lesson);
+    const colors = new Set(students.map((student) => student.color));
+    return { id: lesson.eventId, start: lesson.startsAt, end: lesson.endsAt, title: students.map((student) => student.studentName).join("、") || "学生待确认", classNames: [styles.lesson, ...(Date.parse(lesson.endsAt) - Date.parse(lesson.startsAt) < 3600000 ? [styles.compact] : [])], extendedProps: { lesson, ownerColor: colors.size === 1 ? [...colors][0] : "owner-unassigned" } };
   });
   const remaining = data.remainingAVA.filter((interval) => !teacher || interval.teacherId === teacher).map((interval) => ({ id: `ava:${interval.id}:${interval.startsAt}`, start: interval.startsAt, end: interval.endsAt, display: "background", classNames: [styles.free], extendedProps: { interval } }));
   return [...lessons, ...remaining];
@@ -240,8 +246,9 @@ function detailTime(event: AvaCalendarEvent, zone: string) {
   return `${start.toFormat("yyyy-MM-dd HH:mm")} – ${end.toFormat(start.toISODate() === end.toISODate() ? "HH:mm" : "yyyy-MM-dd HH:mm")}`;
 }
 
-function DetailStudents({ students }: { students: AvaCalendarEvent["students"] }) {
-  return students.length ? students.map((student) => <div key={student.studentId}><span>{student.owner || "教务待分配"}</span><strong data-owner-color={student.color}>{student.studentName || "学生待确认"}</strong></div>) : <div><strong data-owner-color="owner-unassigned">学生待确认</strong></div>;
+function DetailStudents({ lesson }: { lesson: AvaCalendarEvent }) {
+  const students = lessonDisplayStudents(lesson);
+  return students.length ? students.map((student, index) => <div key={index}><span>{student.owner || "教务待分配"}</span><strong data-owner-color={student.color}>{student.studentName || "学生待确认"}</strong></div>) : <div><strong data-owner-color="owner-unassigned">学生待确认</strong></div>;
 }
 
 function DetailContent({ selected, zone }: { selected: AvaCalendarEvent | undefined; zone: string }) {
@@ -250,7 +257,7 @@ function DetailContent({ selected, zone }: { selected: AvaCalendarEvent | undefi
     <div><span>老师</span><strong>{lessonTeacherName(selected)}</strong></div>
     <div><span>时间 · {ZONES[zone] || zone}</span><strong>{detailTime(selected, zone)}</strong></div>
     <div><span>时长</span><strong>{(Date.parse(selected.endsAt) - Date.parse(selected.startsAt)) / 60000} 分钟</strong></div>
-    <DetailStudents students={selected.students} />
+    <DetailStudents lesson={selected} />
     {selected.identityPending && <div><span>身份待确认</span></div>}
   </div>;
 }

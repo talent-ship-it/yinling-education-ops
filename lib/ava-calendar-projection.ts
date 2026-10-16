@@ -8,10 +8,11 @@ import { isJiaowubaoSharedTrialAccountLabel } from "./trial-operations";
 import { AvaCalendarReadError } from "./ava-calendar-snapshot";
 import type { AvaCalendarMachineCapability } from "./ava-calendar-machine-auth";
 import { parseAvaCalendarInstant } from "./ava-calendar-health";
+import { avaCalendarSourceStudentName } from "./ava-calendar-source-name";
 
 export type AvaCoordinatorAccount = Pick<AccountDirectoryRow, "account_id" | "account_name" | "account_role" | "status">;
 export type AvaCalendarStudent = { studentId: string; studentName: string; owner: string | null; ownerId: string | null; color: string };
-export type AvaCalendarEvent = { eventId: string; startsAt: string; endsAt: string; teacherId: string | null; teacherName: string | null; students: AvaCalendarStudent[]; trial: boolean; identityPending: boolean };
+export type AvaCalendarEvent = { eventId: string; startsAt: string; endsAt: string; teacherId: string | null; teacherName: string | null; students: AvaCalendarStudent[]; unresolvedSourceStudents?: { studentName: string; owner: null }[]; trial: boolean; identityPending: boolean };
 export type AvaCalendarProjection = { events: AvaCalendarEvent[]; teachers: { id: string; name: string }[] };
 export type AvaCalendarProjectionInput = {
   rows: OpsStateRow[];
@@ -81,6 +82,7 @@ type EventProjectionContext = {
   teacherCandidates: Map<string, string[]>;
   visibleTeacherIds: Set<string>;
   strictSourceIdentity: boolean;
+  sourceNameDisplay: boolean;
   sourceEvents: ReadonlyMap<string, SnapshotEvent>;
 };
 
@@ -137,15 +139,17 @@ function resolveTrialStudent(event: SnapshotEvent, teacherId: string | null, con
 function resolveEventStudents(event: SnapshotEvent, teacherId: string | null, context: EventProjectionContext) {
   const shared = event.sourceParticipants.some((participant) => isJiaowubaoSharedTrialAccountLabel(participant.label));
   const participants = event.sourceParticipants.filter((participant) => !isJiaowubaoSharedTrialAccountLabel(participant.label));
-  const ids = [...new Set(participants.flatMap((participant) => {
-    if (context.strictSourceIdentity && (!teacherSourceKey(participant.memberId) || !context.lookup.internalByMember.has(participant.memberId!))) return [];
-    const id = mapJiaowubaoSnapshotParticipant(participant, context.lookup);
-    return id ? [id] : [];
-  }))];
+  const participantIds = participants.map((participant) => {
+    if (context.strictSourceIdentity && (!teacherSourceKey(participant.memberId) || !context.lookup.internalByMember.has(participant.memberId!))) return null;
+    return mapJiaowubaoSnapshotParticipant(participant, context.lookup);
+  });
+  const unresolvedParticipants = participants.filter((_, index) => participantIds[index] === null);
+  const ids = [...new Set(participantIds.filter((id) => id !== null))];
   const linkedId = resolveTrialStudent(event, teacherId, context);
   if (shared && participants.length === 0 && linkedId) ids.push(linkedId);
   const trialResolved = linkedId !== null && ids.length === 1 && ids[0] === linkedId;
-  return { shared, participants, ids, trialResolved };
+  const identityPending = unresolvedParticipants.length > 0 || (shared ? !trialResolved : ids.length !== participants.length);
+  return { shared, ids, trialResolved, unresolvedParticipants, identityPending };
 }
 
 function publicCalendarStudent(studentId: string, context: EventProjectionContext): AvaCalendarStudent {
@@ -156,14 +160,26 @@ function publicCalendarStudent(studentId: string, context: EventProjectionContex
   return { studentId, studentName: text(student.name), owner: ownerAccounts.length === 1 ? owner : null, ownerId: ownerAccounts.length === 1 ? ownerAccounts[0]!.account_id : null, color: ownerAccounts.length === 1 ? `owner-${ownerIndex + 1}` : "owner-unassigned" };
 }
 
+function sourceStudentDisplay(identity: ReturnType<typeof resolveEventStudents>, context: EventProjectionContext) {
+  if (!context.sourceNameDisplay) return {};
+  const students = identity.unresolvedParticipants.flatMap((participant) => {
+    if (!teacherSourceKey(participant.memberId)) return [];
+    const studentName = avaCalendarSourceStudentName(participant.label);
+    return studentName ? [{ studentName, owner: null }] : [];
+  });
+  return students.length ? { unresolvedSourceStudents: students } : {};
+}
+
 function publicCalendarEvent(event: SnapshotEvent, teacherId: string | null, identity: ReturnType<typeof resolveEventStudents>, context: EventProjectionContext): AvaCalendarEvent {
   const visibleStudents = identity.ids.map((studentId) => publicCalendarStudent(studentId, context));
+
   const publicTeacherId = teacherId && context.visibleTeacherIds.has(teacherId) ? teacherId : null;
   return {
     eventId: event.eventId, startsAt: event.startsAt, endsAt: event.endsAt, teacherId: publicTeacherId,
     teacherName: publicTeacherId ? text(context.teacherById.get(publicTeacherId)?.name) : null,
     students: visibleStudents, trial: identity.shared || identity.trialResolved,
-    identityPending: !teacherId || event.sourceStudentsTruncated || (identity.shared ? !identity.trialResolved : identity.ids.length !== identity.participants.length),
+    ...sourceStudentDisplay(identity, context),
+    identityPending: !teacherId || event.sourceStudentsTruncated || identity.identityPending,
   };
 }
 
@@ -197,7 +213,8 @@ export function projectAvaCalendarEvents(input: AvaCalendarProjectionInput): Ava
   const lpItems = records(rows, "lpItems");
   const visibleTeachers = records(machine ? rows : filterOpsStateRows(rows, access), "teachers").flatMap((teacher) => text(teacher.id) && text(teacher.name) ? [{ id: text(teacher.id), name: text(teacher.name) }] : []);
   const visibleTeacherIds = new Set(visibleTeachers.map((teacher) => teacher.id));
-  const context: EventProjectionContext = { activeStudentIds, teacherIds: !machine && access.teacher ? access.teacherIds : null, unrestricted: machine || canReadUnrestrictedOpsData(access), accounts, revision: input.revision, lookup, lpItems, studentById, teacherById, teacherCandidates, visibleTeacherIds, strictSourceIdentity: input.strictSourceIdentity === true, sourceEvents: new Map((input.sourceEvents ?? input.events).map((event) => [event.eventId, event])) };
+  const sourceNameDisplay = !machine && access.fullAdmin && canReadUnrestrictedOpsData(access) && input.strictSourceIdentity === true && /^sha256:[a-f0-9]{64}$/.test(input.revision ?? "");
+  const context: EventProjectionContext = { activeStudentIds, teacherIds: !machine && access.teacher ? access.teacherIds : null, unrestricted: machine || canReadUnrestrictedOpsData(access), accounts, revision: input.revision, lookup, lpItems, studentById, teacherById, teacherCandidates, visibleTeacherIds, strictSourceIdentity: input.strictSourceIdentity === true, sourceNameDisplay, sourceEvents: new Map((input.sourceEvents ?? input.events).map((event) => [event.eventId, event])) };
   const events = input.events.flatMap((event) => projectCalendarEvent(event, context));
   return { events, teachers: visibleTeachers };
 }
