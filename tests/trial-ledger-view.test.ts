@@ -137,3 +137,28 @@ test("trial operations filters remain complete with no or partial ledger records
   assert.deepEqual(filterAndSortTrialLedgerRows([alias, historic], { ...state, operationsOwner: "Ella" }), [alias]);
   assert.deepEqual(filterAndSortTrialLedgerRows([alias, historic], { ...state, operationsOwner: "Nixon" }), [historic]);
 });
+
+
+test("shows one Tara option and includes her canonical and legacy-name records without rewriting either", () => {
+  const state = defaultTrialLedgerViewState();
+  const canonical = { ...rows[0]!, id: "LP-TARA", planner: "Tara" };
+  const legacy = { ...rows[0]!, id: "LP-TARA-OLD", planner: " Tara龙 " };
+  const other = { ...rows[0]!, id: "LP-OTHER", planner: "Other Planner" };
+  const source = [canonical, legacy, other];
+  const original = structuredClone(source);
+  assert.deepEqual(trialLedgerViewFilterOptions(source, state, "planner"), ["Abby", "Eileen", "Other Planner", "Tara"]);
+  for (const planner of ["Tara", "Tara龙"]) {
+    const filtered = filterAndSortTrialLedgerRows(source, { ...state, planner });
+    assert.equal(filtered.length, 2);
+    assert.ok(filtered.includes(canonical));
+    assert.ok(filtered.includes(legacy));
+    assert.ok(!filtered.includes(other));
+    const restored = parseTrialLedgerViewState(JSON.stringify({ ...state, planner }));
+    assert.equal(restored.planner, "Tara");
+    assert.deepEqual(trialLedgerViewFilterOptions([], restored, "planner"), ["Abby", "Eileen", "Tara"]);
+    assert.deepEqual(trialLedgerViewFilterOptions([legacy], { ...state, planner }, "planner"), ["Abby", "Eileen", "Tara"]);
+  }
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...state, planner: "Other Planner" }), [other]);
+  assert.equal(filterAndSortTrialLedgerRows(source, state).length, source.length);
+  assert.deepEqual(source, original);
+});

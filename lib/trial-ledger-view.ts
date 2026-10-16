@@ -104,6 +104,11 @@ function exactDate(value: unknown, fallback = "") {
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString().startsWith(candidate) ? candidate : fallback;
 }
 
+function plannerName(value: string) {
+  const name = value.trim();
+  return name === "Tara龙" ? "Tara" : name;
+}
+
 export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState {
   const fallback = defaultTrialLedgerViewState();
   let candidate = value;
@@ -129,7 +134,7 @@ export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState 
     scheduledFrom: candidate.scheduledFrom === "" ? "" : exactDate(candidate.scheduledFrom),
     scheduledTo: candidate.scheduledTo === "" ? "" : exactDate(candidate.scheduledTo),
     operationsOwner: resolveAssignableOperationsOwner(operationsOwner) ?? operationsOwner,
-    planner: boundedText(candidate.planner, ALL, 120) || ALL,
+    planner: plannerName(boundedText(candidate.planner, ALL, 120)) || ALL,
     subject: boundedText(candidate.subject, ALL, 160) || ALL,
     teacher: boundedText(candidate.teacher, ALL, 160) || ALL,
     resultStatus: resultStatus === ALL || statuses.has(resultStatus) ? resultStatus : ALL,
@@ -168,7 +173,7 @@ export function trialLedgerViewFilterOptions(
   const values = [...(key === "planner" ? TRIAL_LEDGER_PLANNERS : []), ...rows.map((row) => row[key]), state[key] === ALL ? "" : state[key]];
   return key === "operationsOwner"
     ? operationsOwnerFilterOptions(values)
-    : Array.from(new Set(values.filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+    : Array.from(new Set(values.map((value) => key === "planner" ? plannerName(value) : value).filter(Boolean))).sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
 }
 
 function matchesExact(filter: string, value: string) {
@@ -201,7 +206,7 @@ export function filterAndSortTrialLedgerRows(
     if (!matchesExact(state.workflowType, row.workflowType)) return false;
     if (!matchesExact(state.lessonMonth, row.lessonMonth)) return false;
     if (!matchesOperationsOwnerFilter(state.operationsOwner, row.operationsOwner)) return false;
-    if (!matchesExact(state.planner, row.planner)) return false;
+    if (!matchesExact(state.planner, plannerName(row.planner))) return false;
     if (!matchesExact(state.subject, row.subject)) return false;
     if (!matchesExact(state.teacher, row.teacher)) return false;
     if (!matchesExact(state.resultStatus, row.resultStatus)) return false;
