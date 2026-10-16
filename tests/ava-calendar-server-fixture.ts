@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as service from "../lib/ava-calendar-service";
+import * as sessionTokens from "../lib/demo-session-token";
+import * as teacherLogin from "../lib/demo-teacher-login";
 
 import { readAvaCalendarSnapshot } from "../lib/ava-calendar-snapshot";
 import { TRIAL_OPERATIONS } from "../lib/lp-workflows";
@@ -65,7 +67,7 @@ function snapshotResponse(state: ServerFixture, body: Record<string, unknown>) {
   return Response.json({ ...state.page, events, hasMore, empty: events.length === 0 && !hasMore, nextCursor: hasMore && last ? { startsAt: last.startsAt, eventId: last.eventId } : null });
 }
 const requireNode = createRequire(import.meta.url);
-function load(relative: string, imports: Record<string, unknown>, environment: Record<string, string>, fixtureFetch: typeof fetch, now: () => number) {
+function load(relative: string, imports: Record<string, unknown>, environment: Record<string, string>, fixtureFetch: typeof fetch, now: () => number, warnings: string[] = []) {
   const exports: Record<string, unknown> = {};
   const compiled = ts.transpileModule(readFileSync(new URL(relative, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const require = (id: string) => {
@@ -75,18 +77,23 @@ function load(relative: string, imports: Record<string, unknown>, environment: R
     return requireNode(id);
   };
   class FixtureDate extends Date { static now() { return now(); } }
-  runInNewContext(compiled, { exports, require, Buffer, process: { env: environment }, Date: FixtureDate, fetch: fixtureFetch, Response, Request, URL, AbortController, setTimeout, clearTimeout });
+  runInNewContext(compiled, { exports, require, Buffer, process: { env: environment }, Date: FixtureDate, fetch: fixtureFetch, Response, Request, URL, AbortController, setTimeout, clearTimeout, console: { warn: (value: string) => warnings.push(value) } });
   return exports;
 }
-export function serverFixture(state = fixture(), hook: (rpc: string, body: Record<string, unknown>, environment: Record<string, string>) => void | Promise<void> = () => {}) {
+export function serverFixture(state = fixture(), hook: (rpc: string, body: Record<string, unknown>, environment: Record<string, string>, init?: RequestInit) => void | Response | Promise<void | Response> = () => {}, useServerSession = false) {
+  const warnings: string[] = [];
+  const sessionToken = sessionTokens.createServerSessionToken();
+  assert.ok(sessionToken);
+  const { sessionId } = sessionToken;
   const environment: Record<string, string> = { AVA_CALENDAR_SERVICE_TOKEN_SHA256: digest, NEXT_PUBLIC_SUPABASE_URL: "https://offline.synthetic.test", NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "synthetic-publishable", OPS_API_SECRET: "synthetic-rpc" };
   const credentials = load("../lib/account-credentials.ts", {}, environment, async () => assert.fail("unexpected fetch"), () => state.now) as typeof import("../lib/account-credentials");
-  const calls: { rpc: string; body: Record<string, unknown> }[] = [];
-  const fixtureFetch: typeof fetch = async (input, init) => {
-    const { rpc, body } = rpcRequest(input, init, environment.NEXT_PUBLIC_SUPABASE_URL!);
-    calls.push({ rpc, body });
-    await hook(rpc, body, environment);
+  const calls: { rpc: string; body: Record<string, unknown>; signal?: AbortSignal | null }[] = [];
+  const sessionResponse = () => Response.json([{ session_id: sessionId, account_id: "synthetic-account", account_name: state.session.user,
+    account_role: state.session.role, access_version: 1, role_version: 1, scope_version: 1, credential_version: 2,
+    mfa_verified: true, permissions: state.session.permissions ?? [], scope_members: state.session.scopeMembers ?? [], must_change_password: false }]);
+  const defaultResponse = (rpc: string, body: Record<string, unknown>) => {
     switch (rpc) {
+      case "read_account_session": return sessionResponse();
       case "get_ops_state": return Response.json(state.rows);
       case "get_ops_versions": return Response.json(state.versions);
       case "read_account_by_identity": return Response.json(state.accounts.filter((account) => credentials.accountIdentityKey(account.account_name, "staff") === body.p_identity_key));
@@ -96,18 +103,29 @@ export function serverFixture(state = fixture(), hook: (rpc: string, body: Recor
       default: return assert.fail(`non-read RPC: ${rpc}`);
     }
   };
+  const fixtureFetch: typeof fetch = async (input, init) => {
+    const { rpc, body } = rpcRequest(input, init, environment.NEXT_PUBLIC_SUPABASE_URL!);
+    calls.push({ rpc, body, signal: init?.signal });
+    return await hook(rpc, body, environment, init) || defaultResponse(rpc, body);
+  };
   const rpcBudget = load("../lib/ops-rpc-budget.ts", {}, environment, fixtureFetch, () => state.now);
   const store = load("../lib/ops-store.ts", { "@/lib/ops-rpc-budget": rpcBudget }, environment, fixtureFetch, () => state.now);
+  const diagnostics = load("../lib/ava-calendar-read-diagnostics.ts", {}, environment, fixtureFetch, () => state.now, warnings);
+  const auth = useServerSession ? load("../lib/demo-auth.ts", {
+    "@/lib/nixon-auth": {}, "@/lib/demo-users": {}, "@/lib/demo-session-token": sessionTokens,
+    "@/lib/demo-teacher-login": teacherLogin, "@/lib/account-credentials": credentials, "@/lib/ops-store": store,
+  }, environment, fixtureFetch, () => state.now) as typeof import("../lib/demo-auth") : null;
   let sessionReads = 0;
   const imports = {
     "@/lib/account-credentials": credentials, "@/lib/ops-store": store, "@/lib/lp-workflows": { TRIAL_OPERATIONS },
     "@/lib/ava-calendar-service": service, "@/lib/ava-calendar-snapshot": { readAvaCalendarSnapshot },
-    "next/headers": { cookies: async () => ({ get: () => ({ value: "synthetic-cookie" }) }) },
-    "@/lib/demo-auth": { DEMO_COOKIE_NAME: "demo", getCurrentDemoSession: async () => { sessionReads++; return { session: state.session }; } },
+    "@/lib/ava-calendar-read-diagnostics": diagnostics,
+    "next/headers": { cookies: async () => ({ get: () => ({ value: useServerSession ? sessionToken.token : "synthetic-cookie" }) }) },
+    "@/lib/demo-auth": { DEMO_COOKIE_NAME: "demo", getCurrentDemoSession: async (...args: Parameters<typeof import("../lib/demo-auth").getCurrentDemoSession>) => { sessionReads++; return auth ? auth.getCurrentDemoSession(...args) : { session: state.session }; } },
     "@/lib/nixon-auth": { NIXON_COOKIE_NAME: "full", hasFullAdminAccess: () => state.fullAdmin },
   };
-  const human = load("../app/api/ava-calendar/route.ts", imports, environment, fixtureFetch, () => state.now) as typeof import("../app/api/ava-calendar/route");
-  const machine = load("../app/api/ava-calendar/service/route.ts", imports, environment, fixtureFetch, () => state.now) as typeof import("../app/api/ava-calendar/service/route");
-  const get = (kind: "human" | "machine", range = window) => (kind === "human" ? human : machine).GET(new Request(`https://example.test/api/ava-calendar${kind === "machine" ? "/service" : ""}?${new URLSearchParams(range)}`, { headers: kind === "machine" ? { Authorization: `Bearer ${token}` } : { Cookie: "synthetic-cookie" } }));
-  return { get, calls, environment, sessionReads: () => sessionReads };
+  const human = load("../app/api/ava-calendar/route.ts", imports, environment, fixtureFetch, () => state.now, warnings) as typeof import("../app/api/ava-calendar/route");
+  const machine = load("../app/api/ava-calendar/service/route.ts", imports, environment, fixtureFetch, () => state.now, warnings) as typeof import("../app/api/ava-calendar/service/route");
+  const get = (kind: "human" | "machine", range = window, init: RequestInit = {}) => (kind === "human" ? human : machine).GET(new Request(`https://example.test/api/ava-calendar${kind === "machine" ? "/service" : ""}?${new URLSearchParams(range)}`, { ...init, headers: { ...(kind === "machine" ? { Authorization: `Bearer ${token}` } : { Cookie: "synthetic-cookie" }), ...Object.fromEntries(new Headers(init.headers)) } }));
+  return { get, calls, environment, warnings, sessionReads: () => sessionReads };
 }

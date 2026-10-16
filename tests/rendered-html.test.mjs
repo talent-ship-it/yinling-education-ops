@@ -222,7 +222,7 @@ test("revalidates roster-backed teacher sessions on every protected API", async 
     read("../lib/demo-auth.ts"),
     read("../app/api/demo-login/route.ts"),
   ]);
-  assert.match(auth, /getOpsState\(\["teachers"\]\)/);
+  assert.match(auth, /getOpsState\(\["teachers"\], options\.rpcOptions\)/);
   assert.match(auth, /validateTeacherSession/);
   assert.match(login, /getOpsState\(\["teachers"\]\)/);
   assert.match(login, /pinned && pinned\.role !== "staff"/);

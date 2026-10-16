@@ -331,6 +331,81 @@ test("the separate authenticated live entry restores compact FullCalendar with r
   await page.screenshot({ path: info.outputPath("desktop-live-day.png"), fullPage: true });
 });
 
+for (const colorScheme of ["dark", "light"] as const) {
+  for (const [width, height] of [[1440, 1000], [320, 568], [568, 320]] as const) {
+    test(`lesson detail text meets AA contrast in ${colorScheme} at ${width}x${height}`, async ({ page }, testInfo) => {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width, height });
+      await fixture(page);
+      await openLive(page);
+      await expect(page).toHaveURL(/\/#section=ava-calendar$/);
+      await page.locator("[data-event-id='E1']").click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("试听课");
+      await expect(dialog).toContainText("合成学生1");
+      await expect(dialog).toContainText("30 分钟");
+      const measurements = await dialog.evaluate((element) => {
+        function rgba(value: string) {
+          const channels = value.match(/[\d.]+/g)!.map(Number);
+          return [channels[0]!, channels[1]!, channels[2]!, channels[3] ?? 1];
+        }
+        function over(front: number[], back: number[]) {
+          return front.slice(0, 3).map((channel, index) => channel * front[3]! + back[index]! * (1 - front[3]!));
+        }
+        function luminance(color: number[]) {
+          const linear = color.map((channel) => {
+            const s = channel / 255;
+            return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+          });
+          return linear[0]! * 0.2126 + linear[1]! * 0.7152 + linear[2]! * 0.0722;
+        }
+        const text = [...element.querySelectorAll("h2, strong, span, button")].map((node) => {
+          const layers: Element[] = [];
+          for (let parent: Element | null = node; parent; parent = parent.parentElement) {
+            layers.unshift(parent);
+            if (parent === element) break;
+          }
+          let background = [255, 255, 255];
+          for (const layer of layers) {
+            const style = getComputedStyle(layer);
+            if (style.backgroundImage !== "none" || style.opacity !== "1") throw new Error("Unsupported contrast paint layer");
+            background = over(rgba(style.backgroundColor), background);
+          }
+          const color = getComputedStyle(node).color;
+          const foreground = over(rgba(color), background);
+          const a = luminance(foreground), b = luminance(background);
+          return { tag: node.tagName, text: node.textContent, color, background, contrast: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) };
+        });
+        return {
+          width: innerWidth, height: innerHeight, dark: matchMedia("(prefers-color-scheme: dark)").matches,
+          rootInk: getComputedStyle(document.documentElement).getPropertyValue("--ink").trim(),
+          workspaceHeadingColor: getComputedStyle(document.querySelector("#main-content h1")!).color,
+          dialogBackground: getComputedStyle(element).backgroundColor, text,
+        };
+      });
+      await testInfo.attach("detail-contrast.json", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
+      await page.screenshot({ path: testInfo.outputPath(`detail-${colorScheme}-${width}x${height}.png`) });
+      expect(measurements.width).toBe(width);
+      expect(measurements.height).toBe(height);
+      expect(measurements.dark).toBe(colorScheme === "dark");
+      expect(measurements.rootInk).toBe(colorScheme === "dark" ? "#f3f5f7" : "#1d2529");
+      expect(measurements.workspaceHeadingColor).toBe(colorScheme === "dark" ? "rgb(243, 245, 247)" : "rgb(29, 37, 41)");
+      expect(measurements.dialogBackground).toBe("rgb(255, 255, 255)");
+      expect(measurements.text.length).toBeGreaterThan(5);
+      for (const sample of measurements.text) expect(sample.contrast, `${sample.tag}: ${sample.text}`).toBeGreaterThanOrEqual(4.5);
+      await expect(dialog.getByRole("heading", { level: 2 })).toBeInViewport({ ratio: 1 });
+      const close = dialog.getByRole("button", { name: "关闭课程详情", exact: true });
+      await expect(close).toBeInViewport({ ratio: 1 });
+      const bounds = await close.boundingBox();
+      expect(bounds!.width).toBeGreaterThanOrEqual(44);
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await close.click();
+      await expect(dialog).not.toBeVisible();
+    });
+  }
+}
+
 test("portrait and landscape controls and 15/30/45/60-minute text stay within their actual bounds", async ({ page }, info) => {
   const data = calendarDto();
   const base = data.events[0]!;

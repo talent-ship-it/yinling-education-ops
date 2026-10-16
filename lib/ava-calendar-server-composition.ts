@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { OpsStateRow, OpsVersionRow, JiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
+import type { OpsStateRow, OpsVersionRow, OpsRpcOptions, JiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
 import type { AvaCalendarSnapshot, AvaCalendarWindow, AvaCalendarPageFetcher } from "./ava-calendar-snapshot";
 import { AvaCalendarReadError } from "./ava-calendar-snapshot";
 import type { AvaCalendarProjection, AvaCoordinatorAccount } from "./ava-calendar-projection";
@@ -33,13 +33,13 @@ type CompositionDependencies = {
 };
 type RouteCompositionGetters = Pick<typeof import("./ops-store"), "getOpsSources" | "getJiaowubaoOpenApiScheduleSnapshotWindow">;
 
-export function createAvaCalendarRouteComposition(collectSnapshot: CompositionDependencies["collectSnapshot"], getters: RouteCompositionGetters, deadlineAt: number, now: () => number) {
+export function createAvaCalendarRouteComposition(collectSnapshot: CompositionDependencies["collectSnapshot"], getters: RouteCompositionGetters, deadlineAt: number, now: () => number, options: OpsRpcOptions = {}) {
   return createAvaCalendarServerComposition({
     collectSnapshot,
     fetchPage: (window, page) => getters.getJiaowubaoOpenApiScheduleSnapshotWindow({
       windowStart: window.start, windowEnd: window.end, scope: "all", teacherLabels: null, studentMemberIds: null, studentNameKeys: null, ...page,
-    }, { deadlineAt }),
-    readSources: () => getters.getOpsSources(),
+    }, { ...options, deadlineAt }),
+    readSources: () => getters.getOpsSources({ ...options, deadlineAt }),
     now,
   });
 }

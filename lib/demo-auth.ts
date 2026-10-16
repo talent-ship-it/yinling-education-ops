@@ -33,6 +33,7 @@ import {
   getOpsState,
   type AccountDirectoryRow,
   type AccountSessionResolution,
+  type OpsRpcOptions,
 } from "@/lib/ops-store";
 export { normaliseDemoIdentity } from "@/lib/demo-session-token";
 export type { DemoSessionIdentity, DemoSessionRole } from "@/lib/demo-session-token";
@@ -81,6 +82,7 @@ export type CurrentDemoSessionResolution =
 type CurrentDemoSessionOptions = Readonly<{
   /** Only the session-status and self-service password routes may opt in. */
   allowPasswordChangeRequired?: boolean;
+  rpcOptions?: OpsRpcOptions;
 }>;
 
 function serverSessionIdentity(session: AccountSessionResolution): DemoSessionIdentity {
@@ -104,7 +106,7 @@ async function currentServerSession(value: string | undefined, options: CurrentD
   if (!envelope) return null;
   let current: AccountSessionResolution | null;
   try {
-    current = await getAccountSession(envelope.tokenHash);
+    current = await getAccountSession(envelope.tokenHash, options.rpcOptions);
   } catch {
     // A v5 cookie is never downgraded to a legacy identity when the session
     // ledger is unavailable; doing so would bypass revocation and timeouts.
@@ -122,7 +124,7 @@ async function currentServerSession(value: string | undefined, options: CurrentD
       return { error: "老师登录状态已失效，请联系管理员设置独立密码后重新登录。", status: 401 } as const;
     }
     try {
-      const rows = await getOpsState(["teachers"]);
+      const rows = await getOpsState(["teachers"], options.rpcOptions);
       const teacherRow = rows.find((row) => row.entity === "teachers");
       if (!teacherRow) return { error: "老师登录状态已失效，请重新登录。", status: 401 } as const;
       const validated = validateTeacherSession(identity, teacherRow.payload);
@@ -165,7 +167,7 @@ export async function getCurrentDemoSession(
   try {
     const identityKey = accountIdentityKey(session.user, session.role);
     try {
-      directory = await getAccountByIdentity(identityKey);
+      directory = await getAccountByIdentity(identityKey, options.rpcOptions);
     } catch {
       return { error: "账号登录状态暂时无法核对，请稍后重试。", status: 503 };
     }
@@ -181,11 +183,11 @@ export async function getCurrentDemoSession(
     ) {
       return { error: "账号登录状态已失效，请重新登录。", status: 401 };
     }
-    const authorization = await getAccountAuthorization(directory.account_id, directory.account_id);
+    const authorization = await getAccountAuthorization(directory.account_id, directory.account_id, options.rpcOptions);
     if (!authorization) return { error: "账号权限状态暂时无法核对，请稍后重试。", status: 503 };
     permissions = authorization.permissions;
     scopeMembers = authorization.scope_members;
-    const authState = await getAppAccountAuthState(identityKey);
+    const authState = await getAppAccountAuthState(identityKey, options.rpcOptions);
     if (authState) {
       const identityMatches = authState.identity_key === identityKey
         && authState.account_role === session.role
@@ -223,7 +225,7 @@ export async function getCurrentDemoSession(
   }
 
   try {
-    const rows = await getOpsState(["teachers"]);
+    const rows = await getOpsState(["teachers"], options.rpcOptions);
     const teacherRow = rows.find((row) => row.entity === "teachers");
     if (!teacherRow) {
       return { error: "老师登录状态已失效，请重新登录。", status: 401 };

@@ -130,6 +130,7 @@ function loadOfflineServerModule(relative: string, imports: Record<string, unkno
   const compiled = ts.transpileModule(readFileSync(new URL(relative, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const require = (id: string) => {
     if (id === "server-only") return {};
+    if (id === "@/lib/ava-calendar-read-diagnostics") return loadOfflineServerModule("../lib/ava-calendar-read-diagnostics.ts", {});
     if (Object.hasOwn(imports, id)) return imports[id];
     assert.ok(id.startsWith("node:"), `unbound offline server import: ${id}`);
     return requireNode(id);
