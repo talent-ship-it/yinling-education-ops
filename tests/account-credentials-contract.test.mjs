@@ -99,7 +99,7 @@ test("account passwords and browser sessions use server-owned security material"
   assert.match(sessionToken, /randomBytes\(32\)/);
   assert.match(sessionToken, /hashServerSessionToken/);
   assert.match(sessionToken, /parseServerSessionToken/);
-  assert.match(auth, /getAccountSession\(envelope\.tokenHash\)/);
+  assert.match(auth, /getAccountSession\(envelope\.tokenHash, options\.rpcOptions\)/);
   assert.match(auth, /never downgraded to a legacy identity/);
   assert.match(nixonAuth, /NIXON_PASSWORD_SALT/);
   assert.match(nixonAuth, /verifyAccountPassword/);

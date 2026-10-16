@@ -1006,7 +1006,8 @@ export class OpsStoreError extends Error {
 export const OPS_RPC_TIMEOUT_MS = 15_000;
 
 /** Optional per-call bound used by routes with a shorter end-to-end budget. */
-export type OpsRpcOptions = OpsRpcBudgetOptions;
+export type OpsRpcDiagnostic = Readonly<{ rpc: string; code: string | null; httpStatus: number | null; upstreamRequestId: string | null; elapsedMs: number }>;
+export type OpsRpcOptions = OpsRpcBudgetOptions & Readonly<{ signal?: AbortSignal; onDiagnostic?: (event: OpsRpcDiagnostic) => void }>;
 
 export type DirectEnrollmentCommitResult = Readonly<{
   command_key: string;
@@ -1371,6 +1372,7 @@ async function requestRpc(
   name: string,
   body: Record<string, unknown>,
   controller: AbortController,
+  received: (response: Response) => void,
 ) {
   const response = await fetch(`${url}/rest/v1/rpc/${name}`, {
     method: "POST",
@@ -1383,6 +1385,7 @@ async function requestRpc(
     cache: "no-store",
     signal: controller.signal,
   });
+  received(response);
   return Object.freeze({
     response,
     payload: await parseRpcPayload(response, controller),
@@ -1397,29 +1400,72 @@ function unwrapRpcResponse<T>(response: Response, payload: unknown) {
   return payload as T;
 }
 
+type RpcAttempt = {
+  options: OpsRpcOptions;
+  controller: AbortController;
+  startedAt: number;
+  timing: ReturnType<typeof resolveOpsRpcTiming>;
+  response?: Response;
+  code: string | null;
+};
+
+function bindRpcCancellation(attempt: RpcAttempt) {
+  const cancel = () => attempt.controller.abort();
+  const timeout = attempt.timing ? setTimeout(cancel, attempt.timing.timeoutMs) : undefined;
+  attempt.options.signal?.addEventListener("abort", cancel, { once: true });
+  if (attempt.options.signal?.aborted) cancel();
+  return () => {
+    clearTimeout(timeout);
+    attempt.options.signal?.removeEventListener("abort", cancel);
+  };
+}
+
+function assertRpcActive(attempt: RpcAttempt) {
+  if (!attempt.timing) throw new OpsStoreError("本轮数据库请求预算已用尽；系统会安全重试。", "deadline");
+  if (attempt.controller.signal.aborted) throw new OpsStoreError("数据库请求已取消。", "cancelled");
+  if (Date.now() - attempt.startedAt >= attempt.timing.timeoutMs) {
+    throw new OpsStoreError("数据库请求超时。", attempt.timing.timeoutCode);
+  }
+}
+
+function rpcFailure(error: unknown, attempt: RpcAttempt) {
+  if (attempt.controller.signal.aborted) {
+    const code = attempt.options.signal?.aborted ? "cancelled" : attempt.timing?.timeoutCode ?? "deadline";
+    return new OpsStoreError("数据库请求超时，请稍后用同一命令重试。", code);
+  }
+  return error;
+}
+
+function rpcResponseContext(response?: Response) {
+  if (!response) return { httpStatus: null, upstreamRequestId: null };
+  const requestId = response.headers.get("sb-request-id") ?? response.headers.get("x-request-id");
+  const upstreamRequestId = requestId && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(requestId) ? requestId : null;
+  return { httpStatus: response.status, upstreamRequestId };
+}
+
+function reportRpcDiagnostic(name: string, attempt: RpcAttempt) {
+  try {
+    attempt.options.onDiagnostic?.({ rpc: name, code: attempt.code, ...rpcResponseContext(attempt.response), elapsedMs: Math.max(0, Date.now() - attempt.startedAt) });
+  } catch {}
+}
+
 async function rpc<T>(name: string, body: Record<string, unknown>, options: OpsRpcOptions = {}) {
   const { url, publishableKey } = configuration();
-  const controller = new AbortController();
-  const timing = resolveOpsRpcTiming(options, OPS_RPC_TIMEOUT_MS);
-  if (timing === null) {
-    throw new OpsStoreError("本轮数据库请求预算已用尽；系统会安全重试。", "deadline");
-  }
-  const timeout = setTimeout(() => controller.abort(), timing.timeoutMs);
-  let result: Awaited<ReturnType<typeof requestRpc>>;
+  const attempt: RpcAttempt = { options, controller: new AbortController(), startedAt: Date.now(), timing: resolveOpsRpcTiming(options, OPS_RPC_TIMEOUT_MS), code: null };
+  const stop = bindRpcCancellation(attempt);
   try {
-    result = await requestRpc(url, publishableKey, name, body, controller);
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new OpsStoreError(
-        "数据库请求超时，请稍后用同一命令重试。",
-        timing.timeoutCode,
-      );
-    }
+    assertRpcActive(attempt);
+    const result = await requestRpc(url, publishableKey, name, body, attempt.controller, (response) => { attempt.response = response; });
+    assertRpcActive(attempt);
+    return unwrapRpcResponse<T>(result.response, result.payload);
+  } catch (caught) {
+    const error = rpcFailure(caught, attempt);
+    attempt.code = error instanceof OpsStoreError ? error.code ?? "source_unavailable" : "transport";
     throw error;
   } finally {
-    clearTimeout(timeout);
+    stop();
+    reportRpcDiagnostic(name, attempt);
   }
-  return unwrapRpcResponse<T>(result.response, result.payload);
 }
 
 export function getOpsState(entities?: string[], options: OpsRpcOptions = {}) {
@@ -1705,9 +1751,9 @@ export function getTencentTrialLedgerSyncStatus() {
   });
 }
 
-export function getOpsVersions() {
+export function getOpsVersions(options: OpsRpcOptions = {}) {
   const { secret } = configuration();
-  return rpc<OpsVersionRow[]>("get_ops_versions", { p_secret: secret });
+  return rpc<OpsVersionRow[]>("get_ops_versions", { p_secret: secret }, options);
 }
 
 /** Database derives the complete payment reminder projection under five locks. */
@@ -1895,9 +1941,9 @@ export function recoverStaleLpParentProgressSchedulerRuns() {
   );
 }
 
-export function getOpsSources() {
+export function getOpsSources(options: OpsRpcOptions = {}) {
   const { secret } = configuration();
-  return rpc<OpsSourceRow[]>("get_ops_sources", { p_secret: secret });
+  return rpc<OpsSourceRow[]>("get_ops_sources", { p_secret: secret }, options);
 }
 
 /** Persists a worker-normalised WeCom batch and projects only unique exact matches. */
@@ -3915,12 +3961,12 @@ export function putStudentFileLinkAtomic(input: {
 }
 
 /** Minimal per-request state; password material is never returned by this reader. */
-export async function getAppAccountAuthState(identityKey: string) {
+export async function getAppAccountAuthState(identityKey: string, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   const rows = await rpc<AppAccountAuthState[]>(APP_ACCOUNT_AUTH_STATE_RPC, {
     p_secret: secret,
     p_identity_key: identityKey,
-  });
+  }, options);
   return rows[0] ?? null;
 }
 
@@ -3973,12 +4019,12 @@ export async function getAccountDirectory(actorAccountId: string) {
   });
 }
 
-export async function getAccountByIdentity(identityKey: string) {
+export async function getAccountByIdentity(identityKey: string, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   const rows = await rpc<AccountDirectoryRow[]>(ACCOUNT_BY_IDENTITY_RPC, {
     p_secret: secret,
     p_identity_key: identityKey,
-  });
+  }, options);
   return rows[0] ?? null;
 }
 
@@ -4086,13 +4132,13 @@ export async function setAccountStatus(input: {
   return rows[0] ?? null;
 }
 
-export async function getAccountAuthorization(accountId: string, actorAccountId = accountId) {
+export async function getAccountAuthorization(accountId: string, actorAccountId = accountId, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   const rows = await rpc<AccountAuthorization[]>(ACCOUNT_AUTHORIZATION_RPC, {
     p_secret: secret,
     p_account_id: accountId,
     p_actor_account_id: actorAccountId,
-  });
+  }, options);
   return rows[0] ?? null;
 }
 
@@ -4119,12 +4165,12 @@ export async function createAccountSession(input: {
   return rows[0] ?? null;
 }
 
-export async function getAccountSession(tokenHash: string) {
+export async function getAccountSession(tokenHash: string, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   const rows = await rpc<AccountSessionResolution[]>(ACCOUNT_SESSION_READ_RPC, {
     p_secret: secret,
     p_token_hash: tokenHash,
-  });
+  }, options);
   return rows[0] ?? null;
 }
 

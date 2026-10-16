@@ -1392,6 +1392,7 @@ function useSharedState<T>(
   onSync: (state: SharedSyncState, message?: string) => void,
   readOnly = false,
   scopeVersions?: Readonly<Record<string, number>>,
+  autoSave = true,
 ) {
   const [value, setValue] = useState<T>(initialValue);
   const [version, setVersion] = useState(initialVersion);
@@ -1403,11 +1404,19 @@ function useSharedState<T>(
   const committedRef = useRef(JSON.stringify(initialValue));
   const remoteGenerationRef = useRef(0);
   const pendingWriteRef = useRef(false);
+  const autoSaveRef = useRef(autoSave);
   // An explicit commit owns this exact serialized payload until its server
   // receipt (or authoritative recovery) is known.  The regular optimistic
   // effect must not schedule a second PUT for the same user action.
   const explicitCommitPayloadRef = useRef<string | null>(null);
   const scopeVersionsKey = JSON.stringify(scopeVersions ?? null);
+
+  useLayoutEffect(() => {
+    autoSaveRef.current = autoSave;
+    if (autoSave || timerRef.current === null) return;
+    window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, [autoSave]);
 
   useEffect(() => {
     readyRef.current = true;
@@ -1440,7 +1449,7 @@ function useSharedState<T>(
   }, [value]);
 
   useEffect(() => {
-    if (!readyRef.current || readOnly) return;
+    if (!readyRef.current || readOnly || !autoSave) return;
     const serialized = JSON.stringify(value);
     if (serialized === committedRef.current) return;
     if (explicitCommitPayloadRef.current === serialized) return;
@@ -1456,7 +1465,7 @@ function useSharedState<T>(
       const scheduledScopeVersions = JSON.parse(scopeVersionsKey) as Record<string, number> | null;
       let sentCommittedBaseline: SharedStateRow<T> | null = null;
       queueRef.current = queueRef.current.then(async () => {
-        if (scheduledGeneration !== remoteGenerationRef.current) return;
+        if (!autoSaveRef.current || scheduledGeneration !== remoteGenerationRef.current) return;
         sentCommittedBaseline = {
           entity,
           payload: JSON.parse(committedRef.current) as T,
@@ -1562,7 +1571,7 @@ function useSharedState<T>(
         }
       });
     }, 450);
-  }, [actor, entity, onSync, readOnly, scopeVersionsKey, value]);
+  }, [actor, autoSave, entity, onSync, readOnly, scopeVersionsKey, value]);
 
   const applyRemote = useCallback((row: RemoteStateRow<T>) => {
     if (row.version <= versionRef.current) return;
@@ -2691,6 +2700,7 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
 function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
   const [active, setActive] = useWorkspaceLocation<Section>("section", "dashboard");
+  const isAvaCalendarView = active === "ava-calendar";
   const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
   const isAdminSession = initialNixonUnlocked && initialRole === "admin" && sessionOperator === "Nixon";
   const [currentOperator, setCurrentOperator] = useState(sessionOperator);
@@ -2712,7 +2722,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const versionFor = (entity: string) => initialData?.versions?.[entity] ?? 1;
   const [students, , studentsShared] = useSharedState("students", defaults.defaultStudents, versionFor("students"), currentOperator, reportSharedSync);
   const [teachers, , teachersShared] = useSharedState("teachers", defaults.defaultTeachers, versionFor("teachers"), currentOperator, reportSharedSync);
-  const [tasks, setTasks, tasksShared] = useSharedState("tasks", defaults.defaultTasks, versionFor("tasks"), currentOperator, reportSharedSync);
+  const [tasks, setTasks, tasksShared] = useSharedState("tasks", defaults.defaultTasks, versionFor("tasks"), currentOperator, reportSharedSync, false, undefined, !isAvaCalendarView);
   const bookingScopeVersions = useMemo(() => ({
     students: studentsShared.version,
     teachers: teachersShared.version,
@@ -4294,7 +4304,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renewalTaskProjections = renewalTaskProjectionSnapshot.projections;
 
   useEffect(() => {
-    if (isTeacherView) return;
+    if (isTeacherView || isAvaCalendarView) return;
     setTasks((current) => {
       const next = reconcileRenewalTasks(current, renewalTaskProjections, {
         now: new Date(),
@@ -4303,7 +4313,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const before = JSON.stringify(current);
       return before === JSON.stringify(next) ? current : next;
     });
-  }, [isTeacherView, renewalTaskProjectionSnapshot, renewalTaskProjections, setTasks]);
+  }, [isAvaCalendarView, isTeacherView, renewalTaskProjectionSnapshot, renewalTaskProjections, setTasks]);
 
   const addAudit = (action: string, detail: string, tone: Tone = "blue") => {
     void action;

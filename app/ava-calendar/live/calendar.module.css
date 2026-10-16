@@ -56,7 +56,7 @@
 .compact .eventTime, :global([class~="fc-timegrid-event-short"]) .eventTime, :global([class~="fc-timegrid-event-short"]) .eventDetail { display: none; }
 .calendar :global([class~="fc-daygrid-event"]) { padding: 4px; border-radius: 4px; margin: 3px 4px; white-space: normal; }
 .calendar :global([class~="fc-daygrid-day-top"]) { padding: 6px; }
-.dialog { width: min(540px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); border: 1px solid #d9e5e0; border-radius: 14px; background: #fff; padding: 0; color: #17241f; box-shadow: 0 20px 70px #123f3b24; }
+.dialog { --ink: #17241f; width: min(540px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); border: 1px solid #d9e5e0; border-radius: 14px; background: #fff; padding: 0; color: #17241f; box-shadow: 0 20px 70px #123f3b24; }
 .dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
 .dialog::backdrop { background: #102c285e; }
 .dialogHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid #d9e5e0; flex-shrink: 0; }
