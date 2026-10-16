@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { defaultDisplayPreferences, displayPreferencesStorageKey, type InterfaceLanguage } from "../../lib/display-preferences";
 import { defaultTrialLedgerViewState, trialLedgerViewStorageKey } from "../../lib/trial-ledger-view";
+import { splitAvaCalendarWindow } from "../../lib/ava-calendar-live-client";
 
 async function isolateCalendarPage(page: Page) {
   await page.route("**/*", (route) => {
@@ -58,6 +59,15 @@ function calendarDto() {
 
 type CalendarFixture = Omit<ReturnType<typeof calendarDto>, "availabilityStatus"> & { availabilityStatus: { teacherId: string; reason: string }[] };
 
+function rangeWindows(url: string) {
+  const params = new URL(url).searchParams;
+  return splitAvaCalendarWindow({ start: params.get("start")!, end: params.get("end")! });
+}
+
+function rangeReply(data: CalendarFixture, url: string) {
+  return { slices: rangeWindows(url).map((window) => sliceReply(data, `http://127.0.0.1/api/ava-calendar?${new URLSearchParams(window)}`)) };
+}
+
 function sliceReply(data: CalendarFixture, url: string) {
   const params = new URL(url).searchParams;
   const start = Date.parse(params.get("start")!);
@@ -100,6 +110,7 @@ async function fixture(
   await page.route("**/api/app-snapshot", (route) => route.fulfill({ json: workspaceSnapshot() }));
   await page.route("**/api/nixon-session", (route) => route.fulfill({ json: { ok: session.user === "Nixon" && session.role === "admin" } }));
   await page.route("**/api/ava-calendar?**", (route) => route.fulfill({ json: sliceReply(scopedData(), route.request().url()) }));
+  await page.route("**/api/ava-calendar/range?**", (route) => route.fulfill({ json: rangeReply(scopedData(), route.request().url()) }));
   await page.route("**/api/teacher-availability/self", (route) => route.fulfill({ status: 403, json: { error: "Synthetic readonly session has no self-write permission" } }));
   return data;
 }
@@ -583,16 +594,15 @@ test("a month group publishes only after all five bounded slices share authority
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
   const windows: { start: string; end: string }[] = [];
-  await page.route("**/api/ava-calendar?**", async (route) => {
+  await page.route("**/api/ava-calendar/range?**", async (route) => {
     reads += 1;
-    const params = new URL(route.request().url()).searchParams;
-    windows.push({ start: params.get("start")!, end: params.get("end")! });
-    if (reads === 5) await pending;
-    await route.fulfill({ json: sliceReply(data, route.request().url()) });
+    windows.push(...rangeWindows(route.request().url()));
+    await pending;
+    await route.fulfill({ json: rangeReply(data, route.request().url()) });
   });
   try {
     await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("dayGridMonth");
-    await expect.poll(() => reads).toBe(5);
+    await expect.poll(() => reads).toBe(1);
     await expect(page.locator("[data-event-id], [data-ava-id]")).toHaveCount(0);
     await expect(page.getByRole("status")).toHaveText("正在读取…");
     release();
@@ -604,7 +614,7 @@ test("a month group publishes only after all five bounded slices share authority
     }
   } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
   let conflicts = 0;
-  await page.route("**/api/ava-calendar?**", (route) => { conflicts += 1; return route.fulfill({ status: 409, json: {} }); });
+  await page.route("**/api/ava-calendar/range?**", (route) => { conflicts += 1; return route.fulfill({ status: 409, json: {} }); });
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("课表或身份已更新");
   expect(conflicts).toBe(2);

@@ -9,7 +9,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import luxonPlugin from "@fullcalendar/luxon3";
 import { DateTime } from "luxon";
 import type { AvaCalendarEvent } from "@/lib/ava-calendar-projection";
-import { fetchAvaCalendarWindow, type AvaCalendarLiveData, type AvaCalendarLiveWindow } from "@/lib/ava-calendar-live-client";
+import { fetchAvaCalendarRange as fetchAvaCalendarWindow, type AvaCalendarLiveData, type AvaCalendarLiveWindow } from "@/lib/ava-calendar-live-client";
 import { TRIAL_OPERATIONS } from "@/lib/lp-workflows";
 import styles from "./calendar.module.css";
 import { useAvaCalendarVisibleRefresh } from "@/lib/ava-calendar-visible-refresh";

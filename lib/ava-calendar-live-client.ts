@@ -216,6 +216,39 @@ export async function fetchAvaCalendarWindow(window: AvaCalendarLiveWindow, sign
   }
 }
 
+async function readRangeGroup(window: AvaCalendarLiveWindow, signal: AbortSignal, fetchImpl: typeof fetch) {
+  const windows = splitAvaCalendarWindow(window);
+  signal.throwIfAborted();
+  const response = await fetchImpl(`/api/ava-calendar/range?${new URLSearchParams(window)}`, { method: "GET", credentials: "same-origin", cache: "no-store", signal });
+  signal.throwIfAborted();
+  if (!response.ok) throw new CalendarReadError(response.status);
+  const envelope = object(await response.json());
+  if (!envelope || !Array.isArray(envelope.slices) || envelope.slices.length !== windows.length) throw new CalendarReadError(503);
+  const bodies = envelope.slices.map(decodeSlice);
+  const events = new Map<string, AvaCalendarEvent>();
+  const key = authority(bodies[0]!);
+  for (const body of bodies) {
+    if (authority(body) !== key) throw new CalendarReadError(409);
+    mergeLessons(events, body.events);
+  }
+  signal.throwIfAborted();
+  return mergeSlices(bodies, windows, events);
+}
+
+export async function fetchAvaCalendarRange(window: AvaCalendarLiveWindow, signal: AbortSignal, fetchImpl: typeof fetch = fetch): Promise<AvaCalendarLiveData> {
+  if (splitAvaCalendarWindow(window).length === 1) return fetchAvaCalendarWindow(window, signal, fetchImpl);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await readRangeGroup(window, signal, fetchImpl);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof CalendarReadError && error.status === 409 && attempt < 1) continue;
+      if (error instanceof CalendarReadError) throw error;
+      throw new CalendarReadError(503);
+    }
+  }
+}
+
 export function splitAvaCalendarWindow(window: AvaCalendarLiveWindow): AvaCalendarLiveWindow[] {
   if (!instant(window.start) || !instant(window.end)) throw new Error("请选择有效的日期范围。");
   const start = Date.parse(window.start);

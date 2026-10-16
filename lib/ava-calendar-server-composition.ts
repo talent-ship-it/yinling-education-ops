@@ -22,6 +22,7 @@ export type AvaCalendarPublicationInput = {
 export type AvaCalendarPublicationComposition = {
   sourceEvents: (snapshot: AvaCalendarSnapshot) => AvaCalendarSnapshot["events"];
   readMetadata: (snapshot: AvaCalendarSnapshot, assertAuthority: () => Promise<void>) => Promise<void>;
+  readRangeMetadata?: (snapshots: AvaCalendarSnapshot[], assertAuthority: () => Promise<void>) => Promise<void>;
   compose: (input: AvaCalendarPublicationInput) => ReturnType<typeof composePublication>;
 };
 type Capture = { snapshot: AvaCalendarAvailabilitySnapshot; sources: unknown };
@@ -89,10 +90,12 @@ function createAvaCalendarServerComposition(dependencies: CompositionDependencie
     return capture;
   };
   return {
-    readSnapshot: async (window: AvaCalendarWindow) => {
+    readSnapshot: async (window: AvaCalendarWindow, assertAuthority?: () => Promise<void>) => {
       let first: JiaowubaoOpenApiScheduleSnapshotWindow | undefined;
       const events: AvaCalendarSnapshot["events"] = [];
       const snapshot = await dependencies.collectSnapshot(window, async (input) => {
+        await assertAuthority?.();
+        assertAvaCalendarReadAuthority();
         const page = await dependencies.fetchPage(window, input);
         first ??= page;
         events.push(...page.events);
@@ -104,6 +107,14 @@ function createAvaCalendarServerComposition(dependencies: CompositionDependencie
     },
     publication: {
       sourceEvents: (snapshot: AvaCalendarSnapshot) => captureFor(snapshot).snapshot.events,
+      readRangeMetadata: async (snapshots: AvaCalendarSnapshot[], assertAuthority: () => Promise<void>) => {
+        await assertAuthority();
+        assertAvaCalendarReadAuthority();
+        const sources = await metadataRead(dependencies.readSources);
+        await assertAuthority();
+        assertAvaCalendarReadAuthority();
+        for (const snapshot of snapshots) captureFor(snapshot).sources = sources;
+      },
       readMetadata: async (snapshot: AvaCalendarSnapshot, assertAuthority: () => Promise<void>) => {
         const capture = captureFor(snapshot);
         await assertAuthority();
