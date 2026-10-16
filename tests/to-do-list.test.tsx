@@ -82,6 +82,7 @@ test("renders the today and category tabs, marks the controlled filter, and keep
   const html = render([], "考试");
   for (const label of ["全部", "今日", "LP", "考试", "续课", "请假代课"]) assert.match(html, new RegExp(`>${label}<`));
   assert.match(html, /aria-label="任务类别"/);
+  assert.match(html, /截止日期<input type="date" aria-label="按截止日期筛选任务"/);
   for (const label of ["To Do", "All Done", "Can’t Do"]) assert.match(html, new RegExp(label));
   assert.match(html, /aria-label="任务状态"/);
   assert.match(html, /class="active" type="button" aria-pressed="true">考试</);
