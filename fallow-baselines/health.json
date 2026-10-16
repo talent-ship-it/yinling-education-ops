@@ -202,9 +202,6 @@
       },
       "crap_critical": {
         "count": 2
-      },
-      "crap_moderate": {
-        "count": 2
       }
     },
     "app/api/cron/lp-parent-progress/route.ts": {
@@ -1283,9 +1280,6 @@
         "count": 2
       },
       "crap_critical": {
-        "count": 2
-      },
-      "crap_high": {
         "count": 1
       }
     },
@@ -2353,21 +2347,11 @@
         "count": 1
       }
     },
-    "app/api/cron/jiaowubao-schedule/route.ts\u0000hasCronSecret": {
-      "crap_moderate": {
-        "count": 1
-      }
-    },
     "app/api/cron/jiaowubao-schedule/route.ts\u0000authorityReceipt": {
       "complexity_critical": {
         "count": 1
       },
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "app/api/cron/jiaowubao-schedule/route.ts\u0000validConfirmation": {
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -4842,11 +4826,6 @@
         "count": 1
       }
     },
-    "lib/jiaowubao-trial-source-window.ts\u0000<arrow>": {
-      "crap_high": {
-        "count": 1
-      }
-    },
     "lib/jiaowubao-trial-source-window.ts\u0000normalizeJiaowubaoTrialSourceEvent": {
       "complexity_critical": {
         "count": 1
@@ -4857,9 +4836,6 @@
     },
     "lib/jiaowubao-trial-source-window.ts\u0000readJiaowubaoTrialSourceWindow": {
       "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
         "count": 1
       }
     },
