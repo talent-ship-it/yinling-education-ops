@@ -1,9 +1,7 @@
-import AuthClient from "../../auth-client";
-import AvaCalendarLiveClient from "./calendar-client";
-import styles from "./calendar.module.css";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default function Page() {
-  return <div className={styles.entry}><AuthClient authenticatedContent={<AvaCalendarLiveClient />} /></div>;
+  redirect("/#section=ava-calendar");
 }

@@ -126,7 +126,7 @@ import {
   type DisplayPreferences,
   type InterfaceLanguage,
 } from "@/lib/display-preferences";
-import { FormEvent, ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
@@ -428,6 +428,8 @@ import {
   type JiaowubaoTrialSyncPendingCommand,
 } from "@/lib/jiaowubao-trial-sync";
 
+const AvaCalendarLiveClient = lazy(() => import("./ava-calendar/live/calendar-client"));
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
 
@@ -479,6 +481,7 @@ type Section =
   | "lp"
   | "operations"
   | "renewals"
+  | "ava-calendar"
   | "payroll"
   | "messages"
   | "files"
@@ -1182,14 +1185,15 @@ const navigationDefinitions: Array<{ id: Section; label: string; icon: typeof La
   { id: "settings", label: "规则设置", icon: Settings, group: "support" },
   { id: "accounts", label: "账号与安全", icon: KeyRound, group: "support" },
   { id: "audit", label: "操作审计", icon: ShieldCheck, group: "support" },
+  { id: "ava-calendar", label: "AVA日历", icon: CalendarDays, group: "work" },
 ];
 
 function navigationFor(language: InterfaceLanguage) {
-  return navigationDefinitions.map((item) => ({ ...item, label: displayTerm(item.label, language) }));
+  return navigationDefinitions.map((item) => ({ ...item, label: item.id === "ava-calendar" && language === "en-AU" ? "AVA calendar" : displayTerm(item.label, language) }));
 }
 
-const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files", "accounts"]);
-const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "classroom", "accounts"]);
+const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "ava-calendar", "courses", "lp", "operations", "renewals", "messages", "files", "accounts"]);
+const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
 const noPayrollAdminSectionIds = new Set<Section>(navigationDefinitions.filter((item) => item.id !== "payroll").map((item) => item.id));
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "yinling.sidebar-collapsed";
 
@@ -12321,6 +12325,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         return renderLp();
       case "operations":
         return renderOperations();
+      case "ava-calendar":
+        return canOpenAvaCalendar ? <><ViewHeading eyebrow={avaCalendarLabel} title={avaCalendarLabel} /><Suspense fallback={<p role="status">正在读取…</p>}><AvaCalendarLiveClient /></Suspense></> : renderDashboard();
       case "renewals":
         return renderRenewals();
       case "payroll":
@@ -14451,7 +14457,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
-          {canOpenAvaCalendar ? <a className="nav-item" href="/ava-calendar/live" aria-label={avaCalendarLabel} title={avaCalendarLabel} style={{ textDecoration: "none" }}><CalendarDays size={18} /><span>{avaCalendarLabel}</span></a> : null}
           <p>{displayTerm("运营与系统", displayPreferences.language)}</p>
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;
@@ -14518,9 +14523,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
-              return <button className={active === item.id ? "active" : ""} type="button" aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{displayTerm(item.group === "work" ? "学生与教务" : "运营与系统", displayPreferences.language)}</small></span><ChevronRight size={16} /></button>;
+              return <button className={active === item.id ? "active" : ""} type="button" aria-label={item.id === "ava-calendar" ? item.label : undefined} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{displayTerm(item.group === "work" ? "学生与教务" : "运营与系统", displayPreferences.language)}</small></span><ChevronRight size={16} /></button>;
             })}
-            {canOpenAvaCalendar ? <button type="button" aria-label={avaCalendarLabel} onClick={() => { setMobileMenuOpen(false); window.location.assign("/ava-calendar/live"); }}><CalendarDays size={20} /><span><strong>{avaCalendarLabel}</strong><small>{displayTerm("学生与教务", displayPreferences.language)}</small></span><ChevronRight size={16} /></button> : null}
           </div>
           <button className="mobile-password-button" type="button" onClick={() => { setModal("accountPasswordChange"); setMobileMenuOpen(false); }}><KeyRound size={18} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
           <button className="mobile-preferences-button" type="button" onClick={() => { setDisplayPreferencesOpen(true); setMobileMenuOpen(false); }}><Settings size={18} aria-hidden="true" />{interfaceText.profilePreferences}</button>
