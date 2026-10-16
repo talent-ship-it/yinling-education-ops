@@ -73,7 +73,6 @@ async function twoPoints(page: Page, start = "07:00", end = "08:30", touch = fal
   if (touch) await page.touchscreen.tap(position.x, position.y); else await page.mouse.click(position.x, position.y);
   await expect(page.getByRole("dialog", { name: "新开放时段", exact: true })).toBeVisible();
 }
-const shots = "/Users/nixon/.hermes/profiles/insiderleads/cache/scratch/ava-authorized-delivery-20261015/ava-self-service-impl-20261016/screenshots";
 
 test("draw saves immediately, adjusts and deletes AVA without moving a scheduled lesson", async ({ page }, info) => {
   const f = await syntheticCalendar(page);
@@ -105,7 +104,7 @@ test("draw saves immediately, adjusts and deletes AVA without moving a scheduled
   await expect(page.locator("[data-ava-id]")).toHaveCount(2);
   await expect(page.locator("[data-event-id='event-1']")).toHaveAttribute("data-start", "2026-10-12T02:00:00.123Z");
   await expect(page.locator(".fc-event-draggable, .fc-event-resizable")).toHaveCount(0);
-  await page.screenshot({ path: `${shots}/${info.project.name}-desktop.png`, fullPage: true });
+  await page.screenshot({ path: info.outputPath(`${info.project.name}-desktop.png`), fullPage: true });
   expect(f.external).toEqual([]);
 });
 
@@ -123,17 +122,17 @@ test.describe("phone two-point entry", () => {
     await expect(editor.getByRole("button", { name: "保存", exact: true })).toBeInViewport({ ratio: 1 });
     await editor.getByLabel("结束", { exact: true }).focus();
     await expect(editor.getByRole("button", { name: "关闭开放时段", exact: true })).toBeInViewport({ ratio: 1 });
-    await page.screenshot({ path: `${shots}/${info.project.name}-mobile320-editor.png`, fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${info.project.name}-mobile320-editor.png`), fullPage: true });
     await page.setViewportSize({ width: 568, height: 320 });
     await expect(editor.getByRole("button", { name: "保存", exact: true })).toBeInViewport({ ratio: 1 });
     await expect(editor.getByRole("button", { name: "关闭开放时段", exact: true })).toBeInViewport({ ratio: 1 });
-    await page.screenshot({ path: `${shots}/${info.project.name}-landscape-editor.png`, fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${info.project.name}-landscape-editor.png`), fullPage: true });
     await page.setViewportSize({ width: 320, height: 568 });
     await editor.getByRole("button", { name: "保存", exact: true }).click();
     await expect.poll(() => f.writes.length).toBe(1);
     await expect(editor).not.toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-    await page.screenshot({ path: `${shots}/${info.project.name}-mobile320-calendar.png`, fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${info.project.name}-mobile320-calendar.png`), fullPage: true });
     expect(f.external).toEqual([]);
   });
 });
@@ -147,7 +146,7 @@ test("stale and failed reads show last sync; unavailable lessons hide green but 
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "已隐藏绿色" })).toContainText("最后成功同步：2026-10-12 00:00");
   await expect(page.locator("[data-ava-id]")).toHaveCount(0);
-  await page.screenshot({ path: `${shots}/${info.project.name}-source-unavailable.png`, fullPage: true });
+  await page.screenshot({ path: info.outputPath(`${info.project.name}-source-unavailable.png`), fullPage: true });
   await twoPoints(page);
   await page.getByRole("dialog", { name: "新开放时段", exact: true }).getByRole("button", { name: "保存", exact: true }).click();
   await expect.poll(() => f.writes.length).toBe(1);
@@ -190,7 +189,7 @@ test("student names, six owner colors, trial marker and real short-card duration
       }).map(() => event.getAttribute("data-event-id"));
     }));
     expect(violations).toEqual([]);
-    await page.screenshot({ path: `${shots}/${info.project.name}-colors-${viewport.width}x${viewport.height}.png`, fullPage: true });
+    await page.screenshot({ path: info.outputPath(`${info.project.name}-colors-${viewport.width}x${viewport.height}.png`), fullPage: true });
   }
   const first = await point(page, "04:00");
   await page.mouse.click(first.x, first.y + 5);
@@ -208,14 +207,14 @@ test("shared all-teacher columns sync scrolling and preserve each mobile axis; m
   await expect(page.getByRole("button", { name: "我的开放时段", exact: true })).toHaveCount(0);
   await page.locator(".fc-timegrid-body").nth(1).evaluate((element) => { element.closest(".fc-scroller")!.scrollTop = 300; });
   await expect.poll(() => page.locator(".fc-timegrid-body").evaluateAll((elements) => Math.max(...elements.map((element) => element.closest(".fc-scroller")!.scrollTop)) - Math.min(...elements.map((element) => element.closest(".fc-scroller")!.scrollTop)))).toBeLessThanOrEqual(1);
-  await page.screenshot({ path: `${shots}/${info.project.name}-all-teachers-desktop.png`, fullPage: true });
+  await page.screenshot({ path: info.outputPath(`${info.project.name}-all-teachers-desktop.png`), fullPage: true });
   await page.setViewportSize({ width: 320, height: 568 });
   await page.locator("[aria-label='日历滚动区域']").evaluate((element) => { element.scrollLeft = element.scrollWidth; });
   const label = page.locator(".fc").nth(1).locator(".fc-timegrid-slot-label").first();
   await expect(label).toBeVisible();
   expect(await label.evaluate((element) => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; })).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  await page.screenshot({ path: `${shots}/${info.project.name}-all-teachers-mobile320.png`, fullPage: true });
+  await page.screenshot({ path: info.outputPath(`${info.project.name}-all-teachers-mobile320.png`), fullPage: true });
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("America/New_York");
   await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T1");
   const view = page.getByRole("combobox", { name: "日历视图", exact: true });
@@ -277,7 +276,7 @@ test("a second viewer refreshes the same saved AVA in their own browser timezone
     await other.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
     await other.getByLabel("日期", { exact: true }).fill("2026-10-12");
     await expect(other.locator("[data-ava-id]")).toHaveCount(3);
-    await other.screenshot({ path: `${shots}/${info.project.name}-second-viewer-shanghai.png`, fullPage: true });
+    await other.screenshot({ path: info.outputPath(`${info.project.name}-second-viewer-shanghai.png`), fullPage: true });
     expect(second.external).toEqual([]);
   } finally { await context.close(); }
 });
