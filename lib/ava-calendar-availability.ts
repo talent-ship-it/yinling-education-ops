@@ -1,3 +1,4 @@
+import type { AvaCalendarDisplay } from "./ava-calendar-display";
 import type { AvaCalendarAvailabilitySnapshot, AvaCalendarHealth } from "./ava-calendar-health";
 import { parseAvaCalendarInstant } from "./ava-calendar-health";
 import type { AvaCalendarWindow } from "./ava-calendar-snapshot";
@@ -19,6 +20,7 @@ export type AvaCalendarAvailabilityInput = Readonly<{
   window: AvaCalendarWindow;
   visibleTeacherIds: ReadonlySet<string>;
   health: AvaCalendarHealth | null;
+  display?: AvaCalendarDisplay;
 }>;
 
 type CalendarRange = { start: number; end: number };
@@ -78,12 +80,16 @@ function nativeEntityRow(rows: readonly OpsStateRow[], entity: string) {
   return { payload: row.payload as unknown[], version: row.version };
 }
 
+function rowVersionMatches(input: AvaCalendarAvailabilityInput, entity: string, version: number) {
+  if (input.display || entity === "lpItems") return true;
+  return input.health?.state === "ready" && version === input.health.nativeVersions[entity as "students" | "teachers" | "bookings"];
+}
 function readRows(input: AvaCalendarAvailabilityInput) {
-  if (!Array.isArray(input.rows) || input.health?.state !== "ready") throw new AvailabilityFailure("native_state_invalid");
+  if (!Array.isArray(input.rows) || !input.display && input.health?.state !== "ready") throw new AvailabilityFailure("native_state_invalid");
   const result = new Map<string, unknown[]>();
   for (const entity of ["students", "teachers", "bookings", "lpItems"]) {
     const row = nativeEntityRow(input.rows, entity);
-    if (entity !== "lpItems" && row.version !== input.health.nativeVersions[entity as "students" | "teachers" | "bookings"]) throw new AvailabilityFailure("native_state_invalid");
+    if (!rowVersionMatches(input, entity, row.version)) throw new AvailabilityFailure("native_state_invalid");
     result.set(entity, row.payload);
   }
   return result;
@@ -117,13 +123,13 @@ function teacherIndex(values: unknown[]) {
   return { teachers, sources };
 }
 
-function teacherProven(teacher: Record<string, unknown>, sources: Map<string, string[]>, revision: string) {
+function teacherProven(teacher: Record<string, unknown>, sources: Map<string, string[]>, revision?: string) {
   const metadata = record(teacher.jiaowubaoOpenApi);
   return metadata !== null && literalId(metadata.sourceId, 200) && sources.get(metadata.sourceId)?.length === 1
-    && metadata.snapshotRevision === revision && ["stable_source_id", "created"].includes(metadata.resolution as string) && metadata.confidence === "exact";
+    && (revision === undefined || metadata.snapshotRevision === revision) && ["stable_source_id", "created"].includes(metadata.resolution as string) && metadata.confidence === "exact";
 }
 
-function sourceTeacher(event: SnapshotEvent, index: TeacherIndex, revision: string) {
+function sourceTeacher(event: SnapshotEvent, index: TeacherIndex, revision?: string) {
   const sourceId = event?.sourceTeacherId;
   if (!literalId(sourceId, 200)) throw new AvailabilityFailure("source_occupancy_unmapped");
   const teacherId = index.sources.get(sourceId)?.[0];
@@ -153,7 +159,7 @@ function sourceOccupancy(input: AvaCalendarAvailabilityInput, index: TeacherInde
   if (!Array.isArray(input.snapshot.events)) throw new AvailabilityFailure("source_occupancy_unmapped");
   if (input.snapshot.events.length > 10000) throw new AvailabilityFailure("resource_limit");
   for (const event of input.snapshot.events) {
-    const teacherId = sourceTeacher(event, index, input.snapshot.revision);
+    const teacherId = sourceTeacher(event, index, input.display ? undefined : input.snapshot.revision);
     addOccupancy(occupied, teacherId, sourceInterval(event, seen));
   }
   return occupied;
@@ -334,7 +340,7 @@ function teacherAvailability(teacher: Record<string, unknown>, teacherId: string
 function projectedTeacher(input: AvaCalendarAvailabilityInput, index: TeacherIndex, teacherId: string, invalid: ReadonlySet<string>, range: CalendarRange, occupied: Occupancy) {
   if (invalid.has(teacherId)) return { remainingAVA: [], reason: "native_occupancy_invalid" as const };
   const teacher = index.teachers.get(teacherId);
-  if (!teacher || !teacherProven(teacher, index.sources, input.snapshot.revision)) return { remainingAVA: [], reason: "teacher_identity_unproven" as const };
+  if (!teacher || !teacherProven(teacher, index.sources, input.display ? undefined : input.snapshot.revision)) return { remainingAVA: [], reason: "teacher_identity_unproven" as const };
   return teacherAvailability(teacher, teacherId, range, occupied.get(teacherId) ?? []);
 }
 
@@ -342,9 +348,10 @@ export function projectCalendarAvailability(input: AvaCalendarAvailabilityInput)
   let ids: string[] = [];
   try {
     ids = [...input.visibleTeacherIds].filter((id) => literalId(id)).sort();
-    if (input.health?.state !== "ready" || !healthBound(input)) return denied(ids, "health_not_ready");
+    if (input.display ? !input.display.canSubtract : input.health?.state !== "ready" || !healthBound(input)) return denied(ids, "health_not_ready");
     const range = validateAvaCalendarWindow(input.window);
-    range.start = Math.max(range.start, parseAvaCalendarInstant(input.health.evaluatedAt)!.ceil);
+    const evaluatedAt = input.display?.evaluatedAt ?? (input.health?.state === "ready" ? input.health.evaluatedAt : "");
+    range.start = Math.max(range.start, parseAvaCalendarInstant(evaluatedAt)!.ceil);
     const rows = readRows(input);
     const index = teacherIndex(rows.get("teachers")!);
     const occupied = sourceOccupancy(input, index);

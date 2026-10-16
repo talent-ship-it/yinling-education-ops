@@ -1,5 +1,5 @@
 import { accountIdentityKey } from "@/lib/account-credentials";
-import { getOpsState, getOpsVersions, getOpsSources, getAccountByIdentity, getJiaowubaoOpenApiScheduleSnapshotWindow, getJiaowubaoOpenApiScheduleProjectionTarget } from "@/lib/ops-store";
+import { getOpsState, getOpsVersions, getOpsSources, getAccountByIdentity, getJiaowubaoOpenApiScheduleSnapshotWindow } from "@/lib/ops-store";
 import { TRIAL_OPERATIONS } from "@/lib/lp-workflows";
 import { createAvaCalendarMachineHandler, createAvaCalendarRouteComposition } from "@/lib/ava-calendar-service";
 import { readAvaCalendarSnapshot } from "@/lib/ava-calendar-snapshot";
@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const deadlineAt = Date.now() + 45000;
   const composition = createAvaCalendarRouteComposition(readAvaCalendarSnapshot,
-    { getOpsSources, getJiaowubaoOpenApiScheduleSnapshotWindow, getJiaowubaoOpenApiScheduleProjectionTarget }, deadlineAt, () => Date.now());
+    { getOpsSources, getJiaowubaoOpenApiScheduleSnapshotWindow }, deadlineAt, () => Date.now());
   return createAvaCalendarMachineHandler({
     ...composition,
     strictSourceIdentity: true,

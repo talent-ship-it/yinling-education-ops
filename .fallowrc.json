@@ -2,6 +2,7 @@
   "entry": [
     "tests/*.test.{ts,tsx,mjs}",
     "playwright.ava.config.ts",
+    "playwright.self-service.config.ts",
     "scripts/wecom-receiver/receiver.mjs"
   ]
 }

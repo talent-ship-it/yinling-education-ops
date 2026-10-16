@@ -1,11 +1,12 @@
 import type { AvaCalendarEvent, AvaCalendarProjection } from "./ava-calendar-projection";
+import type { AvaCalendarSync } from "./ava-calendar-display";
 import { TRIAL_OPERATIONS } from "./lp-workflows";
 
 export type AvaCalendarLiveWindow = { start: string; end: string };
 export type AvaCalendarRemaining = { id: string; teacherId: string; startsAt: string; endsAt: string };
 export type AvaCalendarAvailabilityState = { teacherId: string; state: "empty" | "unready" };
-export type AvaCalendarLiveData = AvaCalendarProjection & { remainingAVA: AvaCalendarRemaining[]; availabilityStates: AvaCalendarAvailabilityState[] };
-type CalendarSlice = AvaCalendarProjection & { remainingAVA?: AvaCalendarRemaining[]; availabilityStatus?: { teacherId: string; reason: string }[]; nativeVersions?: Record<string, number>; consistencyKey?: string; source?: { revision: string; publishedAt: string; freshness: string; coverage: string; window?: AvaCalendarLiveWindow } };
+export type AvaCalendarLiveData = AvaCalendarProjection & { remainingAVA: AvaCalendarRemaining[]; availabilityStates: AvaCalendarAvailabilityState[]; sync?: AvaCalendarSync };
+type CalendarSlice = AvaCalendarProjection & { remainingAVA?: AvaCalendarRemaining[]; availabilityStatus?: { teacherId: string; reason: string }[]; nativeVersions?: Record<string, number>; consistencyKey?: string; source?: { revision: string; publishedAt: string; freshness: string; coverage: string; sync?: AvaCalendarSync; window?: AvaCalendarLiveWindow } };
 
 class CalendarReadError extends Error {
   constructor(readonly status: number) {
@@ -83,7 +84,13 @@ function decodeSlice(value: unknown): CalendarSlice {
 
 function validSource(source: CalendarSlice["source"]) {
   if (!source) return false;
-  return typeof source.revision === "string" && /^sha256:[a-f0-9]{64}$/.test(source.revision) && instant(source.publishedAt) && source.freshness === "fresh" && source.coverage === "complete";
+  return typeof source.revision === "string" && /^sha256:[a-f0-9]{64}$/.test(source.revision) && instant(source.publishedAt)
+    && (source.freshness === "fresh" || source.freshness === "stale" && validSync(source.sync)) && source.coverage === "complete";
+}
+
+function validSync(value: unknown): value is AvaCalendarSync {
+  const item = object(value);
+  return !!item && ["fresh", "stale", "sync_failed", "unknown"].includes(item.state as string) && item.staleAfterMinutes === 90 && (item.lastSuccessAt === null || instant(item.lastSuccessAt));
 }
 
 function validSourceWindow(window: AvaCalendarLiveWindow | undefined, slice: AvaCalendarLiveWindow) {
@@ -163,11 +170,22 @@ function verifiedEmptyStates(bodies: CalendarSlice[], approved: (AvaCalendarRema
   }));
 }
 
+function mergeSync(bodies: CalendarSlice[]): AvaCalendarSync | undefined {
+  const values = bodies.map((body) => body.source?.sync).filter(validSync);
+  if (!values.length) return undefined;
+  const priority = { fresh: 0, unknown: 1, sync_failed: 2, stale: 3 };
+  const worst = values.sort((left, right) => priority[right.state] - priority[left.state])[0]!;
+  const state = bodies.some((body) => body.source?.freshness === "stale") ? "stale" : worst.state;
+  const times = values.map((sync) => sync.lastSuccessAt).filter(instant).sort((left, right) => Date.parse(left) - Date.parse(right));
+  return { state, lastSuccessAt: times[0] ?? null, staleAfterMinutes: 90 };
+}
+
 function mergeSlices(bodies: CalendarSlice[], windows: AvaCalendarLiveWindow[], events: Map<string, AvaCalendarEvent>): AvaCalendarLiveData {
   const approved = bodies.map((body, index) => approvedRemaining(body, windows[index]!));
   const lessons = [...events.values()];
   const remaining = approved.every((values) => values !== null) ? safeRemaining(approved.flatMap((values) => values!), lessons, new Set(bodies.flatMap(unavailableTeachers))) : [];
-  return { events: lessons, teachers: bodies[0]!.teachers, remainingAVA: remaining, availabilityStates: verifiedEmptyStates(bodies, approved) };
+  const sync = mergeSync(bodies);
+  return { events: lessons, teachers: bodies[0]!.teachers, remainingAVA: remaining, availabilityStates: verifiedEmptyStates(bodies, approved), ...(validSync(sync) ? { sync } : {}) };
 }
 
 async function readGroup(window: AvaCalendarLiveWindow, signal: AbortSignal, fetchImpl: typeof fetch): Promise<AvaCalendarLiveData> {

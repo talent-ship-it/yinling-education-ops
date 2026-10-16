@@ -3864,6 +3864,15 @@ export function mutateLegacyTaskDeadlineAtomic(input: {
   });
 }
 
+export function putTeacherSelfAvailabilityState(input: {
+  payload: unknown;
+  expectedVersion: number;
+  actor: string;
+  scopeVersions: Record<string, number>;
+}) {
+  return putOpsState({ entity: "teachers", payload: input.payload, expectedVersion: input.expectedVersion, actor: input.actor, scopeVersions: input.scopeVersions });
+}
+
 export function putOpsState(input: {
   entity: string;
   payload: unknown;

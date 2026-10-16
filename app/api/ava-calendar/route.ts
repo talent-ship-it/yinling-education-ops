@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { accountIdentityKey } from "@/lib/account-credentials";
-import { getOpsState, getOpsVersions, getOpsSources, getAccountByIdentity, getJiaowubaoOpenApiScheduleSnapshotWindow, getJiaowubaoOpenApiScheduleProjectionTarget } from "@/lib/ops-store";
+import { getOpsState, getOpsVersions, getOpsSources, getAccountByIdentity, getJiaowubaoOpenApiScheduleSnapshotWindow } from "@/lib/ops-store";
 import { TRIAL_OPERATIONS } from "@/lib/lp-workflows";
 import { createAvaCalendarHandler, createAvaCalendarRouteComposition } from "@/lib/ava-calendar-service";
 import { readAvaCalendarSnapshot } from "@/lib/ava-calendar-snapshot";
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const jar = await cookies();
   const deadlineAt = Date.now() + 45000;
   const composition = createAvaCalendarRouteComposition(readAvaCalendarSnapshot,
-    { getOpsSources, getJiaowubaoOpenApiScheduleSnapshotWindow, getJiaowubaoOpenApiScheduleProjectionTarget }, deadlineAt, () => Date.now());
+    { getOpsSources, getJiaowubaoOpenApiScheduleSnapshotWindow }, deadlineAt, () => Date.now());
   const handler = createAvaCalendarHandler({
     ...composition,
     strictSourceIdentity: true,

@@ -39,7 +39,7 @@ for (const kind of ["human", "machine"] as const) {
     assert.deepEqual(data.remainingAVA, []);
     assert.deepEqual(data.availabilityStatus, [{ teacherId: "T1", reason: "no_current_availability" }]);
   });
-  test(`${kind} health getter failures retain verified lessons and suppress only green`, async () => {
+  test(`${kind} sync metadata failures retain lessons and safe occupancy-subtracted green`, async () => {
     for (const failing of ["get_ops_sources", "get_jiaowubao_open_api_schedule_projection_target"]) {
       const server = serverFixture(fixture(), (rpc) => { if (rpc === failing) throw new Error("private synthetic diagnostic"); });
       const response = await server.get(kind);
@@ -47,13 +47,14 @@ for (const kind of ["human", "machine"] as const) {
       const data = await response.json();
       assert.equal(data.events.length, 1);
       assert.equal(data.events[0].students[0].studentId, "S1");
-      assert.deepEqual(data.remainingAVA, []);
-      assert.deepEqual(data.availabilityStatus, [{ teacherId: "T1", reason: "health_not_ready" }]);
+      assert.equal(data.remainingAVA.length, 2);
+      assert.deepEqual(data.availabilityStatus, [{ teacherId: "T1", reason: "ready" }]);
+      assert.equal(data.source.sync.state, failing === "get_ops_sources" ? "unknown" : "fresh");
       assert.doesNotMatch(JSON.stringify(data), /private|nativeApply|sourceParticipants/);
     }
   });
 
-  test(`${kind} missing mismatched pending or stale health receipts never manufacture green`, async () => {
+  test(`${kind} old receipts and teacher versions no longer gate complete snapshot subtraction`, async () => {
     const mutations: ((state: ServerFixture) => void)[] = [
       (state) => { state.sources = []; },
       (state) => { state.target.projectionState = "pending"; },
@@ -71,8 +72,9 @@ for (const kind of ["human", "machine"] as const) {
       assert.equal(response.status, 200);
       const data = await response.json();
       assert.equal(data.events.length, 1);
-      assert.deepEqual(data.remainingAVA, []);
-      assert.equal(data.availabilityStatus[0].reason, "health_not_ready");
+      assert.equal(data.remainingAVA.length, 2);
+      assert.equal(data.availabilityStatus[0].reason, "ready");
+      for (const free of data.remainingAVA) assert.ok(Date.parse(free.endsAt) <= Date.parse(data.events[0].startsAt) || Date.parse(free.startsAt) >= Date.parse(data.events[0].endsAt));
     }
   });
 

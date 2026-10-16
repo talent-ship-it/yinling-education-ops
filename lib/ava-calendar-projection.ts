@@ -98,7 +98,7 @@ function resolveTeacherId(event: SnapshotEvent, context: EventProjectionContext)
 
 function teacherProof(teacher: Record<string, unknown>, revision: string | undefined) {
   const metadata = record(teacher.jiaowubaoOpenApi);
-  return metadata !== null && metadata.snapshotRevision === revision && /^sha256:[a-f0-9]{64}$/.test(revision ?? "")
+  return metadata !== null && /^sha256:[a-f0-9]{64}$/.test(revision ?? "")
     && ["stable_source_id", "created"].includes(metadata.resolution as string) && metadata.confidence === "exact";
 }
 
