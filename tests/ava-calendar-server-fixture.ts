@@ -127,5 +127,6 @@ export function serverFixture(state = fixture(), hook: (rpc: string, body: Recor
   const human = load("../app/api/ava-calendar/route.ts", imports, environment, fixtureFetch, () => state.now, warnings) as typeof import("../app/api/ava-calendar/route");
   const machine = load("../app/api/ava-calendar/service/route.ts", imports, environment, fixtureFetch, () => state.now, warnings) as typeof import("../app/api/ava-calendar/service/route");
   const get = (kind: "human" | "machine", range = window, init: RequestInit = {}) => (kind === "human" ? human : machine).GET(new Request(`https://example.test/api/ava-calendar${kind === "machine" ? "/service" : ""}?${new URLSearchParams(range)}`, { ...init, headers: { ...(kind === "machine" ? { Authorization: `Bearer ${token}` } : { Cookie: "synthetic-cookie" }), ...Object.fromEntries(new Headers(init.headers)) } }));
-  return { get, calls, environment, warnings, sessionReads: () => sessionReads };
+  const getRange = (range: { start: string; end: string }, init: RequestInit = {}) => human.GET(new Request(`https://example.test/api/ava-calendar/range?${new URLSearchParams(range)}`, { ...init, headers: { Cookie: "synthetic-cookie", ...Object.fromEntries(new Headers(init.headers)) } }));
+  return { get, getRange, calls, environment, warnings, sessionReads: () => sessionReads };
 }

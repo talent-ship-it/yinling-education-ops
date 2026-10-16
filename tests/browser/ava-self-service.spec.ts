@@ -45,8 +45,9 @@ async function syntheticCalendar(page: Page, teacher = true, prepare: (state: Re
     if (url.hostname !== "127.0.0.1") { external.push(url.origin); return route.abort(); }
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (workspace[url.pathname]) return route.fulfill({ json: workspace[url.pathname]!() });
-    if (url.pathname === "/api/ava-calendar") {
-      const response = await server.get("human", { start: url.searchParams.get("start")!, end: url.searchParams.get("end")! });
+    if (url.pathname === "/api/ava-calendar" || url.pathname === "/api/ava-calendar/range") {
+      const window = { start: url.searchParams.get("start")!, end: url.searchParams.get("end")! };
+      const response = await (url.pathname.endsWith("/range") ? server.getRange(window) : server.get("human", window));
       return route.fulfill({ status: response.status, json: await response.json() });
     }
     if (url.pathname === "/api/teacher-availability/self") {
@@ -272,6 +273,7 @@ test("shared all-teacher columns sync scrolling and preserve each mobile axis; m
     expect(await page.locator(".fc-col-header-cell-cushion").allTextContents()).toEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日"]);
   }
   await view.selectOption("timeGridWeek");
+  await expect(page.locator(".fc-timeGridWeek-view")).toHaveCount(1);
   expect((await page.locator(".fc-col-header-cell-cushion").allTextContents()).every((text) => /\d/.test(text))).toBe(true);
   expect(f.writes.length).toBe(0);
   expect(f.external).toEqual([]);

@@ -12,6 +12,7 @@ import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "./
 import { TRIAL_OPERATIONS } from "./lp-workflows";
 import { isJiaowubaoSharedTrialAccountLabel } from "./trial-operations";
 import type { AvaCalendarPublicationComposition } from "./ava-calendar-server-composition";
+import { splitAvaCalendarWindow } from "./ava-calendar-live-client";
 export { createAvaCalendarRouteComposition } from "./ava-calendar-server-composition";
 
 export type AvaCalendarDependencies = {
@@ -19,7 +20,7 @@ export type AvaCalendarDependencies = {
   readRows: () => Promise<OpsStateRow[]>;
   readVersions: () => Promise<OpsVersionRow[]>;
   readAccounts: () => Promise<readonly AvaCoordinatorAccount[]>;
-  readSnapshot: (window: AvaCalendarWindow) => Promise<AvaCalendarSnapshot>;
+  readSnapshot: (window: AvaCalendarWindow, assertAuthority?: () => Promise<void>) => Promise<AvaCalendarSnapshot>;
   strictSourceIdentity?: boolean;
   publication?: AvaCalendarPublicationComposition;
 };
@@ -243,6 +244,66 @@ export function createAvaCalendarMachineHandler(dependencies: CalendarReadDepend
       return denied ? json({ error: denied.error }, denied.status, "Authorization") : json(publication, 200, "Authorization");
     } catch (error) {
       return error instanceof CalendarAuthorityDenied ? json({ error: error.denial.error }, error.denial.status, "Authorization") : errorResponse(error, "Authorization");
+    }
+  };
+}
+
+function rangeWindows(request: Request) {
+  const params = new URL(request.url).searchParams;
+  if ([...params.keys()].some((key) => !["start", "end"].includes(key)) || params.getAll("start").length !== 1 || params.getAll("end").length !== 1) throw new AvaCalendarReadError("invalid_window");
+  try { return splitAvaCalendarWindow({ start: params.get("start")!, end: params.get("end")! }); }
+  catch { throw new AvaCalendarReadError("invalid_window"); }
+}
+
+async function rangeSnapshots(dependencies: AvaCalendarDependencies, windows: AvaCalendarWindow[], assertAuthority: () => Promise<void>) {
+  const snapshots: AvaCalendarSnapshot[] = [];
+  for (const window of windows) {
+    await assertAuthority();
+    const snapshot = await dependencies.readSnapshot(window, assertAuthority);
+    const first = snapshots[0];
+    if (first && (snapshot.revision !== first.revision || snapshot.publishedAt !== first.publishedAt)) throw new AvaCalendarReadError("source_changed");
+    snapshots.push(snapshot);
+  }
+  if (!dependencies.publication?.readRangeMetadata) throw new AvaCalendarReadError("source_unavailable");
+  await dependencies.publication.readRangeMetadata(snapshots, assertAuthority);
+  return snapshots;
+}
+
+export function createAvaCalendarRangeHandler(dependencies: AvaCalendarDependencies) {
+  return async (request: Request) => {
+    try {
+      const initial = await dependencies.readSession();
+      if (!("session" in initial)) return json({ error: initial.error }, initial.status);
+      const windows = rangeWindows(request);
+      const assertAuthority = async () => {
+        request.signal.throwIfAborted();
+        const current = await dependencies.readSession();
+        if ("error" in current) throw new CalendarAuthorityDenied(current);
+        if (JSON.stringify(current) !== JSON.stringify(initial)) throw new AvaCalendarReadError("source_changed");
+      };
+      await assertAuthority();
+      const rows = await dependencies.readRows();
+      const initialVersions = versions(rows);
+      validateRowPayloads(rows);
+      const access = buildOpsAccessContext(rows, initial.session.user, initial.fullAdmin, initial.session);
+      if (!["students", "teachers", "bookings"].every((entity) => canReadOpsEntity(access, entity))) return json({ error: "当前账号无权查看日历。" }, 403);
+      await assertAuthority();
+      const accounts = await dependencies.readAccounts();
+      const snapshots = await rangeSnapshots(dependencies, windows, assertAuthority);
+      await assertAuthority();
+      const [currentVersions, currentIdentity, currentAccounts] = await Promise.all([dependencies.readVersions(), dependencies.readSession(), dependencies.readAccounts()]);
+      if ("error" in currentIdentity) return json({ error: currentIdentity.error }, currentIdentity.status);
+      validateCurrentAuthority({ versions: initialVersions, identity: initial, accounts }, { versions: currentVersions, identity: currentIdentity, accounts: currentAccounts });
+      const slices = snapshots.map((snapshot, index) => {
+        const window = windows[index]!;
+        const projection = projectAvaCalendarEvents({ rows, access, accounts, events: snapshot.events, revision: snapshot.revision, strictSourceIdentity: dependencies.strictSourceIdentity, sourceEvents: dependencies.publication!.sourceEvents(snapshot) });
+        return { ...projection, ...dependencies.publication!.compose({ snapshot, rows, window, accounts, identity: initial, currentVersions, projection }) };
+      });
+      if (slices.some((slice) => slice.consistencyKey !== slices[0]!.consistencyKey)) throw new AvaCalendarReadError("source_changed");
+      await assertAuthority();
+      return json({ slices });
+    } catch (error) {
+      return error instanceof CalendarAuthorityDenied ? json({ error: error.denial.error }, error.denial.status) : errorResponse(error);
     }
   };
 }
