@@ -179,7 +179,7 @@ test("uses the complete role-scoped navigation in the 375px More drawer", async 
     "function navigationFor",
   );
   const navigationIds = [...definitions.matchAll(/\bid: "([^"]+)"/g)].map((match) => match[1]);
-  assert.equal(navigationIds.length, 17);
+  assert.equal(navigationIds.length, 18);
   assert.deepEqual(navigationIds, [
     "dashboard",
     "students",
@@ -198,6 +198,7 @@ test("uses the complete role-scoped navigation in the 375px More drawer", async 
     "settings",
     "accounts",
     "audit",
+    "ava-calendar",
   ]);
 
   const mobileDrawer = section(
@@ -242,8 +243,10 @@ test("keeps every navigation definition wired to a renderView branch", async () 
   const renderBranches = [...renderView.matchAll(/case "([^"]+)":\s*return\s+(render\w+)\(\);/g)]
     .map((match) => ({ id: match[1], renderer: match[2] }));
 
-  assert.equal(renderBranches.length, navigationIds.length);
-  assert.deepEqual(renderBranches.map(({ id }) => id), navigationIds);
+  const calendarBranches = [...renderView.matchAll(/case "ava-calendar":\s*return canOpenAvaCalendar \?/g)];
+  assert.equal(calendarBranches.length, 1);
+  assert.equal(renderBranches.length + calendarBranches.length, navigationIds.length);
+  assert.deepEqual(renderBranches.map(({ id }) => id), navigationIds.filter((id) => id !== "ava-calendar"));
   for (const { id, renderer } of renderBranches) {
     assert.match(renderView, new RegExp(`case "${id}":\\s*return ${renderer}\\(\\);`));
   }
@@ -262,9 +265,9 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   };
 
   assert.deepEqual(sectionIds("staffSectionIds"), [
-    "dashboard", "students", "teachers", "schedule", "courses", "lp", "operations", "renewals", "messages", "files", "accounts",
+    "dashboard", "students", "teachers", "schedule", "ava-calendar", "courses", "lp", "operations", "renewals", "messages", "files", "accounts",
   ]);
-  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "students", "schedule", "classroom", "accounts"]);
+  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
   assert.doesNotMatch(client, /staffSectionIds = new Set<Section>\([^)]*"classroom"/s);
   assert.doesNotMatch(client, /teacherSectionIds = new Set<Section>\([^)]*"payroll"/s);
   assert.match(client, /const noPayrollAdminSectionIds = new Set<Section>\(navigationDefinitions\.filter\(\(item\) => item\.id !== "payroll"\)/);
@@ -282,6 +285,8 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   const renderView = section(client, "const renderView = () => {", "const removeStudentCreationPending");
   assert.match(renderView, /if \(!canViewPayroll && active === "payroll"\) return renderDashboard\(\);/);
   assert.match(renderView, /!isAdminView[\s\S]*teacherSectionIds : staffSectionIds/);
+  assert.match(client, /const canOpenAvaCalendar = visibleNavigation\.some\(\(item\) => item\.id === "schedule"\)/);
+  assert.match(renderView, /case "ava-calendar":\s*return canOpenAvaCalendar \?/);
 
   // Staff schedule pages must not expose a classroom action that can bounce
   // into the protected classroom route; admins/teachers retain the controls.

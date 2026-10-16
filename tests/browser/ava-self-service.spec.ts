@@ -1,12 +1,26 @@
 import { expect, test, type Page } from "@playwright/test";
 import { fixture, serverFixture } from "../ava-calendar-server-fixture";
 import { createTeacherSelfAvailabilityHandler } from "../../lib/teacher-availability-self-service";
+import { defaultDisplayPreferences, displayPreferencesStorageKey } from "../../lib/display-preferences";
+
+function workspaceSnapshot(state: ReturnType<typeof fixture>) {
+  const rows = Object.fromEntries(state.rows.map((row) => [row.entity, row]));
+  const versions = { students: rows.students!.version, teachers: rows.teachers!.version, tasks: 1, bookings: rows.bookings!.version, lpItems: rows.lpItems!.version };
+  return {
+    students: (rows.students!.payload as Record<string, unknown>[]).map((student) => ({ initials: "合", status: "在读", course: "VCE English", timezone: "UTC", next: "待安排", nextTone: "blue", files: 0, ...student })),
+    teachers: (rows.teachers!.payload as Record<string, unknown>[]).map((teacher) => ({ initials: "ST", subjects: ["VCE English"], availability: "合成开放时段", load: 0, capacity: 12, acceptsStudents: true, note: "合成样本", ...teacher })),
+    versions,
+    managedExamSnapshot: { versions: { students: versions.students, tasks: versions.tasks }, students: [] },
+    managedTrialPaymentSnapshot: { versions: { bookings: versions.bookings, students: versions.students, lpItems: versions.lpItems, tasks: versions.tasks }, students: [] },
+  };
+}
 
 async function syntheticCalendar(page: Page, teacher = true, prepare: (state: ReturnType<typeof fixture>) => void = () => {}, shared?: ReturnType<typeof fixture>) {
   const state = shared ?? fixture();
   state.session = teacher ? { user: "Synthetic Teacher", role: "teacher", permissions: ["operations.read", "availability.write.self"] } : state.session;
   state.fullAdmin = !teacher;
   prepare(state);
+  await page.addInitScript(({ key, value }) => { localStorage.setItem(key, value); }, { key: displayPreferencesStorageKey(state.session.user), value: JSON.stringify(defaultDisplayPreferences()) });
   const server = serverFixture(state);
   const writes: unknown[] = [];
   const external: string[] = [];
@@ -20,12 +34,17 @@ async function syntheticCalendar(page: Page, teacher = true, prepare: (state: Re
       writes.push(input); return structuredClone([row]);
     },
   });
+  const workspace: Record<string, () => unknown> = {
+    "/api/demo-session": () => ({ ok: true, ...state.session, mustChangePassword: false }),
+    "/api/demo-logout": () => ({ serverSessionRevoked: true }),
+    "/api/app-snapshot": () => workspaceSnapshot(state),
+    "/api/nixon-session": () => ({ ok: !teacher }),
+  };
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname !== "127.0.0.1") { external.push(url.origin); return route.abort(); }
     if (!url.pathname.startsWith("/api/")) return route.continue();
-    if (url.pathname === "/api/demo-session") return route.fulfill({ json: { ok: true, ...state.session, mustChangePassword: false } });
-    if (url.pathname === "/api/nixon-session") return route.fulfill({ json: { ok: !teacher } });
+    if (workspace[url.pathname]) return route.fulfill({ json: workspace[url.pathname]!() });
     if (url.pathname === "/api/ava-calendar") {
       const response = await server.get("human", { start: url.searchParams.get("start")!, end: url.searchParams.get("end")! });
       return route.fulfill({ status: response.status, json: await response.json() });
@@ -78,9 +97,15 @@ test("draw saves immediately, adjusts and deletes AVA without moving a scheduled
   const f = await syntheticCalendar(page);
   await day(page);
   await expect(page.locator("[data-event-id='event-1']")).toHaveCount(1);
-  const first = await point(page, "07:00");
-  const last = await point(page, "08:00");
-  await page.mouse.move(first.x, first.y); await page.mouse.down(); await page.mouse.move(last.x, last.y, { steps: 20 }); await page.mouse.up();
+  await point(page, "08:00");
+  const [first, last] = await page.locator(".fc").evaluate((root) => {
+    const column = root.querySelector(".fc-timegrid-col[data-date]")!.getBoundingClientRect();
+    return ["07:00", "08:00"].map((time) => {
+      const slot = root.querySelector(`[data-time='${time}:00'].fc-timegrid-slot-lane`)!.getBoundingClientRect();
+      return { x: column.x + column.width * .6, y: slot.y + 3 };
+    });
+  });
+  await page.mouse.move(first!.x, first!.y); await page.mouse.down(); await page.mouse.move(last!.x, last!.y, { steps: 20 }); await page.mouse.up();
   const editor = page.getByRole("dialog", { name: "新开放时段", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor.getByLabel("开始", { exact: true })).toHaveValue("2026-10-12T07:00");
@@ -153,6 +178,27 @@ test("stale and failed reads show last sync; unavailable lessons hide green but 
   expect(f.external).toEqual([]);
 });
 
+for (const width of [1440, 320]) {
+  test(`empty dates keep the teacher self calendar writable at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: width === 320 ? 568 : 1000 });
+    const f = await syntheticCalendar(page);
+    await day(page);
+    await page.getByLabel("日期", { exact: true }).fill("2026-10-14");
+    await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+    await expect(page.locator("[data-event-id], [data-ava-id]")).toHaveCount(0);
+    await expect(page.locator("[data-teacher='T1'][data-writable='true']")).toHaveCount(1);
+    await twoPoints(page);
+    const editor = page.getByRole("dialog", { name: "新开放时段", exact: true });
+    await expect(editor.getByLabel("开始", { exact: true })).toHaveValue("2026-10-14T07:00");
+    await editor.getByRole("button", { name: "保存", exact: true }).click();
+    await expect.poll(() => f.writes.length).toBe(1);
+    await expect(editor).not.toBeVisible();
+    await expect(page.locator("[data-ava-id]")).toHaveCount(1);
+    await page.screenshot({ path: info.outputPath(`empty-date-self-${width}.png`), fullPage: true });
+    expect(f.external).toEqual([]);
+  });
+}
+
 const SYNTHETIC_NAMES = ["合成甲", "合成乙", "合成丙", "合成丁", "合成戊", "合成己"];
 function sixColors(state: ReturnType<typeof fixture>) {
   const owners = ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin"];
@@ -202,6 +248,7 @@ test("student names, six owner colors, trial marker and real short-card duration
 test("shared all-teacher columns sync scrolling and preserve each mobile axis; month headers remain weekdays", async ({ page }, info) => {
   const f = await syntheticCalendar(page, false, (state) => { otherTeacher(state); sixColors(state); });
   await day(page, false);
+  await page.getByRole("button", { name: "只看有课/AVA", exact: true }).click();
   await expect(page.locator(".fc")).toHaveCount(2);
   await expect(page.locator(".fc-col-header-cell-cushion")).toHaveText(["Synthetic Teacher", "Synthetic Other"]);
   await expect(page.getByRole("button", { name: "我的开放时段", exact: true })).toHaveCount(0);
