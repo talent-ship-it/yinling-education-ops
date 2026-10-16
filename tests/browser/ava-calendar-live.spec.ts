@@ -83,6 +83,7 @@ async function fixture(
   await page.route("**/api/app-snapshot", (route) => route.fulfill({ json: workspaceSnapshot() }));
   await page.route("**/api/nixon-session", (route) => route.fulfill({ json: { ok: session.user === "Nixon" && session.role === "admin" } }));
   await page.route("**/api/ava-calendar?**", (route) => route.fulfill({ json: sliceReply(scopedData(), route.request().url()) }));
+  await page.route("**/api/teacher-availability/self", (route) => route.fulfill({ status: 403, json: { error: "Synthetic readonly session has no self-write permission" } }));
   return data;
 }
 
@@ -144,7 +145,7 @@ test("administrator discovers live AVA and returns to the existing pending-revie
   await expect(entry).toHaveAttribute("href", "/ava-calendar/live");
   await entry.click();
   await expect(page).toHaveURL(/\/ava-calendar\/live$/);
-  await expect(page.locator(".fc")).toHaveCount(1);
+  await expect(page.locator(".fc")).toHaveCount(2);
   await page.getByRole("link", { name: "工作台", exact: true }).click();
   await page.getByRole("navigation", { name: "主要导航" }).getByRole("button", { name: /老师资源|Teachers/ }).click();
   const availability = page.getByRole("region", { name: "Amelia Brown 月度 AVA" });
@@ -211,7 +212,8 @@ test("the fifty-second abort clears the complete private group and leaves manual
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(page.getByText("合成学生1", { exact: true })).toHaveCount(0);
     await page.clock.fastForward(50001);
-    await expect(page.getByRole("main").getByRole("alert")).toHaveText("读取超时，请重试。");
+    await expect(page.getByRole("main").getByRole("alert").filter({ hasText: "读取超时，请重试。" })).toHaveText("读取超时，请重试。");
+    await expect(page.getByRole("main").getByRole("alert").filter({ hasText: "已隐藏绿色" })).toContainText("最后成功同步");
     await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
 });
@@ -252,10 +254,13 @@ test("portrait and landscape controls and 15/30/45/60-minute text stay within th
       await expect(page.locator(".fc-timegrid-event[data-event-id]")).toHaveCount(5);
       const geometry = await page.evaluate(measureLiveCalendarGeometry);
       expect(geometry, `${width}x${height} ${view}`).toEqual([]);
-      const a = await page.locator("[data-event-id='SHORT0']").boundingBox();
-      const b = await page.locator("[data-event-id='SHORT1']").boundingBox();
-      expect(Math.abs(a!.x - b!.x)).toBeLessThanOrEqual(1);
-      expect(a!.y + a!.height).toBeLessThanOrEqual(b!.y + 1);
+      await expect.poll(() => page.evaluate(() => {
+        const first = document.querySelector("[data-event-id='SHORT0']");
+        const second = document.querySelector("[data-event-id='SHORT1']");
+        if (!first || !second) return false;
+        const a = first.getBoundingClientRect(); const b = second.getBoundingClientRect();
+        return a.width > 0 && b.width > 0 && Math.abs(a.x - b.x) <= 1 && a.bottom <= b.y + 1;
+      })).toBe(true);
       expect(await page.locator("[data-event-id='SHORT0']").getAttribute("data-end")).toBe("2026-10-12T04:15:00.000Z");
       if (view === "timeGridWeek" && [320, 844, 1280].includes(width!)) await page.screenshot({ path: info.outputPath(`${width}x${height}-week.png`), fullPage: true });
     }
@@ -405,6 +410,7 @@ test("all navigation views and selected timezone retain teacher scope and both c
 
 test("a month group publishes only after all five bounded slices share authority and 409 retries at most once", async ({ page }) => {
   const data = await fixture(page);
+  data.teachers = data.teachers.slice(0, 1);
   await openLive(page);
   let reads = 0;
   let release!: () => void;
@@ -557,19 +563,27 @@ test("revocation also clears the selected teacher ID and closes private details 
   await expect(page.getByRole("combobox", { name: "老师", exact: true }).locator("option")).toHaveCount(1);
 });
 
-test("273 visible teacher options use one calendar and one window payload, never a hardcoded six-column grid", async ({ page }) => {
+test("273 teachers use bounded parallel columns and one range payload without per-teacher reads", async ({ page }) => {
   const data = calendarDto();
   data.teachers = Array.from({ length: 273 }, (_, index) => ({ id: `T${index + 1}`, name: `Synthetic Teacher ${index + 1}` }));
   await fixture(page, data, { user: "Nixon", role: "admin" });
-  await openLive(page);
+  await page.clock.install({ time: new Date("2026-10-12T02:00:00.000Z") });
+  await page.clock.pauseAt(new Date("2026-10-12T02:00:01.000Z"));
+  await page.goto("/ava-calendar/live");
   await expect(page.getByRole("combobox", { name: "老师", exact: true }).locator("option")).toHaveCount(274);
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  expect(await page.locator(".fc").count()).toBeLessThanOrEqual(8);
   let reads = 0;
   page.on("request", (request) => { if (request.url().includes("/api/ava-calendar?")) reads += 1; });
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   expect(reads).toBe(1);
-  await expect(page.locator(".fc")).toHaveCount(1);
-  await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T273");
-  await expect(page.locator("[data-event-id]")).toHaveCount(0);
+  await page.getByLabel("日历滚动区域", { exact: true }).evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+  await expect(page.locator(".fc-col-header-cell-cushion").last()).toHaveText("Synthetic Teacher 273");
+  expect(await page.locator(".fc").count()).toBeLessThanOrEqual(8);
   expect(reads).toBe(1);
+  await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T273");
+  await expect(page.locator(".fc")).toHaveCount(1);
+  await expect(page.locator("[data-event-id]")).toHaveCount(0);
+  expect(reads).toBeLessThanOrEqual(2);
 });

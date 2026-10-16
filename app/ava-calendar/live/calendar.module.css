@@ -72,8 +72,25 @@
 .detailContent > div:last-child { border: 0; }
 .detailContent span { color: #66776f; font-size: 12px; }
 .detailContent strong { font-size: 14px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.singleCalendar { min-width: 0; }
+.globalCalendar { display: flex; width: max-content; min-width: 100%; }
+.teacherColumn { min-width: 0; flex: 1 0 0; }
+.globalCalendar .teacherColumn { width: 340px; min-width: 320px; border-right: 1px solid #d9e5e0; }
+.globalCalendar .calendar { min-width: 0; }
+.syncWarning { margin: 0; padding: 10px 16px; color: #77501a; background: #fff4df; font-size: 13px; }
+.editorBody { padding: 12px 20px; overflow-y: auto; min-height: 0; }
+.editorField { display: grid; gap: 6px; margin: 12px 0; }
+.editorField input, .editorField select { width: 100%; min-width: 0; height: 44px; font-size: 16px; border: 1px solid #cbdad3; border-radius: 7px; background: white; color: #17241f; padding: 8px; }
+.editorFooter { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #d9e5e0; flex-shrink: 0; }
+.availabilityRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #e2e9e5; padding: 10px 0; }
+.availabilityRow span { min-width: 0; overflow-wrap: anywhere; }
+@media (min-width: 901px) {
+  .globalCalendar[data-scrollable="false"] .teacherColumn:not(:first-child) :global([class~="fc-timegrid-axis"]),
+  .globalCalendar[data-scrollable="false"] .teacherColumn:not(:first-child) :global([class~="fc-timegrid-slot-label"]) { display: none; }
+}
 @media (max-width: 900px) { .toolbar { gap: 8px; } .navigation, .controls { flex-wrap: wrap; } }
 @media (max-width: 700px), (max-height: 480px), (pointer: coarse) {
+  .globalCalendar .teacherColumn { width: calc(100vw - 18px); min-width: calc(100vw - 18px); }
   .brandBar { min-height: 54px; padding: 10px 12px; }
   .brand { gap: 8px; }
   .brandMark { width: 34px; height: 34px; }

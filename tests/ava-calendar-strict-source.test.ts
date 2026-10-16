@@ -17,8 +17,8 @@ function project(teachers: unknown[], students: unknown[] = [student], source = 
   return projectAvaCalendarEvents({ rows, access, accounts, events: [source], revision, ...{ strictSourceIdentity: true } });
 }
 
-test("strict calendars require current exact source teacher evidence instead of a unique label", () => {
-  for (const jiaowubaoOpenApi of [undefined, { ...metadata, sourceId: 901 }, { ...metadata, sourceId: " 901" }, { ...metadata, snapshotRevision: `sha256:${"b".repeat(64)}` }, { ...metadata, resolution: "same_name" }, { ...metadata, confidence: "strong" }]) {
+test("strict calendars require stable exact source teacher identity instead of a unique label", () => {
+  for (const jiaowubaoOpenApi of [undefined, { ...metadata, sourceId: 901 }, { ...metadata, sourceId: " 901" }, { ...metadata, resolution: "same_name" }, { ...metadata, confidence: "strong" }]) {
     const output = project([{ ...teacher, jiaowubaoOpenApi }]);
     assert.equal(output.events[0]!.teacherId, null);
     assert.equal(output.events[0]!.teacherName, null);
@@ -26,6 +26,7 @@ test("strict calendars require current exact source teacher evidence instead of 
     assert.equal(output.events[0]!.startsAt, event.startsAt);
   }
   assert.equal(project([teacher]).events[0]!.teacherId, "T1");
+  assert.equal(project([{ ...teacher, jiaowubaoOpenApi: { ...metadata, snapshotRevision: `sha256:${"b".repeat(64)}` } }]).events[0]!.teacherId, "T1");
   assert.equal(project([teacher], [student], { ...event, sourceTeacherLabel: "different source alias" }).events[0]!.teacherId, "T1");
   assert.equal(project([teacher, { ...teacher, id: "T2" }]).events[0]!.teacherId, null);
 });

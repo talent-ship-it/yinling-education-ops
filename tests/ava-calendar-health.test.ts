@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AvaCalendarHealthInput } from "../lib/ava-calendar-health";
+import { evaluateAvaCalendarHealth, parseAvaCalendarInstant, type AvaCalendarHealthInput } from "../lib/ava-calendar-health";
 
 const revision = `sha256:${"a".repeat(64)}`;
 const publishedAt = "2026-10-12T00:00:00.000Z";
@@ -34,11 +34,8 @@ function fixture() {
   } satisfies AvaCalendarHealthInput;
 }
 
-const calendarModule = await import("../lib/ava-calendar-health").catch(() => null);
-
 function evaluate(input: AvaCalendarHealthInput = fixture()) {
-  assert.equal(typeof calendarModule?.evaluateAvaCalendarHealth, "function");
-  return calendarModule!.evaluateAvaCalendarHealth(input);
+  return evaluateAvaCalendarHealth(input);
 }
 
 test("allowlists a complete exact-current projection receipt without private payloads", () => {
@@ -140,8 +137,7 @@ test("preserves microsecond receipt identity and rejects malformed instants with
     input.target.publishedAt = value as string;
     assert.equal(evaluate(input).state, "not_ready");
   }
-  assert.equal(typeof calendarModule?.parseAvaCalendarInstant, "function");
-  const parse = calendarModule!.parseAvaCalendarInstant;
+  const parse = parseAvaCalendarInstant;
   assert.deepEqual(parse("2026-10-12T01:00:00.123001Z"), { floor: Date.parse("2026-10-12T01:00:00.123Z"), ceil: Date.parse("2026-10-12T01:00:00.124Z"), microseconds: BigInt(Date.parse("2026-10-12T01:00:00.123Z")) * BigInt(1000) + BigInt(1) });
   assert.deepEqual(parse("2026-10-12T12:00:00.123001+11:00"), parse("2026-10-12T01:00:00.123001Z"));
   assert.notDeepEqual(parse("2026-10-12T01:00:00.123001Z"), parse("2026-10-12T01:00:00.123002Z"));
