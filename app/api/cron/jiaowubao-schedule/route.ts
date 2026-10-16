@@ -15,7 +15,7 @@ import {
   jiaowubaoScheduleSnapshotRows,
   type JiaowubaoScheduleHorizonCollectedPage,
 } from "@/lib/jiaowubao-open-api-schedule-snapshot";
-import { queryJiaowubaoScheduleList } from "@/lib/jiaowubao-open-api-node";
+import { createJiaowubaoScheduleReader, type JiaowubaoScheduleReader } from "@/lib/jiaowubao-schedule-provider";
 import {
   JIAOWUBAO_SCHEDULE_COLLECTION_RESERVE_MS,
   JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS,
@@ -102,8 +102,9 @@ function scheduleReservationWait(reservation: Readonly<{ tool: unknown; notBefor
 }
 
 async function queryScheduleWithGlobalRateGate(
-  query: Parameters<typeof queryJiaowubaoScheduleList>[0],
+  query: Parameters<JiaowubaoScheduleReader["readPage"]>[0],
   deadlineAt: number,
+  sourceReader: JiaowubaoScheduleReader,
 ) {
   assertJiaowubaoScheduleTime(
     deadlineAt,
@@ -126,7 +127,7 @@ async function queryScheduleWithGlobalRateGate(
     JIAOWUBAO_SCHEDULE_COLLECTION_RESERVE_MS,
     JIAOWUBAO_SCHEDULE_UPSTREAM_REQUEST_MS,
   );
-  return queryJiaowubaoScheduleList(query, {
+  return sourceReader.readPage(query, {
     deadlineAt,
     rateGate: "database",
   });
@@ -313,6 +314,7 @@ type HorizonCollectionContext = Readonly<{
   runKey: string;
   deadlineAt: number;
   parts: ReturnType<typeof jiaowubaoScheduleCollectionWindows>;
+  sourceReader: JiaowubaoScheduleReader;
 }>;
 
 function shouldAbortHorizonStageError(error: unknown) {
@@ -339,7 +341,7 @@ async function stageHorizonSourcePage(
     page: cursor.nextPage,
     limit: JIAOWUBAO_SCHEDULE_SNAPSHOT_PAGE_SIZE,
     order: "asc",
-  }, context.deadlineAt);
+  }, context.deadlineAt, context.sourceReader);
   try {
     const rows = jiaowubaoScheduleSourcePageRows(response);
     const next = await stageJiaowubaoScheduleHorizonPage({
@@ -435,6 +437,7 @@ async function collectResumableHorizon(
   currentRevision: string | null,
   deadlineAt: number,
   runKey: string,
+  sourceReader: JiaowubaoScheduleReader,
 ) {
   const initialCursor = await beginJiaowubaoScheduleHorizonCollection({
     runKey,
@@ -444,7 +447,7 @@ async function collectResumableHorizon(
   }, jiaowubaoScheduleRpcOptions(deadlineAt));
   if (!validHorizonCollectionReceipt(initialCursor)) throw new Error("schedule_horizon_cursor_invalid");
   const runId = initialCursor.runId;
-  const context = { runId, runKey, deadlineAt, parts: jiaowubaoScheduleCollectionWindows(window) };
+  const context = { runId, runKey, deadlineAt, parts: jiaowubaoScheduleCollectionWindows(window), sourceReader };
   const cursor = await advanceHorizonCollectionUntilBudget(initialCursor, context);
   if (shouldDeferHorizonAssembly(cursor, deadlineAt)) {
     return Object.freeze({ runId, cursor, snapshot: null });
@@ -655,7 +658,8 @@ export async function GET(request: Request) {
     const window = fixedWindow();
     const currentRevision = currentTarget?.revision ?? null;
     phase = "collect_source";
-    const collection = await collectResumableHorizon(window, currentRevision, deadlineAt, runKey);
+    const sourceReader = createJiaowubaoScheduleReader();
+    const collection = await collectResumableHorizon(window, currentRevision, deadlineAt, runKey, sourceReader);
     if (collection.snapshot === null) {
       return noStore({
         outcome: "in_progress",
