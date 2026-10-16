@@ -9,9 +9,9 @@ import {
   type OpsTask,
   type TaskTone,
 } from "./ops-tasks";
+import { trialAccountLetter } from "./trial-account-label";
 import {
   TRIAL_PAYMENT_METHODS,
-  trialAccountLetter,
   type LpFieldValues,
   type TrialPaymentMethod,
 } from "./lp-workflows";

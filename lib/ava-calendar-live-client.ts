@@ -1,6 +1,6 @@
 import type { AvaCalendarEvent, AvaCalendarProjection } from "./ava-calendar-projection";
 import type { AvaCalendarSync } from "./ava-calendar-display";
-import { TRIAL_OPERATIONS } from "./lp-workflows";
+import { ASSIGNABLE_DEMO_STAFF_USERS as TRIAL_OPERATIONS } from "./demo-users";
 import { avaCalendarSourceStudentName } from "./ava-calendar-source-name";
 
 export type AvaCalendarLiveWindow = { start: string; end: string };
