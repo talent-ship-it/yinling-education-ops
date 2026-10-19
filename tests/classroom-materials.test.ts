@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  ClassroomMaterialsError, externalMaterialUrl, materialGrantsInput, materialId, materialMaxBytes,
+  ClassroomMaterialsError, externalMaterialUrl, materialGrantsInput, materialId, materialListInput, materialMaxBytes,
   materialTitle, materialUploadInput, materialUsesExternalViewer, verifyMaterialObject,
 } from "../lib/classroom-materials.ts";
 
@@ -46,4 +46,21 @@ test("completion verifies authoritative object location and actual metadata", ()
   assert.equal(materialUsesExternalViewer("audio/mpeg"), true);
   assert.equal(materialUsesExternalViewer("video/mp4"), true);
   assert.equal(materialUsesExternalViewer("application/pdf"), false);
+});
+
+test("online IPv4 links reject private range boundaries and preserve public addresses", () => {
+  for (const host of ["0.0.0.0", "10.255.255.255", "127.255.255.255", "169.254.0.1", "172.16.0.1", "172.31.255.255", "192.0.1.1", "192.168.255.255", "100.64.0.1", "100.127.255.255", "198.18.0.1", "198.19.255.255", "224.0.0.1", "255.255.255.255"]) {
+    assert.throws(() => externalMaterialUrl(`https://${host}/lesson`), ClassroomMaterialsError);
+  }
+  for (const host of ["8.8.8.8", "172.15.1.1", "172.32.1.1", "192.1.1.1", "100.63.1.1", "100.128.1.1", "198.17.1.1", "198.20.1.1", "223.255.255.255"]) {
+    assert.equal(externalMaterialUrl(`https://${host}/lesson`), `https://${host}/lesson`);
+  }
+});
+
+test("material list queries retain pagination bounds and validate search parameters", () => {
+  assert.deepEqual(materialListInput(new URLSearchParams()), { folderId: null, q: "", offset: 0, limit: 100 });
+  assert.deepEqual(materialListInput(new URLSearchParams({ folderId: requestKey, offset: "200", limit: "200", q: "  lesson  " })), { folderId: requestKey, q: "lesson", offset: 200, limit: 200 });
+  for (const query of [{ offset: "-1" }, { offset: "1000001" }, { offset: "1.5" }, { limit: "0" }, { limit: "201" }, { limit: "NaN" }, { q: "a".repeat(161) }, { folderId: "bad" }]) {
+    assert.throws(() => materialListInput(new URLSearchParams(query)), ClassroomMaterialsError);
+  }
 });

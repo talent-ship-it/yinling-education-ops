@@ -42,16 +42,21 @@ export function materialTitle(value: unknown, maxLength = 240): string {
   return title;
 }
 
+const privateIpv4Ranges: readonly [number, number, number][] = [
+  [0, 0, 255], [10, 0, 255], [127, 0, 255], [169, 254, 254], [172, 16, 31],
+  [192, 168, 168], [192, 0, 0], [100, 64, 127], [198, 18, 19],
+];
+
+function publicIpv4(host: string) {
+  const [a, b] = host.split(".").map(Number);
+  return a < 224 && !privateIpv4Ranges.some(([first, min, max]) => a === first && b >= min && b <= max);
+}
+
 function publicHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!host || host === "localhost" || /\.(localhost|local|internal|test|invalid|example|home|lan)$/u.test(host)) return false;
   const ipVersion = isIP(host);
-  if (ipVersion === 4) {
-    const [a, b] = host.split(".").map(Number);
-    return a !== 0 && a !== 10 && a !== 127 && a < 224 && !(a === 169 && b === 254)
-      && !(a === 172 && b >= 16 && b <= 31) && !(a === 192 && (b === 168 || b === 0))
-      && !(a === 100 && b >= 64 && b <= 127) && !(a === 198 && (b === 18 || b === 19));
-  }
+  if (ipVersion === 4) return publicIpv4(host);
   if (ipVersion === 6) return false;
   return host.includes(".") && !host.split(".").some((part) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(part));
 }
@@ -122,4 +127,15 @@ export function verifyMaterialObject(object: unknown, material: Record<string, u
 
 export function materialUsesExternalViewer(mimeType: string) {
   return mimeType.startsWith("audio/") || mimeType.startsWith("video/");
+}
+
+export function materialListInput(searchParams: URLSearchParams) {
+  const folderId = materialId(searchParams.get("folderId"), true);
+  const offset = Number(searchParams.get("offset") ?? 0);
+  const limit = Number(searchParams.get("limit") ?? 100);
+  const q = (searchParams.get("q") ?? "").trim();
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200 || q.length > 160) {
+    throw new ClassroomMaterialsError("资料查询参数无效。", "materials_invalid_input");
+  }
+  return { folderId, q, offset, limit };
 }

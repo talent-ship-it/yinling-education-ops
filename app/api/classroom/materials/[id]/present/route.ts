@@ -6,6 +6,12 @@ import { readClassroomEndRequests } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 
+async function presentAuthorizedMaterial(meetingId: string, material: Record<string, unknown>, url: string) {
+  if (material.kind === "link" || materialUsesExternalViewer(String(material.mimeType))) return materialsResponse({ mode: "external", url });
+  await insertMeetingDocument({ meetingId, name: String(material.fileName || material.title), url });
+  return materialsResponse({ mode: "presentation" });
+}
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const session = await materialsSession();
@@ -17,8 +23,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if ((await readClassroomEndRequests(String(input.occurrenceId))).length > 0) {
       throw new ClassroomMaterialsError("这节课正在结束或已经结束。", "materials_classroom_unavailable", 409);
     }
-    if (material.kind === "link" || materialUsesExternalViewer(String(material.mimeType))) return materialsResponse({ mode: "external", url });
-    await insertMeetingDocument({ meetingId, name: String(material.fileName || material.title), url });
-    return materialsResponse({ mode: "presentation" });
+    return await presentAuthorizedMaterial(meetingId, material, url);
   } catch (error) { return materialsErrorResponse(error); }
 }

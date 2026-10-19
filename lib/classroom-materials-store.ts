@@ -23,6 +23,20 @@ async function responsePayload(response: Response) {
   try { return await response.json() as unknown; } catch { return null; }
 }
 
+const materialRpcErrors: Record<string, { message: string; status: number }> = {
+  materials_forbidden: { message: "当前账号没有此资料权限。", status: 403 },
+  materials_not_found: { message: "资料不存在或尚未授权。", status: 404 },
+  materials_conflict: { message: "资料请求与已有记录不一致。", status: 409 },
+  materials_invalid_input: { message: "资料参数无效。", status: 400 },
+};
+
+function materialRpcError(result: unknown) {
+  const code = String(materialRecord(result).message ?? "");
+  const known = Object.hasOwn(materialRpcErrors, code) ? materialRpcErrors[code] : undefined;
+  if (known) return new ClassroomMaterialsError(known.message, code, known.status);
+  return new ClassroomMaterialsError("资料库数据接口尚未就绪。", "materials_contract_unavailable", 503);
+}
+
 export async function materialRpc<T = Record<string, unknown>>(accountId: string, operation: string, payload: Record<string, unknown> = {}): Promise<T> {
   const { url, key, secret } = databaseConfiguration();
   let response: Response;
@@ -35,11 +49,7 @@ export async function materialRpc<T = Record<string, unknown>>(accountId: string
   } catch { throw new ClassroomMaterialsError("资料库暂时无法连接。", "materials_unavailable", 503); }
   const result = await responsePayload(response);
   if (!response.ok) {
-    const message = String(materialRecord(result).message ?? "");
-    const statuses: Record<string, number> = { materials_forbidden: 403, materials_not_found: 404, materials_conflict: 409, materials_invalid_input: 400 };
-    const code = Object.keys(statuses).find((item) => message === item);
-    if (code) throw new ClassroomMaterialsError(code === "materials_forbidden" ? "当前账号没有此资料权限。" : code === "materials_not_found" ? "资料不存在或尚未授权。" : code === "materials_conflict" ? "资料请求与已有记录不一致。" : "资料参数无效。", code, statuses[code]);
-    throw new ClassroomMaterialsError("资料库数据接口尚未就绪。", "materials_contract_unavailable", 503);
+    throw materialRpcError(result);
   }
   return result as T;
 }
