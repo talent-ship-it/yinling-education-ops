@@ -169,11 +169,17 @@ function durationValid(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1440;
 }
 
-function nativeSeries(booking: Record<string, unknown>) {
+function validateNativeTimezone(timezone: string, timezones: Set<string>) {
+  if (timezones.has(timezone)) return;
+  new Intl.DateTimeFormat("en", { timeZone: timezone }).format(0);
+  timezones.add(timezone);
+}
+
+function nativeSeries(booking: Record<string, unknown>, timezones: Set<string>) {
   if (!literalId(booking.id) || ![booking.date, booking.start, booking.timezone].every(literalText) || !durationValid(booking.duration)
     || booking.recurring !== undefined && typeof booking.recurring !== "boolean"
     || booking.teacherId !== undefined && booking.teacherId !== null && !literalId(booking.teacherId)) throw new AvailabilityFailure("native_occupancy_invalid");
-  new Intl.DateTimeFormat("en", { timeZone: booking.timezone as string }).format(0);
+  validateNativeTimezone(booking.timezone as string, timezones);
   return booking as unknown as LegacyLessonSeries;
 }
 
@@ -197,8 +203,8 @@ function nativeOverride(value: unknown, seriesId: string) {
   return override as unknown as LessonOccurrenceOverride;
 }
 
-function finiteOccurrences(booking: Record<string, unknown>) {
-  const series = nativeSeries(booking);
+function finiteOccurrences(booking: Record<string, unknown>, timezones: Set<string>) {
+  const series = nativeSeries(booking, timezones);
   const bounds = { ...series, startDate: series.date };
   const end = recurrenceSourceEndDate(bounds);
   const count = recurrenceOccurrenceCount(bounds);
@@ -233,24 +239,30 @@ function affectedTeachers(booking: Record<string, unknown>, teachers: TeacherInd
   return ids;
 }
 
-function occurrenceInterval(occurrence: LessonOccurrence) {
+function occurrenceInterval(occurrence: LessonOccurrence, intervals: Map<string, { start: number; end: number }>) {
   const timezone = occurrence.timezone!;
+  const key = JSON.stringify([occurrence.date, occurrence.start, timezone, occurrence.scheduledDurationMinutes]);
+  const cached = intervals.get(key);
+  if (cached) return { id: occurrence.occurrenceId, ...cached };
   const earlier = localTimeToInstant(occurrence.date, occurrence.start, timezone, "earlier").valueOf();
   const later = localTimeToInstant(occurrence.date, occurrence.start, timezone, "later").valueOf();
   const native = scheduleOccurrenceInstant({ ...occurrence, timezone }).valueOf();
   if (native < earlier || native > later) throw new AvailabilityFailure("native_occupancy_invalid");
-  return { id: occurrence.occurrenceId, start: earlier, end: Math.ceil(later + occurrence.scheduledDurationMinutes * 60_000) };
+  const interval = { start: earlier, end: Math.ceil(later + occurrence.scheduledDurationMinutes * 60_000) };
+  intervals.set(key, interval);
+  return { id: occurrence.occurrenceId, ...interval };
 }
 
 function sourceDateRange(range: CalendarRange, timezone: string) {
   return { from: shiftScheduleDate(scheduleDateInTimezone(new Date(range.start), timezone), -2), to: shiftScheduleDate(scheduleDateInTimezone(new Date(range.end), timezone), 2) };
 }
 
-function recordNativeOccurrences(occurrences: readonly LessonOccurrence[], timezone: string, teachers: TeacherIndex["teachers"], range: CalendarRange, occupied: Occupancy) {
-  const dates = sourceDateRange(range, timezone);
+function recordNativeOccurrences(occurrences: readonly LessonOccurrence[], timezone: string, teachers: TeacherIndex["teachers"], range: CalendarRange, occupied: Occupancy, dateRanges: Map<string, ReturnType<typeof sourceDateRange>>, intervals: Map<string, { start: number; end: number }>) {
+  const dates = dateRanges.get(timezone) ?? sourceDateRange(range, timezone);
+  dateRanges.set(timezone, dates);
   for (const occurrence of occurrences) {
     if (["cancelled", "leave"].includes(occurrence.status) || occurrence.date < dates.from || occurrence.date > dates.to) continue;
-    const interval = occurrenceInterval(occurrence);
+    const interval = occurrenceInterval(occurrence, intervals);
     if (interval.end <= range.start || interval.start >= range.end) continue;
     if (!knownTeacher(occurrence.teacherId, teachers)) throw new AvailabilityFailure("native_occupancy_invalid");
     addOccupancy(occupied, occurrence.teacherId, { id: interval.id, startsAt: new Date(interval.start).toISOString(), endsAt: new Date(interval.end).toISOString() });
@@ -269,14 +281,17 @@ function nativeOccupancy(values: unknown[], teachers: TeacherIndex["teachers"], 
   const invalid = new Set<string>();
   const seen = new Set<string>();
   let expandedCount = 0;
+  const timezones = new Set<string>();
+  const dateRanges = new Map<string, ReturnType<typeof sourceDateRange>>();
+  const intervals = new Map<string, { start: number; end: number }>();
   for (const value of values) {
     const booking = identifiedNativeRecord(value, seen, "native_occupancy_invalid");
     seen.add(booking.id);
     try {
-      const occurrences = finiteOccurrences(booking);
+      const occurrences = finiteOccurrences(booking, timezones);
       expandedCount += occurrences.length;
       if (expandedCount > 50000) throw new AvailabilityFailure("resource_limit");
-      recordNativeOccurrences(occurrences, booking.timezone as string, teachers, range, occupied);
+      recordNativeOccurrences(occurrences, booking.timezone as string, teachers, range, occupied, dateRanges, intervals);
     } catch (error) {
       recordNativeFailure(booking, teachers, invalid, error);
     }
