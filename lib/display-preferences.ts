@@ -1,3 +1,6 @@
+import type { DemoSessionRole } from "./demo-session-token";
+import { resolveAssignableOperationsOwner } from "./demo-users";
+
 export type InterfaceLanguage = "zh-CN" | "en-AU";
 export type TextSize = "default" | "large" | "extra-large";
 export type TimeFormat = "24h" | "12h";
@@ -50,6 +53,21 @@ export function defaultDisplayPreferences(preferEnglish = false): DisplayPrefere
     density: "comfortable",
     motion: "standard",
   };
+}
+
+export function defaultAccountDisplayPreferences(user: string, role: DemoSessionRole): DisplayPreferences {
+  const preferences = defaultDisplayPreferences(role === "teacher");
+  if (role === "staff" && resolveAssignableOperationsOwner(user)) preferences.timezone = "Asia/Shanghai";
+  return preferences;
+}
+
+export function readAccountDisplayPreferences(user: string, role: DemoSessionRole, read: (key: string) => string | null) {
+  const fallback = defaultAccountDisplayPreferences(user, role);
+  try {
+    return parseDisplayPreferences(read(displayPreferencesStorageKey(user)), fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 export function parseDisplayPreferences(value: unknown, fallback: DisplayPreferences): DisplayPreferences {

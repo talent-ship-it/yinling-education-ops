@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  defaultAccountDisplayPreferences,
   defaultDisplayPreferences,
   displayTerm,
   displayPreferencesStorageKey,
   displayTimezoneOptions,
   parseDisplayPreferences,
+  readAccountDisplayPreferences,
   timezoneLabelFor,
 } from "../lib/display-preferences";
 import { translateInterfaceText } from "../lib/interface-localization";
@@ -15,6 +17,46 @@ test("uses an English-friendly default for teacher accounts without changing the
   assert.equal(defaultDisplayPreferences(true).language, "en-AU");
   assert.equal(defaultDisplayPreferences(false).language, "zh-CN");
   assert.equal(defaultDisplayPreferences(true).timezone, "Australia/Melbourne");
+});
+
+test("defaults operations staff to Beijing and teaching control and planners to Melbourne", () => {
+  for (const user of ["Tiffany", "Ella", "Abby", "Molly", "Thea", "Erin", " ＥＬＬＡ 教务 "]) {
+    assert.equal(defaultAccountDisplayPreferences(user, "staff").timezone, "Asia/Shanghai");
+  }
+  for (const user of ["Tara", "Eileen", "Ops Admin", "思佳", "Unknown"]) {
+    assert.equal(defaultAccountDisplayPreferences(user, "staff").timezone, "Australia/Melbourne");
+  }
+  for (const role of ["admin", "limited-admin", "teacher"] as const) {
+    assert.equal(defaultAccountDisplayPreferences("Abby", role).timezone, "Australia/Melbourne");
+  }
+  assert.equal(defaultAccountDisplayPreferences("Synthetic Teacher", "teacher").language, "en-AU");
+  assert.equal(defaultAccountDisplayPreferences("Ops Admin", "limited-admin").language, "zh-CN");
+});
+
+test("loads saved account preferences before applying role defaults and preserves an explicit Melbourne selection", () => {
+  const saved = new Map([
+    [displayPreferencesStorageKey("Abby"), JSON.stringify({ timezone: "Australia/Melbourne", textSize: "large" })],
+    [displayPreferencesStorageKey("Ella"), JSON.stringify({ timezone: "Australia/Sydney" })],
+    [displayPreferencesStorageKey("Ops Admin"), JSON.stringify({ timezone: "Asia/Shanghai" })],
+  ]);
+  const read = (key: string) => saved.get(key) ?? null;
+  assert.equal(readAccountDisplayPreferences("Abby", "staff", read).timezone, "Australia/Melbourne");
+  assert.equal(readAccountDisplayPreferences("Abby", "staff", read).textSize, "large");
+  assert.equal(readAccountDisplayPreferences("Ella", "staff", read).timezone, "Australia/Sydney");
+  assert.equal(readAccountDisplayPreferences("Erin", "staff", read).timezone, "Asia/Shanghai");
+  assert.equal(readAccountDisplayPreferences("Ops Admin", "limited-admin", read).timezone, "Asia/Shanghai");
+  assert.equal(readAccountDisplayPreferences("Tara", "staff", read).timezone, "Australia/Melbourne");
+  assert.equal(saved.size, 3);
+});
+
+test("unavailable storage and malformed saved preferences safely retain the current account role default", () => {
+  for (const read of [() => null, () => "{broken", () => JSON.stringify({ timezone: "Not/A-Timezone" }), () => { throw new Error("storage denied"); }]) {
+    assert.equal(readAccountDisplayPreferences("Erin", "staff", read).timezone, "Asia/Shanghai");
+    assert.equal(readAccountDisplayPreferences("Ops Admin", "limited-admin", read).timezone, "Australia/Melbourne");
+  }
+  const defaults = defaultAccountDisplayPreferences("Ella", "staff");
+  defaults.timezone = "Europe/London";
+  assert.equal(defaultAccountDisplayPreferences("Ella", "staff").timezone, "Asia/Shanghai");
 });
 
 test("keeps only supported display preference values", () => {
