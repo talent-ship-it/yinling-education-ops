@@ -108,8 +108,8 @@ function GrantDialog({ target, teachers, close, saved }: { target: GrantTarget; 
         <div className={styles.grantHeader}><span>教师</span><span>课堂使用</span><span>下载原件</span></div>
         {loading ? <p className={styles.empty}>正在加载授权…</p> : teachers.filter((teacher) => teacher.name.toLowerCase().includes(query.toLowerCase())).map((teacher) => <div className={styles.grantRow} key={teacher.id}>
           <span>{teacher.name}</span>
-          <label className={styles.grantCheck}><input type="checkbox" aria-label={`${teacher.name} 课堂使用`} checked={grants.includes(teacher.id) || inherited.teacherIds.includes(teacher.id)} onChange={(event) => toggle(teacher.id, event.target.checked)} disabled={busy || loadFailed || inherited.teacherIds.includes(teacher.id)} />{inherited.teacherIds.includes(teacher.id) && <small>继承</small>}</label>
-          <label className={styles.grantCheck}><input type="checkbox" aria-label={`${teacher.name} 下载原件`} checked={downloads.includes(teacher.id) || inherited.downloadTeacherIds.includes(teacher.id)} onChange={(event) => toggle(teacher.id, event.target.checked, true)} disabled={busy || loadFailed || inherited.downloadTeacherIds.includes(teacher.id)} />{inherited.downloadTeacherIds.includes(teacher.id) && <small>继承</small>}</label>
+          <label className={styles.grantCheck}><input type="checkbox" aria-label={`${teacher.name} 课堂使用直接授权`} checked={grants.includes(teacher.id)} onChange={(event) => toggle(teacher.id, event.target.checked)} disabled={busy || loadFailed} />{inherited.teacherIds.includes(teacher.id) && <small>上级已授权</small>}</label>
+          <label className={styles.grantCheck}><input type="checkbox" aria-label={`${teacher.name} 下载原件直接授权`} checked={downloads.includes(teacher.id)} onChange={(event) => toggle(teacher.id, event.target.checked, true)} disabled={busy || loadFailed} />{inherited.downloadTeacherIds.includes(teacher.id) && <small>上级已授权</small>}</label>
         </div>)}
         {!loading && teachers.length === 0 && <p className={styles.empty}>暂无教师</p>}
       </div>
