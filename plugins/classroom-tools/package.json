@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "NODE_ENV=test tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "bigbluebutton-html-plugin-sdk": "0.0.104",
