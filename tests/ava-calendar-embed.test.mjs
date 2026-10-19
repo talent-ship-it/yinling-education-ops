@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import * as demoUsers from "../lib/demo-users.ts";
 
 test("calendar navigation reuses one role-scoped definition with its original labels and position", () => {
   const source = readFileSync("app/operations-client.tsx", "utf8");
@@ -14,7 +15,10 @@ test("calendar navigation reuses one role-scoped definition with its original la
   assert.deepEqual(calendar, [{ id: "ava-calendar", label: "AVA日历", icon: "CalendarDays", group: "work" }]);
   assert.equal(navigation.at(-1).id, "ava-calendar");
   const preferences = {};
-  runInNewContext(ts.transpileModule(readFileSync("lib/display-preferences.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: preferences });
+  runInNewContext(ts.transpileModule(readFileSync("lib/display-preferences.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: preferences, require(id) {
+    assert.equal(id, "./demo-users");
+    return demoUsers;
+  } });
   const navigationFor = ast.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "navigationFor");
   const translated = runInNewContext(ts.transpileModule(`${navigationFor.getText(ast)}\nnavigationFor;`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, { navigationDefinitions: navigation, displayTerm: preferences.displayTerm });
   for (const [language, label] of [["zh-CN", "AVA日历"], ["en-AU", "AVA calendar"]]) {
