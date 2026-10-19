@@ -116,13 +116,14 @@ import {
   reviewOnlyPersistedPayrollWithJiaowubaoEvidence,
 } from "@/lib/jiaowubao-completed-lesson-payroll-evidence";
 import {
+  defaultAccountDisplayPreferences,
   defaultDisplayPreferences,
   displayPreferencesStorageKey,
   displayTerm,
   displayTimezoneOptions,
   interfaceCopy,
   localeFor,
-  parseDisplayPreferences,
+  readAccountDisplayPreferences,
   timezoneLabelFor,
   type DisplayPreferences,
   type InterfaceLanguage,
@@ -2703,7 +2704,7 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
   if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
+  return <OperationsWorkspace key={`${initialSession.role}:${initialSession.user}`} initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
 }
 
 function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
@@ -2713,12 +2714,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
   const isAdminSession = initialNixonUnlocked && initialRole === "admin" && sessionOperator === "Nixon";
   const [currentOperator, setCurrentOperator] = useState(sessionOperator);
-  const sessionIsTeacher = initialRole === "teacher";
-  const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(() => defaultDisplayPreferences(sessionIsTeacher));
+  const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(() => readAccountDisplayPreferences(sessionOperator, initialRole, (key) => window.localStorage.getItem(key)));
   const taskDeadlineTimeZone = cleanTimezone(displayPreferences.timezone);
   const taskDeadlineTimeZoneLabel = timezoneLabelFor(taskDeadlineTimeZone, displayPreferences.language);
-  const [displayPreferencesReady, setDisplayPreferencesReady] = useState(false);
-  const [displayPreferencesOwner, setDisplayPreferencesOwner] = useState("");
   const [displayPreferencesOpen, setDisplayPreferencesOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarCollapseReady, setSidebarCollapseReady] = useState(false);
@@ -2960,7 +2958,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [teacherAvailabilitySubmitBusy, setTeacherAvailabilitySubmitBusy] = useState(false);
   const teacherAvailabilitySubmissionKey = useRef<string | null>(null);
   const [scheduleMode, setScheduleMode] = useState<"month" | "week" | "agenda">("month");
-  const [scheduleMonth, setScheduleMonth] = useState(() => isoDateInTimezone(new Date(), defaultDisplayPreferences().timezone).slice(0, 7));
+  const [scheduleMonth, setScheduleMonth] = useState(() => isoDateInTimezone(new Date(), displayPreferences.timezone).slice(0, 7));
   const [scheduleFilter, setScheduleFilter] = useState("all");
   const [scheduleDay, setScheduleDay] = useState("all");
   const [scheduleTeacherFilter, setScheduleTeacherFilter] = useState("all");
@@ -3483,20 +3481,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reads one external, account-scoped browser preference record after hydration.
-    setDisplayPreferencesReady(false);
-    const fallback = defaultDisplayPreferences(sessionIsTeacher);
-    try {
-      setDisplayPreferences(parseDisplayPreferences(window.localStorage.getItem(displayPreferencesStorageKey(sessionOperator)), fallback));
-    } catch {
-      setDisplayPreferences(fallback);
-    } finally {
-      setDisplayPreferencesOwner(sessionOperator);
-      setDisplayPreferencesReady(true);
-    }
-  }, [sessionIsTeacher, sessionOperator]);
-
-  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Reads one external, actor-scoped table preference after hydration.
     setTrialLedgerViewReady(false);
     try {
@@ -3534,13 +3518,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, []);
 
   useEffect(() => {
-    if (!displayPreferencesReady || displayPreferencesOwner !== sessionOperator) return;
     try {
       window.localStorage.setItem(displayPreferencesStorageKey(sessionOperator), JSON.stringify(displayPreferences));
     } catch {
       // Browser storage can be unavailable in private mode; displaying the selected values still works for this session.
     }
-  }, [displayPreferences, displayPreferencesOwner, displayPreferencesReady, sessionOperator]);
+  }, [displayPreferences, sessionOperator]);
 
   useEffect(() => {
     if (!trialLedgerViewReady || trialLedgerViewOwner !== sessionOperator) return;
@@ -3571,9 +3554,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [displayPreferences.language]);
 
   useEffect(() => {
-    if (!displayPreferencesReady || !interfaceRootRef.current) return;
+    if (!interfaceRootRef.current) return;
     return observeInterfaceLocalization(interfaceRootRef.current, displayPreferences.language);
-  }, [displayPreferences.language, displayPreferencesReady]);
+  }, [displayPreferences.language]);
 
   const updateDisplayPreferences = useCallback((patch: Partial<DisplayPreferences>) => {
     setDisplayPreferences((current) => ({ ...current, ...patch }));
@@ -12208,7 +12191,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       case "operations":
         return renderOperations();
       case "ava-calendar":
-        return canOpenAvaCalendar ? <><ViewHeading eyebrow={avaCalendarLabel} title={avaCalendarLabel} /><Suspense fallback={<p role="status">正在读取…</p>}><AvaCalendarLiveClient /></Suspense></> : renderDashboard();
+        return canOpenAvaCalendar ? <><ViewHeading eyebrow={avaCalendarLabel} title={avaCalendarLabel} /><Suspense fallback={<p role="status">正在读取…</p>}><AvaCalendarLiveClient displayTimezone={scheduleTimezone} onDisplayTimezoneChange={(timezone) => updateDisplayPreferences({ timezone })} /></Suspense></> : renderDashboard();
       case "renewals":
         return renderRenewals();
       case "payroll":
@@ -14426,7 +14409,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             <label>{interfaceText.density}<select value={displayPreferences.density} onChange={(event) => updateDisplayPreferences({ density: event.target.value as DisplayPreferences["density"] })}><option value="comfortable">{interfaceText.comfortable}</option><option value="compact">{interfaceText.compact}</option></select></label>
             <label className="span-2">{interfaceText.motion}<select value={displayPreferences.motion} onChange={(event) => updateDisplayPreferences({ motion: event.target.value as DisplayPreferences["motion"] })}><option value="standard">{interfaceText.standardMotion}</option><option value="reduced">{interfaceText.reducedMotion}</option></select></label>
           </div>
-          <footer className="display-preferences-actions"><button className="secondary-button" type="button" onClick={() => updateDisplayPreferences(defaultDisplayPreferences(sessionIsTeacher))}>{interfaceText.reset}</button><button className="primary-button" type="button" onClick={() => setDisplayPreferencesOpen(false)}>{interfaceText.close}</button></footer>
+          <footer className="display-preferences-actions"><button className="secondary-button" type="button" onClick={() => updateDisplayPreferences(defaultAccountDisplayPreferences(sessionOperator, initialRole))}>{interfaceText.reset}</button><button className="primary-button" type="button" onClick={() => setDisplayPreferencesOpen(false)}>{interfaceText.close}</button></footer>
         </section>
       </div>}
       {toast && <div className="toast" role="status" aria-live="polite"><CheckCircle2 size={17} /><span>{toast.message}</span>{toast.onAction && <button className="toast-action" type="button" onClick={() => { const action = toast.onAction; setToast(null); action?.(); }}>{toast.actionLabel ?? "撤销"}</button>}</div>}

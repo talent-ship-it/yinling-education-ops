@@ -1,3 +1,6 @@
+import type { DemoSessionRole } from "./demo-session-token";
+import { resolveAssignableOperationsOwner } from "./demo-users";
+
 export type InterfaceLanguage = "zh-CN" | "en-AU";
 export type TextSize = "default" | "large" | "extra-large";
 export type TimeFormat = "24h" | "12h";
@@ -25,6 +28,11 @@ export const displayTimezoneOptions = [
   { id: "Australia/Perth", zh: "珀斯", en: "Perth" },
   { id: "Pacific/Auckland", zh: "新西兰", en: "New Zealand" },
   { id: "Asia/Shanghai", zh: "北京时间（中国）", en: "Beijing time (China)" },
+  { id: "Asia/Hong_Kong", zh: "香港", en: "Hong Kong" },
+  { id: "Asia/Singapore", zh: "新加坡", en: "Singapore" },
+  { id: "Europe/London", zh: "伦敦", en: "London" },
+  { id: "America/New_York", zh: "纽约", en: "New York" },
+  { id: "UTC", zh: "UTC", en: "UTC" },
   { id: "America/Argentina/Buenos_Aires", zh: "阿根廷", en: "Argentina" },
   { id: "Europe/Sarajevo", zh: "波斯尼亚", en: "Bosnia" },
 ] as const;
@@ -50,6 +58,21 @@ export function defaultDisplayPreferences(preferEnglish = false): DisplayPrefere
     density: "comfortable",
     motion: "standard",
   };
+}
+
+export function defaultAccountDisplayPreferences(user: string, role: DemoSessionRole): DisplayPreferences {
+  const preferences = defaultDisplayPreferences(role === "teacher");
+  if (role === "staff" && resolveAssignableOperationsOwner(user)) preferences.timezone = "Asia/Shanghai";
+  return preferences;
+}
+
+export function readAccountDisplayPreferences(user: string, role: DemoSessionRole, read: (key: string) => string | null) {
+  const fallback = defaultAccountDisplayPreferences(user, role);
+  try {
+    return parseDisplayPreferences(read(displayPreferencesStorageKey(user)), fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 export function parseDisplayPreferences(value: unknown, fallback: DisplayPreferences): DisplayPreferences {

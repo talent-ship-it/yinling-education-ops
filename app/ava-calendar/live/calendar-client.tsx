@@ -11,6 +11,7 @@ import { DateTime } from "luxon";
 import type { AvaCalendarEvent } from "@/lib/ava-calendar-projection";
 import { fetchAvaCalendarRange as fetchAvaCalendarWindow, type AvaCalendarLiveData, type AvaCalendarLiveWindow } from "@/lib/ava-calendar-live-client";
 import { ASSIGNABLE_DEMO_STAFF_USERS as TRIAL_OPERATIONS } from "@/lib/demo-users";
+import { displayTimezoneOptions } from "@/lib/display-preferences";
 import styles from "./calendar.module.css";
 import { useAvaCalendarVisibleRefresh } from "@/lib/ava-calendar-visible-refresh";
 import type { AvaCalendarSync } from "@/lib/ava-calendar-display";
@@ -18,7 +19,7 @@ import { SelfAvailabilityButton, SelfAvailabilityDialogs, useTeacherSelfAvailabi
 import { useCalendarColumnWindow, calendarScrollers, readCalendarScroll, restoreCalendarScroll, appendCalendarSpacer, sizeTeacherColumn, calendarLifecycle } from "./calendar-columns";
 import { calendarTeacherColumns, calendarInitialScrollTime, calendarColumnScrollLeft, type CalendarColumnPosition } from "./calendar-presentation";
 
-const ZONES: Record<string, string> = { "Australia/Melbourne": "墨尔本", "Australia/Sydney": "悉尼", "Australia/Brisbane": "布里斯班", "Australia/Adelaide": "阿德莱德", "Australia/Perth": "珀斯", "Pacific/Auckland": "奥克兰", "Asia/Shanghai": "中国", "Asia/Hong_Kong": "香港", "Asia/Singapore": "新加坡", "Europe/London": "伦敦", "America/New_York": "纽约", UTC: "UTC" };
+const ZONES = Object.fromEntries(displayTimezoneOptions.map((option) => [option.id, option.zh]));
 
 function readFailure(error: unknown) {
   return error instanceof Error && error.name !== "AbortError" ? error.message : "读取超时，请重试。";
@@ -472,7 +473,6 @@ function CalendarSurface({ state, controls, resetKey }: { state: Pick<SurfacePro
   return <div ref={host} className={global ? styles.globalCalendar : styles.singleCalendar} style={global ? { width: totalWidth } : undefined} data-first-column={first} />;
 }
 
-function browserCalendarZone() { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Melbourne"; }
 function calendarAnchorDate(info: DatesSetArg) { return DateTime.fromJSDate(info.view.calendar.getDate(), { zone: info.timeZone }).toISODate() || ""; }
 function closeHiddenLesson(dialogRef: RefObject<HTMLDialogElement | null>, data: AvaCalendarLiveData | null, loading: boolean) { if (loading || !data) dialogRef.current?.close(); }
 function loadedAvailabilityMessage(data: AvaCalendarLiveData | null, loading: boolean, teacher: string) { return loading ? "" : availabilityMessage(data, teacher); }
@@ -489,16 +489,16 @@ function calendarSwitches(close: () => void, hideManager: (value: boolean) => vo
     switchView: (next: string) => { close(); hideManager(false); setters.setView(next); },
   };
 }
-function useCalendarViewState() {
-  const [zone, setZone] = useState(browserCalendarZone);
+type CalendarTimezone = { displayTimezone: string; onDisplayTimezoneChange: (timezone: string) => void };
+function useCalendarViewState({ displayTimezone: zone, onDisplayTimezoneChange: setZone }: CalendarTimezone) {
   const [view, setView] = useState(initialCalendarView);
   const [date, setDate] = useState("");
   const [title, setTitle] = useState("");
   const [teacher, setTeacher] = useState("");
   return { zone, setZone, view, setView, date, setDate, title, setTitle, teacher, setTeacher };
 }
-function useLiveCalendarPage() {
-  const { zone, setZone, view, setView, date, setDate, title, setTitle, teacher, setTeacher } = useCalendarViewState();
+function useLiveCalendarPage(timezone: CalendarTimezone) {
+  const { zone, setZone, view, setView, date, setDate, title, setTitle, teacher, setTeacher } = useCalendarViewState(timezone);
   const [range, setRange] = useState<AvaCalendarLiveWindow | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<AvailabilityDraft | null>(null);
@@ -527,9 +527,9 @@ function useLiveCalendarPage() {
   const { switchZone, switchTeacher, switchView } = calendarSwitches(closeDraft, setManager, { setZone, setTeacher, setView });
   return { zone, view, date, title, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, refreshCalendar, invalidateCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView };
 }
-export default function AvaCalendarLiveClient() {
+export default function AvaCalendarLiveClient(timezone: CalendarTimezone) {
   const [activeOnly, setActiveOnly] = useState(true);
-  const { zone, view, date, title, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, invalidateCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView } = useLiveCalendarPage();
+  const { zone, view, date, title, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, invalidateCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView } = useLiveCalendarPage(timezone);
   return <div className={styles.page}>
     <section className={`panel ${styles.stage}`} aria-label="老师课程日历">
       <div className={styles.toolbar}>

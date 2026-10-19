@@ -22,6 +22,30 @@ function shipping(names, scope = {}) {
 }
 
 const directory = { teachers: [{ id: "T1", name: "Synthetic First" }, { id: "T2", name: "Synthetic Last" }], events: [], remainingAVA: [] };
+test("calendar timezone follows account preferences while keeping the selected view across preference changes", () => {
+  const states = [];
+  let cursor = 0;
+  const { useCalendarViewState } = shipping(["useCalendarViewState"], {
+    initialCalendarView: () => "timeGridDay",
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
+      return [states[index], (value) => { states[index] = value; }];
+    },
+  });
+  const selected = [];
+  const change = (timezone) => selected.push(timezone);
+  const first = useCalendarViewState({ displayTimezone: "Asia/Shanghai", onDisplayTimezoneChange: change });
+  assert.equal(first.zone, "Asia/Shanghai");
+  first.setView("timeGridWeek");
+  first.setZone("Australia/Melbourne");
+  assert.deepEqual(selected, ["Australia/Melbourne"]);
+  cursor = 0;
+  const second = useCalendarViewState({ displayTimezone: selected[0], onDisplayTimezoneChange: change });
+  assert.equal(second.zone, "Australia/Melbourne");
+  assert.equal(second.view, "timeGridWeek");
+});
+
 test("all-teacher day columns do not disable aggregate three-day week or month views", () => {
   const { globalCalendarView, surfaceColumns } = shipping(["globalCalendarView", "surfaceColumns"], { calendarTeacherColumns: (data) => data.teachers });
   assert.equal(globalCalendarView(directory, "", "timeGridDay"), true);
