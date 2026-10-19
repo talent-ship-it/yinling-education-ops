@@ -11,7 +11,7 @@ export const MATERIALS_BUCKET = "classroom-materials";
 export const MATERIALS_PROJECT_REF = "orvsgisjjrzgtxuwwsms";
 export const MATERIALS_CHUNK_SIZE = 6 * 1024 * 1024;
 export const MATERIALS_SIGNED_URL_SECONDS = 300;
-export const MATERIALS_DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
+const MATERIALS_DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 
 const formats: Record<string, string> = {
   pdf: "application/pdf", ppt: "application/vnd.ms-powerpoint",
