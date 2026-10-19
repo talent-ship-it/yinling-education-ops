@@ -61,8 +61,12 @@ test("teacher can edit and start the next duration after expiry and sees the res
     assert.equal(teacherDigits(renderer), "0002");
     await act(async () => { renderer.root.findByProps({ className: "ilct-primary" }).props.onClick(); });
     assert.deepEqual(commands, [{ action: "time", variables: { time: 2000 } }]);
-    const reset = { ...elapsed, time: 2000, timePassed: 2000, elapsed: false };
-    await act(async () => { renderer.update(renderPanel({ ...countdown, native: reset }, true)); });
+    const configured = { ...elapsed, time: 2000, timePassed: 2000 };
+    countdown.controller.observe(configured);
+    assert.deepEqual(commands.at(-1), { action: "start", variables: {} });
+    const restarted = { ...configured, running: true, elapsed: false };
+    countdown.controller.observe(restarted);
+    await act(async () => { renderer.update(renderPanel({ ...countdown, native: restarted }, true)); });
     assert.equal(teacherDigits(renderer), "0002");
   } finally {
     await act(async () => { renderer.unmount(); });
@@ -77,9 +81,10 @@ test("teacher restarts an expired countdown using its existing configured durati
   await act(async () => { renderer = create(renderPanel(countdown, true)); });
   try {
     await act(async () => { renderer.root.findByProps({ className: "ilct-primary" }).props.onClick(); });
-    assert.deepEqual(commands, ["reset"]);
-    countdown.controller.observe({ ...elapsed, elapsed: false });
-    assert.deepEqual(commands, ["reset", "start"]);
+    assert.deepEqual(commands, ["start"]);
+    assert.equal(countdown.controller.busy, true);
+    countdown.controller.observe({ ...elapsed, running: true, elapsed: false });
+    assert.equal(countdown.controller.busy, false);
   } finally {
     await act(async () => { renderer.unmount(); });
     countdown.controller.dispose();
