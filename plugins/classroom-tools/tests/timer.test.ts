@@ -106,3 +106,43 @@ test("sender replacement, reset and deactivation wait for their own native ackno
   assert.equal(controller.busy, false);
   controller.dispose();
 });
+
+for (const seconds of [3, 20]) {
+  test(`restarts an expired countdown at ${seconds}s when BBB keeps elapsed latched until start`, (context) => {
+    const commands: { action: TimerAction; variables: TimerVariables }[] = [];
+    const progress: unknown[] = [];
+    const controller = new NativeTimerController((action, variables) => commands.push({ action, variables }), (value) => progress.push(value));
+    context.after(() => controller.dispose());
+    let state = { ...initial, active: true, stopwatch: false, time: 3000, timePassed: 3000, elapsed: true };
+    controller.observe(state);
+    controller.startCountdown(seconds);
+    if (seconds !== 3) {
+      assert.deepEqual(commands, [{ action: "time", variables: { time: seconds * 1000 } }]);
+      state = { ...state, time: seconds * 1000, timePassed: seconds * 1000 };
+      controller.observe(state);
+    }
+    assert.equal(commands.at(-1)?.action, "start");
+    assert.equal(commands.some(({ action }) => action === "reset"), false);
+    assert.equal(controller.busy, true);
+    controller.observe({ ...state, running: true });
+    assert.equal(controller.busy, true);
+    controller.observe({ ...state, running: true, elapsed: false });
+    assert.equal(controller.busy, false);
+    assert.deepEqual(progress.at(-1), { busy: false, error: "" });
+  });
+}
+
+test("an expired restart still fails when BBB never confirms a running non-expired timer", async () => {
+  const commands: TimerAction[] = [];
+  let message = "";
+  const controller = new NativeTimerController((action) => commands.push(action), ({ error }) => { message = error; }, 5);
+  const state = { ...initial, active: true, stopwatch: false, elapsed: true };
+  controller.observe(state);
+  controller.startCountdown(300);
+  assert.deepEqual(commands, ["start"]);
+  controller.observe({ ...state, running: true });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.match(message, /未确认/);
+  assert.equal(controller.busy, false);
+  controller.dispose();
+});

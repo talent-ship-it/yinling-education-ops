@@ -55,8 +55,8 @@ export class NativeTimerController {
       { action: "stop", variables: {}, confirmed: (state) => !state.running },
       { action: "mode", variables: { stopwatch: false }, confirmed: (state) => !state.stopwatch },
       { action: "time", variables: { time }, confirmed: (state) => state.time === time },
-      { action: "reset", variables: {}, confirmed: (state) => state.accumulated === 0 && !state.elapsed },
-      { action: "start", variables: {}, confirmed: (state) => state.running && !state.stopwatch && state.time === time },
+      { action: "reset", variables: {}, confirmed: (state) => !state.running && state.accumulated === 0 },
+      { action: "start", variables: {}, confirmed: (state) => state.running && !state.elapsed && !state.stopwatch && state.time === time },
     ]);
   }
 
@@ -71,7 +71,7 @@ export class NativeTimerController {
   reset() {
     this.begin([
       { action: "stop", variables: {}, confirmed: (state) => !state.running },
-      { action: "reset", variables: {}, confirmed: (state) => state.accumulated === 0 && !state.elapsed },
+      { action: "reset", variables: {}, confirmed: (state) => !state.running && state.accumulated === 0 },
     ]);
   }
 

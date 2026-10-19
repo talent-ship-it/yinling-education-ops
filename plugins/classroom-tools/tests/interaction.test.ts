@@ -32,8 +32,8 @@ test("teacher start, pause, resume, reset and student display follow native ackn
         if(query.includes("timerActivate(")) { commands.push("activate"); return {...old,active:true,running:false,stopwatch:true,time:variables.time!,timePassed:variables.time!,accumulated:0,elapsed:false}; }
         if(query.includes("timerSwitchMode(")) { commands.push("mode"); return {...old,stopwatch:variables.stopwatch!}; }
         if(query.includes("timerSetTime(")) { commands.push("time"); return {...old,time:variables.time!,timePassed:variables.time!}; }
-        if(query.includes("timerReset")) { commands.push("reset"); return {...old,accumulated:0,timePassed:old.time,elapsed:false}; }
-        if(query.includes("timerStart")) { commands.push("start"); return {...old,running:true}; }
+        if(query.includes("timerReset")) { commands.push("reset"); return {...old,accumulated:0,timePassed:old.time}; }
+        if(query.includes("timerStart")) { commands.push("start"); return {...old,running:true,elapsed:false}; }
         if(query.includes("timerStop")) { commands.push("stop"); return {...old,running:false,accumulated:old.time-old.timePassed}; }
         if(query.includes("timerDeactivate")) { commands.push("deactivate"); return {...old,active:false,running:false}; }
         return old;
@@ -66,6 +66,19 @@ test("teacher start, pause, resume, reset and student display follow native ackn
     await act(async () => { changeRole("VIEWER"); changeTimer(old=>({...old,accumulated:122000,timePassed:178000})); });
     assert.equal(renderer.root.findAllByProps({className:"ilct-readonly"})[0].children.join(""),"02:58");
     assert.equal(renderer.root.findAllByProps({className:"ilct-primary"}).length,0);
+    await act(async () => { changeRole("MODERATOR"); changeTimer(old=>({...old,running:false,elapsed:true,time:3000,timePassed:3000,accumulated:0})); });
+    assert.equal(digits(),"0000");
+    for (let index = 0; index < 5; index++) {
+      await act(async () => { renderer.root.findByProps({"aria-label":"增加秒个位"}).props.onClick(); });
+    }
+    assert.equal(digits(),"0005");
+    await act(async () => { primary().props.onClick(); });
+    assert.deepEqual(commands.slice(-2),["time","start"]);
+    assert.equal(primary().children.join(""),"暂停");
+    await act(async () => { changeRole("VIEWER"); });
+    assert.equal(renderer.root.findByProps({className:"ilct-readonly"}).children.join(""),"00:05");
+    await act(async () => { changeTimer(old=>({...old,timePassed:4000})); });
+    assert.equal(renderer.root.findByProps({className:"ilct-readonly"}).children.join(""),"00:04");
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
