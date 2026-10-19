@@ -2,7 +2,7 @@
 
 import { ChevronRight, Download, FileText, Folder, Link, Plus, RefreshCw, Search, Upload, Users, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { MaterialUploadResumeStore, materialUploadFingerprint, ResumableMaterialUpload, type MaterialUploadResumeRecord, type MaterialUploadSession } from "@/lib/classroom-materials-upload";
+import { createMaterialUploadFolderResolver, materialDropFiles, MaterialUploadResumeStore, materialUploadFingerprint, ResumableMaterialUpload, type MaterialUploadResumeRecord, type MaterialUploadSession } from "@/lib/classroom-materials-upload";
 import styles from "./classroom-materials.module.css";
 
 type Teacher = { id: string; name: string };
@@ -14,7 +14,7 @@ type Material = {
   canDownload?: boolean; createdAt: string;
 };
 type MaterialList = {
-  configured: boolean; canManage: boolean; folders: MaterialFolder[]; materials: Material[];
+  configured: boolean; canManage: boolean; canPresent: boolean; folders: MaterialFolder[]; materials: Material[];
   breadcrumbs: { id: string; name: string }[]; nextOffset: number | null; maxFileBytes?: number; error?: string; uploadScope?: string;
 };
 type GrantTarget = { targetType: "folder" | "material"; targetId: string; title: string };
@@ -139,6 +139,8 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
   const [dragging, setDragging] = useState(false);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const directoryInput = useRef<HTMLInputElement>(null);
+  const directoryRequests = useRef(new Set<AbortController>());
   const jobs = useRef<UploadJob[]>([]);
   const activeJob = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -158,10 +160,11 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
   }, [folderId, search, key]);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; jobs.current.forEach((job) => job.controller?.abort()); };
+    const pendingDirectories = directoryRequests.current;
+    return () => { mounted.current = false; jobs.current.forEach((job) => job.controller?.abort()); pendingDirectories.forEach((controller) => controller.abort()); };
   }, []);
   const syncJobs = () => {
-    if (mounted.current) setUploadRows(jobs.current.map((job) => ({ id: job.id, name: job.file.name, size: job.file.size, status: job.status, bytes: job.bytes, error: job.error, active: activeJob.current === job.id })));
+    if (mounted.current) setUploadRows(jobs.current.map((job) => ({ id: job.id, name: job.file.webkitRelativePath || job.file.name, size: job.file.size, status: job.status, bytes: job.bytes, error: job.error, active: activeJob.current === job.id })));
   };
   const runNext = async () => {
     if (activeJob.current || !mounted.current) return;
@@ -211,25 +214,37 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
     if (!canUpload) return;
     setActionError("");
     const errors: string[] = [];
-    const targetFolder = folderId;
+    const directoryController = new AbortController();
+    directoryRequests.current.add(directoryController);
+    let directoryCreated = false;
+    const resolveFolder = createMaterialUploadFolderResolver(folderId, async (parentId, name) => {
+      directoryController.signal.throwIfAborted();
+      const result = await request<{ folder: MaterialFolder }>("", { method: "POST", signal: directoryController.signal, body: JSON.stringify({ action: "create-folder", parentId, name }) });
+      directoryCreated = true;
+      return result.folder.id;
+    }, data?.breadcrumbs.length || 0);
     let resumeStore: MaterialUploadResumeStore | undefined;
     try { resumeStore = new MaterialUploadResumeStore(data?.uploadScope, window.sessionStorage); } catch { }
-    for (const file of Array.from(files)) {
+    try { for (const file of Array.from(files)) {
       const extension = file.name.split(".").at(-1)?.toLowerCase() || "";
       if (!mimeTypes[extension]) { errors.push(`${file.name}：不支持的文件类型`); continue; }
       if (file.size === 0) { errors.push(`${file.name}：文件为空`); continue; }
       if (data?.maxFileBytes && file.size > data.maxFileBytes) { errors.push(`${file.name}：超过 ${sizeLabel(data.maxFileBytes)}`); continue; }
-      if (jobs.current.some((job) => job.status !== "done" && job.folderId === targetFolder && job.file.name === file.name && job.file.size === file.size && job.file.lastModified === file.lastModified)) continue;
       try {
-        const fingerprint = await materialUploadFingerprint(file, targetFolder);
+        const targetFolder = await resolveFolder(file);
+        if (!mounted.current) return;
+        if (jobs.current.some((job) => job.status !== "done" && job.folderId === targetFolder && job.file.name === file.name && job.file.size === file.size && job.file.lastModified === file.lastModified)) continue;
+        const fingerprint = await materialUploadFingerprint(file, targetFolder).catch(() => { throw new Error("无法读取文件"); });
         if (!mounted.current) return;
         const resume = resumeStore?.get(fingerprint) || { fingerprint, requestKey: crypto.randomUUID(), expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 };
         if (jobs.current.some((job) => job.status !== "done" && job.resume?.fingerprint === fingerprint)) continue;
         resumeStore?.save(resume);
         jobs.current.push({ id: resume.requestKey, file, folderId: targetFolder, mimeType: mimeTypes[extension], status: "queued", bytes: 0, resume, resumeStore });
         syncJobs(); void runNext();
-      } catch { errors.push(`${file.name}：无法读取文件`); }
-    }
+      } catch (error) { if (directoryController.signal.aborted) return; errors.push(`${file.webkitRelativePath || file.name}：${messageOf(error)}`); }
+    } } finally { directoryRequests.current.delete(directoryController); }
+    if (!mounted.current) return;
+    if (directoryCreated) setRevision((value) => value + 1);
     setActionError(errors.join("；")); syncJobs(); void runNext();
   };
   const actOnMaterial = async (material: Material, present: boolean) => {
@@ -248,13 +263,15 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
   return <section className={`${styles.panel} ${dragging ? styles.dragging : ""}`} aria-label="教材资料库"
     onDragOver={(event) => { if (canUpload && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragging(true); } }}
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
-    onDrop={(event) => { event.preventDefault(); setDragging(false); void queueFiles(event.dataTransfer.files); }}>
+    onDrop={(event) => { event.preventDefault(); setDragging(false); if (!canUpload) return; try { void queueFiles(materialDropFiles(event.dataTransfer)); } catch (error) { setActionError(messageOf(error)); } }}>
     <header className={styles.heading}><h2><Folder size={21} />资料库</h2><button type="button" className={styles.iconButton} aria-label="刷新资料库" onClick={() => setRevision((value) => value + 1)} disabled={loading}><RefreshCw size={16} /></button></header>
     <div className={styles.toolbar}>
       {canManage && <><button type="button" className={styles.secondary} onClick={() => { setFormTitle(""); setFormError(""); setModal("folder"); }}><Plus size={16} />新建文件夹</button>
         <button type="button" className={styles.primary} disabled={!canUpload} onClick={() => input.current?.click()}><Upload size={16} />上传</button>
+        <button type="button" className={styles.secondary} disabled={!canUpload} onClick={() => directoryInput.current?.click()}><Folder size={16} />上传文件夹</button>
         <button type="button" className={styles.secondary} onClick={() => { setFormTitle(""); setFormUrl(""); setFormError(""); setModal("link"); }}><Link size={16} />添加链接</button>
-        <input ref={input} className={styles.hidden} type="file" multiple accept={Object.keys(mimeTypes).map((extension) => `.${extension}`).join(",")} onChange={(event) => { if (event.target.files) void queueFiles(Array.from(event.target.files)); event.target.value = ""; }} /></>}
+        <input ref={input} className={styles.hidden} type="file" multiple accept={Object.keys(mimeTypes).map((extension) => `.${extension}`).join(",")} onChange={(event) => { if (event.target.files) void queueFiles(Array.from(event.target.files)); event.target.value = ""; }} />
+        <input ref={directoryInput} className={styles.hidden} type="file" multiple {...{ webkitdirectory: "" }} onChange={(event) => { if (event.target.files) void queueFiles(Array.from(event.target.files)); event.target.value = ""; }} /></>}
       <form className={styles.search} onSubmit={(event) => { event.preventDefault(); setSearch(query.trim()); }}><Search size={16} /><input aria-label="搜索教材" placeholder="搜索教材" value={query} onChange={(event) => setQuery(event.target.value)} /><button type="submit" className={styles.searchButton}>搜索</button></form>
     </div>
     <nav className={styles.breadcrumbs} aria-label="教材目录"><button type="button" onClick={() => { setFolderId(null); setSearch(""); setQuery(""); }}>学校资料</button>{data?.breadcrumbs.map((folder) => <span key={folder.id}><ChevronRight size={14} /><button type="button" onClick={() => { setFolderId(folder.id); setSearch(""); setQuery(""); }}>{folder.name}</button></span>)}</nav>
@@ -270,7 +287,7 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
         {data.materials.map((material) => <div className={styles.row} key={material.id}>
           <div className={styles.fileName}>{material.kind === "link" ? <Link size={22} /> : <FileText size={23} />}<span>{material.title}{material.status !== "ready" && <small>上传未完成</small>}</span></div><span className={styles.size}>{material.kind === "link" ? "链接" : sizeLabel(material.byteSize)}</span>
           <div className={styles.actions}>
-            <button type="button" disabled={material.status !== "ready" || !selectedClassroom || !!actionBusy} onClick={() => void actOnMaterial(material, true)}>课堂使用</button>
+            {data.canPresent && <button type="button" disabled={material.status !== "ready" || !selectedClassroom || !!actionBusy} onClick={() => void actOnMaterial(material, true)}>课堂使用</button>}
             {(material.kind === "link" || material.canDownload) && <button type="button" disabled={material.status !== "ready" || !!actionBusy} onClick={() => void actOnMaterial(material, false)}><Download size={14} />{material.kind === "link" ? "打开链接" : "下载"}</button>}
             {canManage && <button type="button" onClick={() => setGrantTarget({ targetType: "material", targetId: material.id, title: material.title })}><Users size={15} />授权</button>}
           </div>

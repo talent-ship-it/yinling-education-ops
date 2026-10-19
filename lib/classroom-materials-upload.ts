@@ -11,6 +11,46 @@ export type MaterialUploadResumeRecord = { fingerprint: string; requestKey: stri
 
 const CHUNK_BYTES = 6 * 1024 * 1024;
 
+export function createMaterialUploadFolderResolver(parentId: string | null, createFolder: (parentId: string | null, name: string) => Promise<string>, parentDepth = 0) {
+  const folders = new Map<string, Promise<string>>();
+  return async (file: Pick<File, "name" | "webkitRelativePath">) => {
+    if (!file.webkitRelativePath) return parentId;
+    const components = file.webkitRelativePath.split("/");
+    const fileName = components.pop();
+    const parts = components.map((name) => name.normalize("NFC").trim());
+    if (fileName !== file.name || !parts.length || parts.length + parentDepth > 32
+      || parts.some((name) => !name.trim() || name.length > 160 || name === "." || name === ".." || /[\u0000-\u001f\u007f\\]/u.test(name))) {
+      throw new Error("教材文件夹路径无效或超过 32 层");
+    }
+    let target = parentId;
+    let path = "";
+    for (const name of parts) {
+      path += `/${name}`;
+      const key = path;
+      let folder = folders.get(key);
+      if (!folder) {
+        folder = createFolder(target, name).then((id) => {
+          if (!id) throw new Error("未能创建教材文件夹");
+          return id;
+        }).catch((error) => { folders.delete(key); throw error; });
+        folders.set(key, folder);
+      }
+      target = await folder;
+    }
+    return target;
+  };
+}
+
+export function materialDropFiles(transfer: Pick<DataTransfer, "items" | "files">) {
+  for (const item of Array.from(transfer.items)) {
+    if (item.kind !== "file") continue;
+    const entry = item.webkitGetAsEntry?.();
+    if (!entry) throw new Error("无法读取拖放内容，请使用上传按钮");
+    if (entry.isDirectory) throw new Error("请使用“上传文件夹”选择整个文件夹");
+  }
+  return Array.from(transfer.files);
+}
+
 function uploadError(status: number) {
   if (status === 401 || status === 403) return new Error("上传授权已过期，请重试");
   if (status === 409) return new Error("上传进度冲突，请重试以恢复进度");

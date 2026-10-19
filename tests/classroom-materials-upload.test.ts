@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MaterialUploadResumeStore, materialUploadFingerprint, ResumableMaterialUpload, type MaterialUploadResumeRecord } from "../lib/classroom-materials-upload.ts";
+import { createMaterialUploadFolderResolver, materialDropFiles, MaterialUploadResumeStore, materialUploadFingerprint, ResumableMaterialUpload, type MaterialUploadResumeRecord } from "../lib/classroom-materials-upload.ts";
 
 const chunk = 6 * 1024 * 1024;
 const session = { endpoint: "https://materials.storage.supabase.co/storage/v1/upload/resumable/sign", bucket: "classroom-materials", objectPath: "synthetic/教材.pdf", token: "synthetic-upload-signature", headers: { apikey: "synthetic-public-key" } };
@@ -8,6 +8,53 @@ const location = `${session.endpoint}/synthetic-upload`;
 const created = () => new Response(null, { status: 201, headers: { Location: location } });
 const uploaded = (offset: number) => new Response(null, { status: 204, headers: { "Upload-Offset": String(offset) } });
 const metadata = (contentType = "application/octet-stream", objectPath = session.objectPath) => Object.entries({ bucketName: session.bucket, objectName: objectPath, contentType }).map(([key, value]) => `${key} ${Buffer.from(value).toString("base64")}`).join(",");
+
+test("folder uploads preserve nested paths and reuse shared directories beneath the selected parent", async () => {
+  const calls: Array<{ parentId: string | null; name: string }> = [];
+  const resolve = createMaterialUploadFolderResolver("selected", async (parentId, name) => {
+    calls.push({ parentId, name });
+    return `${parentId}/${name}`;
+  });
+  assert.equal(await resolve({ name: "loose.pdf", webkitRelativePath: "" }), "selected");
+  const targets = await Promise.all([
+    resolve({ name: "one.pdf", webkitRelativePath: "教材/一级/one.pdf" }),
+    resolve({ name: "two.pdf", webkitRelativePath: "教材/一级/two.pdf" }),
+    resolve({ name: "three.pdf", webkitRelativePath: "教材/二级/three.pdf" }),
+  ]);
+  assert.deepEqual(targets, ["selected/教材/一级", "selected/教材/一级", "selected/教材/二级"]);
+  assert.deepEqual(calls, [{ parentId: "selected", name: "教材" }, { parentId: "selected/教材", name: "一级" }, { parentId: "selected/教材", name: "二级" }]);
+});
+
+test("invalid directory paths and excessive nesting never create or flatten folders", async () => {
+  let calls = 0;
+  const create = async () => { calls += 1; return "synthetic"; };
+  const resolve = createMaterialUploadFolderResolver(null, create);
+  for (const path of ["教材/../one.pdf", "/one.pdf", "教材//one.pdf", "教材/ . /one.pdf", "教材\\一级/one.pdf", "教材/wrong.pdf", `${"a/".repeat(33)}one.pdf`]) {
+    await assert.rejects(resolve({ name: "one.pdf", webkitRelativePath: path }), /路径无效/);
+  }
+  const deep = createMaterialUploadFolderResolver("selected", create, 32);
+  await assert.rejects(deep({ name: "one.pdf", webkitRelativePath: "教材/one.pdf" }), /路径无效/);
+  assert.equal(calls, 0);
+});
+
+test("failed folder creation stays visible and a later file can retry that path", async () => {
+  let fail = true;
+  const resolve = createMaterialUploadFolderResolver(null, async () => {
+    if (fail) { fail = false; throw new Error("synthetic directory permission denied"); }
+    return "created-folder";
+  });
+  const file = { name: "one.pdf", webkitRelativePath: "教材/one.pdf" };
+  await assert.rejects(resolve(file), /directory permission denied/);
+  assert.equal(await resolve(file), "created-folder");
+});
+
+test("dragged directories are explicitly rejected while ordinary files remain available", () => {
+  const file = new File(["synthetic"], "one.pdf");
+  const transfer = (entry: { isDirectory: boolean } | null) => ({ items: [{ kind: "file", webkitGetAsEntry: () => entry }], files: [file] }) as unknown as DataTransfer;
+  assert.deepEqual(materialDropFiles(transfer({ isDirectory: false })), [file]);
+  assert.throws(() => materialDropFiles(transfer({ isDirectory: true })), /上传文件夹/);
+  assert.throws(() => materialDropFiles(transfer(null)), /使用上传按钮/);
+});
 
 test("resumable material upload uses signed direct chunks and UTF-8 metadata", async (t) => {
   const file = new Blob([new Uint8Array(chunk + 17)], { type: "application/pdf" });
