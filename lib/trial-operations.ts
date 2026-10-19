@@ -879,10 +879,10 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
   const compressBeforeTrialTasks = leadDays !== null && leadDays >= 0 && leadDays <= 1;
   const n3Deadline = localDayDeadline(start, -3, 18, MELBOURNE_TIME_ZONE);
   const n2Deadline = shortNoticeFinalize
-    ? localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE)
+    ? new Date(Math.min(start.valueOf(), localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE).valueOf()))
     : localDayDeadline(start, -2, 18, MELBOURNE_TIME_ZONE);
   const n1Deadline = compressBeforeTrialTasks
-    ? localDayDeadline(requestSentAt!, 0, 18, MELBOURNE_TIME_ZONE)
+    ? n2Deadline
     : localDayDeadline(start, -1, 18, MELBOURNE_TIME_ZONE);
   const anchor = `JWB:${input.link.eventId}`;
   const operations = [input.owner, DEFAULT_TEACHING_CONTROL_WATCHER];

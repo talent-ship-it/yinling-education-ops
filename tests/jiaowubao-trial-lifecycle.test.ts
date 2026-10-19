@@ -115,3 +115,30 @@ test("revocation commands preserve exact retry intent and reject mixed ownership
   assert.equal(parseJiaowubaoTrialSyncCommand({ ...command,
     revocations: [reference, { ...reference, lpItemId: "LP-2" }] }).revocations?.length, 2);
 });
+
+test("same-day rescheduling rebases open deadlines while completed work and paper-receive clocks survive cancellation", () => {
+  const early = { ...event, startsAt: "2030-09-03T02:00:00.000Z", endsAt: "2030-09-03T03:00:00.000Z" };
+  const intake = { ...lp, requestedAt: "2030-09-03T00:00:00.000Z",
+    fields: { ...lp.fields, trialPaymentMethod: "付费试听（未付费）" } };
+  const initial = project({ ...common, rows: rows([intake]), rawEvents: [early], matchedAt: "2030-09-03T00:30:00.000Z" });
+  assert.equal(initial.nextTasks.length, 4);
+  assert.ok(initial.nextTasks.every((candidate) => candidate.dueAt === early.startsAt));
+  const materials = initial.nextTasks.find((candidate) => candidate.ruleKey?.endsWith("lp-materials-n2"))!;
+  const done = { ...materials, status: "done", tone: "green", result: "Operator confirmed", closedAt: "2030-09-03T00:35:00.000Z" };
+  const paper = { ...task, id: "PAPER-RECEIVE", ruleKey: "trial.manual-request.paper-receive", anchorBookingId: "LP-1",
+    dueAt: "2030-09-04T00:20:00.000Z", due: "2030-09-04T00:20:00.000Z" };
+  const current = initial.nextTasks.map((candidate) => candidate.id === done.id ? done
+    : candidate.ruleKey?.endsWith("prep-n1") ? { ...candidate, completionNote: "Awaiting teacher", completionNoteUpdatedAt: "2030-09-03T00:35:00.000Z" }
+      : candidate).concat(paper);
+  const moved = { ...early, startsAt: "2030-09-03T01:00:00.000Z", endsAt: "2030-09-03T02:00:00.000Z" };
+  const rescheduled = project({ ...common, rows: rows([...initial.nextLpItems], current), rawEvents: [moved], matchedAt: "2030-09-03T00:40:00.000Z" });
+  assert.deepEqual(rescheduled.nextTasks.find((candidate) => candidate.id === done.id), done);
+  const open = rescheduled.nextTasks.filter((candidate) => candidate.ruleKey?.startsWith("trial.jiaowubao.") && candidate.status !== "done");
+  assert.equal(open.length, 3);
+  assert.ok(open.every((candidate) => candidate.dueAt === moved.startsAt));
+  assert.equal(open.find((candidate) => candidate.ruleKey?.endsWith("prep-n1"))?.completionNote, "Awaiting teacher");
+  assert.deepEqual(rescheduled.nextTasks.find((candidate) => candidate.id === paper.id), paper);
+  const cancelled = project({ ...common, rows: rows([...rescheduled.nextLpItems], [...rescheduled.nextTasks]), rawEvents: [], matchedAt: "2030-09-03T00:50:00.000Z" });
+  assert.equal(cancelled.nextLpItems[0]!.trialSchedule, undefined);
+  assert.deepEqual(new Set(cancelled.nextTasks), new Set([done, paper]));
+});
