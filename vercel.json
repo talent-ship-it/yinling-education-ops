@@ -1,4 +1,15 @@
 {
   "crons": [],
-  "buildCommand": "npm run lint && npm test"
+  "buildCommand": "npm run lint && npm test",
+  "functions": {
+    "app/api/ava-calendar/route.ts": {
+      "regions": ["bom1"]
+    },
+    "app/api/ava-calendar/range/route.ts": {
+      "regions": ["bom1"]
+    },
+    "app/api/teacher-availability/self/route.ts": {
+      "regions": ["bom1"]
+    }
+  }
 }
