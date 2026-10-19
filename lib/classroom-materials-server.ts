@@ -4,11 +4,12 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import { BigBlueButtonError, meetingIdForOccurrence, meetingStatus } from "@/lib/bigbluebutton";
-import { ClassroomMaterialsError, materialRecord } from "@/lib/classroom-materials";
+import { ClassroomMaterialsError, materialId, materialRecord } from "@/lib/classroom-materials";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession, type DemoSessionIdentity } from "@/lib/demo-auth";
 import { materialsMeetingBooking, materialsMeetingInput, materialsMeetingOccurrence, requireMaterialsMeetingOpen } from "@/lib/classroom-materials-meeting";
 import { buildOpsAccessContext } from "@/lib/ops-access";
 import { getOpsState, readClassroomEndRequests } from "@/lib/ops-store";
+import { materialRpc } from "@/lib/classroom-materials-store";
 
 export function materialsResponse(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
@@ -62,4 +63,12 @@ export async function authorizedMaterialsMeeting(session: DemoSessionIdentity, b
   const meetingId = meetingIdForOccurrence(input.occurrenceId);
   if (!(await meetingStatus(meetingId)).running) throw new ClassroomMaterialsError("请先进入正在进行的课堂。", "materials_classroom_not_running", 409);
   return meetingId;
+}
+
+
+export async function materialsTarget(params: Promise<{ id: string }>, permission: "complete" | "download") {
+  const session = await materialsSession();
+  const id = materialId((await params).id)!;
+  const material = materialRecord((await materialRpc(session.accountId, "authorize", { id, permission })).material);
+  return { accountId: session.accountId, id, material };
 }

@@ -3,6 +3,11 @@
     "tests/*.test.{ts,tsx,mjs}",
     "playwright.ava.config.ts",
     "playwright.self-service.config.ts",
-    "scripts/wecom-receiver/receiver.mjs"
+    "scripts/wecom-receiver/receiver.mjs",
+    "plugins/classroom-tools/src/index.tsx",
+    "plugins/classroom-tools/tests/*.test.ts"
+  ],
+  "ignorePatterns": [
+    "public/classroom-tools/InsiderClassroomTools.js"
   ]
 }

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev-fixed-port.mjs",
-    "build": "next build && node scripts/check-client-bundle-budget.mjs",
+    "build": "npm run build:classroom-tools && next build && node scripts/check-client-bundle-budget.mjs",
     "check:client-bundle": "node scripts/check-client-bundle-budget.mjs",
     "check:architecture": "node scripts/check-api-write-boundaries.mjs",
     "check:fallow": "node scripts/run-fallow-gate.mjs",
@@ -17,7 +17,8 @@
     "lint": "eslint . --ignore-pattern .next",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:sql-runtime": "node scripts/run-sql-runtime-fixtures.mjs",
-    "typecheck:scripts": "tsc --project tsconfig.scripts.json"
+    "typecheck:scripts": "tsc --project tsconfig.scripts.json",
+    "build:classroom-tools": "npm --prefix plugins/classroom-tools ci --ignore-scripts --no-audit --no-fund && npm --prefix plugins/classroom-tools run typecheck && npm --prefix plugins/classroom-tools test && npm --prefix plugins/classroom-tools run build"
   },
   "dependencies": {
     "@fullcalendar/core": "6.1.21",

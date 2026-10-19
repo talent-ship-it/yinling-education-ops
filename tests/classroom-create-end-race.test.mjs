@@ -6,6 +6,7 @@ import test from "node:test";
 import ts from "typescript";
 import * as analytics from "../lib/bbb-analytics.ts";
 import * as duration from "../lib/classroom-duration.ts";
+import * as tools from "../lib/classroom-provider-tools.ts";
 
 const require = createRequire(import.meta.url);
 const source = ts.transpileModule(readFileSync(new URL("../lib/bigbluebutton.ts", import.meta.url), "utf8"), {
@@ -33,7 +34,7 @@ function provider({ admitted = true, released = true, failCreate = false } = {})
       if (id === "server-only") return {};
       if (id === "@/lib/ops-store") return store;
       if (id === "@/lib/bbb-analytics") return analytics;
-      if (id === "./classroom-duration") return duration;
+      if (id.startsWith("./classroom-")) return { "./classroom-duration": duration, "./classroom-provider-tools": tools }[id];
       if (id.startsWith("node:") || id === "fast-xml-parser") return require(id);
       throw new Error(`Unexpected dependency: ${id}`);
     },

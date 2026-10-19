@@ -1,3 +1,4 @@
+import { loadClassroomAttendance } from "@/lib/classroom-attendance";
 import { signClassroomEntry, classroomEntryOpen } from "@/lib/classroom-entry";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -7,13 +8,14 @@ import {
   createJoinUrl,
   createMeeting,
   getRecordings,
+  insertMeetingWhiteboard,
   meetingIdForOccurrence,
   meetingStatus,
 } from "@/lib/bigbluebutton";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsEntity, filterOpsStateRows } from "@/lib/ops-access";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
-import { beginClassroomEnd, getOpsState, readClassroomEndRequests } from "@/lib/ops-store";
+import { beginClassroomEnd, getLessonAttendanceEvidence, getOpsState, readClassroomEndRequests } from "@/lib/ops-store";
 import { reconcileStoredClassroomEnd } from "@/lib/classroom-end-service";
 import { expandLessonOccurrences, type LegacyLessonSeries, type LessonOccurrenceOverride } from "@/lib/lesson-occurrences";
 import { cleanTimezone } from "@/lib/timezone";
@@ -123,6 +125,7 @@ async function authorizedBooking(bookingId: string, occurrenceId: string, reques
     course: booking.course,
     timezone: cleanTimezone(booking.timezone),
     classroom: record(override?.classroom),
+    attendanceReference: typeof override?.attendanceReference === "string" ? override.attendanceReference : undefined,
     occurrenceId,
     occurrenceStatus: expanded.status,
   };
@@ -188,6 +191,10 @@ function bookingIsHistorical(booking: RecordValue) {
   return startsAt.getTime() + duration * 60 * 1000 < Date.now();
 }
 
+function attendanceStartsAt(booking: Parameters<typeof bookingStartsAt>[0]) {
+  return bookingStartsAt(booking)?.getTime() ?? NaN;
+}
+
 export async function GET(request: NextRequest) {
   const bookingId = bookingIdFrom(request.nextUrl.searchParams.get("bookingId"));
   const occurrenceId = occurrenceIdFrom(request.nextUrl.searchParams.get("occurrenceId"));
@@ -201,7 +208,12 @@ export async function GET(request: NextRequest) {
     if (context.forbidden) return noStore({ error: "当前账号无权访问这节课。" }, 403);
     const meetingId = meetingIdForOccurrence(occurrenceId);
     const [status, recordings, ending] = await Promise.all([meetingStatus(meetingId), getRecordings(meetingId), readClassroomEndRequests(occurrenceId)]);
-    return noStore({ status, recordings, closing: ending[0]?.status === "closing", ended: ending[0]?.status === "ended" });
+    const { attendance, attendanceUnavailable } = await loadClassroomAttendance(context.booking.attendanceReference, occurrenceId, {
+      teacherId: String(context.booking.teacherId),
+      studentId: String(context.booking.studentId),
+      startsAt: attendanceStartsAt(context.booking),
+    }, getLessonAttendanceEvidence);
+    return noStore({ status, recordings, attendance, attendanceUnavailable, closing: ending[0]?.status === "closing", ended: ending[0]?.status === "ended" });
   } catch (error) {
     return handleError(error);
   }
@@ -266,6 +278,15 @@ export async function POST(request: NextRequest) {
         role: "MODERATOR",
         url: createJoinUrl({ meetingId, fullName: teacherName, role: "MODERATOR", userId: teacherId }),
       });
+    }
+
+    if (body.action === "whiteboard") {
+      if (unavailable || historical || classroom.status === "ended" || (await readClassroomEndRequests(occurrenceId)).length) {
+        return noStore({ error: "这节课已经结束或当前不可用。" }, 409);
+      }
+      if (!(await meetingStatus(meetingId)).running) return noStore({ error: "请先进入在线教室。" }, 409);
+      await insertMeetingWhiteboard(meetingId);
+      return noStore({ accepted: true });
     }
 
     if (body.action === "student-link") {

@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       ],
+    }, {
+      source: "/classroom-tools/:path*",
+      headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
     }];
   },
   turbopack: {
