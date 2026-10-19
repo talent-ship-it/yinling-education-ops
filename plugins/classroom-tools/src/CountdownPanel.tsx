@@ -8,7 +8,7 @@ function countdownDigits(countdown: Countdown, digits: string, changed: boolean)
   if (!native || !native.active || native.stopwatch) return { configured: digits, shown: digits };
   const configured = changed ? digits : timerDigits(native.time);
   const showRemaining = native.running || !changed && (native.accumulated > 0 || native.elapsed);
-  return { configured, shown: showRemaining ? timerDigits(native.timePassed) : configured };
+  return { configured, shown: showRemaining ? timerDigits(native.elapsed ? 0 : native.timePassed) : configured };
 }
 
 function timerButtonsDisabled(countdown: Countdown, configured: string) {
