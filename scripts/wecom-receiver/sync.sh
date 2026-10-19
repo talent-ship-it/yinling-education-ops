@@ -13,4 +13,4 @@ if [ -f "$CONFIG" ]; then
 fi
 export WECOM_RECEIVER_DATA="$DATA"
 cd "$APP"
-exec /usr/bin/flock -n "$DATA/sync.lock" /usr/bin/node sync.mjs
+exec /usr/bin/flock -n "$DATA/sync.lock" /usr/bin/timeout --signal=TERM --kill-after=5s 45s /usr/bin/node sync.mjs
