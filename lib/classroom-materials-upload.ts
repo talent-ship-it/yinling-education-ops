@@ -90,24 +90,26 @@ export async function materialUploadFingerprint(file: File, folderId: string | n
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function isMatchingString(value: unknown, pattern: RegExp): value is string {
+  return typeof value === "string" && pattern.test(value);
+}
+
+function resumeUploadTarget(value: unknown): ResumeTarget | undefined {
+  if (!value || typeof value !== "object") return;
+  const { endpoint, bucket, objectPath, location } = value as Record<string, unknown>;
+  if (typeof endpoint !== "string" || typeof bucket !== "string" || typeof objectPath !== "string" || typeof location !== "string") return;
+  try { const url = validLocation(location, endpoint); if (!url.search) return { endpoint, bucket, objectPath, location: url.href }; } catch { }
+}
+
 function resumeRecord(value: unknown): MaterialUploadResumeRecord | null {
   if (!value || typeof value !== "object") return null;
   const entry = value as Record<string, unknown>;
   const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-  if (typeof entry.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(entry.fingerprint)
-    || typeof entry.requestKey !== "string" || !uuid.test(entry.requestKey)
+  if (!isMatchingString(entry.fingerprint, /^[a-f0-9]{64}$/) || !isMatchingString(entry.requestKey, uuid)
     || typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()
-    || (entry.materialId !== undefined && (typeof entry.materialId !== "string" || !uuid.test(entry.materialId)))) return null;
-  let upload: ResumeTarget | undefined;
-  if (entry.upload && typeof entry.upload === "object") {
-    const target = entry.upload as Record<string, unknown>;
-    const { endpoint, bucket, objectPath, location } = target;
-    if (typeof endpoint === "string" && typeof bucket === "string" && typeof objectPath === "string" && typeof location === "string") {
-      try { const url = validLocation(location, endpoint); if (!url.search) upload = { endpoint, bucket, objectPath, location: url.href }; } catch { }
-    }
-  }
+    || (entry.materialId !== undefined && !isMatchingString(entry.materialId, uuid))) return null;
   return { fingerprint: entry.fingerprint, requestKey: entry.requestKey, materialId: entry.materialId as string | undefined,
-    expiresAt: entry.expiresAt, uploaded: entry.uploaded === true, upload };
+    expiresAt: entry.expiresAt, uploaded: entry.uploaded === true, upload: resumeUploadTarget(entry.upload) };
 }
 
 export class MaterialUploadResumeStore {
@@ -198,53 +200,53 @@ export class ResumableMaterialUpload {
     return { endpoint, bucket, objectPath, location: url.href };
   }
 
+  private async storedOffset(request: typeof fetch) {
+    if (!this.location) return 0;
+    const response = await request(this.location, { method: "HEAD" });
+    if (response.status === 404 || response.status === 410) { this.location = null; return 0; }
+    if (!response.ok) throw uploadError(response.status);
+    const offset = readOffset(response, this.file.size);
+    if (response.headers.get("Upload-Length") !== String(this.file.size)) throw new Error("上传文件大小不匹配");
+    verifyMetadata(response, this.session, this.contentType);
+    return offset;
+  }
+
+  private async createUpload(request: typeof fetch) {
+    const { endpoint, bucket, objectPath } = this.session;
+    const metadata = { bucketName: bucket, objectName: objectPath, contentType: this.contentType, cacheControl: "0" };
+    const response = await request(endpoint, { method: "POST", headers: {
+      "Upload-Length": String(this.file.size),
+      "Upload-Metadata": Object.entries(metadata).map(([key, value]) => `${key} ${metadataValue(value)}`).join(","),
+    } });
+    if (response.status !== 201) throw uploadError(response.status);
+    const location = response.headers.get("Location");
+    if (!location) throw new Error("存储服务未返回上传地址");
+    this.location = validLocation(location, endpoint).href;
+    return this.location;
+  }
+
+  private async patchChunk(location: string, offset: number, request: typeof fetch) {
+    const end = Math.min(offset + CHUNK_BYTES, this.file.size);
+    const response = await request(location, { method: "PATCH", headers: {
+      "Content-Type": "application/offset+octet-stream", "Upload-Offset": String(offset),
+    }, body: this.file.slice(offset, end) });
+    if (response.status !== 204) throw uploadError(response.status);
+    const nextOffset = readOffset(response, this.file.size);
+    if (nextOffset !== end) throw new Error("存储服务未确认完整分片，请重试");
+    return nextOffset;
+  }
+
   async run(signal: AbortSignal, onProgress: (bytes: number) => void) {
-    const { endpoint, bucket, objectPath, token } = this.session;
-    const headers = { ...this.session.headers, "Tus-Resumable": "1.0.0", "x-signature": token, "x-upsert": "false" };
-    const request = (url: string, init: RequestInit) => fetch(url, {
-      ...init, signal, credentials: "omit", redirect: "error", cache: "no-store",
-      headers: { ...headers, ...init.headers },
+    const headers = { ...this.session.headers, "Tus-Resumable": "1.0.0", "x-signature": this.session.token, "x-upsert": "false" };
+    const request: typeof fetch = (url, init = {}) => fetch(url, {
+      ...init, signal, credentials: "omit", redirect: "error", cache: "no-store", headers: { ...headers, ...init.headers },
     });
-    let offset = 0;
-    if (this.location) {
-      const response = await request(this.location, { method: "HEAD" });
-      if (response.status === 404 || response.status === 410) this.location = null;
-      else {
-        if (!response.ok) throw uploadError(response.status);
-        offset = readOffset(response, this.file.size);
-        const length = response.headers.get("Upload-Length");
-        if (length !== String(this.file.size)) throw new Error("上传文件大小不匹配");
-        verifyMetadata(response, this.session, this.contentType);
-      }
-    }
-    if (!this.location) {
-      const metadata = { bucketName: bucket, objectName: objectPath, contentType: this.contentType, cacheControl: "0" };
-      const response = await request(endpoint, {
-        method: "POST",
-        headers: {
-          "Upload-Length": String(this.file.size),
-          "Upload-Metadata": Object.entries(metadata).map(([key, value]) => `${key} ${metadataValue(value)}`).join(","),
-        },
-      });
-      if (response.status !== 201) throw uploadError(response.status);
-      const location = response.headers.get("Location");
-      if (!location) throw new Error("存储服务未返回上传地址");
-      const destination = validLocation(location, endpoint);
-      this.location = destination.href;
-    }
+    let offset = await this.storedOffset(request);
+    const location = this.location ?? await this.createUpload(request);
     onProgress(offset);
     while (offset < this.file.size) {
       signal.throwIfAborted();
-      const end = Math.min(offset + CHUNK_BYTES, this.file.size);
-      const response = await request(this.location, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/offset+octet-stream", "Upload-Offset": String(offset) },
-        body: this.file.slice(offset, end),
-      });
-      if (response.status !== 204) throw uploadError(response.status);
-      const nextOffset = readOffset(response, this.file.size);
-      if (nextOffset !== end) throw new Error("存储服务未确认完整分片，请重试");
-      offset = nextOffset;
+      offset = await this.patchChunk(location, offset, request);
       onProgress(offset);
     }
   }
