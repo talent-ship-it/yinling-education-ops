@@ -107,10 +107,11 @@
   .navigation button:nth-child(3) { grid-column: 3; grid-row: 2; }
   .controls { justify-content: flex-start; }
   .rangeTitle { grid-column: 1; grid-row: 1; min-width: 0; font-size: 18px; }
-  .viewSwitcher { order: -1; width: 100%; }
-  .toolbar .viewSwitcher button { flex: 1; }
+  .viewSwitcher { order: -1; flex: 1 1 176px; padding: 0; border: 0; gap: 0; }
+  .controls > button[aria-pressed] { order: -1; width: 88px; padding-inline: 4px; font-size: 12px; }
+  .toolbar .viewSwitcher button { flex: 1; padding-inline: 4px; white-space: nowrap; }
   .navigation input { grid-column: 1 / span 2; grid-row: 2; width: 100%; min-width: 0; padding-inline: 8px; }
   .toolbar input, .toolbar select { font-size: 16px; height: 44px; }
-  .controls select:first-child, .controls select:nth-child(2) { flex: 1 1 120px; min-width: 0; width: auto; max-width: none; }
+  .controls select:first-child, .controls select:nth-child(2) { flex: 1 1 100px; min-width: 0; width: auto; max-width: none; }
   .legend { padding: 2px 10px 10px; gap: 8px 12px; font-size: 11px; }
 }

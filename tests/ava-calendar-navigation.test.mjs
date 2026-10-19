@@ -157,3 +157,45 @@ test("month popovers stay inside the visible calendar and viewport with an inter
     assert.ok(body.offsetHeight < 900);
   }
 });
+
+
+test("manual DOM scroll is captured before a reused calendar changes timezone or date", async () => {
+  const { readCalendarScroll, restoreCalendarScroll } = await import("../app/ava-calendar/live/calendar-columns.ts");
+  const { calendarColumnScrollLeft } = await import("../app/ava-calendar/live/calendar-presentation.ts");
+  const viewport = { scrollLeft: 0 };
+  const scroller = { scrollTop: 0 };
+  const host = { current: { parentElement: viewport, querySelectorAll: () => [{ closest: () => scroller }] } };
+  const refs = [], commits = [];
+  let cursor = 0, effectCursor = 0;
+  const { useCalendarPosition: positionHook } = shipping(["useCalendarPosition"], {
+    useRef(value) { return refs[cursor++] ??= { current: value }; },
+    useEffect(callback, dependencies) {
+      const i = effectCursor++;
+      const saved = commits[i];
+      if (!saved || dependencies.some((value, index) => value !== saved.dependencies[index])) {
+        saved?.cleanup?.();
+        commits[i] = { dependencies, cleanup: callback() };
+      }
+    },
+    readCalendarScroll, restoreCalendarScroll, calendarColumnScrollLeft,
+  });
+  const render = (key, width = 0, order = '["T1"]') => { cursor = 0; effectCursor = 0; return positionHook(host, key, order, width); };
+  const position = render("Melbourne-week");
+  viewport.scrollLeft = 280;
+  scroller.scrollTop = 300;
+  assert.equal(position.current.left, 0);
+  render("Melbourne-week");
+  assert.equal(viewport.scrollLeft, 280);
+  render("UTC-week");
+  assert.equal(viewport.scrollLeft, 280);
+  assert.equal(position.current.left, 280);
+  assert.equal(position.current.top, -1);
+  viewport.scrollLeft = 340;
+  scroller.scrollTop = 700;
+  render("UTC-next-week");
+  assert.equal(viewport.scrollLeft, 340);
+  assert.equal(position.current.top, -1);
+  render("next-day-columns", 340, '["T1","T2"]');
+  assert.equal(viewport.scrollLeft, 0);
+  for (const effect of commits) effect.cleanup?.();
+});

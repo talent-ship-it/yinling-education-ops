@@ -3,12 +3,16 @@ import { changeTimerDigit, secondsFromDigits, timerDigits } from "./timer";
 import type { Countdown } from "./useCountdown";
 import { ToolDialog } from "./ToolDialog";
 
+function remainingTimerDigits(native: NonNullable<Countdown["native"]>) {
+  return timerDigits(native.elapsed ? 0 : native.timePassed);
+}
+
 function countdownDigits(countdown: Countdown, digits: string, changed: boolean) {
   const { native } = countdown;
   if (!native || !native.active || native.stopwatch) return { configured: digits, shown: digits };
   const configured = changed ? digits : timerDigits(native.time);
   const showRemaining = native.running || !changed && (native.accumulated > 0 || native.elapsed);
-  return { configured, shown: showRemaining ? timerDigits(native.timePassed) : configured };
+  return { configured, shown: showRemaining ? remainingTimerDigits(native) : configured };
 }
 
 function timerButtonsDisabled(countdown: Countdown, configured: string) {

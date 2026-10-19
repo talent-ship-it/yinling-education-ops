@@ -428,7 +428,9 @@ function useCalendarPosition(host: RefObject<HTMLDivElement | null>, key: string
     if (prior.current?.key !== key) scroll.current.top = -1;
     scroll.current.left = calendarColumnScrollLeft(prior.current, next, scroll.current.left);
     prior.current = next;
-    if (host.current) restoreCalendarScroll(host.current, scroll.current);
+    const element = host.current;
+    if (element) restoreCalendarScroll(element, scroll.current);
+    return () => { if (element) scroll.current = readCalendarScroll(element, scroll.current); };
   }, [host, key, order, width]);
   return scroll;
 }
