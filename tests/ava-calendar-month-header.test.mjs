@@ -29,6 +29,7 @@ test("live Calendar uses weekday-only month headers without changing dated time-
   assert.equal(calendar.host, host);
   assert.equal(calendar.options.datesSet, datesSet);
   assert.deepEqual(options.views.dayGridMonth?.dayHeaderFormat, { weekday: "short" });
+  assert.equal(options.views.dayGridMonth?.dayMaxEvents, 3);
   assert.deepEqual(options.dayHeaderFormat, { month: "2-digit", day: "2-digit", weekday: "short" });
   assert.deepEqual(options.views.timeGridThreeDay, { type: "timeGrid", duration: { days: 3 } });
   assert.equal(options.firstDay, 1);

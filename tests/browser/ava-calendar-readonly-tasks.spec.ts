@@ -166,7 +166,7 @@ test("AVA remote polling and display controls do not save shared tasks", async (
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => result.reads.slice(before).some((path) => path.includes("entities="))).toBe(true);
   await flush(page);
-  await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
+  await page.locator('button[data-view="timeGridDay"]').click();
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("Asia/Shanghai");
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await flush(page);

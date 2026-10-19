@@ -55,10 +55,10 @@ async function setup(page: Page) {
   await expect(page.locator(".fc").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T1");
-  await expect(page.getByRole("combobox", { name: "日历视图", exact: true })).toBeEnabled();
+  await expect(page.getByRole("group", { name: "日历视图", exact: true }).getByRole("button", { name: "周", exact: true })).toBeEnabled();
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("Australia/Melbourne");
   await page.getByLabel("日期", { exact: true }).fill("2026-10-12");
-  await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("dayGridMonth");
+  await page.locator('button[data-view="dayGridMonth"]').click();
   await complete(page);
   return { requests, replies, external, actual, setSuffix: (value: string) => { suffix = value; }, revoke: () => { revoked = true; } };
 }
@@ -98,7 +98,7 @@ test("actual old-reader month keeps all courses, occupancy and instants through 
     await page.screenshot({ path: info.outputPath(`month-${zone.replace("/", "-")}.png`), fullPage: true });
   }
   for (const [view, selector] of [["timeGridDay", ".fc-timeGridDay-view"], ["timeGridThreeDay", ".fc-timeGridThreeDay-view"], ["timeGridWeek", ".fc-timeGridWeek-view"], ["dayGridMonth", ".fc-dayGridMonth-view"]]) {
-    await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption(view!);
+    await page.locator(`button[data-view="${view!}"]`).click();
     await expect(page.locator(selector!)).toHaveCount(1);
     await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
     await expect(page.getByRole("combobox", { name: "老师", exact: true })).toHaveValue("T1");

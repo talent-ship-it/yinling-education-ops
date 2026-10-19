@@ -52,6 +52,10 @@ function useLiveData(window: AvaCalendarLiveWindow | null, onAccessLost: () => v
     busy.current = true;
     setRefresh((value) => value + 1);
   }, []);
+  const invalidateCalendar = useCallback(() => {
+    busy.current = true;
+    setRefresh((value) => value + 1);
+  }, []);
   useEffect(() => {
     if (!window) return;
     const abort = new AbortController();
@@ -82,7 +86,7 @@ function useLiveData(window: AvaCalendarLiveWindow | null, onAccessLost: () => v
     return () => { mounted = false; clearTimeout(timer); abort.abort(); };
   }, [window, refresh, onAccessLost]);
   useAvaCalendarVisibleRefresh(loading, refreshCalendar);
-  return { data, dataRange, loading, failure, refreshCalendar, sync };
+  return { data, dataRange, loading, failure, refreshCalendar, invalidateCalendar, sync };
 }
 
 function node(tag: string, className: string, text?: string) {
@@ -161,7 +165,7 @@ function mountLesson(info: EventMountArg, openLesson: (lesson: AvaCalendarEvent)
 }
 
 type CalendarEntry = { select: (start: Date, end: Date) => void; point: (date: Date, instance: Pick<Calendar, "select" | "unselect">) => void };
-function createCalendar(host: HTMLElement, initial: { zone: string; view: string; writable?: boolean; date?: Date }, datesSet: (info: DatesSetArg) => void, openLesson: (lesson: AvaCalendarEvent) => void, entry?: CalendarEntry) {
+function createCalendar(host: HTMLElement, initial: { zone: string; view: string; writable?: boolean; date?: string }, datesSet: (info: DatesSetArg) => void, openLesson: (lesson: AvaCalendarEvent) => void, entry?: CalendarEntry) {
   return new Calendar(host, {
     plugins: [timeGridPlugin, dayGridPlugin, interactionPlugin, luxonPlugin], locale: zhCnLocale,
     initialView: initial.view, initialDate: initial.date, timeZone: initial.zone, firstDay: 1, headerToolbar: false,
@@ -170,7 +174,7 @@ function createCalendar(host: HTMLElement, initial: { zone: string; view: string
     selectAllow: (range) => !range.allDay && range.end.valueOf() - range.start.valueOf() >= 900000 && range.end.valueOf() - range.start.valueOf() < 86400000,
     select(info) { if (!info.allDay && info.jsEvent) entry?.select(info.start, info.end); },
     dateClick(info) { if (!info.allDay && initial.writable) entry?.point(info.date, info.view.calendar); },
-    views: { timeGridThreeDay: { type: "timeGrid", duration: { days: 3 } }, dayGridMonth: { dayHeaderFormat: { weekday: "short" } } },
+    views: { timeGridThreeDay: { type: "timeGrid", duration: { days: 3 } }, dayGridMonth: { dayHeaderFormat: { weekday: "short" }, dayMaxEvents: 3 } },
     slotDuration: "00:30:00", slotMinTime: "00:00:00", slotMaxTime: "24:00:00", scrollTime: "09:00:00", scrollTimeReset: false,
     nowIndicator: true, eventMinHeight: 0, eventShortHeight: 34,
     eventTimeFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
@@ -195,12 +199,16 @@ function TeacherFilter({ data, teacher, setTeacher }: { data: AvaCalendarLiveDat
   return <select aria-label="老师" value={teacher} onChange={(event) => setTeacher(event.target.value)}><option value="">全部老师</option>{teacher && !data?.teachers.some((item) => item.id === teacher) && <option value={teacher}>已选老师</option>}{data?.teachers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
 }
 
+function CalendarViewButtons({ view, setView }: { view: string; setView: (value: string) => void }) {
+  return <div className={styles.viewSwitcher} role="group" aria-label="日历视图">{[["timeGridDay", "日"], ["timeGridThreeDay", "3 天"], ["timeGridWeek", "周"], ["dayGridMonth", "月"]].map(([value, label]) => <button type="button" key={value} aria-pressed={view === value} data-view={value} onClick={() => setView(value)}>{label}</button>)}</div>;
+}
+
 type ControlsProps = { data: AvaCalendarLiveData | null; teacher: string; setTeacher: (value: string) => void; zone: string; setZone: (value: string) => void; view: string; setView: (value: string) => void; global: boolean; activeOnly: boolean; setActiveOnly: (value: boolean) => void; loading: boolean; refreshCalendar: () => void };
 function CalendarControls({ data, teacher, setTeacher, zone, setZone, view, setView, global, activeOnly, setActiveOnly, loading, refreshCalendar }: ControlsProps) {
   return <div className={styles.controls}>
     <TeacherFilter data={data} teacher={teacher} setTeacher={setTeacher} />
     <select aria-label="显示时区" value={zone} onChange={(event) => setZone(event.target.value)}>{[...new Set([zone, ...Object.keys(ZONES)])].map((value) => <option key={value} value={value}>{ZONES[value] || value}</option>)}</select>
-    <select aria-label="日历视图" value={global ? "timeGridDay" : view} disabled={global} onChange={(event) => setView(event.target.value)}><option value="timeGridDay">日</option><option value="timeGridThreeDay">3 天</option><option value="timeGridWeek">周</option><option value="dayGridMonth">月</option></select>
+    <CalendarViewButtons view={view} setView={setView} />
     <button type="button" disabled={loading} onClick={refreshCalendar}>刷新</button>
     {global && <button type="button" aria-pressed={activeOnly} onClick={() => setActiveOnly(!activeOnly)}>只看有课/AVA</button>}
   </div>;
@@ -278,14 +286,14 @@ function SyncStatus({ sync, zone, unavailable }: { sync: AvaCalendarSync | undef
   const attributes = warning ? { role: "alert", className: styles.syncWarning } : { role: "status", className: styles.status };
   return <p {...attributes}>{warning}最后成功同步：{syncTime(sync, zone)}</p>;
 }
-function globalCalendarView(data: AvaCalendarLiveData | null, teacher: string) { return !teacher && (data?.teachers.length ?? 0) > 1; }
-function firstTeacherId(data: AvaCalendarLiveData | null) { return data?.teachers[0]?.id ?? ""; }
+function globalCalendarView(data: AvaCalendarLiveData | null, teacher: string, view: string) { return !teacher && view === "timeGridDay" && (data?.teachers.length ?? 0) > 1; }
 function surfaceColumns(data: AvaCalendarLiveData | null, teacher: string, global: boolean, range: AvaCalendarLiveWindow | null, activeOnly: boolean, selfId = "") {
   if (global) {
     const active = calendarTeacherColumns(data, range, activeOnly, selfId);
     return JSON.stringify(active.length ? active : [{ id: "", name: "" }]);
   }
-  return JSON.stringify([{ id: teacher || firstTeacherId(data) || selfId, name: "" }]);
+  const scoped = teacher || (data?.teachers.length === 1 ? data.teachers[0]!.id : !data ? selfId : "");
+  return JSON.stringify([{ id: scoped, name: "" }]);
 }
 
 type PendingCalendarPoint = { start: number; instance: Pick<Calendar, "select" | "unselect"> } | null;
@@ -294,20 +302,17 @@ function completesCalendarPoint(first: PendingCalendarPoint, current: Pick<Calen
   const duration = date.valueOf() - first.start;
   return first.instance === current && duration >= 900000 && duration < 86400000;
 }
-function initialCalendarView() { return typeof window !== "undefined" && window.innerWidth < 700 ? "timeGridDay" : "timeGridWeek"; }
+function initialCalendarView() { return "timeGridDay"; }
 function nextCalendarRange(prior: AvaCalendarLiveWindow | null, next: AvaCalendarLiveWindow) { return prior && prior.start === next.start && prior.end === next.end ? prior : next; }
 
 type SurfaceProps = { data: AvaCalendarLiveData | null; loading: boolean; teacher: string; zone: string; view: string; range: AvaCalendarLiveWindow | null; activeOnly: boolean; selfId?: string; calendarsRef: CalendarRefs; datesSet: (info: DatesSetArg) => void; openLesson: (lesson: AvaCalendarEvent) => void; openDraft: (draft: AvailabilityDraft) => void; resetKey: number };
-type MountedCalendarOptions = Pick<SurfaceProps, "zone" | "view" | "selfId" | "calendarsRef" | "datesSet" | "openLesson" | "openDraft"> & { hostRef: RefObject<HTMLDivElement | null>; anchorRef: RefObject<Date | undefined>; pendingRef: RefObject<PendingCalendarPoint>; scrollRef: RefObject<{ top: number; left: number }>; columns: string; order: string; positionKey: string; first: number; end: number; totalColumns: number; columnWidth: number; global: boolean };
-function useMountedCalendars({ hostRef, anchorRef, pendingRef, scrollRef, columns, order, positionKey, first, end, totalColumns, columnWidth, global, zone, view, selfId, calendarsRef, datesSet, openLesson, openDraft }: MountedCalendarOptions) {
-  const priorPosition = useRef<CalendarColumnPosition | null>(null);
+type MountedCalendarOptions = Pick<SurfaceProps, "zone" | "view" | "selfId" | "calendarsRef" | "datesSet" | "openLesson" | "openDraft"> & { hostRef: RefObject<HTMLDivElement | null>; anchorRef: RefObject<string | undefined>; pendingRef: RefObject<PendingCalendarPoint>; scrollRef: RefObject<{ top: number; left: number }>; columns: string; first: number; end: number; totalColumns: number; columnWidth: number; global: boolean };
+function useMountedCalendars({ hostRef, anchorRef, pendingRef, scrollRef, columns, first, end, totalColumns, columnWidth, global, zone, view, selfId, calendarsRef, datesSet, openLesson, openDraft }: MountedCalendarOptions) {
+  const settings = useRef({ zone, view });
+  useEffect(() => { settings.current = { zone, view }; }, [zone, view]);
   useEffect(() => {
     const element = hostRef.current;
     if (!element) return;
-    const nextPosition = { key: positionKey, columns: JSON.parse(order) as string[], width: columnWidth };
-    if (priorPosition.current?.key !== positionKey) scrollRef.current.top = -1;
-    scrollRef.current.left = calendarColumnScrollLeft(priorPosition.current, nextPosition, scrollRef.current.left);
-    priorPosition.current = nextPosition;
     pendingRef.current = null; element.removeAttribute("data-first-point");
     const teachers: { id: string; name: string }[] = JSON.parse(columns);
     const instances: Calendar[] = [];
@@ -321,9 +326,9 @@ function useMountedCalendars({ hostRef, anchorRef, pendingRef, scrollRef, column
       const wrapper = node("div", styles.teacherColumn); wrapper.dataset.teacher = item.id; wrapper.dataset.writable = String(item.id === selfId);
       sizeTeacherColumn(wrapper, columnWidth, global);
       const grid = node("div", styles.calendar); wrapper.append(grid); element.append(wrapper);
-      const instance = createCalendar(grid, { zone, view: global ? "timeGridDay" : view, date: anchorRef.current, writable: item.id === selfId }, lifecycle.guard((info: DatesSetArg) => {
+      const instance = createCalendar(grid, { ...settings.current, date: anchorRef.current, writable: !!item.id && item.id === selfId }, lifecycle.guard((info: DatesSetArg) => {
         pendingRef.current = null; element.removeAttribute("data-first-point");
-        if (index === 0) { anchorRef.current = info.view.calendar.getDate(); datesSet(info); }
+        if (index === 0) { anchorRef.current = calendarAnchorDate(info); datesSet(info); }
       }), lifecycle.guard(openLesson), { select: lifecycle.guard(draw), point: lifecycle.guard((date: Date, current: Pick<Calendar, "select" | "unselect">) => {
         const first = pendingRef.current;
         instances.forEach((calendar) => calendar.unselect());
@@ -345,7 +350,17 @@ function useMountedCalendars({ hostRef, anchorRef, pendingRef, scrollRef, column
     const observer = new ResizeObserver(() => { element.dataset.scrollable = String(element.scrollWidth > element.parentElement!.clientWidth + 1); });
     observer.observe(element.parentElement!);
     return () => { lifecycle.dispose(); scrollRef.current = readCalendarScroll(element, scrollRef.current); observer.disconnect(); instances.forEach((instance) => instance.destroy()); calendarsRef.current = []; element.replaceChildren(); };
-  }, [hostRef, anchorRef, pendingRef, scrollRef, columns, order, positionKey, first, end, totalColumns, columnWidth, global, zone, view, selfId, calendarsRef, datesSet, openLesson, openDraft]);
+  }, [hostRef, anchorRef, pendingRef, scrollRef, columns, first, end, totalColumns, columnWidth, global, selfId, calendarsRef, datesSet, openLesson, openDraft]);
+  useEffect(() => { calendarsRef.current.forEach((instance) => updateCalendarDisplay(instance, zone, view, anchorRef.current)); }, [zone, view, columns, first, end, totalColumns, columnWidth, global, selfId, calendarsRef, anchorRef]);
+}
+
+function updateCalendarDisplay(instance: Calendar, zone: string, view: string, date: string | undefined) {
+  if (instance.getOption("timeZone") === zone && instance.view.type === view) return;
+  instance.batchRendering(() => {
+    instance.setOption("timeZone", zone);
+    if (instance.view.type !== view) instance.changeView(view, date);
+    else if (date) instance.gotoDate(date);
+  });
 }
 
 function revealInitialLesson(host: HTMLElement) {
@@ -363,23 +378,79 @@ function revealInitialLesson(host: HTMLElement) {
   if (delta > 0) window.scrollBy(0, delta + 8);
 }
 
+function calendarPopoverBounds(container: HTMLElement) {
+  const viewport = window.visualViewport ?? { offsetTop: 0, offsetLeft: 0, height: window.innerHeight, width: window.innerWidth };
+  const bounds = container.getBoundingClientRect();
+  return {
+    top: Math.max(bounds.top, viewport.offsetTop) + 8,
+    bottom: Math.min(bounds.bottom, viewport.offsetTop + viewport.height) - 8,
+    left: Math.max(bounds.left, viewport.offsetLeft) + 8,
+    right: Math.min(bounds.right, viewport.offsetLeft + viewport.width) - 8,
+  };
+}
+
+function fitCalendarPopover(host: HTMLElement) {
+  const popover = host.querySelector<HTMLElement>(".fc-more-popover");
+  const body = popover?.querySelector<HTMLElement>(".fc-popover-body");
+  const container = host.closest<HTMLElement>('[aria-label="日历滚动区域"]');
+  if (!popover || !body || !container || !popover.offsetParent) return;
+  const { top, bottom, left, right } = calendarPopoverBounds(container);
+  popover.style.maxWidth = `${Math.max(0, right - left)}px`;
+  body.style.maxHeight = `${Math.max(0, bottom - top - (popover.offsetHeight - body.offsetHeight))}px`;
+  const rect = popover.getBoundingClientRect();
+  const origin = popover.offsetParent.getBoundingClientRect();
+  popover.style.top = `${Math.max(top, Math.min(rect.top, bottom - rect.height)) - origin.top}px`;
+  popover.style.left = `${Math.max(left, Math.min(rect.left, right - rect.width)) - origin.left}px`;
+}
+
+function useCalendarPopover(host: RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const element = host.current;
+    if (!element) return;
+    let frame = 0;
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => fitCalendarPopover(element)); };
+    const observer = new MutationObserver(schedule);
+    observer.observe(element, { childList: true, subtree: true });
+    const targets = [window, window.visualViewport].filter((target) => target !== null);
+    targets.forEach((target) => { target.addEventListener("resize", schedule); target.addEventListener("scroll", schedule, true); });
+    return () => {
+      observer.disconnect(); cancelAnimationFrame(frame);
+      targets.forEach((target) => { target.removeEventListener("resize", schedule); target.removeEventListener("scroll", schedule, true); });
+    };
+  }, [host]);
+}
+
+function useCalendarPosition(host: RefObject<HTMLDivElement | null>, key: string, order: string, width: number) {
+  const scroll = useRef({ top: -1, left: 0 });
+  const prior = useRef<CalendarColumnPosition | null>(null);
+  useEffect(() => {
+    const next = { key, columns: JSON.parse(order) as string[], width };
+    if (prior.current?.key !== key) scroll.current.top = -1;
+    scroll.current.left = calendarColumnScrollLeft(prior.current, next, scroll.current.left);
+    prior.current = next;
+    if (host.current) restoreCalendarScroll(host.current, scroll.current);
+  }, [host, key, order, width]);
+  return scroll;
+}
+
 function CalendarSurface({ state, controls, resetKey }: { state: Pick<SurfaceProps, "data" | "loading" | "teacher" | "zone" | "view" | "selfId" | "range" | "activeOnly">; controls: Pick<SurfaceProps, "calendarsRef" | "datesSet" | "openLesson" | "openDraft">; resetKey: number }) {
   const { data, loading, teacher, zone, view, selfId, range, activeOnly } = state;
   const { calendarsRef, datesSet, openLesson, openDraft } = controls;
   const host = useRef<HTMLDivElement>(null);
-  const anchor = useRef<Date | undefined>(undefined);
+  useCalendarPopover(host);
+  const anchor = useRef<string | undefined>(undefined);
   const pending = useRef<{ start: number; instance: Pick<Calendar, "select" | "unselect"> } | null>(null);
-  const global = globalCalendarView(data, teacher);
+  const global = globalCalendarView(data, teacher, view);
   const allColumns: { id: string; name: string }[] = JSON.parse(surfaceColumns(data, teacher, global, range, activeOnly, selfId));
   const totalColumns = allColumns.length;
   const { first, end, columnWidth, totalWidth } = useCalendarColumnWindow(host, totalColumns);
   const layoutWidth = global ? columnWidth : 0;
   const columns = JSON.stringify(allColumns.slice(first, end));
   const order = JSON.stringify(allColumns.map(({ id }) => id));
-  const positionKey = JSON.stringify([range?.start, range?.end, zone, teacher, global ? "timeGridDay" : view]);
-  const scrollPosition = useRef({ top: -1, left: 0 });
+  const positionKey = JSON.stringify([range?.start, range?.end, zone, teacher, view]);
+  const scrollPositionRef = useCalendarPosition(host, positionKey, order, layoutWidth);
   const initialized = useRef("");
-  useMountedCalendars({ hostRef: host, anchorRef: anchor, pendingRef: pending, scrollRef: scrollPosition, columns, order, positionKey, first, end, totalColumns, columnWidth: layoutWidth, global, zone, view, selfId, calendarsRef, datesSet, openLesson, openDraft });
+  useMountedCalendars({ hostRef: host, anchorRef: anchor, pendingRef: pending, scrollRef: scrollPositionRef, columns, first, end, totalColumns, columnWidth: layoutWidth, global, zone, view, selfId, calendarsRef, datesSet, openLesson, openDraft });
   useEffect(() => {
     calendarsRef.current.forEach((instance, index) => {
       const scoped = (JSON.parse(columns) as { id: string }[])[index]!.id;
@@ -393,8 +464,8 @@ function CalendarSurface({ state, controls, resetKey }: { state: Pick<SurfacePro
     if (global) host.current!.parentElement!.scrollLeft = 0;
     calendarsRef.current.forEach((instance) => instance.scrollToTime(time));
     revealInitialLesson(host.current!);
-    scrollPosition.current = readCalendarScroll(host.current!, scrollPosition.current);
-  }, [data, loading, range, zone, teacher, positionKey, columns, layoutWidth, global, calendarsRef]);
+    scrollPositionRef.current = readCalendarScroll(host.current!, scrollPositionRef.current);
+  }, [data, loading, range, zone, teacher, positionKey, columns, layoutWidth, global, calendarsRef, scrollPositionRef]);
   useEffect(() => { pending.current = null; host.current?.removeAttribute("data-first-point"); calendarsRef.current.forEach((instance) => instance.unselect()); }, [resetKey, calendarsRef]);
   return <div ref={host} className={global ? styles.globalCalendar : styles.singleCalendar} style={global ? { width: totalWidth } : undefined} data-first-column={first} />;
 }
@@ -420,11 +491,12 @@ function useCalendarViewState() {
   const [zone, setZone] = useState(browserCalendarZone);
   const [view, setView] = useState(initialCalendarView);
   const [date, setDate] = useState("");
+  const [title, setTitle] = useState("");
   const [teacher, setTeacher] = useState("");
-  return { zone, setZone, view, setView, date, setDate, teacher, setTeacher };
+  return { zone, setZone, view, setView, date, setDate, title, setTitle, teacher, setTeacher };
 }
 function useLiveCalendarPage() {
-  const { zone, setZone, view, setView, date, setDate, teacher, setTeacher } = useCalendarViewState();
+  const { zone, setZone, view, setView, date, setDate, title, setTitle, teacher, setTeacher } = useCalendarViewState();
   const [range, setRange] = useState<AvaCalendarLiveWindow | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<AvailabilityDraft | null>(null);
@@ -435,29 +507,33 @@ function useLiveCalendarPage() {
   const self = useTeacherSelfAvailability(range?.start);
   const clearSelf = self.clear;
   const clearPrivateSelection = useCallback(() => { setTeacher(""); setSelectedId(""); setDraft(null); setManager(false); clearSelf(); }, [clearSelf, setTeacher]);
-  const { data, dataRange, loading, failure, refreshCalendar, sync } = useLiveData(range, clearPrivateSelection);
+  const { data, dataRange, loading, failure, refreshCalendar, invalidateCalendar, sync } = useLiveData(range, clearPrivateSelection);
   const selected = selectedLesson(data, loading, selectedId);
-  const global = globalCalendarView(data, teacher);
+  const global = globalCalendarView(data, teacher, view);
   const datesSet = useCallback((info: DatesSetArg) => {
     setDate(calendarAnchorDate(info));
+    setTitle(info.view.title);
     setResetKey((value) => value + 1);
     const next = { start: info.start.toISOString(), end: info.end.toISOString() };
     setRange((prior) => nextCalendarRange(prior, next));
-  }, [setDate]);
+  }, [setDate, setTitle]);
   const openLesson = useCallback((lesson: AvaCalendarEvent) => { setResetKey((value) => value + 1); setSelectedId(lesson.eventId); dialog.current?.showModal(); }, []);
   const openDraft = useCallback((next: AvailabilityDraft) => { setManager(false); setDraft(next); }, []);
   const closeDraft = () => { setDraft(null); setResetKey((value) => value + 1); };
   const refresh = () => { refreshCalendar(); void self.reload(); };
   useEffect(() => { closeHiddenLesson(dialog, data, loading); }, [data, loading]);
   const { switchZone, switchTeacher, switchView } = calendarSwitches(closeDraft, setManager, { setZone, setTeacher, setView });
-  return { zone, view, date, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, refreshCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView };
+  return { zone, view, date, title, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, refreshCalendar, invalidateCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView };
 }
 export default function AvaCalendarLiveClient() {
   const [activeOnly, setActiveOnly] = useState(true);
-  const { zone, view, date, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, refreshCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView } = useLiveCalendarPage();
+  const { zone, view, date, title, teacher, range, draft, manager, setManager, setResetKey, resetKey, calendarsRef, dialog, data, dataRange, loading, failure, invalidateCalendar, sync, self, selected, global, datesSet, openLesson, openDraft, closeDraft, refresh, switchZone, switchTeacher, switchView } = useLiveCalendarPage();
   return <div className={styles.page}>
     <section className={`panel ${styles.stage}`} aria-label="老师课程日历">
-      <div className={styles.toolbar}><DateNavigation calendarsRef={calendarsRef} date={date} /><CalendarControls data={data} teacher={teacher} setTeacher={switchTeacher} zone={zone} setZone={switchZone} view={view} setView={switchView} global={global} activeOnly={activeOnly} setActiveOnly={setActiveOnly} loading={loading} refreshCalendar={refresh} /><SelfAvailabilityButton available={!!self.data} open={() => { setResetKey((value) => value + 1); setManager(true); }} /></div>
+      <div className={styles.toolbar}>
+        <div className={styles.navigationRow}><h2 className={styles.rangeTitle} aria-live="polite">{title}</h2><DateNavigation calendarsRef={calendarsRef} date={date} /></div>
+        <div className={styles.filterRow}><CalendarControls data={data} teacher={teacher} setTeacher={switchTeacher} zone={zone} setZone={switchZone} view={view} setView={switchView} global={global} activeOnly={activeOnly} setActiveOnly={setActiveOnly} loading={loading} refreshCalendar={refresh} /><SelfAvailabilityButton available={!!self.data} open={() => { setResetKey((value) => value + 1); setManager(true); }} /></div>
+      </div>
       <div className={styles.legend} aria-label="日历图例"><span><i className={styles.freeSwatch} />AVA</span><span className={styles.trialTag}>试听</span>{TRIAL_OPERATIONS.map((owner, index) => <span key={owner}><i className={styles.swatch} data-owner-color={`owner-${index + 1}`} />{owner}</span>)}</div>
       <ReadStatus loading={loading} failure={failure} message={loadedAvailabilityMessage(data, loading, teacher)} />
       <SyncStatus sync={sync} zone={zone} unavailable={synchronizationFailure(failure)} />
@@ -465,6 +541,6 @@ export default function AvaCalendarLiveClient() {
       <div className={styles.viewport} aria-label="日历滚动区域"><CalendarSurface state={{ data, loading: loading || dataRange !== range, teacher, zone, view, range, activeOnly, selfId: self.data?.teacherId }} controls={{ calendarsRef, datesSet, openLesson, openDraft }} resetKey={resetKey} /></div>
     </section>
     <LessonDialog dialogRef={dialog} selected={selected} zone={zone} />
-    <SelfAvailabilityDialogs data={self.data} manager={manager} draft={draft} range={range} zone={zone} edit={openDraft} closeManager={() => setManager(false)} closeDraft={closeDraft} save={self.save} saved={refreshCalendar} />
+    <SelfAvailabilityDialogs data={self.data} manager={manager} draft={draft} range={range} zone={zone} edit={openDraft} closeManager={() => setManager(false)} closeDraft={closeDraft} save={self.save} saved={invalidateCalendar} />
   </div>;
 }

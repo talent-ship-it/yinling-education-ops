@@ -130,7 +130,7 @@ async function openLive(page: Page) {
   await expect(page.locator(".fc")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("Australia/Melbourne");
-  await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
+  await page.locator('button[data-view="timeGridDay"]').click();
   await page.getByLabel("日期", { exact: true }).fill("2026-10-12");
 }
 
@@ -426,7 +426,7 @@ test("portrait and landscape controls and 15/30/45/60-minute text stay within th
   for (const [width, height] of [[320, 568], [390, 844], [568, 320], [844, 390], [1280, 800]]) {
     await page.setViewportSize({ width: width!, height: height! });
     for (const view of ["timeGridDay", "timeGridWeek"]) {
-      await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption(view);
+      await page.locator(`button[data-view="${view}"]`).click();
       await page.clock.runFor(50);
       await expect(page.locator(".fc-timegrid-event[data-event-id]")).toHaveCount(5);
       const geometry = await page.evaluate(measureLiveCalendarGeometry);
@@ -442,7 +442,7 @@ test("portrait and landscape controls and 15/30/45/60-minute text stay within th
       if (view === "timeGridWeek" && [320, 844, 1280].includes(width!)) await page.screenshot({ path: info.outputPath(`${width}x${height}-week.png`), fullPage: true });
     }
   }
-  await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
+  await page.locator('button[data-view="timeGridDay"]').click();
   await page.setViewportSize({ width: 568, height: 320 });
   await page.locator("[data-event-id='SHORT0']").click();
   await expect(page.getByRole("dialog")).toContainText("15 分钟");
@@ -557,7 +557,7 @@ test("refresh retains both scroll positions while date and timezone navigation r
   await openLive(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T1");
-  await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridWeek");
+  await page.locator('button[data-view="timeGridWeek"]').click();
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   const viewport = page.getByLabel("日历滚动区域", { exact: true });
   await viewport.evaluate((element) => { element.scrollLeft = 280; });
@@ -574,7 +574,7 @@ test("refresh retains both scroll positions while date and timezone navigation r
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   await expect.poll(() => page.locator(".fc-timegrid-slot-lane[data-time='09:00:00']").evaluate((element) => Math.abs(element.getBoundingClientRect().top - element.closest(".fc-scroller")!.getBoundingClientRect().top))).toBeLessThanOrEqual(2);
   for (const [view, css] of [["timeGridDay", ".fc-timeGridDay-view"], ["timeGridThreeDay", ".fc-timeGridThreeDay-view"], ["dayGridMonth", ".fc-dayGridMonth-view"]]) {
-    await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption(view!);
+    await page.locator(`button[data-view="${view!}"]`).click();
     await expect(page.locator(css!)).toHaveCount(1);
   }
   await page.clock.setSystemTime(new Date("2026-10-11T16:30:00.000Z"));
@@ -601,7 +601,7 @@ test("a month group publishes only after all five bounded slices share authority
     await route.fulfill({ json: rangeReply(data, route.request().url()) });
   });
   try {
-    await page.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("dayGridMonth");
+    await page.locator('button[data-view="dayGridMonth"]').click();
     await expect.poll(() => reads).toBe(1);
     await expect(page.locator("[data-event-id], [data-ava-id]")).toHaveCount(0);
     await expect(page.getByRole("status")).toHaveText("正在读取…");
@@ -1011,4 +1011,79 @@ test("273 teachers use bounded parallel columns and one range payload without pe
   await expect(page.locator(".fc")).toHaveCount(1);
   await expect(page.locator("[data-event-id]")).toHaveCount(0);
   expect(reads).toBeLessThanOrEqual(2);
+});
+
+
+test("all teachers can switch every view and a dense month keeps every course reachable", async ({ page }) => {
+  const data = calendarDto();
+  data.teachers[1]!.name = "Synthetic Last";
+  data.events.push({ ...structuredClone(data.events[0]!), eventId: "OTHER-TEACHER", teacherId: "T2", teacherName: "Synthetic Last" });
+  data.events.push(...Array.from({ length: 11 }, (_, index) => ({ ...structuredClone(data.events[0]!), eventId: `DENSE-${index}` })));
+  await fixture(page, data, { user: "Nixon", role: "admin" });
+  await page.clock.install({ time: new Date("2026-10-12T02:00:00.000Z") });
+  await page.goto("/#section=ava-calendar");
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  await page.getByLabel("日期", { exact: true }).fill("2026-10-12");
+  for (const view of ["timeGridDay", "timeGridThreeDay", "timeGridWeek", "dayGridMonth"]) {
+    const choice = page.locator(`button[data-view="${view}"]`);
+    await choice.click();
+    await expect(choice).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+    await expect(page.getByRole("combobox", { name: "老师", exact: true })).toHaveValue("");
+    await expect(page.getByLabel("日期", { exact: true })).toHaveValue("2026-10-12");
+    await expect(page.locator(`.fc-${view}-view`)).toHaveCount(view === "timeGridDay" ? 2 : 1);
+  }
+  await expect(page.locator(".fc-more-link").first()).toBeVisible();
+  await page.locator(".fc-more-link").first().click();
+  const popover = page.locator(".fc-more-popover");
+  await expect(popover).toBeVisible();
+  const ids = await popover.locator("[data-event-id]").evaluateAll((events) => [...new Set(events.map((event) => event.getAttribute("data-event-id")))].sort());
+  expect(ids).toEqual(data.events.map(({ eventId }) => eventId).sort());
+  const body = popover.locator(".fc-popover-body");
+  await expect(body).toHaveCSS("overflow-y", "auto");
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  const fits = () => popover.evaluate((element) => { const bounds = element.getBoundingClientRect(); const viewport = visualViewport ?? { offsetTop: 0, height: innerHeight }; return bounds.top >= viewport.offsetTop && bounds.bottom <= viewport.offsetTop + viewport.height + 1 && bounds.left >= 0 && bounds.right <= innerWidth + 1; });
+  await expect.poll(fits).toBe(true);
+  const last = popover.locator("[data-event-id]").last();
+  const lastId = await last.getAttribute("data-event-id");
+  await last.click();
+  await expect(page.getByRole("dialog")).toContainText(data.events.find((event) => event.eventId === lastId)!.students[0]!.studentName);
+  await page.getByRole("button", { name: "关闭课程详情", exact: true }).click();
+  await page.locator(".fc-more-link").first().click();
+  await popover.locator("[data-event-id='OTHER-TEACHER']").click();
+  await expect(page.getByRole("dialog")).toContainText("Synthetic Last");
+  await expect(page.getByRole("dialog")).toContainText("合成学生1");
+  await page.getByRole("button", { name: "关闭课程详情", exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.locator(".fc-more-link").first().click();
+  await expect.poll(fits).toBe(true);
+  await page.setViewportSize({ width: 320, height: 480 });
+  await expect.poll(fits).toBe(true);
+  await popover.locator("[data-event-id]").last().click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "关闭课程详情", exact: true }).click();
+  await page.locator(".fc-more-link").first().click();
+  await popover.locator(".fc-popover-close").click();
+  await expect(popover).toHaveCount(0);
+});
+
+test("date view and timezone navigation preserve the mounted single calendar and selected day", async ({ page }) => {
+  await fixture(page);
+  await openLive(page);
+  await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T1");
+  await page.getByLabel("日期", { exact: true }).fill("2026-11-18");
+  await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+  await page.locator(".fc").evaluate((element) => { (element as HTMLElement).dataset.navigationWitness = "same-calendar"; });
+  for (const zone of ["UTC", "Europe/London", "Australia/Melbourne"]) {
+    await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption(zone);
+    for (const view of ["timeGridThreeDay", "timeGridWeek", "dayGridMonth", "timeGridDay"]) {
+      await page.locator(`button[data-view="${view}"]`).click();
+      await expect(page.locator(".fc")).toHaveAttribute("data-navigation-witness", "same-calendar");
+      await expect(page.getByLabel("日期", { exact: true })).toHaveValue("2026-11-18");
+      await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
+    }
+  }
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(page.getByLabel("日期", { exact: true })).toHaveValue("2026-11-19");
+  await expect(page.locator(".fc")).toHaveAttribute("data-navigation-witness", "same-calendar");
 });
