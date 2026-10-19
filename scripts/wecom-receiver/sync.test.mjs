@@ -72,9 +72,9 @@ function fixture(t){
   fs.mkdirSync(app,{mode:0o700});fs.mkdirSync(data,{mode:0o700});
   let shell=replaceOnce(source,'APP=/home/codex/.local/wecom-receiver',`APP=${quote(app)}`);
   shell=replaceOnce(shell,'DATA=/home/codex/.local/share/wecom-receiver',`DATA=${quote(data)}`);
+  shell=replaceOnce(shell,'/usr/bin/node',quote(process.execPath));
   if(process.platform!=='linux'){
     shell=replaceOnce(shell,'/usr/bin/flock',quote(process.env.WECOM_SYNC_TEST_FLOCK));
-    shell=replaceOnce(shell,'/usr/bin/node',quote(process.execPath));
     shell=shell.replace('/usr/bin/timeout',quote(process.env.WECOM_SYNC_TEST_TIMEOUT));
   }
   const launcher=path.join(root,'sync.sh');
