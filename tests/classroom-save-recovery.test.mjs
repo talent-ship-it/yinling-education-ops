@@ -14,6 +14,13 @@ function handler(name, next, deps) {
   const entries = Object.entries(deps).filter(([key]) => key !== name);
   return new Function(...entries.map(([key]) => key), `${source}; return ${name};`)(...entries.map(([, value]) => value));
 }
+const runtimeStart = client.indexOf("function classroomRuntimeResponse(");
+const runtimeEnd = client.indexOf("type CourseRecord =", runtimeStart);
+assert.ok(runtimeStart > 0 && runtimeEnd > runtimeStart);
+const runtimeSource = ts.transpileModule(client.slice(runtimeStart, runtimeEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const classroomRuntimeResponse = new Function(`${runtimeSource}; return classroomRuntimeResponse;`)();
 const booking = { id: "B-1", occurrenceKey: "B-1:2099-01-01", sourceDate: "2099-01-01" };
 function fixture() {
   const notices = [], requests = [], syncs = [], navigations = [], views = [];
@@ -22,6 +29,7 @@ function fixture() {
   let persist = async () => { throw new Error("排课保存失败。"); };
   const noOp = () => {};
   const deps = {
+    classroomRuntimeResponse,
     classroomRequest: async (request) => { requests.push(request); return result; },
     classroomFetch: async () => ({ response: { ok: true }, body: result }),
     persistClassroom: (...args) => { syncs.push(args); return persist(...args); },
@@ -118,4 +126,19 @@ test("a successful refresh keeps runtime when its binding fails", async () => {
   assert.equal(result.running, true);
   assert.equal(run.runtime.participantCount, 2);
   assert.ok(run.views.some(([state]) => state === "error"));
+});
+
+
+test("classroom refresh retains synchronized attendance evidence and unavailable state", async () => {
+  const run = fixture();
+  const attendance = { teacher: { firstJoinedAt: "2099-01-01T00:00:00Z", lastLeftAt: "2099-01-01T01:00:00Z", durationSeconds: 3600, lateSeconds: 0 }, student: null };
+  run.result({ status: { meetingId: "room-one", running: false }, attendance, recordings: [] });
+  const refresh = handler("refreshClassroom", "provisionClassroom", run.deps);
+  await refresh(booking, true);
+  assert.deepEqual(run.runtime.attendance, attendance);
+  assert.equal(run.runtime.attendanceUnavailable, false);
+  run.result({ status: { meetingId: "room-one", running: false }, attendanceUnavailable: true });
+  await refresh(booking, true);
+  assert.equal(run.runtime.attendance, null);
+  assert.equal(run.runtime.attendanceUnavailable, true);
 });

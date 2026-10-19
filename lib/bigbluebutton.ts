@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
+import { classroomDocumentXml, classroomFeatureOptions } from "./classroom-provider-tools";
 import { classroomMeetingDurationMinutes } from "./classroom-duration";
 import { claimClassroomCreation, releaseClassroomCreation } from "@/lib/ops-store";
 
@@ -138,14 +139,19 @@ function meetingPassword(meetingId: string, role: "moderator" | "viewer") {
     .slice(0, 30);
 }
 
-async function call(action: string, params: Record<string, string | number | boolean | undefined>) {
+function providerRequest(body?: string) {
+  const headers = { Accept: "application/xml,text/xml" };
+  return body === undefined ? { method: "GET", headers } : { method: "POST", headers: { ...headers, "Content-Type": "application/xml" }, body };
+}
+
+async function call(action: string, params: Record<string, string | number | boolean | undefined>, body?: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BBB_REQUEST_TIMEOUT_MS);
   let response: Response;
   let raw = "";
   try {
     response = await fetch(buildBigBlueButtonUrl(action, params), {
-      headers: { Accept: "application/xml,text/xml" },
+      ...providerRequest(body),
       cache: "no-store",
       signal: controller.signal,
     });
@@ -180,6 +186,46 @@ async function call(action: string, params: Record<string, string | number | boo
   return parsed;
 }
 
+function classroomFeatureParameters(occurrence?: { bookingId: string; occurrenceId: string }) {
+  const enabled = process.env.BBB_CLASSROOM_TOOLS_ENABLED === "true";
+  return classroomFeatureOptions(occurrence || enabled ? callbackOrigin() : "", occurrence, enabled);
+}
+
+function secureDocumentUrl(url: URL) {
+  return url.protocol === "https:" && !url.username && !url.password;
+}
+
+function documentUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new BigBlueButtonError("教材链接无效。", "invalid_document_url", 400);
+  }
+  if (!secureDocumentUrl(url)) {
+    throw new BigBlueButtonError("教材链接必须使用 HTTPS。", "invalid_document_url", 400);
+  }
+
+  return url;
+}
+
+function documentName(value: string) {
+  const name = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 180);
+  if (!name) throw new BigBlueButtonError("教材名称不能为空。", "invalid_document_name", 400);
+  return name;
+}
+
+export async function insertMeetingDocument(input: { meetingId: string; name: string; url: string }): Promise<void> {
+  const url = documentUrl(input.url);
+  const name = documentName(input.name);
+  const body = classroomDocumentXml(name, url.toString());
+  await call("insertDocument", { meetingID: normalizeMeetingId(input.meetingId) }, body);
+}
+
+export async function insertMeetingWhiteboard(meetingId: string): Promise<void> {
+  await insertMeetingDocument({ meetingId, name: "白色板书.pdf", url: new URL("/classroom-tools/whiteboard.pdf", callbackOrigin()).toString() });
+}
+
 export async function createMeeting(input: {
   meetingId: string;
   name: string;
@@ -201,6 +247,7 @@ export async function createMeeting(input: {
   // A timeout retains the short-lived lease: the provider may still complete
   // the request. End recovery cannot declare success while that lease is live.
   const result = await call("create", {
+    ...classroomFeatureParameters(input),
     name: input.name.slice(0, 180),
     meetingID: meetingId,
     moderatorPW: meetingPassword(meetingId, "moderator"),
@@ -247,6 +294,7 @@ export async function createTemporaryTestMeeting(input: {
 }) {
   const meetingId = normalizeMeetingId(input.meetingId);
   const result = await call("create", {
+    ...classroomFeatureParameters(),
     name: "吟领教育 · 临时课堂",
     meetingID: meetingId,
     moderatorPW: meetingPassword(meetingId, "moderator"),

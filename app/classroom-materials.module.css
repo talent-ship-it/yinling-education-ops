@@ -1,0 +1,75 @@
+.panel { background:#fff; border:1px solid var(--line,#dce6e3); border-radius:7px; color:var(--ink,#17231e); padding:22px; }
+.heading { align-items:center; display:flex; justify-content:space-between; margin-bottom:20px; }
+.heading h2 { align-items:center; display:flex; font-size:16px; gap:9px; margin:0; }
+.heading h2 svg { color:#61bdb5; }
+.panel button,.dialog button { align-items:center; cursor:pointer; display:inline-flex; font:inherit; gap:6px; justify-content:center; }
+.panel button:disabled,.dialog button:disabled { cursor:default; opacity:.45; }
+.panel button:focus-visible,.dialog button:focus-visible,.panel input:focus-visible,.dialog input:focus-visible { outline:2px solid #228c81; outline-offset:3px; }
+.toolbar { align-items:center; display:flex; flex-wrap:wrap; gap:9px; }
+.primary,.secondary { border:1px solid #d5deda; border-radius:6px; font-size:12px!important; min-height:36px; padding:8px 14px; }
+.primary { background:#1d2528; border-color:#1d2528; color:#fff; }
+.secondary { background:#fff; color:#273b34; }
+.primary:hover:not(:disabled) { background:#344440; }
+.secondary:hover:not(:disabled),.actions button:hover:not(:disabled) { background:#f0f8f6; }
+.iconButton { background:transparent; border:0; color:#77867e; height:32px; padding:5px; width:32px; }
+.search { align-items:center; border:1px solid #dce6e3; border-radius:6px; color:#7e8e86; display:flex; gap:7px; margin-left:auto; min-height:36px; padding:0 10px; }
+.search input { background:transparent; border:0; color:#243a30; font:inherit; font-size:12px; min-width:80px; outline:0; padding:8px 0; width:150px; }
+.searchButton { background:transparent; border:0; color:#216b61; font-size:11px!important; padding:4px; }
+.breadcrumbs { align-items:center; display:flex; flex-wrap:wrap; gap:7px; margin:22px 0 16px; padding:0; }
+.breadcrumbs span { align-items:center; color:#a3b0aa; display:flex; gap:7px; }
+.breadcrumbs button { background:transparent; border:0; color:#677e74; font-size:12px; padding:3px 0; }
+.breadcrumbs button:hover { color:#1b6e63; }
+.list { min-height:160px; }
+.listHeader,.row { align-items:center; display:grid; gap:12px; grid-template-columns:minmax(150px,1fr) 80px minmax(200px,auto); }
+.listHeader { border-bottom:1px solid #e6ede9; color:#899a91; font-size:11px; padding:10px 6px; }
+.row { border-bottom:1px solid #eff3f1; min-height:65px; padding:10px 6px; }
+.fileName { align-items:center; background:transparent; border:0; color:#40554b; display:flex; font-size:13px!important; gap:13px!important; justify-content:flex-start!important; min-width:0; padding:0; text-align:left; }
+.fileName > svg { color:#819f9b; flex-shrink:0; }
+.fileName > .folderIcon { color:#ffbf25; stroke:#ffbf25; }
+.fileName > span { min-width:0; overflow-wrap:anywhere; }
+.fileName small { color:#a08655; display:block; font-size:10px; margin-top:3px; }
+.size { color:#8b9b93; font-size:11px; }
+.actions { align-items:center; display:flex; flex-wrap:wrap; gap:3px; justify-content:flex-end; }
+.actions button { background:transparent; border:0; border-radius:4px; color:#35796e; font-size:11px; min-height:32px; padding:6px; white-space:nowrap; }
+.empty { color:#83938b; font-size:12px; padding:35px 12px; text-align:center; }
+.error { color:#ab433e; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.hidden { display:none; }
+.dragging { outline:2px dashed #3a9e91; outline-offset:-8px; }
+.loadMore { background:#fff; border:1px solid #dce6e3; border-radius:5px; color:#35796e; display:flex!important; font-size:12px!important; margin:18px auto 0; padding:8px 24px; }
+.uploads { border:1px solid #e3ebe6; border-radius:6px; margin-top:22px; padding:13px 15px; }
+.uploads > header { align-items:center; display:flex; justify-content:space-between; }
+.uploads h3 { font-size:12px; margin:0; }
+.uploads button,.uploadRow button { background:transparent; border:0; color:#35796e; font-size:11px; padding:6px; }
+.uploadRow { align-items:center; border-top:1px solid #edf2ef; display:flex; gap:16px; margin-top:10px; padding-top:10px; }
+.uploadRow > div { display:grid; flex:1; gap:4px; min-width:0; }
+.uploadRow strong { font-size:12px; font-weight:500; overflow-wrap:anywhere; }
+.uploadRow small { color:#7e8f86; font-size:10px; }
+.uploadRow progress { accent-color:#429c8c; height:5px; width:100%; }
+.dialog { background:#fff; border:1px solid #d7e3dc; border-radius:9px; box-shadow:0 20px 70px #102a2040; color:#243b30; max-height:85dvh; max-width:560px; overflow:auto; padding:22px; width:calc(100% - 48px); }
+.dialog::backdrop { background:#12291f66; }
+.dialog > header { align-items:center; display:flex; gap:12px; justify-content:space-between; margin-bottom:22px; }
+.dialog h3 { font-size:15px; margin:0; overflow-wrap:anywhere; }
+.dialog form { display:grid; gap:15px; }
+.dialog footer { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+.dialog .primary { background:#278576; border-color:#278576; }
+.dialog .search { margin:0; }
+.dialog .search input { width:100%; }
+.field { color:#6a7d72; display:grid; font-size:12px; gap:8px; }
+.field input { background:#f8fbf9; border:1px solid #d6e2da; border-radius:5px; color:#243b30; font:inherit; font-size:13px; padding:10px; width:100%; }
+.grantList { border:1px solid #e3ebe6; border-radius:5px; max-height:350px; overflow:auto; }
+.grantHeader,.grantRow { align-items:center; display:grid; font-size:12px; gap:12px; grid-template-columns:minmax(100px,1fr) 64px 64px; padding:11px; }
+.grantHeader { background:#f4f8f6; color:#809087; font-size:10px; position:sticky; top:0; }
+.grantRow { border-top:1px solid #edf2ef; }
+.grantRow input { accent-color:#278576; height:16px; justify-self:center; width:16px; }
+.grantCheck { align-items:center; display:grid; gap:4px; justify-items:center; }
+.grantCheck small { color:#8c9b93; font-size:9px; }
+@media(max-width:760px) {
+  .panel { padding:15px; }
+  .toolbar { gap:7px; }
+  .search { flex:1; margin-left:0; }
+  .search input { flex:1; width:100%; }
+  .listHeader,.row { gap:8px; grid-template-columns:minmax(100px,1fr) auto; }
+  .listHeader > span:nth-child(2),.size { display:none; }
+  .actions { max-width:155px; }
+  .fileName { font-size:12px!important; gap:8px!important; }
+}

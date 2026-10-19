@@ -1,5 +1,6 @@
 "use client";
 
+import type { ClassroomAttendance } from "@/lib/classroom-attendance";
 import { dateTimeFormat } from "@/lib/date-time-format";
 import { dashboardLessonsForDay } from "@/lib/dashboard-schedule";
 import { buildAuditView } from "@/lib/audit-view";
@@ -429,6 +430,8 @@ import {
 } from "@/lib/jiaowubao-trial-sync";
 
 const AvaCalendarLiveClient = lazy(() => import("./ava-calendar/live/calendar-client"));
+const ClassroomMaterialsPanel = lazy(() => import("./classroom-materials-panel"));
+const ClassroomLessonTools = lazy(() => import("./classroom-lesson-tools"));
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
@@ -658,6 +661,8 @@ type ClassroomRuntime = {
   participantCount: number;
   moderatorCount: number;
   recording?: boolean;
+  attendance?: ClassroomAttendance | null;
+  attendanceUnavailable?: boolean;
   recordings: Array<{
     id: string;
     name: string;
@@ -665,6 +670,10 @@ type ClassroomRuntime = {
     playbackUrl?: string;
   }>;
 };
+
+function classroomRuntimeResponse(result: { status: ClassroomRuntime; recordings?: unknown; attendance?: ClassroomAttendance; attendanceUnavailable?: unknown; closing?: unknown; ended?: unknown }): ClassroomRuntime {
+  return { ...result.status, recordings: Array.isArray(result.recordings) ? result.recordings : [], attendance: result.attendance ?? null, attendanceUnavailable: result.attendanceUnavailable === true, closing: result.closing === true, ended: result.ended === true };
+}
 
 type CourseRecord = {
   id: string;
@@ -7405,7 +7414,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     notify("已导出当前运营报表");
   };
 
-  const classroomRequest = async (body: { action: "create" | "teacher-join" | "student-link" | "end"; bookingId: string; occurrenceId: string; sourceDate: string }) => {
+  const classroomRequest = async (body: { action: "create" | "teacher-join" | "student-link" | "end" | "whiteboard"; bookingId: string; occurrenceId: string; sourceDate: string }) => {
     const { response, body: receivedBody } = await classroomFetch("/api/classroom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -7448,8 +7457,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const { response, body: receivedBody } = await classroomFetch(`/api/classroom?bookingId=${encodeURIComponent(booking.id)}&occurrenceId=${encodeURIComponent(booking.occurrenceKey)}&sourceDate=${encodeURIComponent(booking.sourceDate)}`, { cache: "no-store" });
       const result = receivedBody ?? {};
       if (!response.ok) throw new Error(result.error || "无法读取教室状态");
-      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-      const runtime: ClassroomRuntime = { ...result.status, recordings, closing: result.closing === true, ended: result.ended === true };
+      const runtime = classroomRuntimeResponse(result);
+      const { recordings } = runtime;
       const nextStatus = runtime.running
         ? "running"
         : booking.classroom?.status === "running" || recordings.length
@@ -7915,8 +7924,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       if (signal.aborted) return;
       const result = receivedBody && typeof receivedBody === "object" ? receivedBody : {};
       if (!response.ok || signal.aborted) return;
-      const recordings = Array.isArray(result.recordings) ? result.recordings : [];
-      const runtime: ClassroomRuntime = { ...result.status, recordings, closing: result.closing === true, ended: result.ended === true };
+      const runtime = classroomRuntimeResponse(result);
+      const { recordings } = runtime;
       const currentClassroom = booking.classroom;
       const nextStatus: NonNullable<Booking["classroom"]>["status"] = runtime.running
         ? "running"
@@ -12104,145 +12113,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       {classroomStatus.label}
                     </StatusPill>
                   </div>
-                  {roomRuntime?.running ? <div className="classroom-link-preview">
-                    <Video size={24} />
-                    <span><strong>{roomRuntime.participantCount} 人在线 · {roomRuntime.moderatorCount} 位老师</strong></span>
-                  </div> : null}
-                  {temporaryClassroomLink?.occurrenceId === roomBooking.occurrenceKey && (
-                    <div className="classroom-share-link">
-                      <label>
-                        学生邀请链接
-                        <input aria-label="学生邀请链接" value={temporaryClassroomLink.url} readOnly />
-                      </label>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => void navigator.clipboard.writeText(temporaryClassroomLink.url)
-                          .then(() => notify("学生进入链接已复制"))
-                          .catch(() => notify("复制失败，请手动选择并复制链接"))}
-                      >
-                        <Copy size={16} /> 复制链接
-                      </button>
-                      <a className="secondary-button" href={temporaryClassroomLink.url} target="_blank" rel="noreferrer">
-                        <ExternalLink size={16} /> 打开学生端
-                      </a>
-                    </div>
-                  )}
-                  <div className="detail-section">
-                    <span>课程时间</span>
-                    <strong>
-                      {formatInstant(
-                        bookingInstant(roomBooking),
-                        scheduleTimezone,
-                        displayPreferences,
-                      )}
-                    </strong>
-                    <p>
-                      {timezoneLabel(scheduleTimezone, displayPreferences.language)} · {roomBooking.duration}{" "}
-                      {displayPreferences.language === "en-AU" ? "min" : "分钟"}
-                    </p>
-                  </div>
-                  {historicalRoom ? null : !roomMeetingId ? (
-                    <button
-                      className="primary-button full"
-                      type="button"
-                      disabled={classroomBusy}
-                      onClick={() => void createClassroom(roomBooking)}
-                    >
-                      <Video size={16} />{" "}
-                      {classroomBusy ? "正在创建…" : "创建在线教室"}
-                    </button>
-                  ) : (
-                    <>
-                      {!roomClosed && (
-                        <button
-                          className="primary-button full"
-                          type="button"
-                          disabled={classroomBusy || !canJoinTeacherClassroom}
-                          onClick={() => void joinTeacherClassroom(roomBooking)}
-                        >
-                          <ExternalLink size={16} />{" "}
-                          {classroomBusy ? "正在处理…" : canJoinTeacherClassroom ? "老师进入教室" : "等待授课老师进入"}
-                        </button>
-                      )}
-                      {!roomClosed && (
-                        <button
-                          className="secondary-button full"
-                          type="button"
-                          disabled={classroomBusy}
-                          onClick={() =>
-                            void copyStudentClassroomLink(roomBooking)
-                          }
-                        >
-                          <Copy size={16} />{" "}
-                          {classroomBusy ? "正在处理…" : "复制学生进入链接"}
-                        </button>
-                      )}
-                      {!historicalRoom && (
-                        <button
-                          className="secondary-button full"
-                          type="button"
-                          disabled={classroomBusy}
-                          onClick={() => void refreshClassroom(roomBooking)}
-                        >
-                          <RefreshCw size={16} /> 刷新教室状态
-                        </button>
-                      )}
-                      {(roomRuntime?.running ||
-                        roomBooking.classroom?.status === "running") && (
-                        <button
-                          className="danger-button full"
-                          type="button"
-                          disabled={classroomBusy || !roomBooking.classroom?.meetingId}
-                          onClick={() => void endClassroom(roomBooking)}
-                        >
-                          <ShieldCheck size={16} /> 结束课堂
-                        </button>
-                      )}
-                      {playback?.playbackUrl && (
-                        <a
-                          className="secondary-button full classroom-recording-link"
-                          href={playback.playbackUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <ExternalLink size={16} /> 打开课堂录播
-                        </a>
-                      )}
-                      {!playback?.playbackUrl &&
-                        roomClosed && (
-                          <div className="classroom-recording-pending">
-                            <Clock3 size={16} />
-                            <span>
-                              <strong>录播处理中</strong>
-                              <small>
-                                供应商处理完成后会在这里出现回放链接
-                              </small>
-                            </span>
-                          </div>
-                        )}
-                    </>
-                  )}
-                  {historicalRoom && roomBooking.classroom?.meetingId && (
-                    <button
-                      className="secondary-button full"
-                      type="button"
-                      disabled={classroomBusy}
-                      onClick={() => void refreshClassroom(roomBooking)}
-                    >
-                      <RefreshCw size={16} /> 刷新历史录播
-                    </button>
-                  )}
-                  {historicalRoom && playback?.playbackUrl && (
-                    <a
-                      className="secondary-button full classroom-recording-link"
-                      href={playback.playbackUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <ExternalLink size={16} /> 打开课堂录播
-                    </a>
-                  )}
+                  <Suspense fallback={null}>
+                    <ClassroomLessonTools section="details" runtime={roomRuntime} invitationUrl={temporaryClassroomLink?.occurrenceId === roomBooking.occurrenceKey ? temporaryClassroomLink.url : undefined} scheduledTime={formatInstant(bookingInstant(roomBooking), scheduleTimezone, displayPreferences)} timezone={timezoneLabel(scheduleTimezone, displayPreferences.language)} duration={roomBooking.duration} durationUnit={displayPreferences.language === "en-AU" ? "min" : "分钟"} formatTime={(value) => formatInstant(new Date(value), scheduleTimezone, displayPreferences)} notify={notify} />
+                  </Suspense>
+                  <Suspense fallback={null}>
+                    <ClassroomLessonTools section="controls" historical={historicalRoom} hasMeeting={Boolean(roomMeetingId)} closed={Boolean(roomClosed)} busy={classroomBusy} canJoin={canJoinTeacherClassroom} canEnd={Boolean(roomBooking.classroom?.meetingId)} running={Boolean(roomRuntime?.running || roomBooking.classroom?.status === "running")} hasSavedMeeting={Boolean(roomBooking.classroom?.meetingId)} create={() => void createClassroom(roomBooking)} join={() => void joinTeacherClassroom(roomBooking)} copyStudentLink={() => void copyStudentClassroomLink(roomBooking)} refresh={() => void refreshClassroom(roomBooking)} end={() => void endClassroom(roomBooking)} />
+                  </Suspense>
+                  <Suspense fallback={null}>
+                    <ClassroomLessonTools section="actions" playbackUrl={playback?.playbackUrl} recordingPending={Boolean(roomMeetingId && !historicalRoom && roomClosed)} canOpenWhiteboard={Boolean(roomRuntime?.running && !historicalRoom && !roomClosed)} busy={classroomBusy} setBusy={setClassroomBusy} openWhiteboard={() => classroomRequest({ action: "whiteboard", bookingId: roomBooking.id, occurrenceId: roomBooking.occurrenceKey, sourceDate: roomBooking.sourceDate })} notify={notify} />
+                  </Suspense>
                   {historicalRoom && isAdminView && roomBooking.occurrenceStatus !== "completed" && (
                     <button
                       className="primary-button full"
@@ -12253,17 +12132,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                       <CheckCircle2 size={16} /> 人工结算本节
                     </button>
                   )}
-                  {classroomBusy && (
-                    <div className="classroom-recording-pending">
-                      <Clock3 size={16} />
-                      <span>
-                        <strong>正在连接课堂服务</strong>
-                        <small>
-                          通常需要 10–30 秒，请不要重复点击或关闭新标签页
-                        </small>
-                      </span>
-                    </div>
-                  )}
+                  {classroomBusy && <Suspense fallback={null}><ClassroomLessonTools section="connecting" /></Suspense>}
                 </aside>
               )}
             </div>
@@ -12282,6 +12151,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             />
           )}
         </section>
+        <Suspense fallback={<section className="panel" aria-busy="true">正在加载教材库…</section>}>
+          <ClassroomMaterialsPanel teachers={teachers.map(({ id, name }) => ({ id, name }))} selectedClassroom={roomBooking && !historicalRoom && !roomClosed ? { bookingId: roomBooking.id, occurrenceId: roomBooking.occurrenceKey, sourceDate: roomBooking.sourceDate } : undefined} notify={notify} />
+        </Suspense>
       </>
     );
   };

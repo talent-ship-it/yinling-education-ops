@@ -1,4 +1,15 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "classroom-materials", source: "tests/sql/classroom-materials-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/classroom-materials-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260827000700_account_lifecycle.sql",
+      start: "create or replace function internal.app_account_default_permissions(p_account_role text)",
+      end: "-- Stable, secret-gated directory read.  No credential material is selected." },
+    { kind: "sql-fragment", file: "supabase/migrations/20260827000900_account_lifecycle_security_hardening.sql",
+      start: "create or replace function internal.app_account_default_permissions(p_account_role text)",
+      end: "-- Account-directory administration remains a super-admin capability." },
+    { kind: "sql", file: "supabase/migrations/20261019061534_classroom_materials_library.sql" },
+    { kind: "sql", file: "tests/sql/classroom-materials-runtime.sql" },
+  ] },
   { id: "task-note-save-dates", source: "tests/sql/task-note-save-dates-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/booking-projection-atomic-runtime.sql" },
     { kind: "sql", file: "supabase/migrations/20260819102000_trial_payment_reminders_authoritative.sql" },
