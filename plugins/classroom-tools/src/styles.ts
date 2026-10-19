@@ -31,5 +31,5 @@ export const styles = `
 .ilct-readonly{font-variant-numeric:tabular-nums;text-align:center;font-size:56px;line-height:1.4;letter-spacing:4px;font-weight:300}
 .ilct-caption{text-align:center;color:#c4cccc;font-size:12px;margin:0 0 12px}
 .ilct-off{width:100%;margin-top:10px;font-size:12px!important;background:transparent!important;color:#c6cccc!important;min-height:30px!important}
-@media(max-width:480px){.ilct-panel{width:300px}.ilct-digit{width:45px}.ilct-digit output{font-size:54px}.ilct-body{padding:16px}}
+.ilct-focus-notice{width:340px;max-width:calc(100vw - 32px);margin-top:10px;padding:14px;background:#303234;border:1px solid #535658;border-radius:8px;box-shadow:0 8px 24px #0005}\n.ilct-focus-notice .ilct-close{float:right}\n.ilct-focus-notice p{margin:0 24px 12px 0;overflow-wrap:anywhere}\n@media(max-width:480px){.ilct-panel{width:300px}.ilct-digit{width:45px}.ilct-digit output{font-size:54px}.ilct-body{padding:16px}}
 `;

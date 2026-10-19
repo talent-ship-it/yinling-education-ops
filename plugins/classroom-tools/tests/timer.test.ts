@@ -78,3 +78,31 @@ test("four-digit inputs retain valid seconds and bound unsupported durations", (
   assert.throws(() => controller.startCountdown(6000));
   controller.dispose();
 });
+
+test("sender replacement, reset and deactivation wait for their own native acknowledgements", () => {
+  const oldRoute: string[] = [];
+  const route: string[] = [];
+  const controller = new NativeTimerController((action) => oldRoute.push(action), () => {});
+  let state = { ...initial, active: true, running: true, stopwatch: false, accumulated: 12000, timePassed: 288000 };
+  controller.observe(state);
+  controller.setSender((action) => route.push(action));
+  controller.reset();
+  assert.deepEqual(oldRoute, []);
+  assert.deepEqual(route, ["stop"]);
+  controller.observe(state);
+  assert.deepEqual(route, ["stop"]);
+  state = { ...state, running: false };
+  controller.observe(state);
+  assert.deepEqual(route, ["stop", "reset"]);
+  assert.equal(controller.busy, true);
+  state = { ...state, accumulated: 0, timePassed: state.time };
+  controller.observe(state);
+  assert.equal(controller.busy, false);
+  controller.deactivate();
+  assert.deepEqual(route, ["stop", "reset", "deactivate"]);
+  controller.observe(state);
+  assert.equal(controller.busy, true);
+  controller.observe({ ...state, active: false });
+  assert.equal(controller.busy, false);
+  controller.dispose();
+});

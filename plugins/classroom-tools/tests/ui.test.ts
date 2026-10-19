@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PluginApi } from "bigbluebutton-html-plugin-sdk";
-Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: { currentScript: null } });
+Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: Object.assign(new EventTarget(), { currentScript: null, hidden: false, fullscreenElement: null }) });
 const { ClassroomTools, default: Plugin } = await import("../src/Plugin");
 function classroomApi(role: "MODERATOR" | "VIEWER", supported = true) {
   return {

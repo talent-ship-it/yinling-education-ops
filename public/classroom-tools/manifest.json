@@ -1,7 +1,17 @@
 {
   "requiredSdkVersion": "~0.0.104",
   "name": "InsiderClassroomTools",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "javascriptEntrypointUrl": "InsiderClassroomTools.js",
-  "enabledForBreakoutRooms": false
+  "enabledForBreakoutRooms": false,
+  "dataChannels": [
+    {
+      "name": "classroom-visibility",
+      "pushPermission": [
+        "viewer",
+        "presenter"
+      ],
+      "replaceOrDeletePermission": []
+    }
+  ]
 }
