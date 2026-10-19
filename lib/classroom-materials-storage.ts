@@ -21,7 +21,11 @@ export function createMaterialsStorage(configuration: { url: string; key: string
       });
     } catch { throw new ClassroomMaterialsError("资料文件存储暂时无法连接。", "materials_storage_unavailable", 503); }
     const payload = await responsePayload(response);
-    if (!response.ok) throw new ClassroomMaterialsError("资料文件尚未就绪，请稍后重试。", "materials_storage_unavailable", response.status === 404 ? 409 : 503);
+    if (!response.ok) {
+      const error = materialRecord(payload);
+      const missing = [400, 404].includes(response.status) && error.code === "NoSuchKey" && String(error.statusCode) === "404";
+      throw new ClassroomMaterialsError("资料文件尚未就绪，请稍后重试。", missing ? "materials_object_missing" : "materials_storage_unavailable", missing ? 409 : 503);
+    }
     return materialRecord(payload);
   }
 
@@ -64,9 +68,14 @@ export function createMaterialsStorage(configuration: { url: string; key: string
     };
   }
 
-  async function objectInfo(material: Record<string, unknown>) {
+  async function objectInfo(material: Record<string, unknown>, options: { allowMissing?: boolean } = {}) {
     await requirePrivateBucket();
-    return storageRequest(`/object/info/${objectPath(material)}`);
+    try {
+      return await storageRequest(`/object/info/${objectPath(material)}`);
+    } catch (error) {
+      if (options.allowMissing && error instanceof ClassroomMaterialsError && error.code === "materials_object_missing") return null;
+      throw error;
+    }
   }
 
   async function readUrl(material: Record<string, unknown>, download = false) {

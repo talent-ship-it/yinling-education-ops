@@ -88,3 +88,77 @@ test("library exposes classroom use capability only for the teacher role", async
     assert.equal(response.canPresent, role === "teacher");
   }
 });
+
+const uploadMaterial = {
+  id: material.id, kind: "file", status: "uploading", mimeType: "application/pdf", fileName: "lesson.pdf", byteSize: 12,
+  bucketId: "classroom-materials", objectPath: `materials/${material.id}/source.pdf`,
+};
+const uploadedObject = { bucket_id: uploadMaterial.bucketId, name: uploadMaterial.objectPath, size: 12, content_type: "application/pdf" };
+function uploadRecovery({ value = uploadMaterial, object = uploadedObject, failure } = {}) {
+  const events = [];
+  const api = route("../app/api/classroom/materials/upload/route.ts", {
+    "@/lib/classroom-materials": validators,
+    "@/lib/classroom-materials-server": {
+      materialsSession: async () => ({ accountId: "synthetic-admin", role: "admin" }),
+      materialsBody: async () => ({ fileName: value.fileName, mimeType: value.mimeType, byteSize: value.byteSize, requestKey: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }),
+      publicMaterial: (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !["bucketId", "objectPath"].includes(key))),
+      materialsResponse: (body, status = 200) => ({ body, status }),
+      materialsErrorResponse: (error) => ({ status: error.status ?? 500, code: error.code }),
+    },
+    "@/lib/classroom-materials-store": {
+      materialsStorageConfigured: () => true,
+      materialRpc: async (accountId, operation, payload) => {
+        assert.equal(accountId, "synthetic-admin");
+        events.push(operation);
+        if (operation === "upload-start") return { material: value };
+        assert.equal(operation, "upload-complete");
+        assert.equal(payload.id, value.id);
+        return { material: { ...value, status: "ready" } };
+      },
+      materialObjectInfo: async (target, options) => {
+        events.push("object-info");
+        assert.equal(target, value);
+        assert.equal(options.allowMissing, true);
+        if (failure) throw failure;
+        return object;
+      },
+      materialUploadDescriptor: async () => { events.push("sign-upload"); return { token: "synthetic-upload-only" }; },
+    },
+  });
+  return { api, events };
+}
+
+test("retry after a lost final upload response verifies the reserved object before returning ready", async () => {
+  const { api, events } = uploadRecovery();
+  const response = await api.POST({});
+  assert.equal(response.status, 200);
+  assert.equal(response.body.material.status, "ready");
+  assert.equal(response.body.material.bucketId, undefined);
+  assert.equal(response.body.material.objectPath, undefined);
+  assert.equal(response.body.upload, null);
+  assert.deepEqual(events, ["upload-start", "object-info", "upload-complete"]);
+});
+
+test("upload recovery signs an absent object but does not sign or promote mismatched objects", async () => {
+  const missing = uploadRecovery({ object: null });
+  const response = await missing.api.POST({});
+  assert.equal(response.status, 201);
+  assert.equal(response.body.upload.token, "synthetic-upload-only");
+  assert.deepEqual(missing.events, ["upload-start", "object-info", "sign-upload"]);
+  for (const patch of [{ bucket_id: "other" }, { name: "materials/other/source.pdf" }, { size: 11 }, { content_type: "image/png" }]) {
+    const mismatch = uploadRecovery({ object: { ...uploadedObject, ...patch } });
+    const rejected = await mismatch.api.POST({});
+    assert.equal(rejected.status, 409);
+    assert.equal(rejected.code, "materials_object_mismatch");
+    assert.deepEqual(mismatch.events, ["upload-start", "object-info"]);
+  }
+});
+
+test("upload recovery fails closed on storage failures and skips provider calls for an already ready reservation", async () => {
+  const unavailable = uploadRecovery({ failure: new validators.ClassroomMaterialsError("synthetic storage failure", "materials_storage_unavailable", 503) });
+  assert.equal((await unavailable.api.POST({})).status, 503);
+  assert.deepEqual(unavailable.events, ["upload-start", "object-info"]);
+  const ready = uploadRecovery({ value: { ...uploadMaterial, status: "ready" } });
+  assert.equal((await ready.api.POST({})).body.upload, null);
+  assert.deepEqual(ready.events, ["upload-start"]);
+});

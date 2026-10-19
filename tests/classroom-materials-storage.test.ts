@@ -16,6 +16,7 @@ function fixture(responses: unknown[]) {
     requests.push({ url: String(url), init: init ?? {} });
     const response = responses.shift();
     if (response instanceof Error) throw response;
+    if (response instanceof Response) return response;
     assert.notEqual(response, undefined, "unexpected provider request");
     return new Response(JSON.stringify(response), { status: 200 });
   }) as typeof fetch;
@@ -61,4 +62,20 @@ test("storage fails closed on public buckets, foreign URLs, invalid paths, and n
   await assert.rejects(fixture([bucket, { signedURL: "/object/sign/classroom-materials/other.pdf?token=t" }]).client.readUrl(material), ClassroomMaterialsError);
   await assert.rejects(fixture([new Error("synthetic provider failure")]).client.readUrl(material), ClassroomMaterialsError);
   assert.throws(() => createMaterialsStorage({ ...configuration, url: "https://other.supabase.co" }), ClassroomMaterialsError);
+});
+
+test("upload recovery accepts only a confirmed missing object and rejects bucket, access, and provider failures", async () => {
+  for (const status of [400, 404]) {
+    const missing = () => new Response(JSON.stringify({ code: "NoSuchKey", statusCode: "404" }), { status });
+    const { client, requests } = fixture([bucket, missing()]);
+    assert.equal(await client.objectInfo(material, { allowMissing: true }), null);
+    assert.equal(requests[1].url, `${configuration.url}/storage/v1/object/info/classroom-materials/${material.objectPath}`);
+    await assert.rejects(fixture([bucket, missing()]).client.objectInfo(material), (error: unknown) => error instanceof ClassroomMaterialsError && error.code === "materials_object_missing");
+  }
+  for (const [status, code, statusCode] of [[404, "NoSuchBucket", "404"], [403, "AccessDenied", "403"], [500, "NoSuchKey", "404"], [404, "UnknownError", "404"]]) {
+    const failure = new Response(JSON.stringify({ code, statusCode }), { status: Number(status) });
+    await assert.rejects(fixture([bucket, failure]).client.objectInfo(material, { allowMissing: true }), ClassroomMaterialsError);
+  }
+  const missingBucket = new Response(JSON.stringify({ code: "NoSuchKey", statusCode: "404" }), { status: 404 });
+  await assert.rejects(fixture([missingBucket]).client.objectInfo(material, { allowMissing: true }), ClassroomMaterialsError);
 });

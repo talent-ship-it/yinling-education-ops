@@ -65,8 +65,8 @@ export async function materialUploadDescriptor(material: Record<string, unknown>
   return storageClient().uploadDescriptor(material);
 }
 
-export async function materialObjectInfo(material: Record<string, unknown>) {
-  return storageClient().objectInfo(material);
+export async function materialObjectInfo(material: Record<string, unknown>, options: { allowMissing?: boolean } = {}) {
+  return storageClient().objectInfo(material, options);
 }
 
 export async function materialReadUrl(material: Record<string, unknown>, download = false) {
