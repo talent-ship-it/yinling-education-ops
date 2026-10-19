@@ -18,7 +18,7 @@
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:sql-runtime": "node scripts/run-sql-runtime-fixtures.mjs",
     "typecheck:scripts": "tsc --project tsconfig.scripts.json",
-    "build:classroom-tools": "npm --prefix plugins/classroom-tools ci --ignore-scripts --no-audit --no-fund && npm --prefix plugins/classroom-tools run typecheck && npm --prefix plugins/classroom-tools test && npm --prefix plugins/classroom-tools run build"
+    "build:classroom-tools": "npm --prefix plugins/classroom-tools ci --include=dev --ignore-scripts --no-audit --no-fund && npm --prefix plugins/classroom-tools run typecheck && npm --prefix plugins/classroom-tools test && npm --prefix plugins/classroom-tools run build"
   },
   "dependencies": {
     "@fullcalendar/core": "6.1.21",
