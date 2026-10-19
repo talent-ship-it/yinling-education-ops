@@ -3,7 +3,11 @@ export type MaterialUploadSession = {
   bucket: string;
   objectPath: string;
   token: string;
+  headers?: Record<string, string>;
 };
+
+type ResumeTarget = Pick<MaterialUploadSession, "endpoint" | "bucket" | "objectPath"> & { location: string };
+export type MaterialUploadResumeRecord = { fingerprint: string; requestKey: string; materialId?: string; upload?: ResumeTarget; uploaded?: boolean; expiresAt: number };
 
 const CHUNK_BYTES = 6 * 1024 * 1024;
 
@@ -23,10 +27,80 @@ function metadataValue(value: string) {
 function validEndpoint(value: string) {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash
-    || !url.pathname.endsWith("/storage/v1/upload/resumable")) {
+    || !url.pathname.endsWith("/storage/v1/upload/resumable/sign")) {
     throw new Error("上传地址无效");
   }
   return url;
+}
+
+function validLocation(value: string, endpoint: string) {
+  const destination = new URL(value, endpoint);
+  const source = validEndpoint(endpoint);
+  if (destination.origin !== source.origin || destination.username || destination.password || destination.hash
+    || !destination.pathname.startsWith(`${source.pathname}/`)) throw new Error("存储服务返回了无效的上传地址");
+  return destination;
+}
+
+export async function materialUploadFingerprint(file: File, folderId: string | null) {
+  const metadata = new TextEncoder().encode(JSON.stringify([folderId, file.name, file.size, file.lastModified]));
+  const first = new Uint8Array(await file.slice(0, 65536).arrayBuffer());
+  const last = new Uint8Array(await file.slice(Math.max(65536, file.size - 65536)).arrayBuffer());
+  const bytes = new Uint8Array(metadata.length + first.length + last.length);
+  bytes.set(metadata); bytes.set(first, metadata.length); bytes.set(last, metadata.length + first.length);
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function resumeRecord(value: unknown): MaterialUploadResumeRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Record<string, unknown>;
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  if (typeof entry.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(entry.fingerprint)
+    || typeof entry.requestKey !== "string" || !uuid.test(entry.requestKey)
+    || typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()
+    || (entry.materialId !== undefined && (typeof entry.materialId !== "string" || !uuid.test(entry.materialId)))) return null;
+  let upload: ResumeTarget | undefined;
+  if (entry.upload && typeof entry.upload === "object") {
+    const target = entry.upload as Record<string, unknown>;
+    const { endpoint, bucket, objectPath, location } = target;
+    if (typeof endpoint === "string" && typeof bucket === "string" && typeof objectPath === "string" && typeof location === "string") {
+      try { const url = validLocation(location, endpoint); if (!url.search) upload = { endpoint, bucket, objectPath, location: url.href }; } catch { }
+    }
+  }
+  return { fingerprint: entry.fingerprint, requestKey: entry.requestKey, materialId: entry.materialId as string | undefined,
+    expiresAt: entry.expiresAt, uploaded: entry.uploaded === true, upload };
+}
+
+export class MaterialUploadResumeStore {
+  private key: string | null;
+
+  constructor(scope: string | undefined, private storage: Pick<Storage, "getItem" | "setItem">) {
+    this.key = scope && /^[a-f0-9]{64}$/.test(scope) ? `insiderlead:classroom-upload:v1:${scope}` : null;
+  }
+
+  private records(): MaterialUploadResumeRecord[] {
+    if (!this.key) return [];
+    try {
+      const records: unknown = JSON.parse(this.storage.getItem(this.key) || "[]");
+      if (!Array.isArray(records)) return [];
+      return records.map(resumeRecord).filter((entry): entry is MaterialUploadResumeRecord => entry !== null);
+    } catch { return []; }
+  }
+
+  get(fingerprint: string) { return this.records().find((entry) => entry.fingerprint === fingerprint); }
+
+  save(record: MaterialUploadResumeRecord) {
+    if (!this.key) return;
+    const safeRecord = resumeRecord(record);
+    if (!safeRecord) return;
+    try { this.storage.setItem(this.key, JSON.stringify([...this.records().filter((entry) => entry.fingerprint !== record.fingerprint), safeRecord].slice(-500))); }
+    catch { }
+  }
+
+  remove(fingerprint: string) {
+    if (!this.key) return;
+    try { this.storage.setItem(this.key, JSON.stringify(this.records().filter((entry) => entry.fingerprint !== fingerprint))); }
+    catch { }
+  }
 }
 
 function readOffset(response: Response, size: number) {
@@ -35,6 +109,18 @@ function readOffset(response: Response, size: number) {
   const offset = Number(value);
   if (!Number.isSafeInteger(offset) || offset > size) throw new Error("上传进度无效，请重试");
   return offset;
+}
+
+function verifyMetadata(response: Response, session: MaterialUploadSession, contentType: string) {
+  try {
+    const entries = (response.headers.get("Upload-Metadata") || "").split(",").map((pair) => {
+      const [key, value = ""] = pair.trim().split(" ");
+      return [key, new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(value), (character) => character.charCodeAt(0)))] as const;
+    });
+    const metadata = new Map(entries);
+    if (metadata.size !== entries.length || metadata.get("bucketName") !== session.bucket
+      || metadata.get("objectName") !== session.objectPath || metadata.get("contentType") !== contentType) throw new Error();
+  } catch { throw new Error("待续传文件与存储记录不匹配"); }
 }
 
 export class ResumableMaterialUpload {
@@ -55,9 +141,26 @@ export class ResumableMaterialUpload {
     this.session = session;
   }
 
+  restore(target: ResumeTarget) {
+    if (target.endpoint !== this.session.endpoint || target.bucket !== this.session.bucket || target.objectPath !== this.session.objectPath) {
+      throw new Error("待续传文件与上传目标不匹配");
+    }
+    const url = validLocation(target.location, this.session.endpoint);
+    if (url.search) throw new Error("无法恢复此上传地址");
+    this.location = url.href;
+  }
+
+  checkpoint(): ResumeTarget | undefined {
+    if (!this.location) return;
+    const url = validLocation(this.location, this.session.endpoint);
+    if (url.search) return;
+    const { endpoint, bucket, objectPath } = this.session;
+    return { endpoint, bucket, objectPath, location: url.href };
+  }
+
   async run(signal: AbortSignal, onProgress: (bytes: number) => void) {
     const { endpoint, bucket, objectPath, token } = this.session;
-    const headers = { "Tus-Resumable": "1.0.0", "x-signature": token, "x-upsert": "false" };
+    const headers = { ...this.session.headers, "Tus-Resumable": "1.0.0", "x-signature": token, "x-upsert": "false" };
     const request = (url: string, init: RequestInit) => fetch(url, {
       ...init, signal, credentials: "omit", redirect: "error", cache: "no-store",
       headers: { ...headers, ...init.headers },
@@ -71,6 +174,7 @@ export class ResumableMaterialUpload {
         offset = readOffset(response, this.file.size);
         const length = response.headers.get("Upload-Length");
         if (length !== String(this.file.size)) throw new Error("上传文件大小不匹配");
+        verifyMetadata(response, this.session, this.contentType);
       }
     }
     if (!this.location) {
@@ -85,10 +189,7 @@ export class ResumableMaterialUpload {
       if (response.status !== 201) throw uploadError(response.status);
       const location = response.headers.get("Location");
       if (!location) throw new Error("存储服务未返回上传地址");
-      const destination = new URL(location, endpoint);
-      const source = validEndpoint(endpoint);
-      if (destination.origin !== source.origin || destination.username || destination.password || destination.hash
-        || !destination.pathname.startsWith(`${source.pathname}/`)) throw new Error("存储服务返回了无效的上传地址");
+      const destination = validLocation(location, endpoint);
       this.location = destination.href;
     }
     onProgress(offset);

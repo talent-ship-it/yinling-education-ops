@@ -61,6 +61,8 @@
 .grantHeader { background:#f4f8f6; color:#809087; font-size:10px; position:sticky; top:0; }
 .grantRow { border-top:1px solid #edf2ef; }
 .grantRow input { accent-color:#278576; height:16px; justify-self:center; width:16px; }
+.grantCheck { align-items:center; display:grid; gap:4px; justify-items:center; }
+.grantCheck small { color:#8c9b93; font-size:9px; }
 @media(max-width:760px) {
   .panel { padding:15px; }
   .toolbar { gap:7px; }
