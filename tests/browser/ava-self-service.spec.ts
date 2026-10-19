@@ -70,8 +70,7 @@ test("teacher can open the immediate self-availability editor", async ({ page })
 
 async function day(page: Page, editable = true) {
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("UTC");
-  const view = page.getByRole("combobox", { name: "日历视图", exact: true });
-  if (await view.isEnabled()) await view.selectOption("timeGridDay");
+  await page.getByRole("group", { name: "日历视图", exact: true }).getByRole("button", { name: "日", exact: true }).click();
   await page.getByLabel("日期", { exact: true }).fill("2026-10-12");
   await expect(page.getByRole("button", { name: "刷新", exact: true })).toBeEnabled();
   await expect(page.locator(".fc-timegrid-col[data-date='2026-10-12']").first()).toBeVisible();
@@ -265,14 +264,14 @@ test("shared all-teacher columns sync scrolling and preserve each mobile axis; m
   await page.screenshot({ path: info.outputPath(`${info.project.name}-all-teachers-mobile320.png`), fullPage: true });
   await page.getByRole("combobox", { name: "显示时区", exact: true }).selectOption("America/New_York");
   await page.getByRole("combobox", { name: "老师", exact: true }).selectOption("T1");
-  const view = page.getByRole("combobox", { name: "日历视图", exact: true });
-  await view.selectOption("dayGridMonth");
+  const views = page.getByRole("group", { name: "日历视图", exact: true });
+  await views.getByRole("button", { name: "月", exact: true }).click();
   for (const date of ["2026-10-12", "2026-12-31", "2027-01-15"]) {
     await page.getByLabel("日期", { exact: true }).fill(date);
     await expect(page.locator(".fc-col-header-cell-cushion")).toHaveCount(7);
     expect(await page.locator(".fc-col-header-cell-cushion").allTextContents()).toEqual(["周一", "周二", "周三", "周四", "周五", "周六", "周日"]);
   }
-  await view.selectOption("timeGridWeek");
+  await views.getByRole("button", { name: "周", exact: true }).click();
   await expect(page.locator(".fc-timeGridWeek-view")).toHaveCount(1);
   expect((await page.locator(".fc-col-header-cell-cushion").allTextContents()).every((text) => /\d/.test(text))).toBe(true);
   expect(f.writes.length).toBe(0);
@@ -322,10 +321,42 @@ test("a second viewer refreshes the same saved AVA in their own browser timezone
     const other = await context.newPage();
     const second = await syntheticCalendar(other, true, () => {}, f.state);
     await expect(other.getByRole("combobox", { name: "显示时区", exact: true })).toHaveValue("Asia/Shanghai");
-    await other.getByRole("combobox", { name: "日历视图", exact: true }).selectOption("timeGridDay");
+    await other.locator('button[data-view="timeGridDay"]').click();
     await other.getByLabel("日期", { exact: true }).fill("2026-10-12");
     await expect(other.locator("[data-ava-id]")).toHaveCount(3);
     await other.screenshot({ path: info.outputPath(`${info.project.name}-second-viewer-shanghai.png`), fullPage: true });
     expect(second.external).toEqual([]);
   } finally { await context.close(); }
+});
+
+
+test("a successful self save supersedes an automatic read already in flight", async ({ page }) => {
+  const f = await syntheticCalendar(page);
+  await day(page);
+  await twoPoints(page, "07:00", "08:30");
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  await page.route("**/api/ava-calendar?**", async (route) => {
+    reads++;
+    const url = new URL(route.request().url());
+    const window = { start: url.searchParams.get("start")!, end: url.searchParams.get("end")! };
+    const reply = await f.server.get("human", window);
+    const json = await reply.json();
+    if (reads === 1) await pending;
+    await route.fulfill({ status: reply.status, json }).catch(() => {});
+  });
+  try {
+    await page.clock.fastForward(60000);
+    await expect.poll(() => reads).toBe(1);
+    await page.getByRole("dialog", { name: "新开放时段", exact: true }).getByRole("button", { name: "保存", exact: true }).click();
+    await expect.poll(() => f.writes.length).toBe(1);
+    await expect.poll(() => reads).toBe(2);
+    await expect(page.locator("[data-ava-id]")).toHaveCount(3);
+    release();
+    await page.clock.runFor(100);
+    await expect(page.locator("[data-ava-id]")).toHaveCount(3);
+    expect(reads).toBe(2);
+    expect(f.external).toEqual([]);
+  } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
 });
