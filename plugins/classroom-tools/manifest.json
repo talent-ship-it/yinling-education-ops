@@ -1,7 +1,7 @@
 {
   "requiredSdkVersion": "~0.0.104",
   "name": "InsiderClassroomTools",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "javascriptEntrypointUrl": "InsiderClassroomTools.js",
   "enabledForBreakoutRooms": false,
   "dataChannels": [

@@ -4,7 +4,8 @@ import React, { createContext, useContext, useState } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { PluginApi } from "bigbluebutton-html-plugin-sdk";
 import type { NativeTimerState } from "../src/timer";
-Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: Object.assign(new EventTarget(), { currentScript: null, hidden: false, fullscreenElement: null }) });
+Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: Object.assign(new EventTarget(), { currentScript: null, hidden: false, fullscreenElement: null, hasFocus: () => true }) });
+Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: new EventTarget() });
 Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, writable: true, value: () => 1 });
 Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, writable: true, value: () => {} });
 const { ClassroomTools } = await import("../src/Plugin");
@@ -68,8 +69,11 @@ test("teacher start, pause, resume, reset and student display follow native ackn
   } finally { await act(async () => { renderer.unmount(); }); }
 });
 
-test("fullscreen rejection is visible and student visibility uses a moderator-only SDK channel with transport identity", async () => {
-  const target = Object.assign(new EventTarget(), { currentScript: null, hidden: false, fullscreenElement: null, documentElement: { requestFullscreen: () => { fullscreenCalls++; return Promise.reject(new Error("denied")); } } });
+test("fullscreen rejection is visible and blur plus visibility share a moderator-only SDK channel with transport identity", async () => {
+  let focused = true;
+  const windowTarget = new EventTarget();
+  Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: windowTarget });
+  const target = Object.assign(new EventTarget(), { currentScript: null, hidden: false, fullscreenElement: null, hasFocus: () => focused, documentElement: { requestFullscreen: () => { fullscreenCalls++; return Promise.reject(new Error("denied")); } } });
   Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: target });
   let fullscreenCalls = 0;
   let toolbar: { id: string; onClick: () => void }[] = [];
@@ -98,9 +102,14 @@ test("fullscreen rejection is visible and student visibility uses a moderator-on
   try {
     await act(async () => { toolbar.find((item) => item.id === "insider-classroom-fullscreen")!.onClick(); assert.equal(fullscreenCalls, 1); });
     assert.match(JSON.stringify(renderer.toJSON()), /未能进入或退出全屏/);
+    await act(async () => { focused = false; windowTarget.dispatchEvent(new Event("blur")); });
     await act(async () => { target.hidden = true; target.dispatchEvent(new Event("visibilitychange")); });
+    assert.equal(sent.length, 1);
     assert.deepEqual(sent[0], { report: { version: 1, state: "hidden" }, options: { receivers: [{ role: "MODERATOR" }] } });
+    await act(async () => { focused = true; windowTarget.dispatchEvent(new Event("focus")); });
+    assert.equal(sent.length, 1);
     await act(async () => { target.hidden = false; target.dispatchEvent(new Event("visibilitychange")); });
+    assert.equal(sent.length, 2);
     await act(async () => { renderer.root.findByProps({ "aria-label": "关闭提醒" }).props.onClick(); });
     await act(async () => { target.hidden = true; target.dispatchEvent(new Event("visibilitychange")); target.hidden = false; target.dispatchEvent(new Event("visibilitychange")); });
     assert.match(JSON.stringify(renderer.toJSON()), /已返回课堂，请继续专注上课/);
@@ -110,5 +119,13 @@ test("fullscreen rejection is visible and student visibility uses a moderator-on
     const count = sent.length;
     await act(async () => { target.hidden = true; target.dispatchEvent(new Event("visibilitychange")); });
     assert.equal(sent.length, count);
+    await act(async () => { target.hidden = false; setValue({ role: "VIEWER", entries: [] }); });
   } finally { await act(async () => { renderer.unmount(); }); }
+  const countAfterUnmount = sent.length;
+  focused = false;
+  windowTarget.dispatchEvent(new Event("blur"));
+  target.dispatchEvent(new Event("visibilitychange"));
+  focused = true;
+  windowTarget.dispatchEvent(new Event("focus"));
+  assert.equal(sent.length, countAfterUnmount);
 });

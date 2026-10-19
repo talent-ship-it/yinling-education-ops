@@ -24,10 +24,16 @@ function useStudentVisibility(api: PluginApi, enabled: boolean, returned: () => 
       try { current.pushEntry(report, { receivers: [{ role: DataChannelPushEntryFunctionUserRole.MODERATOR }] }); }
       catch { failed(); }
     }, returned);
-    const changed = () => reporter.observe(document.hidden, Date.now());
+    const changed = () => reporter.observe(document.hidden || !document.hasFocus(), Date.now());
     document.addEventListener("visibilitychange", changed);
+    window.addEventListener("blur", changed);
+    window.addEventListener("focus", changed);
     changed();
-    return () => document.removeEventListener("visibilitychange", changed);
+    return () => {
+      document.removeEventListener("visibilitychange", changed);
+      window.removeEventListener("blur", changed);
+      window.removeEventListener("focus", changed);
+    };
   }, [enabled, returned, failed]);
   return channel;
 }
