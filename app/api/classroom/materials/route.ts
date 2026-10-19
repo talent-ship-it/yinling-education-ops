@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
       throw new ClassroomMaterialsError("资料查询参数无效。", "materials_invalid_input");
     }
     const result = await materialRpc(session.accountId, "list", { folderId, q, offset, limit });
-    return materialsResponse({ ...result, configured: materialsStorageConfigured(), uploadScope: createHash("sha256").update(`materials-upload:${session.accountId}`).digest("hex"), maxFileBytes: materialMaxBytes() });
+    return materialsResponse({ ...result, canPresent: session.role === "teacher", configured: materialsStorageConfigured(), uploadScope: createHash("sha256").update(`materials-upload:${session.accountId}`).digest("hex"), maxFileBytes: materialMaxBytes() });
   } catch (error) { return materialsErrorResponse(error); }
 }
 
