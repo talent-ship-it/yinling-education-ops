@@ -12191,7 +12191,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       case "operations":
         return renderOperations();
       case "ava-calendar":
-        return canOpenAvaCalendar ? <><ViewHeading eyebrow={avaCalendarLabel} title={avaCalendarLabel} /><Suspense fallback={<p role="status">正在读取…</p>}><AvaCalendarLiveClient displayTimezone={scheduleTimezone} onDisplayTimezoneChange={(timezone) => updateDisplayPreferences({ timezone })} /></Suspense></> : renderDashboard();
+        return canOpenAvaCalendar ? <><ViewHeading eyebrow={avaCalendarLabel} title={avaCalendarLabel} /><Suspense fallback={<p role="status">正在读取…</p>}><AvaCalendarLiveClient displayTimezone={scheduleTimezone} onDisplayTimezoneChange={(timezone) => { if (timezoneOptions.some((option) => option.id === timezone)) updateDisplayPreferences({ timezone }); }} /></Suspense></> : renderDashboard();
       case "renewals":
         return renderRenewals();
       case "payroll":

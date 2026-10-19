@@ -28,11 +28,6 @@ export const displayTimezoneOptions = [
   { id: "Australia/Perth", zh: "珀斯", en: "Perth" },
   { id: "Pacific/Auckland", zh: "新西兰", en: "New Zealand" },
   { id: "Asia/Shanghai", zh: "北京时间（中国）", en: "Beijing time (China)" },
-  { id: "Asia/Hong_Kong", zh: "香港", en: "Hong Kong" },
-  { id: "Asia/Singapore", zh: "新加坡", en: "Singapore" },
-  { id: "Europe/London", zh: "伦敦", en: "London" },
-  { id: "America/New_York", zh: "纽约", en: "New York" },
-  { id: "UTC", zh: "UTC", en: "UTC" },
   { id: "America/Argentina/Buenos_Aires", zh: "阿根廷", en: "Argentina" },
   { id: "Europe/Sarajevo", zh: "波斯尼亚", en: "Bosnia" },
 ] as const;

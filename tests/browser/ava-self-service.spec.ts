@@ -20,7 +20,7 @@ async function syntheticCalendar(page: Page, teacher = true, prepare: (state: Re
   state.session = teacher ? { user: "Synthetic Teacher", role: "teacher", permissions: ["operations.read", "availability.write.self"] } : state.session;
   state.fullAdmin = !teacher;
   prepare(state);
-  await page.addInitScript(({ key, value }) => { localStorage.setItem(key, value); }, { key: displayPreferencesStorageKey(state.session.user), value: JSON.stringify(defaultDisplayPreferences()) });
+  await page.addInitScript(({ key, value }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, value); }, { key: displayPreferencesStorageKey(state.session.user), value: JSON.stringify(defaultDisplayPreferences()) });
   const server = serverFixture(state);
   const writes: unknown[] = [];
   const external: string[] = [];
@@ -311,7 +311,7 @@ test("lost save response retries exactly the same command without a duplicate wr
   expect(f.external).toEqual([]);
 });
 
-test("a second viewer refreshes the same saved AVA in their own browser timezone", async ({ page, browser }, info) => {
+test("a second viewer preserves their saved timezone and can change it for the same AVA", async ({ page, browser }, info) => {
   const f = await syntheticCalendar(page);
   await day(page); await twoPoints(page);
   await page.getByRole("dialog", { name: "新开放时段", exact: true }).getByRole("button", { name: "保存", exact: true }).click();
@@ -320,11 +320,19 @@ test("a second viewer refreshes the same saved AVA in their own browser timezone
   try {
     const other = await context.newPage();
     const second = await syntheticCalendar(other, true, () => {}, f.state);
-    await expect(other.getByRole("combobox", { name: "显示时区", exact: true })).toHaveValue("Asia/Shanghai");
+    const timezone = other.getByRole("combobox", { name: "显示时区", exact: true });
+    await expect(timezone).toHaveValue("Australia/Melbourne");
+    await timezone.selectOption("Asia/Shanghai");
+    await expect(timezone).toHaveValue("Asia/Shanghai");
     await other.locator('button[data-view="timeGridDay"]').click();
     await other.getByLabel("日期", { exact: true }).fill("2026-10-12");
     await expect(other.locator("[data-ava-id]")).toHaveCount(3);
     await other.screenshot({ path: info.outputPath(`${info.project.name}-second-viewer-shanghai.png`), fullPage: true });
+    await expect.poll(() => other.evaluate((key) => JSON.parse(localStorage.getItem(key)!).timezone, displayPreferencesStorageKey(f.state.session.user))).toBe("Asia/Shanghai");
+    await other.reload();
+    await expect(timezone).toHaveValue("Asia/Shanghai");
+    await other.getByLabel("日期", { exact: true }).fill("2026-10-12");
+    await expect(other.locator("[data-ava-id]")).toHaveCount(3);
     expect(second.external).toEqual([]);
   } finally { await context.close(); }
 });

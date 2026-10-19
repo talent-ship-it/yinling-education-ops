@@ -36,13 +36,13 @@ test("defaults operations staff to Beijing and teaching control and planners to 
 test("loads saved account preferences before applying role defaults and preserves an explicit Melbourne selection", () => {
   const saved = new Map([
     [displayPreferencesStorageKey("Abby"), JSON.stringify({ timezone: "Australia/Melbourne", textSize: "large" })],
-    [displayPreferencesStorageKey("Ella"), JSON.stringify({ timezone: "Asia/Hong_Kong" })],
+    [displayPreferencesStorageKey("Ella"), JSON.stringify({ timezone: "Australia/Sydney" })],
     [displayPreferencesStorageKey("Ops Admin"), JSON.stringify({ timezone: "Asia/Shanghai" })],
   ]);
   const read = (key: string) => saved.get(key) ?? null;
   assert.equal(readAccountDisplayPreferences("Abby", "staff", read).timezone, "Australia/Melbourne");
   assert.equal(readAccountDisplayPreferences("Abby", "staff", read).textSize, "large");
-  assert.equal(readAccountDisplayPreferences("Ella", "staff", read).timezone, "Asia/Hong_Kong");
+  assert.equal(readAccountDisplayPreferences("Ella", "staff", read).timezone, "Australia/Sydney");
   assert.equal(readAccountDisplayPreferences("Erin", "staff", read).timezone, "Asia/Shanghai");
   assert.equal(readAccountDisplayPreferences("Ops Admin", "limited-admin", read).timezone, "Asia/Shanghai");
   assert.equal(readAccountDisplayPreferences("Tara", "staff", read).timezone, "Australia/Melbourne");

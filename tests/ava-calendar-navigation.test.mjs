@@ -44,6 +44,17 @@ test("calendar timezone follows account preferences while keeping the selected v
   const second = useCalendarViewState({ displayTimezone: selected[0], onDisplayTimezoneChange: change });
   assert.equal(second.zone, "Australia/Melbourne");
   assert.equal(second.view, "timeGridWeek");
+  second.setZone("UTC");
+  cursor = 0;
+  const temporary = useCalendarViewState({ displayTimezone: "Australia/Melbourne", onDisplayTimezoneChange: change });
+  assert.equal(temporary.zone, "UTC");
+  assert.deepEqual(selected, ["Australia/Melbourne", "UTC"]);
+  cursor = 0;
+  const changed = useCalendarViewState({ displayTimezone: "Asia/Shanghai", onDisplayTimezoneChange: change });
+  assert.equal(changed.zone, "Asia/Shanghai");
+  assert.equal(changed.view, "timeGridWeek");
+  cursor = 0;
+  assert.equal(useCalendarViewState({ displayTimezone: "Australia/Melbourne", onDisplayTimezoneChange: change }).zone, "Australia/Melbourne");
 });
 
 test("all-teacher day columns do not disable aggregate three-day week or month views", () => {

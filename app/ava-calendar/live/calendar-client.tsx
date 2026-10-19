@@ -11,7 +11,6 @@ import { DateTime } from "luxon";
 import type { AvaCalendarEvent } from "@/lib/ava-calendar-projection";
 import { fetchAvaCalendarRange as fetchAvaCalendarWindow, type AvaCalendarLiveData, type AvaCalendarLiveWindow } from "@/lib/ava-calendar-live-client";
 import { ASSIGNABLE_DEMO_STAFF_USERS as TRIAL_OPERATIONS } from "@/lib/demo-users";
-import { displayTimezoneOptions } from "@/lib/display-preferences";
 import styles from "./calendar.module.css";
 import { useAvaCalendarVisibleRefresh } from "@/lib/ava-calendar-visible-refresh";
 import type { AvaCalendarSync } from "@/lib/ava-calendar-display";
@@ -19,7 +18,7 @@ import { SelfAvailabilityButton, SelfAvailabilityDialogs, useTeacherSelfAvailabi
 import { useCalendarColumnWindow, calendarScrollers, readCalendarScroll, restoreCalendarScroll, appendCalendarSpacer, sizeTeacherColumn, calendarLifecycle } from "./calendar-columns";
 import { calendarTeacherColumns, calendarInitialScrollTime, calendarColumnScrollLeft, type CalendarColumnPosition } from "./calendar-presentation";
 
-const ZONES = Object.fromEntries(displayTimezoneOptions.map((option) => [option.id, option.zh]));
+const ZONES: Record<string, string> = { "Australia/Melbourne": "墨尔本", "Australia/Sydney": "悉尼", "Australia/Brisbane": "布里斯班", "Australia/Adelaide": "阿德莱德", "Australia/Perth": "珀斯", "Pacific/Auckland": "奥克兰", "Asia/Shanghai": "中国", "Asia/Hong_Kong": "香港", "Asia/Singapore": "新加坡", "Europe/London": "伦敦", "America/New_York": "纽约", UTC: "UTC", "Australia/Canberra": "堪培拉", "Australia/Hobart": "霍巴特", "America/Argentina/Buenos_Aires": "阿根廷", "Europe/Sarajevo": "波斯尼亚" };
 
 function readFailure(error: unknown) {
   return error instanceof Error && error.name !== "AbortError" ? error.message : "读取超时，请重试。";
@@ -490,7 +489,14 @@ function calendarSwitches(close: () => void, hideManager: (value: boolean) => vo
   };
 }
 type CalendarTimezone = { displayTimezone: string; onDisplayTimezoneChange: (timezone: string) => void };
-function useCalendarViewState({ displayTimezone: zone, onDisplayTimezoneChange: setZone }: CalendarTimezone) {
+function useCalendarViewState({ displayTimezone, onDisplayTimezoneChange }: CalendarTimezone) {
+  const [selection, setSelection] = useState({ zone: displayTimezone, preference: displayTimezone });
+  const zone = selection.preference === displayTimezone ? selection.zone : displayTimezone;
+  if (selection.preference !== displayTimezone) setSelection({ zone: displayTimezone, preference: displayTimezone });
+  const setZone = (next: string) => {
+    setSelection({ zone: next, preference: displayTimezone });
+    onDisplayTimezoneChange(next);
+  };
   const [view, setView] = useState(initialCalendarView);
   const [date, setDate] = useState("");
   const [title, setTitle] = useState("");
