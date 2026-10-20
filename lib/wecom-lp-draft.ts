@@ -7,6 +7,7 @@ export type WecomLpDraftSourceRecord = Readonly<{
   messageId: string;
   text: string;
   sentAt: string;
+  studentId?: string | null;
   studentNameHint?: string | null;
   guardianWechatHint?: string | null;
   operationsOwnerHint?: string | null;
