@@ -190,7 +190,7 @@ import {
   type StudentFollowUp,
   type StudentLessonPackage,
 } from "@/lib/student-records";
-import { LpRevisionHistory, LpWorkflowDetails, LpWorkflowFields, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
+import type { LpRevisionHistoryProps, LpWorkflowDetailsProps, LpWorkflowFieldsProps, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
 import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "@/app/to-do-list";
 import { buildStudentRecordsPanelData, StudentRecordsPanel, type StudentHistoricalJwbSnapshot, type StudentRecordPanelSection } from "@/app/student-records-panel";
 import { CoursePackageSummary } from "@/app/course-package-summary";
@@ -429,6 +429,16 @@ import {
   type JiaowubaoTrialSyncCommand,
   type JiaowubaoTrialSyncPendingCommand,
 } from "@/lib/jiaowubao-trial-sync";
+
+const LazyLpWorkflowFields = lazy(() => import("@/app/lp-workflow-fields").then((module) => ({ default: module.LpWorkflowFields })));
+const LazyLpWorkflowDetails = lazy(() => import("@/app/lp-workflow-fields").then((module) => ({ default: module.LpWorkflowDetails })));
+const LazyLpRevisionHistory = lazy(() => import("@/app/lp-workflow-fields").then((module) => ({ default: module.LpRevisionHistory })));
+function LpWorkflowFields(props: LpWorkflowFieldsProps) { return <Suspense fallback={null}><LazyLpWorkflowFields {...props} /></Suspense>; }
+function LpWorkflowDetails(props: LpWorkflowDetailsProps) { return <Suspense fallback={null}><LazyLpWorkflowDetails {...props} /></Suspense>; }
+function LpRevisionHistory(props: LpRevisionHistoryProps) { return <Suspense fallback={null}><LazyLpRevisionHistory {...props} /></Suspense>; }
+
+const WecomLpDraftWorkspace = lazy(() => import("@/app/wecom-lp-draft-workspace").then((module) => ({ default: module.WecomLpDraftWorkspace })));
+
 
 const AvaCalendarLiveClient = lazy(() => import("./ava-calendar/live/calendar-client"));
 const ClassroomMaterialsPanel = lazy(() => import("./classroom-materials-panel"));
@@ -8861,6 +8871,27 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在核对任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `后台自动同步 · 立即核对${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
         <button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>
       </>} />
+      {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
+        key={sessionOperator}
+        students={readableScopedStudents}
+        expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}
+        fieldOptions={{
+          responsibleOperationsOptions: operationsOwnerFormOptions(currentOperator).map((value) => ({ value })),
+          teacherOptions: recordTeachers.map((teacher) => ({ value: teacher.name, label: teacher.name })),
+          subjectOptions: courses.map((course) => ({ value: course.name })),
+          timezoneOptions: timezoneOptions.map((option) => ({ value: option.id, label: option.label })),
+          plannerOptions: [{ value: "Tara", label: "龙老师" }, { value: "Eileen" }, { value: "Abby" }],
+        }}
+        Dialog={Dialog}
+        notify={notify}
+        onCommitted={(body) => {
+          studentsShared.applyRemote(body.studentsRow as RemoteStateRow<Student[]>);
+          lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
+          tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
+          filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+          setSelectedStudentId(body.studentId);
+        }}
+      /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
         <header className="panel-header trial-ledger-header"><div><p className="eyebrow">【吟领教育】学员信息管理（LP）</p><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条试听` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条试听`}</span></div></header>
         {trialLedgerItems.length ? <>
@@ -12902,7 +12933,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const data = new FormData(event.currentTarget);
     let parsedLp: ReturnType<typeof parseLpWorkflowFormData>;
     try {
-      parsedLp = parseLpWorkflowFormData(data);
+      parsedLp = (await import("@/app/lp-workflow-fields")).parseLpWorkflowFormData(data);
     } catch (error) {
       notify(error instanceof Error ? error.message : "LP 表单内容无效");
       return;

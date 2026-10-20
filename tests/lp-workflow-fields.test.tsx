@@ -477,3 +477,15 @@ test("LP forms do not silently select the first coordinator for an absent owner"
     assert.doesNotMatch(operations, /value="Tiffany" selected/);
   }
 });
+
+
+test("robot drafts require explicit choices instead of filling missing facts with manual defaults", () => {
+  const html = renderToStaticMarkup(<LpWorkflowFields requireExplicitSelection initialType="试听 LP" initialValues={{ responsibleOperations: "Ella" }} />);
+  for (const name of ["planner", "writingRequired", "paperRequired", "timeMentioned", "studentNameKnown", "trialDurationMinutes", "trialPaymentMethod", "specifiedContentStatus", "preparationFollowUp"]) {
+    const select = html.match(new RegExp(`<select[^>]*name="${name}"[^>]*>([\\s\\S]*?)</select>`));
+    assert.ok(select, name);
+    assert.match(select[1], /<option value="" selected="">/);
+  }
+  assert.match(html, /name="workflowType" value="试听 LP"/);
+  assert.doesNotMatch(html, /name="contactParents"[^>]*checked/);
+});

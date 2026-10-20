@@ -451,6 +451,7 @@ const trialOperationsOptions = TRIAL_OPERATIONS.map((value) => Object.freeze({ v
 const trialLocationOptions = TRIAL_LOCATION_OPTIONS.map((value) => Object.freeze({ value }));
 
 export type LpWorkflowFieldsProps = Readonly<{
+  requireExplicitSelection?: boolean;
   initialType?: LpWorkflowType;
   initialValues?: Partial<TrialLpFields> & Partial<
     DirectEnrollmentLpFields &
@@ -487,6 +488,18 @@ function SelectOrInput({
   }
   return <select name={name} defaultValue={defaultValue || options[0]?.value} required={required}>
     {options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
+  </select>;
+}
+
+function BooleanChoice({ name, value, onChange, allowEmpty }: Readonly<{
+  name: LpWorkflowFormName;
+  value: boolean | null;
+  onChange: (value: boolean | null) => void;
+  allowEmpty: boolean;
+}>) {
+  return <select name={name} value={value === null ? "" : value ? "是" : "否"} onChange={(event) => onChange(event.target.value === "" ? null : event.target.value === "是")} required>
+    {allowEmpty && <option value="">请选择</option>}
+    <option value="否">否</option><option value="是">是</option>
   </select>;
 }
 
@@ -556,6 +569,7 @@ function SubjectField({
 export function LpWorkflowFields({
   initialType = "试听 LP",
   initialValues = {},
+  requireExplicitSelection = false,
   responsibleOperationsOptions,
   teacherOptions,
   subjectOptions,
@@ -566,8 +580,8 @@ export function LpWorkflowFields({
 }: LpWorkflowFieldsProps) {
   const [workflowType, setWorkflowType] = useState<LpWorkflowType>(initialType);
   const [isUniversityStudent, setIsUniversityStudent] = useState(Boolean(initialValues.isUniversityStudent));
-  const [timeMentioned, setTimeMentioned] = useState(Boolean(initialValues.timeMentioned));
-  const [studentNameKnown, setStudentNameKnown] = useState(Boolean(initialValues.studentNameKnown));
+  const [timeMentioned, setTimeMentioned] = useState<boolean | null>(requireExplicitSelection && initialValues.timeMentioned === undefined ? null : Boolean(initialValues.timeMentioned));
+  const [studentNameKnown, setStudentNameKnown] = useState<boolean | null>(requireExplicitSelection && initialValues.studentNameKnown === undefined ? null : Boolean(initialValues.studentNameKnown));
   const showsTrialFields = workflowType === "试听 LP" || workflowType === "学生直报（无试听）";
   const showsHours = workflowType === "学生直报（无试听）";
   const showsTeacherLp = workflowType === "老师新 LP" || workflowType === "老师 LP 修改";
@@ -584,8 +598,9 @@ export function LpWorkflowFields({
   };
 
   return <>
+    {requireExplicitSelection && <input type="hidden" name={LP_WORKFLOW_FORM_NAMES.workflowType} value={workflowType} />}
     <label>LP 类型
-      <select name={LP_WORKFLOW_FORM_NAMES.workflowType} value={workflowType} onChange={changeWorkflowType}>
+      <select name={LP_WORKFLOW_FORM_NAMES.workflowType} value={workflowType} onChange={changeWorkflowType} disabled={requireExplicitSelection}>
         {LP_WORKFLOW_TYPES.map((type) => <option value={type} key={type}>{type}</option>)}
       </select>
     </label>
@@ -600,12 +615,13 @@ export function LpWorkflowFields({
     {showsTrialFields ? <>
       {workflowType === "试听 LP" ? <>
         <label>课程规划老师
-          <select name={LP_WORKFLOW_FORM_NAMES.planner} defaultValue={initialValues.planner ?? TRIAL_PLANNERS[0]} required>
+          <select name={LP_WORKFLOW_FORM_NAMES.planner} defaultValue={initialValues.planner ?? (requireExplicitSelection ? "" : TRIAL_PLANNERS[0])} required>
+            {requireExplicitSelection && <option value="">请选择课程规划老师</option>}
             {TRIAL_PLANNERS.map((option) => <option value={option} key={option}>{option === "Tara" ? "Tara（试听学员 A）" : option === "Eileen" ? "Eileen（试听学员 B）" : "Abby（试听学员 C）"}</option>)}
           </select>
         </label>
         <label>试听 LP 交接时间
-          <input name={LP_WORKFLOW_FORM_NAMES.requestSentAt} type="datetime-local" defaultValue={localDateTimeDefault(initialValues.requestSentAt)} required />
+          <input name={LP_WORKFLOW_FORM_NAMES.requestSentAt} type="datetime-local" defaultValue={requireExplicitSelection && !initialValues.requestSentAt ? "" : localDateTimeDefault(initialValues.requestSentAt)} required />
         </label>
         <label>安排老师（可自定义）
           <DatalistInput name={LP_WORKFLOW_FORM_NAMES.assignedTeacher} defaultValue={initialValues.assignedTeacher} options={teacherOptions} />
@@ -630,7 +646,7 @@ export function LpWorkflowFields({
         />
       </label>
       {workflowType === "试听 LP" ? <fieldset className="span-2 lp-inline-options"><legend>对接对象（可多选）</legend>
-        <label className="checkbox-field"><input name={LP_WORKFLOW_FORM_NAMES.contactParents} type="checkbox" defaultChecked={initialValues.contactParents ?? true} /> 家长</label>
+        <label className="checkbox-field"><input name={LP_WORKFLOW_FORM_NAMES.contactParents} type="checkbox" defaultChecked={initialValues.contactParents ?? !requireExplicitSelection} /> 家长</label>
         <label className="checkbox-field"><input name={LP_WORKFLOW_FORM_NAMES.contactStudent} type="checkbox" defaultChecked={initialValues.contactStudent} /> 学生本人</label>
       </fieldset> : <label>对接对象
         <select name={LP_WORKFLOW_FORM_NAMES.contactPerson} defaultValue={initialValues.contactPerson ?? LP_CONTACT_OPTIONS[0]}>
@@ -640,41 +656,35 @@ export function LpWorkflowFields({
       {workflowType === "试听 LP" ? <>
         <label className="span-2">对接备注<textarea name={LP_WORKFLOW_FORM_NAMES.contactNote} defaultValue={initialValues.contactNote} rows={2} /></label>
         <label>是否要写作
-          <select name={LP_WORKFLOW_FORM_NAMES.writingRequired} defaultValue={initialValues.writingRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
+          <select name={LP_WORKFLOW_FORM_NAMES.writingRequired} defaultValue={initialValues.writingRequired === undefined && requireExplicitSelection ? "" : initialValues.writingRequired ? "是" : "否"} required>{requireExplicitSelection && <option value="">请选择</option>}<option value="否">否</option><option value="是">是</option></select>
         </label>
         <label>写作备注<input name={LP_WORKFLOW_FORM_NAMES.writingNote} defaultValue={initialValues.writingNote} /></label>
         <label>是否发试卷、收试卷
-          <select name={LP_WORKFLOW_FORM_NAMES.paperRequired} defaultValue={initialValues.paperRequired ? "是" : "否"}><option value="否">否</option><option value="是">是</option></select>
+          <select name={LP_WORKFLOW_FORM_NAMES.paperRequired} defaultValue={initialValues.paperRequired === undefined && requireExplicitSelection ? "" : initialValues.paperRequired ? "是" : "否"} required>{requireExplicitSelection && <option value="">请选择</option>}<option value="否">否</option><option value="是">是</option></select>
         </label>
         <label>试卷备注<input name={LP_WORKFLOW_FORM_NAMES.paperNote} defaultValue={initialValues.paperNote} /></label>
       </> : null}
       <label>是否提到时间
-        <select
-          name={LP_WORKFLOW_FORM_NAMES.timeMentioned}
-          value={timeMentioned ? "是" : "否"}
-          onChange={(event) => setTimeMentioned(event.target.value === "是")}
-        >
-          <option value="否">否</option><option value="是">是</option>
-        </select>
+        <BooleanChoice name={LP_WORKFLOW_FORM_NAMES.timeMentioned} value={timeMentioned} onChange={setTimeMentioned} allowEmpty={requireExplicitSelection} />
       </label>
       {timeMentioned ? <label>偏好时间
         <input name={LP_WORKFLOW_FORM_NAMES.preferredTime} defaultValue={initialValues.preferredTime} required />
       </label> : null}
       {workflowType === "试听 LP" ? <>
         <label>是否知道学生姓名
-          <select name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} value={studentNameKnown ? "是" : "否"} onChange={(event) => setStudentNameKnown(event.target.value === "是")}>
-            <option value="否">否</option><option value="是">是</option>
-          </select>
+          <BooleanChoice name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} value={studentNameKnown} onChange={setStudentNameKnown} allowEmpty={requireExplicitSelection} />
         </label>
         {studentNameKnown ? <label>学生姓名<input name={LP_WORKFLOW_FORM_NAMES.studentName} defaultValue={initialValues.studentName} required /></label> : null}
         <label>试听时长
-          <select name={LP_WORKFLOW_FORM_NAMES.trialDurationMinutes} defaultValue={initialValues.trialDurationMinutes ?? 60}>
+          <select name={LP_WORKFLOW_FORM_NAMES.trialDurationMinutes} defaultValue={initialValues.trialDurationMinutes ?? (requireExplicitSelection ? "" : 60)} required>
+            {requireExplicitSelection && <option value="">请选择试听时长</option>}
             <option value="60">1 小时</option><option value="45">45 分钟</option>
           </select>
         </label>
         <label>时长备注<input name={LP_WORKFLOW_FORM_NAMES.trialDurationNote} defaultValue={initialValues.trialDurationNote} /></label>
         <label>试听付费方式
-          <select name={LP_WORKFLOW_FORM_NAMES.trialPaymentMethod} defaultValue={initialValues.trialPaymentMethod ?? TRIAL_PAYMENT_METHODS[0]}>
+          <select name={LP_WORKFLOW_FORM_NAMES.trialPaymentMethod} defaultValue={initialValues.trialPaymentMethod ?? (requireExplicitSelection ? "" : TRIAL_PAYMENT_METHODS[0])} required>
+            {requireExplicitSelection && <option value="">请选择付费方式</option>}
             {TRIAL_PAYMENT_METHODS.map((option) => <option value={option} key={option}>{option}</option>)}
           </select>
         </label>
@@ -848,16 +858,20 @@ export function LpWorkflowFields({
     <label>{showsTrialFields ? "是否要指定内容" : "指定内容"}
       <select
         name={LP_WORKFLOW_FORM_NAMES.specifiedContentStatus}
-        defaultValue={initialValues.specifiedContentStatus ?? SPECIFIED_CONTENT_STATUSES[2]}
+        defaultValue={initialValues.specifiedContentStatus ?? (requireExplicitSelection ? "" : SPECIFIED_CONTENT_STATUSES[2])}
+        required
       >
+        {requireExplicitSelection && <option value="">请选择</option>}
         {SPECIFIED_CONTENT_STATUSES.filter((option) => option !== "需要跟进").map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
     <label>是否跟进老师备课内容
       <select
         name={LP_WORKFLOW_FORM_NAMES.preparationFollowUp}
-        defaultValue={initialValues.preparationFollowUp ?? PREPARATION_FOLLOW_UP_OPTIONS[0]}
+        defaultValue={initialValues.preparationFollowUp ?? (requireExplicitSelection ? "" : PREPARATION_FOLLOW_UP_OPTIONS[0])}
+        required
       >
+        {requireExplicitSelection && <option value="">请选择</option>}
         {PREPARATION_FOLLOW_UP_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
