@@ -78,6 +78,34 @@ begin
       raise exception using errcode='P0042',message='fixture_rollback';
     exception when sqlstate 'P0042' then null; end;
   end loop;
+  begin
+    raw_variant:=source_record||jsonb_build_object('dated','  '||(source_record->>'dated')||'  ','time_start',' 09:00 ','time_end',' 10:00 ');
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+    execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(next_lp),seed->'tasks') into receipt;
+    if (receipt.lp_items_row).payload<>jsonb_build_array(next_lp) then raise exception 'Padded source date or times diverged from snapshot reader'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  begin
+    select jsonb_set(source_record,'{stu_list}',jsonb_agg(source_record#>'{stu_list,0}')) into raw_variant from generate_series(1,150);
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+    execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(next_lp),seed->'tasks') into receipt;
+    if (receipt.lp_items_row).payload<>jsonb_build_array(next_lp) then raise exception 'Repeated raw participants were counted before reader deduplication'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  begin
+    select jsonb_set(source_record,'{stu_list}',jsonb_agg(jsonb_build_object('mem_id',value::text,'name',case when value=1 then '试听学员A' else 'Synthetic Member '||value end))) into raw_variant from generate_series(1,100) value;
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+    execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(next_lp),seed->'tasks') into receipt;
+    if (receipt.lp_items_row).payload<>jsonb_build_array(next_lp) then raise exception 'Exactly100 distinct source participants were rejected'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  begin
+    select jsonb_set(source_record,'{stu_list}',jsonb_agg(jsonb_build_object('mem_id',value::text,'name',case when value=1 then '试听学员A' else 'Synthetic Member '||value end))) into raw_variant from generate_series(1,101) value;
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+    perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(next_lp),seed->'tasks'),'trial_handover_source_projection_invalid');
+    if (select payload from public.ops_state where entity='lpItems')<>jsonb_build_array(lp) then raise exception 'Truncated participant rejection changed LP state'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
   for raw_variant in select jsonb_set(source_record,'{teacher_title}',value) from (values ('null'::jsonb),('"  "'::jsonb)) variants(value) loop
     begin
       update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);

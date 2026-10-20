@@ -41,6 +41,7 @@ begin
     order by coalesce(nullif(btrim(value->>'mem_id'),''),btrim(value->>'name')),nullif(btrim(value->>'name'),'')
     limit 101
   ) member;
+  if jsonb_array_length(participants)>100 then return false; end if;
   select count(distinct internal.trial_handover_account_letter(value->>'label')) into letters from jsonb_array_elements(participants);
   if letters=1 then
     select internal.trial_handover_account_letter(value->>'label'),value->>'label' into account_letter,account_label
@@ -103,7 +104,7 @@ declare
   source_run internal.jiaowubao_open_api_schedule_snapshot_ingest_runs%rowtype;
   match jsonb; source_record jsonb; before_lp jsonb; after_lp jsonb; expected_lp jsonb; enriched_lp jsonb;
   enriched_items jsonb; enriched_changes jsonb:='[]'::jsonb; schedule jsonb; source_day date; source_start timestamptz; source_end timestamptz;
-  receipt record; final_l public.ops_state%rowtype; enrichment_audit uuid; command_id uuid; item_count integer;
+  receipt record; final_l public.ops_state%rowtype; enrichment_audit uuid; command_id uuid; item_count integer; source_date_text text; source_start_text text; source_end_text text;
 begin
   if not internal.verify_ops_secret(p_secret) then raise exception using errcode='42501',message='invalid_ops_secret'; end if;
   if coalesce(p_command_uuid,'')!~'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
@@ -137,18 +138,21 @@ begin
       raise exception using errcode='P0002',message='trial_handover_lp_not_found';
     end if;
     select count(*),jsonb_agg(i.item->'record')->0 into item_count,source_record from internal.jiaowubao_open_api_schedule_snapshot_ingest_items i where i.run_id=pointer.run_id and i.source_key=match->>'eventId';
+    source_date_text:=coalesce(btrim(source_record->>'dated'),'');
+    source_start_text:=coalesce(btrim(source_record->>'time_start'),'');
+    source_end_text:=coalesce(btrim(source_record->>'time_end'),'');
     if item_count<>1 or jsonb_typeof(source_record) is distinct from 'object'
-      or coalesce(source_record->>'dated','')!~'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-      or coalesce(source_record->>'time_start','')!~'^([01][0-9]|2[0-3]):[0-5][0-9]$' or coalesce(source_record->>'time_end','')!~'^([01][0-9]|2[0-3]):[0-5][0-9]$'
-      or source_record->>'time_end'<=source_record->>'time_start' or jsonb_typeof(source_record->'stu_list') is distinct from 'array' or jsonb_array_length(source_record->'stu_list')>100 then
+      or source_date_text!~'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      or source_start_text!~'^([01][0-9]|2[0-3]):[0-5][0-9]$' or source_end_text!~'^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      or source_end_text<=source_start_text or jsonb_typeof(source_record->'stu_list') is distinct from 'array' or jsonb_array_length(source_record->'stu_list')>1000 then
       raise exception using errcode='40001',message='trial_handover_source_event_changed';
     end if;
     begin
-      source_day:=(source_record->>'dated')::date;
-      if to_char(source_day,'YYYY-MM-DD')<>source_record->>'dated' or extract(year from source_day) not between 1900 and 9998
+      source_day:=source_date_text::date;
+      if to_char(source_day,'YYYY-MM-DD')<>source_date_text or extract(year from source_day) not between 1900 and 9998
         or source_day<(source_run.query->>'start')::date or source_day>(source_run.query->>'end')::date then raise exception using errcode='22023',message='trial_handover_source_date_invalid'; end if;
-      source_start:=((source_day::text||' '||(source_record->>'time_start'))::timestamp at time zone 'Australia/Melbourne');
-      source_end:=((source_day::text||' '||(source_record->>'time_end'))::timestamp at time zone 'Australia/Melbourne');
+      source_start:=((source_day::text||' '||source_start_text)::timestamp at time zone 'Australia/Melbourne');
+      source_end:=((source_day::text||' '||source_end_text)::timestamp at time zone 'Australia/Melbourne');
     exception when datetime_field_overflow or invalid_datetime_format then raise exception using errcode='22023',message='trial_handover_source_date_invalid'; end;
     schedule:=after_lp->'trialSchedule';
     if source_end<=source_start
