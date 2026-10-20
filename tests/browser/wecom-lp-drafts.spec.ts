@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { buildWecomLpDraft } from "../../lib/wecom-lp-draft";
 import { defaultDisplayPreferences, displayPreferencesStorageKey } from "../../lib/display-preferences";
 
@@ -34,6 +34,44 @@ type PostedCommand = {
   expectedVersions: Record<string, number>;
 };
 
+type ScreenshotMatchRequest = {
+  target: { lpItemId: string } | { caseId: string; sourceMessageId: string; sourceRevision: string };
+  evidence: { sourceDate: string; startTime: string; endTime: string; teacherName: string; courseName: string; sharedAccountLetter?: string };
+};
+type ScreenshotConfirmation = {
+  commandKey: string;
+  lpItemId: string;
+  eventId: string;
+  sourceDate: string;
+  sourceRevision: string;
+  expectedVersions: { students: number; lpItems: number; tasks: number };
+};
+
+const screenshotText = `2026-10-22 19:05-20:05
+课程：English - Synthetic Candidate Student试听
+班级：试听学员B(校长号1)2026
+老师：Synthetic Screenshot Teacher(1课时)`;
+
+function screenshotCandidate(revision = "c".repeat(64)) {
+  return {
+    eventId: "jwb-open-api:schedule:synthetic-screenshot-1", sourceRevision: `sha256:${revision}`, sourceDate: "2026-10-22",
+    startsAt: "2026-10-22T08:05:00.000Z", endsAt: "2026-10-22T09:05:00.000Z", teacherName: "Synthetic Screenshot Teacher",
+    courseName: "English - Synthetic Candidate Student试听", studentNameHint: "Synthetic Candidate Student",
+    sharedAccountLabel: "试听学员B(校长号1)2026", sharedAccountLetter: "b", durationMinutes: 60,
+  };
+}
+
+function screenshotMatch(candidate = screenshotCandidate(), freshness = "fresh") {
+  return {
+    candidates: [candidate], ambiguous: false, hasMore: false,
+    coverage: {
+      complete: true, state: freshness === "fresh" ? "complete" : "stale", freshness, sourceRevision: candidate.sourceRevision,
+      publishedAt: NOW, sourceWindow: { start: "2026-10-20", end: "2026-10-30" },
+      requestedWindow: { startsAt: "2026-10-21T13:00:00.000Z", endsAt: "2026-10-22T13:00:00.000Z" }, timeZone: "Australia/Melbourne",
+    },
+  };
+}
+
 function source(text = template, revision = "a".repeat(64), matched = false) {
   const messages = [{ messageId: SOURCE_ID, text, sentAt: NOW }];
   const draft = buildWecomLpDraft(messages);
@@ -51,6 +89,8 @@ type WorkspaceOptions = {
   matched?: boolean;
   postStatuses?: number[];
   sourcePage?: (url: URL) => SourcePage | Promise<SourcePage>;
+  screenshotMatches?: ReturnType<typeof screenshotMatch>[];
+  screenshotConfirmStatuses?: number[];
 };
 
 async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
@@ -60,6 +100,9 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   const reads: URL[] = [];
   const unexpected: string[] = [];
   const errors: string[] = [];
+  const requests: { url: URL; method: string }[] = [];
+  const screenshotReads: ScreenshotMatchRequest[] = [];
+  const screenshotPosted: ScreenshotConfirmation[] = [];
   const student = {
     id: STUDENT_ID, name: options.matched ? "Synthetic Student" : "Synthetic Existing Student", initials: "SS",
     guardianWechat: options.matched ? "Synthetic Parent" : "Synthetic Other Parent", status: "试听待排", owner: "Ella", planner: "Eileen",
@@ -108,6 +151,19 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
     const requested = (url.searchParams.get("entities") ?? "").split(",");
     return { rows: requested.filter((entity) => entity in entities).map(row), ...snapshots() };
   }
+  function screenshotConfirmationReply(route: Route) {
+    screenshotPosted.push(route.request().postDataJSON() as ScreenshotConfirmation);
+    const status = options.screenshotConfirmStatuses?.[screenshotPosted.length - 1] ?? 200;
+    if (status !== 200) return route.fulfill({ status, json: { error: status === 409 ? "合成课表来源已变化，请重新核对。" : "合成小课表服务暂不可用", code: status === 409 ? "source_changed" : "unavailable" } });
+    versions.lpItems++;
+    versions.tasks++;
+    return route.fulfill({ json: { committed: true, applied: true, lpItemsRow: row("lpItems"), tasksRow: row("tasks") } });
+  }
+  function screenshotReply(route: Route, url: URL) {
+    if (url.pathname === "/api/operations/trial-screenshot-confirm") return screenshotConfirmationReply(route);
+    screenshotReads.push(route.request().postDataJSON() as ScreenshotMatchRequest);
+    return route.fulfill({ json: options.screenshotMatches?.[screenshotReads.length - 1] ?? screenshotMatch() });
+  }
   function readReply(route: Route, url: URL) {
     switch (url.pathname) {
       case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
@@ -118,13 +174,15 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
       default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
     }
   }
-  await page.route("**/*", (route) => {
+  await page.context().route("**/*", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    requests.push({ url, method: request.method() });
     if (url.hostname !== "127.0.0.1") { unexpected.push(url.origin); return route.abort(); }
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (url.pathname === "/api/demo-logout") return route.fulfill({ json: { serverSessionRevoked: true } });
     if (url.pathname === "/api/operations/wecom-lp-drafts") return sourceReply(route);
+    if (request.method() === "POST" && ["/api/operations/trial-screenshot-match", "/api/operations/trial-screenshot-confirm"].includes(url.pathname)) return screenshotReply(route, url);
     if (request.method() !== "GET") {
       unexpected.push(`${request.method()} ${url.pathname}`);
       return route.fulfill({ status: 403, json: { error: "Unbound synthetic write" } });
@@ -136,7 +194,7 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   await page.goto("/#section=lp");
   await expect(page.getByRole("heading", { name: "机器人交接草稿", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /核对并创建 LP/u }).first()).toBeVisible();
-  return { posted, reads, errors, unexpected };
+  return { posted, reads, errors, unexpected, requests, screenshotReads, screenshotPosted };
 }
 
 async function openDraft(page: Page) {
@@ -234,6 +292,169 @@ test("retry after a temporary failure preserves the exact command UUID and input
   expect(f.posted).toHaveLength(2);
   expect(f.posted[0].commandKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
   expect(f.posted[1]).toEqual(f.posted[0]);
+  assertClean(f);
+});
+
+function screenshotImport(dialog: Locator) {
+  return dialog.getByRole("region", { name: "教务宝排课截图导入", exact: true });
+}
+
+async function parseScreenshot(dialog: Locator, text = screenshotText) {
+  const region = screenshotImport(dialog);
+  await region.getByRole("textbox", { name: "识别文字（可修正）", exact: true }).fill(text);
+  await region.getByRole("button", { name: "解析并核对教务宝", exact: true }).click();
+  await expect(region.getByRole("radio")).toHaveCount(1);
+  await expect(region.getByRole("radio")).not.toBeChecked();
+  return region;
+}
+
+async function handoverValues(dialog: Locator) {
+  const fields = ["assignedTeacher", "studentName", "studentNameKnown", "trialDurationMinutes", "subject", "requestSentAt", "writingRequired", "paperRequired", "timeMentioned", "trialPaymentMethod", "planner", "locationTimezone"];
+  return Object.fromEntries(await Promise.all(fields.map(async (field) => [field, await dialog.locator(`[name="${field}"]`).inputValue()])));
+}
+
+async function createSyntheticLp(page: Page) {
+  const dialog = await openDraft(page);
+  await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Synthetic Trial LP", exact: true })).toBeVisible();
+}
+
+async function openScreenshotConfirmation(page: Page) {
+  const card = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Trial LP", exact: true }) });
+  const details = card.locator("details.trial-intake-details");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await card.getByRole("button", { name: "补全教务宝小课表", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "补全教务宝小课表", exact: true });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+test("a synthetic PNG is recognized by the real local OCR worker with no external upload", async ({ page }) => {
+  test.setTimeout(120_000);
+  const f = await syntheticWorkspace(page);
+  const dialog = await openDraft(page);
+  const region = screenshotImport(dialog);
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1400; canvas.height = 450;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "black"; context.font = "80px monospace";
+    context.fillText("2026-10-22", 80, 160);
+    context.fillText("19:05-20:05", 80, 310);
+    return canvas.toDataURL("image/png");
+  });
+  await region.getByLabel("截图文件（本地识别，最多 3 MB）", { exact: true }).setInputFiles({ name: "synthetic-schedule.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1]!, "base64") });
+  const text = region.getByRole("textbox", { name: "识别文字（可修正）", exact: true });
+  await expect(text).toHaveValue(/2026-10-22/u, { timeout: 90_000 });
+  await expect(text).toHaveValue(/19:05\s*[-–—]\s*20:05/u);
+  await expect(text).toBeEnabled();
+  const assets = f.requests.filter(({ url }) => url.pathname.startsWith("/trial-ocr/"));
+  expect(assets.map(({ url }) => url.pathname)).toEqual(expect.arrayContaining([
+    "/trial-ocr/v7/worker.min.js", "/trial-ocr/v7/lang/eng.traineddata.gz", "/trial-ocr/v7/lang/chi_sim.traineddata.gz",
+  ]));
+  expect(assets.some(({ url }) => /^\/trial-ocr\/v7\/core\/tesseract-core.*\.wasm(?:\.js)?$/u.test(url.pathname))).toBe(true);
+  expect(new Set(assets.map(({ url }) => url.origin))).toEqual(new Set([new URL(page.url()).origin]));
+  expect(f.requests.filter(({ method }) => method !== "GET")).toEqual([]);
+  expect(f.screenshotReads).toEqual([]); expect(f.screenshotPosted).toEqual([]); expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("reviewed screenshot candidates only replace checked fields and preserve the LP confirmation contract", async ({ page }) => {
+  const candidate = { ...screenshotCandidate(), endsAt: "2026-10-22T08:50:00.000Z", durationMinutes: 45 };
+  const f = await syntheticWorkspace(page, { screenshotMatches: [screenshotMatch(candidate)] });
+  const dialog = await openDraft(page);
+  const before = await handoverValues(dialog);
+  const preferences = await page.evaluate((key) => localStorage.getItem(key), displayPreferencesStorageKey("Nixon"));
+  const region = await parseScreenshot(dialog, screenshotText.replace("20:05", "19:50"));
+  const apply = region.getByRole("button", { name: "填入待核对表单", exact: true });
+  await expect(apply).toBeDisabled();
+  expect(await handoverValues(dialog)).toEqual(before);
+  await region.getByRole("radio", { name: `选择课节：${candidate.courseName} · ${candidate.teacherName}`, exact: true }).check();
+  for (const field of ["填入老师", "填入学生姓名", "填入试听时长（分钟）"]) await expect(region.getByRole("checkbox", { name: field, exact: true })).not.toBeChecked();
+  await expect(apply).toBeDisabled();
+  await region.getByRole("checkbox", { name: "填入老师", exact: true }).check();
+  expect(await handoverValues(dialog)).toEqual(before);
+  expect(f.posted).toEqual([]); expect(f.screenshotPosted).toEqual([]);
+  await apply.click();
+  expect(await handoverValues(dialog)).toEqual({ ...before, assignedTeacher: candidate.teacherName });
+  expect(await page.evaluate((key) => localStorage.getItem(key), displayPreferencesStorageKey("Nixon"))).toBe(preferences);
+  expect(f.screenshotReads).toEqual([{
+    target: { caseId: "d6385b25-691c-424f-a81b-5de3835ea703", sourceMessageId: SOURCE_ID, sourceRevision: "a".repeat(64) },
+    evidence: { sourceDate: "2026-10-22", startTime: "19:05", endTime: "19:50", teacherName: candidate.teacherName, courseName: candidate.courseName, sharedAccountLetter: "b" },
+  }]);
+  await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(f.posted).toHaveLength(1);
+  expect(f.posted[0]).toMatchObject({
+    sourceMessageId: SOURCE_ID, sourceRevision: "a".repeat(64), newStudent: { guardianWechat: "Synthetic Parent", timezone: "Australia/Melbourne" },
+    fields: { studentName: "Synthetic Student", assignedTeacher: candidate.teacherName, subject: "Y8 English", trialDurationMinutes: 60, writingRequired: false, paperRequired: false, timeMentioned: false, requestSentAt: NOW, planner: "Eileen" },
+    expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 },
+  });
+  expect(f.posted[0]).not.toHaveProperty("eventId");
+  expect(f.screenshotPosted).toEqual([]);
+  assertClean(f);
+});
+
+test("an existing synthetic LP needs a manually selected fresh source and retries the same confirmation after 503", async ({ page }) => {
+  const candidate = screenshotCandidate();
+  const f = await syntheticWorkspace(page, { matched: true, screenshotMatches: [screenshotMatch(candidate, "stale"), screenshotMatch(candidate)], screenshotConfirmStatuses: [503] });
+  await createSyntheticLp(page);
+  const dialog = await openScreenshotConfirmation(page);
+  let region = await parseScreenshot(dialog);
+  const confirm = region.getByRole("button", { name: "确认补全交接与排课", exact: true });
+  await expect(confirm).toBeDisabled();
+  await region.getByRole("radio").check();
+  await expect(confirm).toBeDisabled();
+  expect(f.screenshotPosted).toEqual([]);
+  region = await parseScreenshot(dialog, `${screenshotText}\n`);
+  await expect(confirm).toBeDisabled();
+  await region.getByRole("radio").check();
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(page.getByText("合成小课表服务暂不可用", { exact: true })).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(dialog).not.toBeVisible();
+  expect(f.screenshotReads.map(({ target }) => target)).toEqual([{ lpItemId: LP_ID }, { lpItemId: LP_ID }]);
+  expect(f.screenshotPosted).toHaveLength(2);
+  expect(f.screenshotPosted[0]).toEqual({
+    commandKey: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u),
+    lpItemId: LP_ID, eventId: candidate.eventId, sourceDate: candidate.sourceDate, sourceRevision: candidate.sourceRevision,
+    expectedVersions: { students: 2, lpItems: 2, tasks: 2 },
+  });
+  expect(f.screenshotPosted[1]).toEqual(f.screenshotPosted[0]);
+  expect(f.posted).toHaveLength(1);
+  await expect(page.getByText("试听交接、排课和相关待办已补全", { exact: true })).toBeVisible();
+  assertClean(f);
+});
+
+test("a source conflict closes LP supplementation and reopening requires a new reviewed source", async ({ page }) => {
+  const first = screenshotCandidate();
+  const fresh = screenshotCandidate("d".repeat(64));
+  const f = await syntheticWorkspace(page, { matched: true, screenshotMatches: [screenshotMatch(first), screenshotMatch(fresh)], screenshotConfirmStatuses: [409] });
+  await createSyntheticLp(page);
+  const dialog = await openScreenshotConfirmation(page);
+  const region = await parseScreenshot(dialog);
+  await region.getByRole("radio").check();
+  await region.getByRole("button", { name: "确认补全交接与排课", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText("合成课表来源已变化，请重新核对。", { exact: true })).toBeVisible();
+  const reopened = await openScreenshotConfirmation(page);
+  await expect(screenshotImport(reopened).getByRole("button", { name: "确认补全交接与排课", exact: true })).toBeDisabled();
+  await expect(screenshotImport(reopened).getByRole("radio")).toHaveCount(0);
+  const updated = await parseScreenshot(reopened);
+  await expect(updated.getByRole("button", { name: "确认补全交接与排课", exact: true })).toBeDisabled();
+  await updated.getByRole("radio").check();
+  await updated.getByRole("button", { name: "确认补全交接与排课", exact: true }).click();
+  await expect(reopened).not.toBeVisible();
+  expect(f.screenshotPosted).toHaveLength(2);
+  expect(f.screenshotPosted.map(({ sourceRevision }) => sourceRevision)).toEqual([first.sourceRevision, fresh.sourceRevision]);
+  expect(f.screenshotPosted[1].commandKey).not.toBe(f.screenshotPosted[0].commandKey);
+  expect(f.screenshotPosted[1]).toMatchObject({ lpItemId: LP_ID, eventId: fresh.eventId, sourceDate: "2026-10-22", expectedVersions: { students: 2, lpItems: 2, tasks: 2 } });
+  expect(f.posted).toHaveLength(1);
   assertClean(f);
 });
 
