@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWecomLpIntakeHandlers } from "../lib/wecom-lp-intake-service";
 import type { DemoSessionIdentity } from "../lib/demo-session-token";
-import type { OpsStateRow, confirmWecomLpDraftAtomic } from "../lib/ops-store";
+import type { OpsStateRow, confirmWecomLpDraftAtomic, readWecomLpDrafts } from "../lib/ops-store";
 import type { WecomLpDraftRawSource } from "../lib/wecom-lp-intake";
 const fields = { responsibleOperations: "Ella", planner: "Eileen", requestSentAt: "2026-10-20T09:00:00.000Z", assignedTeacher: "Synthetic Teacher", subject: "Y8 English", oneSentenceDescription: "Synthetic learning needs", locationTimezone: "VIC", contactParents: true, contactStudent: false, contactPerson: "家长", timeMentioned: false, studentNameKnown: true, studentName: "Synthetic Child", trialDurationMinutes: 60, trialPaymentMethod: "后置付费试听", writingRequired: false, paperRequired: false, specifiedContentStatus: "无需指定", preparationFollowUp: "是", isUniversityStudent: false };
 const command = { commandKey: "b011aafd-7bb4-43d6-a52a-6c529221a55a", caseId: "d6385b25-691c-424f-a81b-5de3835ea703", sourceMessageId: "synthetic-handover-1", sourceRevision: "a".repeat(64), fields, expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 }, studentId: "STU-1" };
@@ -11,11 +11,12 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
   const rows: OpsStateRow[] = ["students", "lpItems", "tasks", "files"].map((entity) => ({ entity, payload: entity === "students" ? [student, { ...student, id: "STU-OTHER", name: "Other Synthetic Child", guardianWechat: "Other Synthetic Parent", owner: "Tiffany" }] : [], version: 1, updated_at: fields.requestSentAt, updated_by: "synthetic" }));
   const source: WecomLpDraftRawSource = { id: command.sourceMessageId, sourceMessageId: command.sourceMessageId, caseId: command.caseId, sourceRevision: command.sourceRevision, wechatName: "Synthetic Parent", studentName: "Synthetic Child", operationsOwner: "Ella", coursePlanner: "Eileen", status: "identified", createdAt: fields.requestSentAt, messages: [{ messageId: command.sourceMessageId, text: "【安排教师】：Synthetic Teacher\n【安排科目】：Y8 English", sentAt: fields.requestSentAt }], confirmed: null };
   const saved: Parameters<typeof confirmWecomLpDraftAtomic>[0][] = [];
+  const reads: Parameters<typeof readWecomLpDrafts>[0][] = [];
   const handlers = createWecomLpIntakeHandlers({
     readSession: async () => ({ session: options.session ?? { user: "Ella", role: "staff", permissions: ["operations.read", "operations.write"] }, fullAdmin: options.fullAdmin ?? false }),
     readRows: async () => rows,
     readDraft: async () => options.source === undefined ? source : options.source,
-    readDrafts: async () => ({ rows: [source], nextCursor: null, total: 1 }),
+    readDrafts: async (input) => { reads.push(input); return { rows: options.source === null ? [] : [options.source ?? source], nextCursor: null, total: 1 }; },
     confirm: async (input) => {
       saved.push(input);
       if (options.errorCode) throw Object.assign(new Error("synthetic database failure"), { code: options.errorCode });
@@ -23,7 +24,7 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
     },
   });
   const post = (input: unknown = command) => handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(input) }));
-  return { handlers, saved, post, source };
+  return { handlers, saved, reads, post, source };
 }
 test("confirmation keeps the existing roster planner and the handover planner separate", async () => {
   const f = harness(); const response = await f.post();
@@ -66,4 +67,34 @@ test("draft reads validate cursors, decorate fields and only preselect visible s
   assert.equal(response.status, 200); const body = await response.json();
   assert.equal(body.drafts[0].matchedStudentId, "STU-1"); assert.equal(body.drafts[0].draft.fields.subject, "Y8 English");
   assert.equal((await f.handlers.GET(new Request("https://synthetic.invalid/api?cursor=bad%20cursor"))).status, 400);
+});
+
+test("range reads pass UTC calendar bounds and the verified session scope to the store", async () => {
+  const f = harness();
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api?from=2026-10-20&to=2026-10-20&timezone=Asia/Shanghai&cursor=synthetic-handover-1"));
+  assert.equal(response.status, 200);
+  assert.deepEqual(f.reads, [{ actor: "Ella", fullAdmin: false, cursor: "synthetic-handover-1", from: "2026-10-19T16:00:00.000Z", before: "2026-10-20T16:00:00.000Z" }]);
+  assert.equal(f.saved.length, 0);
+  assert.equal(response.headers.get("Vary"), "Cookie");
+});
+
+test("invalid range filters never reach the store or confirmation transaction", async () => {
+  const f = harness();
+  for (const filter of ["from=2026-10-21&to=2026-10-20", "to=2026-02-30", "timezone=bad", "from=2026-10-20&from=2026-10-20", "fullAdmin=true"]) {
+    assert.equal((await f.handlers.GET(new Request(`https://synthetic.invalid/api?${filter}`))).status, 400);
+  }
+  assert.equal(f.reads.length, 0); assert.equal(f.saved.length, 0);
+  const teacher = harness({ session: { user: "Synthetic Teacher", role: "teacher" } });
+  assert.equal((await teacher.handlers.GET(new Request("https://synthetic.invalid/api?from=2026-10-20"))).status, 403);
+  assert.equal(teacher.reads.length, 0);
+});
+
+test("confirmed handovers retain their association in range results", async () => {
+  const source = harness().source;
+  const f = harness({ source: { ...source, handoverAt: "2026-10-19T23:30:00.000Z", confirmed: { studentId: "STU-1", lpItemId: "LP-SYNTHETIC" } } });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api?from=2026-10-20&to=2026-10-20&timezone=Asia/Shanghai"));
+  const body = await response.json();
+  assert.equal(response.status, 200); assert.equal(body.drafts[0].confirmed.lpItemId, "LP-SYNTHETIC");
+  assert.equal(body.drafts[0].handoverAt, "2026-10-19T23:30:00.000Z");
+  assert.equal(body.drafts[0].matchedStudentId, "STU-1"); assert.equal(f.saved.length, 0);
 });

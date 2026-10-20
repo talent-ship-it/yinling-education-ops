@@ -3,6 +3,7 @@ import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filte
 import { normaliseDemoUserName } from "./demo-users";
 import { LpAtomicError } from "./lp-atomic-service";
 import { buildWecomLpDraft } from "./wecom-lp-draft";
+import { parseWecomLpDraftQuery } from "./wecom-lp-draft-query";
 import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation, type WecomLpDraftRawSource } from "./wecom-lp-intake";
 import type { OpsStateRow, readWecomLpDraft, readWecomLpDrafts, confirmWecomLpDraftAtomic } from "./ops-store";
 
@@ -78,17 +79,13 @@ function committedResponse(result: Awaited<ReturnType<Dependencies["confirm"]>>[
   const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, ctx.session.user, ctx.fullAdmin, ctx.session));
   return json({ committed: true, applied: result.applied, studentId: result.student_id, lpItemId: result.lp_item_id, studentsRow: visible.find((row) => row.entity === "students"), lpItemsRow: visible.find((row) => row.entity === "lpItems"), tasksRow: visible.find((row) => row.entity === "tasks"), filesRow: visible.find((row) => row.entity === "files") });
 }
-function cursorFrom(request: Request) {
-  const cursor = new URL(request.url).searchParams.get("cursor");
-  if (cursor && !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,239}$/u.test(cursor)) fail(400, "分页参数无效。");
-  return cursor;
-}
 export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
   return {
     GET: async (request: Request) => {
       try {
         const ctx = await context(dependencies);
-        const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, cursor: cursorFrom(request) });
+        const query = parseWecomLpDraftQuery(new URL(request.url).searchParams);
+        const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, ...query });
         const visible = filterOpsStateRows(ctx.rows, ctx.access);
         return json({ drafts: page.rows.map((source) => decorate(source, visible)), nextCursor: page.nextCursor, total: page.total });
       } catch (error) { return failure(error); }
