@@ -1,5 +1,6 @@
 {
   "entry": [
+    "public/trial-screenshot-ocr.worker.js",
     "tests/*.test.{ts,tsx,mjs}",
     "playwright.ava.config.ts",
     "playwright.self-service.config.ts",
@@ -8,6 +9,7 @@
     "plugins/classroom-tools/tests/*.test.ts"
   ],
   "ignorePatterns": [
-    "public/classroom-tools/InsiderClassroomTools.js"
+    "public/classroom-tools/InsiderClassroomTools.js",
+    "public/trial-ocr/**"
   ]
 }

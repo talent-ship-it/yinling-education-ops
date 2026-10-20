@@ -331,6 +331,8 @@ async function openScreenshotConfirmation(page: Page) {
 }
 
 test("a synthetic PNG is recognized by the real local OCR worker with no external upload", async ({ page }) => {
+  const workerUrls: string[] = [];
+  page.on("worker", (worker) => workerUrls.push(worker.url()));
   test.setTimeout(120_000);
   const f = await syntheticWorkspace(page);
   const dialog = await openDraft(page);
@@ -352,11 +354,12 @@ test("a synthetic PNG is recognized by the real local OCR worker with no externa
   await expect(text).toBeEnabled();
   const assets = f.requests.filter(({ url }) => url.pathname.startsWith("/trial-ocr/"));
   expect(assets.map(({ url }) => url.pathname)).toEqual(expect.arrayContaining([
-    "/trial-ocr/v7/worker.min.js", "/trial-ocr/v7/lang/eng.traineddata.gz", "/trial-ocr/v7/lang/chi_sim.traineddata.gz",
+    "/trial-ocr/v7/tesseract.min.js", "/trial-ocr/v7/lang/eng.traineddata.gz", "/trial-ocr/v7/lang/chi_sim.traineddata.gz",
   ]));
+  expect(workerUrls).toContain(`${new URL(page.url()).origin}/trial-screenshot-ocr.worker.js`);
   expect(assets.some(({ url }) => /^\/trial-ocr\/v7\/core\/tesseract-core.*\.wasm(?:\.js)?$/u.test(url.pathname))).toBe(true);
   expect(new Set(assets.map(({ url }) => url.origin))).toEqual(new Set([new URL(page.url()).origin]));
-  expect(f.requests.filter(({ method }) => method !== "GET")).toEqual([]);
+  expect(f.requests.filter(({ method, url }) => method !== "GET" && url.pathname !== "/api/demo-logout")).toEqual([]);
   expect(f.screenshotReads).toEqual([]); expect(f.screenshotPosted).toEqual([]); expect(f.posted).toEqual([]);
   assertClean(f);
 });

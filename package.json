@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev-fixed-port.mjs",
-    "build": "npm run build:classroom-tools && next build && node scripts/check-client-bundle-budget.mjs",
+    "build": "npm run build:trial-ocr && npm run build:classroom-tools && next build && node scripts/check-client-bundle-budget.mjs",
     "check:client-bundle": "node scripts/check-client-bundle-budget.mjs",
     "check:architecture": "node scripts/check-api-write-boundaries.mjs",
     "check:fallow": "node scripts/run-fallow-gate.mjs",
@@ -18,7 +18,9 @@
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:sql-runtime": "node scripts/run-sql-runtime-fixtures.mjs",
     "typecheck:scripts": "tsc --project tsconfig.scripts.json",
-    "build:classroom-tools": "npm --prefix plugins/classroom-tools ci --include=dev --ignore-scripts --no-audit --no-fund && npm --prefix plugins/classroom-tools run typecheck && npm --prefix plugins/classroom-tools test && npm --prefix plugins/classroom-tools run build"
+    "build:classroom-tools": "npm --prefix plugins/classroom-tools ci --include=dev --ignore-scripts --no-audit --no-fund && npm --prefix plugins/classroom-tools run typecheck && npm --prefix plugins/classroom-tools test && npm --prefix plugins/classroom-tools run build",
+    "build:trial-ocr": "node scripts/build-trial-ocr.mjs",
+    "predev": "npm run build:trial-ocr"
   },
   "dependencies": {
     "@fullcalendar/core": "6.1.21",
@@ -26,12 +28,15 @@
     "@fullcalendar/interaction": "6.1.21",
     "@fullcalendar/luxon3": "6.1.21",
     "@fullcalendar/timegrid": "6.1.21",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
     "fast-xml-parser": "^5.10.1",
     "lucide-react": "^1.25.0",
     "luxon": "3.7.2",
     "next": "16.3.8",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

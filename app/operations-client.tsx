@@ -438,6 +438,8 @@ function LpWorkflowFields(props: LpWorkflowFieldsProps) { return <Suspense fallb
 function LpWorkflowDetails(props: LpWorkflowDetailsProps) { return <Suspense fallback={null}><LazyLpWorkflowDetails {...props} /></Suspense>; }
 function LpRevisionHistory(props: LpRevisionHistoryProps) { return <Suspense fallback={null}><LazyLpRevisionHistory {...props} /></Suspense>; }
 
+const TrialScreenshotConfirmWorkspace = lazy(() => import("@/app/trial-screenshot-confirm-workspace").then((module) => ({ default: module.TrialScreenshotConfirmWorkspace })));
+
 const WecomLpDraftWorkspace = lazy(() => import("@/app/wecom-lp-draft-workspace").then((module) => ({ default: module.WecomLpDraftWorkspace })));
 
 
@@ -3053,6 +3055,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [lpDraftType, setLpDraftType] = useState<LpWorkflowType>(LP_WORKFLOW_TYPES[0]);
   const [lpDraftStudentId, setLpDraftStudentId] = useState(defaults.defaultSelectedStudentId);
   const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
+  const [trialScreenshotItem, setTrialScreenshotItem] = useState<LpItem | null>(null);
   const [examDraft, setExamDraft] = useState<StudentExamRecord | null>(null);
   const [examFormResetToken, setExamFormResetToken] = useState(0);
   const [examSubmissionBusy, setExamSubmissionBusy] = useState(false);
@@ -8859,6 +8862,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     const trialIntakeDetails = (item: LpItem) => item.workflowType === "试听 LP" ? <details className="trial-intake-details">
       <summary>查看试听交接详情</summary>
+      {!isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消" && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
       <LpWorkflowDetails type="试听 LP" fields={item.fields ?? {}} />
       {item.trialIntake ? <dl>
         <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
@@ -8897,6 +8901,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
           filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
           setSelectedStudentId(body.studentId);
+        }}
+      /></Suspense>}
+      {trialScreenshotItem && !isTeacherView && scopedLpItems.some((item) => item.id === trialScreenshotItem.id) && <Suspense fallback={null}><TrialScreenshotConfirmWorkspace
+        key={`${sessionOperator}:${trialScreenshotItem.id}`}
+        item={trialScreenshotItem}
+        studentName={studentById(trialScreenshotItem.studentId)?.name ?? "姓名待补"}
+        expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version }}
+        Dialog={Dialog}
+        notify={notify}
+        onClose={() => setTrialScreenshotItem(null)}
+        onCommitted={(body) => {
+          lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
+          tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
         }}
       /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">

@@ -83,9 +83,12 @@ function parseRequest(value: unknown) {
   return { target, evidence, window: { startsAt: day.toUTC().toISO()!, endsAt: day.plus({ days: 1 }).startOf("day").toUTC().toISO()! } };
 }
 function records(rows: readonly OpsStateRow[], entity: string) {
-  const payload = rows.find((row) => row.entity === entity)?.payload;
-  if (!Array.isArray(payload) || !payload.every(record)) fail(503, "state_unavailable", "试听资料暂不可用，请重试。");
-  return payload as RecordValue[];
+  const state = rows.find((row) => row.entity === entity);
+  if (!Array.isArray(state?.payload)) fail(503, "state_unavailable", "试听资料暂不可用，请重试。");
+  for (const item of state.payload) {
+    if (!record(item)) fail(503, "state_unavailable", "试听资料暂不可用，请重试。");
+  }
+  return state.payload as RecordValue[];
 }
 function realStudentName(student: RecordValue | undefined) {
   if (!student) return "";

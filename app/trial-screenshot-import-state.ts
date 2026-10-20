@@ -1,24 +1,9 @@
 import { parseTrialScreenshotText, type TrialScreenshotExtraction } from "../lib/jiaowubao-trial-screenshot";
+import type { TrialScreenshotCandidate, TrialScreenshotMatchResult, TrialScreenshotTarget } from "../lib/trial-screenshot-match-service";
 
-export type TrialScreenshotTarget = { lpItemId: string } | { caseId: string; sourceMessageId: string; sourceRevision: string };
-export type TrialScreenshotCandidate = Readonly<{
-  eventId: string;
-  sourceRevision: string;
-  sourceDate: string;
-  startsAt: string;
-  endsAt: string;
-  teacherName: string | null;
-  courseName: string | null;
-  studentNameHint: string | null;
-  sharedAccountLabel: string | null;
-  sharedAccountLetter: string | null;
-  durationMinutes: number;
-}>;
-export type TrialScreenshotMatch = Readonly<{
+export type { TrialScreenshotTarget, TrialScreenshotCandidate };
+export type TrialScreenshotMatch = Readonly<Pick<TrialScreenshotMatchResult, "ambiguous" | "hasMore" | "reason"> & {
   candidates: readonly TrialScreenshotCandidate[];
-  ambiguous: boolean;
-  hasMore: boolean;
-  reason?: string;
   coverage: null | Readonly<{
     state: string;
     freshness: string;

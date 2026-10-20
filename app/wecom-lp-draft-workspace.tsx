@@ -112,7 +112,7 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
       <DraftStudentFields source={source} students={students} timezoneOptions={fieldOptions.timezoneOptions} createStudent={createStudent} onCreateStudentChange={setCreateStudent} studentId={studentId} onStudentIdChange={setStudentId} />
-      <LpWorkflowFields initialType="试听 LP" requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
+      <LpWorkflowFields screenshotTarget={{ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision }} initialType="试听 LP" requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
       <footer><button className="secondary-button" type="button" disabled={busy} onClick={close}>取消</button><button className="primary-button" type="submit" disabled={busy}><BookOpen size={16} />{busy ? "正在保存…" : "确认并创建 LP"}</button></footer>
     </form></Dialog>}
   </>;
