@@ -240,6 +240,29 @@ test("discovers the same unambiguous references without any browser-supplied pai
   assert.deepEqual(projection.references, command.matches);
 });
 
+test("archived students never enter a trial sync batch through title or screenshot evidence", () => {
+  for (const importArchived of [true, "true"]) {
+    for (const pinned of [false, true]) {
+      const rows = fixtureRows();
+      const students = rows.find((entry) => entry.entity === "students")!.payload as Record<string, unknown>[];
+      students[0]!.importArchived = importArchived;
+      const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;
+      if (pinned) lp.trialScheduleReview = { source: "screenshot-review", eventId: rawEvent.eventId };
+      const input = {
+        rows,
+        rawEvents: [rawEvent],
+        snapshotRevision: command.snapshotRevision,
+        matchedAt: "2026-08-28T03:00:00.000Z",
+      };
+      const projection = prepareJiaowubaoTrialSyncProjection(input);
+      assert.deepEqual(projection.references, []);
+      assert.deepEqual(projection.nextLpItems, [lp]);
+      assert.deepEqual(projection.nextTasks, rows.find((entry) => entry.entity === "tasks")!.payload);
+      assert.throws(() => prepareJiaowubaoTrialSyncProjection({ ...input, references: command.matches }), /不能再无歧义匹配/);
+    }
+  }
+});
+
 test("an explicit LP paid flag keeps the Jiaowubao payment reminder closed", () => {
   const projection = prepareJiaowubaoTrialSyncProjection({
     rows: fixtureRows({ trialPaid: true }),
