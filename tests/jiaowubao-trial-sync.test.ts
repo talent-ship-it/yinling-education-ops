@@ -263,6 +263,19 @@ test("archived students never enter a trial sync batch through title or screensh
   }
 });
 
+test("cancelled trial LPs are preserved and excluded from sync references", () => {
+  const rows = fixtureRows();
+  const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;
+  lp.resultStatus = "已取消";
+  lp.trialScheduleReview = { source: "screenshot-review", eventId: rawEvent.eventId };
+  const input = { rows, rawEvents: [rawEvent], snapshotRevision: command.snapshotRevision, matchedAt: "2026-08-28T03:00:00.000Z" };
+  const projection = prepareJiaowubaoTrialSyncProjection(input);
+  assert.deepEqual(projection.references, []);
+  assert.deepEqual(projection.nextLpItems, [lp]);
+  assert.deepEqual(projection.nextTasks, rows.find((entry) => entry.entity === "tasks")!.payload);
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({ ...input, references: command.matches }), /不能再无歧义匹配/);
+});
+
 test("an explicit LP paid flag keeps the Jiaowubao payment reminder closed", () => {
   const projection = prepareJiaowubaoTrialSyncProjection({
     rows: fixtureRows({ trialPaid: true }),

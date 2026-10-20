@@ -416,6 +416,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     studentId: string;
     workflowType?: string;
     stage?: string;
+    resultStatus?: string;
     requestedAt?: string;
     trialPaid?: unknown;
     fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
@@ -438,7 +439,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
   const candidatesByLp = input.lpItems
     .filter((candidate) => (
       candidate.workflowType === "试听 LP" || candidate.workflowType === "换老师试听"
-    ) && candidate.stage !== "完成")
+    ) && candidate.stage !== "完成" && candidate.resultStatus !== "已取消")
     .flatMap((item) => {
       const student = students.get(item.studentId);
       if (!student) return [];

@@ -175,7 +175,8 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   const eligibleStudentIds = new Set(students.filter((student) => student.importArchived !== true
     && normalise(student.importArchived) !== "true").map((student) => text(student.id)).filter(Boolean));
   const activeLpItems = lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
-      && text(item.stage) !== "完成" && eligibleStudentIds.has(text(item.studentId)));
+      && text(item.stage) !== "完成" && text(item.resultStatus) !== "已取消"
+      && eligibleStudentIds.has(text(item.studentId)));
   const allowedStudentIds = new Set(activeLpItems.map((item) => text(item.studentId)).filter(Boolean));
   const studentLookup = buildStudentLookup(students, allowedStudentIds);
   const matchedAt = new Date(input.matchedAt);
