@@ -206,5 +206,31 @@ begin
   end if;
 end;
 $draft_runtime$;
+do $existing_student_trial_planner$
+declare source jsonb; receipt record; student jsonb; lp jsonb;
+  fields jsonb := internal.fixture_wecom_lp_fields() || '{"planner":"Eileen"}'::jsonb;
+begin
+  insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+    message_type, body, classification, student_name_hint, guardian_wechat_hint,
+    operations_owner_hint, course_planner_hint, match_status, ingested_by)
+  values('bot:lp-draft:planner-change',repeat('b',64),'draft-room','fixture-sales','2099-01-07T00:00:00Z',
+    'text',E'【安排教师】：Grace\n【安排科目】：English\n【微信名】：Draft Parent\n【课程规划老师】：Eileen',
+    'handover','Draft Student','Draft Parent','Abby','Eileen','pending','WeCom Bot Receiver');
+  source := internal.wecom_lp_draft_source('bot:lp-draft:planner-change');
+  select * into receipt from public.confirm_wecom_lp_draft_atomic(
+    'wecom-fixture-secret',(source->>'caseId')::uuid,source->>'sourceMessageId',source->>'sourceRevision',
+    '10000000-0000-4000-8000-000000000008','STU-DRAFT-1',null,fields,
+    '{"owner":"Abby","planner":"Tara","mayReassign":false}',internal.fixture_wecom_lp_versions(),'Abby',false
+  );
+  select value into student from jsonb_array_elements((receipt.students_row).payload) where value->>'id'='STU-DRAFT-1';
+  select value into lp from jsonb_array_elements((receipt.lp_items_row).payload) where value->>'id'=receipt.lp_item_id;
+  if not receipt.applied or student->>'planner' is distinct from 'Tara'
+     or lp->'fields'->>'planner' is distinct from 'Eileen'
+     or lp->'trialIntake'->>'planner' is distinct from 'Eileen'
+     or lp->'revisions'->0->'after'->>'planner' is distinct from 'Eileen' then
+    raise exception 'existing_student_trial_planner_overwrote_roster_or_lost_intake_planner';
+  end if;
+end;
+$existing_student_trial_planner$;
 select 'wecom_lp_draft_runtime_ok' as result;
 rollback;
