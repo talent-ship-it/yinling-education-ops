@@ -263,6 +263,26 @@ test("archived students never enter a trial sync batch through title or screensh
   }
 });
 
+test("server projection uses the normal trial arranged teacher to disambiguate source lessons", () => {
+  const rows = fixtureRows();
+  const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;
+  lp.fields = { ...(lp.fields as Record<string, unknown>), assignedTeacher: "Zara Baker" };
+  const projection = prepareJiaowubaoTrialSyncProjection({
+    rows, references: command.matches, snapshotRevision: revision, matchedAt: "2026-08-28T03:00:00.000Z",
+    rawEvents: [rawEvent, { ...rawEvent, eventId: "evt-other-teacher", sourceTeacherLabel: "Grace Lin" }],
+  });
+  assert.deepEqual(projection.references, command.matches);
+  assert.equal((projection.nextLpItems[0]!.fields as Record<string, unknown>).assignedTeacher, "Zara Baker");
+});
+
+test("server projection prioritizes direct member evidence without accepting a title-only browser selection", () => {
+  const titleOnly = { ...rawEvent, eventId: "evt-title-only", sourceParticipants: [{ memberId: "shared-member", label: "试听学员A" }] };
+  const input = { rows: fixtureRows(), rawEvents: [titleOnly, rawEvent], snapshotRevision: revision, matchedAt: "2026-08-28T03:00:00.000Z" };
+  const projection = prepareJiaowubaoTrialSyncProjection(input);
+  assert.deepEqual(projection.references, command.matches);
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({ ...input, references: [{ ...command.matches[0], eventId: titleOnly.eventId }] }), /不能再无歧义匹配/);
+});
+
 test("cancelled trial LPs are preserved and excluded from sync references", () => {
   const rows = fixtureRows();
   const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;

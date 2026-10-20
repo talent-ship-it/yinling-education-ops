@@ -140,6 +140,71 @@ test("a cancelled trial does not compete with an active trial candidate", () => 
   assert.deepEqual(matches.map((match) => match.lpItemId), ["LP-ACTIVE"]);
 });
 
+test("uses the arranged teacher to distinguish normal trial lessons without guessing among the same teacher", () => {
+  const base = {
+    lpItems: [{ id: "LP-ARRANGED", studentId: "STU-1", workflowType: "试听 LP", fields: { assignedTeacher: "  GRACE LIN  " } }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [{ id: "TEA-1", name: "Grace Lin" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  };
+  const event = {
+    eventId: "evt-arranged", startsAt: "2026-08-30T03:00:00.000Z", endsAt: "2026-08-30T04:00:00.000Z",
+    courseName: "Heather孙晓琳试听", teacherId: "TEA-1", teacherName: "Grace Lin",
+    visibleStudentIds: [] as string[], trialPlannerHint: "Tara" as const,
+  };
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [event, { ...event, eventId: "evt-other-teacher", teacherName: "Zara Baker" }] })
+    .map((match) => match.link.eventId), [event.eventId]);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [event, { ...event, eventId: "evt-same-teacher" }] }), []);
+  assert.equal(matchTrialScheduleEvents({ ...base, events: [{ ...event, teacherName: null }, { ...event, eventId: "evt-other-teacher", teacherName: "Zara Baker" }] }).length, 1);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [{ ...event, teacherName: "Teacher Two" }, { ...event, eventId: "evt-third-teacher", teacherName: "Teacher Three" }] }), []);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [{ ...event, teacherName: "Teacher Two", visibleStudentIds: ["STU-1"] }] }).map((match) => match.link.teacherName), ["Teacher Two"]);
+});
+
+test("keeps placeholder arranged teachers from excluding proven source identity", () => {
+  for (const assignedTeacher of ["", "待定", "待核对老师映射", "unknown", "未安排"]) {
+    const matches = matchTrialScheduleEvents({
+      lpItems: [{ id: "LP-PLACEHOLDER", studentId: "STU-1", workflowType: "试听 LP", fields: { assignedTeacher } }],
+      students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }], teachers: [],
+      events: [{ eventId: "evt-direct", startsAt: "2026-08-30T03:00:00.000Z", endsAt: "2026-08-30T04:00:00.000Z", courseName: "English", teacherId: null, teacherName: "Grace Lin", visibleStudentIds: ["STU-1"] }],
+      matchedAt: "2026-08-28T03:00:00.000Z",
+    });
+    assert.equal(matches.length, 1, assignedTeacher);
+  }
+});
+
+test("prioritizes direct student identity over title-only evidence and retains multiple-direct ambiguity", () => {
+  const base = {
+    lpItems: [{ id: "LP-DIRECT", studentId: "STU-1", workflowType: "试听 LP", fields: { assignedTeacher: "Grace Lin" } }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }], teachers: [],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  };
+  const event = {
+    eventId: "evt-direct", startsAt: "2026-08-30T03:00:00.000Z", endsAt: "2026-08-30T04:00:00.000Z",
+    courseName: "Heather孙晓琳试听", teacherId: null, teacherName: "Grace Lin",
+    visibleStudentIds: ["STU-1"], trialPlannerHint: "Tara" as const,
+  };
+  const titleOnly = { ...event, eventId: "evt-title-only", visibleStudentIds: [] };
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [titleOnly, event] }).map((match) => match.link.eventId), [event.eventId]);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [event, { ...event, eventId: "evt-second-direct", startsAt: "2026-08-31T03:00:00.000Z", endsAt: "2026-08-31T04:00:00.000Z" }, titleOnly] }), []);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, lpItems: [{ ...base.lpItems[0]!, fields: { assignedTeacher: "Zara Baker" } }], events: [event, { ...titleOnly, teacherName: "Zara Baker" }] }).map((match) => match.link.eventId), [event.eventId]);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, lpItems: [...base.lpItems, { ...base.lpItems[0]!, id: "LP-COMPETITOR" }], events: [event, titleOnly] }), []);
+});
+
+test("does not relax unknown identity or shared-account planner evidence for title-only candidates", () => {
+  const base = {
+    lpItems: [{ id: "LP-TITLE", studentId: "STU-1", workflowType: "试听 LP", fields: { assignedTeacher: "Grace Lin" } }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }], teachers: [],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  };
+  const event = {
+    eventId: "evt-title", startsAt: "2026-08-30T03:00:00.000Z", endsAt: "2026-08-30T04:00:00.000Z",
+    courseName: "Heather孙晓琳试听", teacherId: null, teacherName: "Grace Lin", visibleStudentIds: [] as string[],
+  };
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [event] }), []);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, events: [{ ...event, trialPlannerHint: "Eileen" }] }), []);
+  assert.deepEqual(matchTrialScheduleEvents({ ...base, students: [{ ...base.students[0]!, name: "Synthetic Parent" }], events: [{ ...event, trialPlannerHint: "Tara" }] }), []);
+});
+
 test("does not match when two source events are equally valid for one trial LP", () => {
   const event = {
     startsAt: "2026-08-30T03:00:00.000Z",
