@@ -389,6 +389,10 @@ function reviewedTrialLinkMetadata(item: ReviewedTrialSchedule) {
 function eventDirectlyMatchesStudent(event: TrialScheduleEventLike, studentId: string, confirmedId: string | null) {
   return event.visibleStudentIds.includes(studentId) || confirmedId === event.eventId;
 }
+function trialScheduleStudentName(item: Readonly<{ trialIntake?: TrialIntake; fields?: Readonly<{ studentNameKnown?: unknown; studentName?: unknown }> }>, fallback: string) {
+  if (item.trialIntake?.studentName) return item.trialIntake.studentName;
+  return item.fields?.studentNameKnown === true ? text(item.fields.studentName) || fallback : fallback;
+}
 /**
  * Matches only unambiguous LP/student evidence. A direct student ID wins; the
  * course-title fallback also respects the A/B/C planner hint when available.
@@ -401,7 +405,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     stage?: string;
     requestedAt?: string;
     trialPaid?: unknown;
-    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown }>;
+    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
     trialIntake?: TrialIntake;
     trialSchedule?: TrialScheduleLink;
     trialScheduleReview?: Readonly<{ source: "screenshot-review"; eventId: string }>;
@@ -428,7 +432,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       const teacherChangeTrial = item.workflowType === "换老师试听";
       const expectedTeacherKey = teacherChangeTrial ? provenTeacherKey(item.fields?.newTeacher) : null;
       if (teacherChangeTrial && !expectedTeacherKey) return [];
-      const existingStudentName = item.trialIntake?.studentName || student.name;
+      const existingStudentName = trialScheduleStudentName(item, student.name);
       const nameKey = normalize(existingStudentName);
       if (!nameKey) return [];
       const plannerName = planner(item.trialIntake?.planner) || planner(student.planner) || "";

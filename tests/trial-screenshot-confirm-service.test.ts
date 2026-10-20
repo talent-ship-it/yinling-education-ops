@@ -71,3 +71,13 @@ test("reviewed event pins survive cancellation and reserve the event against heu
   const other = run(cancelledRows, [{ ...event, eventId: "jwb-open-api:schedule:replacement" }]);
   assert.ok(!other.references.some((reference) => reference.lpItemId === "LP-1"));
 });
+
+test("legacy trial LPs without intake use the confirmed LP name without rewriting the guardian placeholder", async () => {
+  const { trialIntake: ignoredIntake, ...legacy } = harness().lp;
+  assert.ok(ignoredIntake);
+  const f = harness({ lp: legacy }); assert.equal((await f.post()).status, 200);
+  const lp = f.saved()!.nextLpItems[0] as Record<string, unknown>;
+  assert.equal((lp.trialSchedule as Record<string, unknown>).studentName, "Synthetic Child");
+  assert.equal(lp.trialIntake, undefined);
+  assert.equal(((f.rows[0]!.payload as Record<string, unknown>[])[0]!).name, "Synthetic Parent");
+});
