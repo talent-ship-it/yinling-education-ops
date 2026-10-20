@@ -8873,6 +8873,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </>} />
       {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
         key={sessionOperator}
+        timeDisplay={{ timezone: scheduleTimezone, label: timezoneLabel(scheduleTimezone, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), scheduleTimezone, displayPreferences) }}
         students={readableScopedStudents}
         expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}
         fieldOptions={{

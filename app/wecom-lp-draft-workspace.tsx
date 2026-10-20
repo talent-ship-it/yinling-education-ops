@@ -4,13 +4,14 @@ import { useRef, useState, type FormEvent, type ComponentType, type ReactNode } 
 import { BookOpen } from "lucide-react";
 import { RecordPicker } from "@/app/record-picker";
 import { LpWorkflowFields, parseLpWorkflowFormData, type LpWorkflowFieldsProps } from "@/app/lp-workflow-fields";
-import { WecomLpDraftsPanel } from "@/app/wecom-lp-drafts-panel";
+import { WecomLpDraftsPanel, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
 import { wecomDraftTimezone } from "@/lib/wecom-lp-draft-timezone";
 import type { LpAtomicExpectedVersions } from "@/lib/lp-atomic-service";
 
 type Commit = Readonly<{ studentId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
 type Props = Readonly<{
+  timeDisplay: HandoverTimeDisplay;
   students: readonly { id: string; name: string; course: string }[];
   expectedVersions: LpAtomicExpectedVersions;
   fieldOptions: Pick<LpWorkflowFieldsProps, "responsibleOperationsOptions" | "teacherOptions" | "subjectOptions" | "timezoneOptions" | "plannerOptions">;
@@ -52,7 +53,7 @@ function SourceNotes({ source }: { source: WecomLpDraftSource }) {
   </>;
 }
 
-export function WecomLpDraftWorkspace({ students, expectedVersions, fieldOptions, Dialog, notify, onCommitted }: Props) {
+export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions, fieldOptions, Dialog, notify, onCommitted }: Props) {
   const [source, setSource] = useState<WecomLpDraftSource | null>(null);
   const [createStudent, setCreateStudent] = useState(false);
   const [studentId, setStudentId] = useState("");
@@ -92,7 +93,7 @@ export function WecomLpDraftWorkspace({ students, expectedVersions, fieldOptions
     finally { busyRef.current = false; setBusy(false); }
   }
   return <>
-    <WecomLpDraftsPanel refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(!draft.matchedStudentId); }} />
+    <WecomLpDraftsPanel timeDisplay={timeDisplay} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(!draft.matchedStudentId); }} />
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
       <label>学生档案<select value={createStudent ? "new" : "existing"} onChange={(event) => setCreateStudent(event.target.value === "new")}><option value="existing">关联已有学生</option><option value="new">确认时创建学生档案</option></select></label>
