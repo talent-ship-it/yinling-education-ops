@@ -259,7 +259,7 @@ test("renders only the plain handbook action as the headline and demotes details
 test("does not present a descriptive legacy due string as an exact deadline", () => {
   const html = render([task("unknown", "LP", "today", "发布后立即")]);
   assert.match(html, /待补截止时间/);
-  assert.match(html, />待补时间</);
+  assert.match(html, />待补截止时间</);
   assert.doesNotMatch(html, /发布后立即/);
 });
 
@@ -275,7 +275,7 @@ test("keeps legacy tasks visible but non-actionable without deadline-repair auth
   };
   const html = render([legacy, managed, anchored]);
   assert.match(html, /待补截止时间/);
-  assert.equal((html.match(/>待补时间</g) ?? []).length, 3);
+  assert.equal((html.match(/<span class="due-label pending"[^>]*>待补截止时间<\/span>/g) ?? []).length, 3);
   assert.doesNotMatch(html, /class="deadline-edit-button"/);
   assert.doesNotMatch(html, /class="complete-button"/);
   assert.doesNotMatch(html, /class="cannot-do-button"/);
@@ -287,7 +287,8 @@ test("offers exact deadline repair only for unbound legacy tasks when authorized
   const anchored = { ...task("anchored", "LP", "waiting", "规则文案"), anchorBookingId: "LES-1" };
   const html = render([legacy, managed, anchored], "all", "Australia/Melbourne", "24h", true);
   assert.equal((html.match(/class="deadline-edit-button"/g) ?? []).length, 1);
-  assert.match(html, /class="deadline-edit-button"[^>]*>补时间<\/button>/);
+  assert.match(html, /class="deadline-edit-button"[^>]*>补截止时间<\/button>/);
+  assert.doesNotMatch(html, />补时间<|>待补时间</);
 });
 
 test("category filtering is exact and completed tasks stay hidden", () => {

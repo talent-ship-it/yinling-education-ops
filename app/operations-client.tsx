@@ -14562,12 +14562,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
-      {modal === "legacyTaskDeadline" && legacyTaskDeadlineDraft && <Dialog title={legacyTaskDeadlineDraft.dueAt ? "调整历史任务截止时间" : "补充历史任务截止时间"} onClose={() => { if (!legacyTaskDeadlineBusy) { setLegacyTaskDeadlineDraft(null); setModal(null); } }}>
+      {modal === "legacyTaskDeadline" && legacyTaskDeadlineDraft && <Dialog title={legacyTaskDeadlineDraft.dueAt ? "调整待办截止时间" : "补充待办截止时间"} onClose={() => { if (!legacyTaskDeadlineBusy) { setLegacyTaskDeadlineDraft(null); setModal(null); } }}>
         <form className="form-grid" onSubmit={submitLegacyTaskDeadline}>
           <div className="form-notice span-2"><CircleAlert size={16} /> 请输入准确截止时间。</div>
           <label className="span-2">任务<input value={legacyTaskDeadlineDraft.title} disabled /></label>
-          <label className="span-2">截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : currentDateTimeValueInTimezone("Australia/Melbourne")} required /><small>按墨尔本时间保存。</small></label>
-          <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存准确时间"}</button></footer>
+          <label className="span-2">待办截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : ""} required /><small>按墨尔本时间保存。</small></label>
+          <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存截止时间"}</button></footer>
         </form>
       </Dialog>}
 

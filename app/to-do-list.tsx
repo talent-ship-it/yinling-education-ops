@@ -183,7 +183,7 @@ function TaskRows({
               className="deadline-edit-button"
               type="button"
               onClick={() => onRepairDeadline(task)}
-            >补时间</button> : null : canReopen?.(task) !== false ? <button
+            >补截止时间</button> : null : canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"
@@ -202,7 +202,7 @@ function TaskRows({
               if (view === "todo" && !executable) return <span
                 className="due-label pending"
                 title="需要管理员补充准确截止时间后才可执行"
-              >待补时间</span>;
+              >待补截止时间</span>;
               return null;
             })()}
           </div>
