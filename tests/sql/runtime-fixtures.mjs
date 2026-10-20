@@ -1,4 +1,7 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-lp-handover-time-range", source: "tests/sql/wecom-lp-handover-time-range-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-lp-handover-time-range-runtime.sql" },
+  ] },
   { id: "wecom-lp-draft-concurrency", source: "tests/sql/wecom-lp-draft-concurrency-runtime.py", steps: [
     { kind: "python", file: "tests/sql/wecom-lp-draft-concurrency-runtime.py" },
   ] },
