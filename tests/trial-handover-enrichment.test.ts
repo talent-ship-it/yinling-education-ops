@@ -62,3 +62,11 @@ test("unfamiliar name glyphs and punctuation stay for manual confirmation", () =
   const result = enrichTrialHandover(lp, { ...event, courseName: "Y7 English - Morgan 王同学试听" }, students);
   assert.equal((result.fields as Record<string, unknown>).studentName, "Morgan王同学");
 });
+
+test("missing source teacher remains incomplete and padded maximum-length names follow the same source trim", () => {
+  const noTeacher = enrichTrialHandover(lp, { ...event, sourceTeacherLabel: null }, students);
+  assert.equal((noTeacher.fields as Record<string, unknown>).assignedTeacher, undefined);
+  const name = "A".repeat(80);
+  const padded = enrichTrialHandover(lp, { ...event, courseName: ` ${name}试听 ` }, [{ id: lp.studentId, name }]);
+  assert.equal((padded.fields as Record<string, unknown>).studentName, name);
+});
