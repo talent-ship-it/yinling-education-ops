@@ -407,8 +407,8 @@ function trialEventSourceDetails(event: TrialScheduleEventLike) {
 }
 
 /**
- * Matches only unambiguous LP/student evidence. A direct student ID wins; the
- * course-title fallback also respects the A/B/C planner hint when available.
+ * Matches only unambiguous LP/student evidence. The course-title fallback
+ * also respects the A/B/C planner hint when available.
  */
 export function matchTrialScheduleEvents(input: Readonly<{
   lpItems: readonly Readonly<{
@@ -466,18 +466,17 @@ export function matchTrialScheduleEvents(input: Readonly<{
           || provenTeacherKey(event.teacherName) === expectedTeacherKey;
         return teacherMatches && (directStudentMatch || titleMatch && Boolean(hint) && plannerMatches);
       }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
-      const directCandidates = candidates.filter((event) => eventDirectlyMatchesStudent(event, student.id, confirmedEventId));
-      if (directCandidates.length) candidates = directCandidates;
+      const competingCandidates = candidates;
       if (candidates.length > 1 && assignedTeacherKey) {
         const teacherCandidates = candidates.filter((event) => provenTeacherKey(optionalText(event.teacherName)
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)) === assignedTeacherKey);
         if (teacherCandidates.length) candidates = teacherCandidates;
       }
-      return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates }];
+      return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates, competingCandidates }];
     });
   const candidateLpCountByEvent = new Map<string, number>();
   for (const entry of candidatesByLp) {
-    for (const eventId of new Set(entry.candidates.map((event) => event.eventId))) {
+    for (const eventId of new Set(entry.competingCandidates.map((event) => event.eventId))) {
       candidateLpCountByEvent.set(eventId, (candidateLpCountByEvent.get(eventId) ?? 0) + 1);
     }
   }
