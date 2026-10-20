@@ -398,10 +398,6 @@ function trialScheduleStudentName(item: Readonly<{ trialIntake?: TrialIntake; fi
   if (item.trialIntake?.studentName) return item.trialIntake.studentName;
   return item.fields?.studentNameKnown === true ? text(item.fields.studentName) || fallback : fallback;
 }
-/**
- * Matches only unambiguous LP/student evidence. A direct student ID wins; the
- * course-title fallback also respects the A/B/C planner hint when available.
- */
 function trialEventSourceDetails(event: TrialScheduleEventLike) {
   return {
     durationMinutes: (new Date(event.endsAt).valueOf() - new Date(event.startsAt).valueOf()) / 60_000,
@@ -410,6 +406,10 @@ function trialEventSourceDetails(event: TrialScheduleEventLike) {
   };
 }
 
+/**
+ * Matches only unambiguous LP/student evidence. A direct student ID wins; the
+ * course-title fallback also respects the A/B/C planner hint when available.
+ */
 export function matchTrialScheduleEvents(input: Readonly<{
   lpItems: readonly Readonly<{
     id: string;
