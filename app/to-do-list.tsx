@@ -4,6 +4,7 @@ import React from "react";
 import { Pencil, RotateCcw, X } from "lucide-react";
 
 import { formatCompactTaskDeadline, formatTaskDeadline, isExecutableOpenTask, matchesTaskDeadlineDate, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
+import type { TaskTrialSchedule } from "../lib/task-trial-schedule";
 import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
 export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
@@ -18,6 +19,7 @@ export interface ToDoListProps {
   deadlineTimeZoneLabel: string;
   deadlineTimeFormat?: TaskDeadlineTimeFormat;
   taskTitle?: (task: OpsTask) => string;
+  taskSchedule?: (task: OpsTask) => TaskTrialSchedule | null;
   studentName: (studentId: string) => string | undefined;
   filter: ToDoFilter;
   onFilterChange: (filter: ToDoFilter) => void;
@@ -75,6 +77,13 @@ function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskLi
   });
 }
 
+function TrialLessonTime({ schedule, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat }: Pick<ToDoListProps, "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat"> & { schedule?: TaskTrialSchedule | null }) {
+  if (!schedule) return null;
+  const startsAt = formatTaskDeadline(schedule.startsAt, deadlineTimeZone, deadlineTimeFormat);
+  if (!startsAt) return null;
+  return <small className="task-title-details">试听上课：<time dateTime={schedule.startsAt}>{startsAt}</time> · {deadlineTimeZoneLabel}</small>;
+}
+
 type Editor = Readonly<{ taskId: string; mode: "note" | "cannot"; value: string }>;
 
 function TaskRows({
@@ -96,7 +105,8 @@ function TaskRows({
   deadlineTimeZoneLabel,
   deadlineTimeFormat = "24h",
   taskTitle,
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & { tasks: OpsTask[]; view: TaskListView }) {
+  taskSchedule = () => null,
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle" | "taskSchedule"> & { tasks: OpsTask[]; view: TaskListView }) {
   const [editor, setEditor] = React.useState<Editor | null>(null);
 
   const submitEditor = (event: React.FormEvent<HTMLFormElement>) => {
@@ -126,6 +136,7 @@ function TaskRows({
           <strong>{title.primary}</strong>
           {title.details.length > 0 ? <small className="task-title-details">{title.details.join(" · ")}</small> : null}
           {supportingCopy ? <span>{supportingCopy}</span> : null}
+          <TrialLessonTime schedule={taskSchedule(task)} deadlineTimeZone={deadlineTimeZone} deadlineTimeZoneLabel={deadlineTimeZoneLabel} deadlineTimeFormat={deadlineTimeFormat} />
           {noteDate ? <time className="task-note-date" dateTime={task.completionNoteUpdatedAt}
             title={`备注于 ${noteDate} · ${deadlineTimeZoneLabel}`}
           >备注于 {noteDate}</time> : null}
@@ -229,7 +240,7 @@ function TaskSection({
   title,
   className,
   ...props
-}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle"> & {
+}: Pick<ToDoListProps, "studentName" | "onComplete" | "onCannotDo" | "onReopen" | "onUpdateNote" | "onRepairDeadline" | "canRepairDeadline" | "onParentReplied" | "onTeacherReplied" | "onOpen" | "canOpen" | "canReopen" | "deadlineTimeZone" | "deadlineTimeZoneLabel" | "deadlineTimeFormat" | "taskTitle" | "taskSchedule"> & {
   title: string;
   className: string;
   tasks: OpsTask[];
@@ -290,6 +301,7 @@ export function ToDoList({
   deadlineTimeZoneLabel,
   deadlineTimeFormat = "24h",
   taskTitle,
+  taskSchedule,
 }: ToDoListProps) {
   const [view, setView] = React.useState<TaskListView>("todo");
   const [ownerFilter, setOwnerFilter] = React.useState("");
@@ -303,7 +315,7 @@ export function ToDoList({
   const visibleOwnerGroups = ownerGroups
     .map((group) => ({ ...group, tasks: group.tasks.filter((task) => filteredTasks.has(task)) }))
     .filter((group) => group.tasks.length > 0);
-  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, view };
+  const rowProps = { studentName, onComplete, onCannotDo, onReopen, onUpdateNote, onRepairDeadline, canRepairDeadline, onParentReplied, onTeacherReplied, onOpen, canOpen, canReopen, deadlineTimeZone, deadlineTimeZoneLabel, deadlineTimeFormat, taskTitle, taskSchedule, view };
 
   return (
     <section className="panel task-panel to-do-list" aria-labelledby="to-do-list-title">
