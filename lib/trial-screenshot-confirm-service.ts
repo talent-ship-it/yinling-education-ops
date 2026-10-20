@@ -139,7 +139,7 @@ async function confirm(dependencies: Dependencies, command: TrialScreenshotConfi
   const nextLp = enrichLp(lp, event, identity);
   const matchedAt = (dependencies.now?.() ?? new Date()).toISOString();
   const rows = identity.rows.map((row) => row.entity === "lpItems" ? { ...row, payload: (row.payload as RecordValue[]).map((item) => item.id === lp.id ? nextLp : item) } : row);
-  const projection = prepareJiaowubaoTrialSyncProjection({ rows, references: [{ lpItemId: command.lpItemId, eventId: event.eventId, startsAt: event.startsAt }], rawEvents: events, snapshotRevision: command.sourceRevision, matchedAt });
+  const projection = prepareJiaowubaoTrialSyncProjection({ rows, references: [{ lpItemId: command.lpItemId, eventId: event.eventId, startsAt: event.startsAt }], rawEvents: events, snapshotRevision: command.sourceRevision, matchedAt, enrichHandover: false });
   const receipts = await dependencies.commit({ ...receiptInput, expectedVersions: command.expectedVersions, nextLpItems: projection.nextLpItems, nextTasks: projection.nextTasks });
   if (receipts.length !== 1) fail(503, "confirmation_unavailable", "试听补全暂未确认，请使用同一次操作重试。");
   return receiptResponse(receipts[0]!, identity);

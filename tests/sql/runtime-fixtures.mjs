@@ -1,4 +1,10 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "trial-handover-enrichment-concurrency", source: "tests/sql/trial-handover-enrichment-concurrency-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/trial-handover-enrichment-concurrency-runtime.py" },
+  ] },
+  { id: "trial-handover-enrichment", source: "tests/sql/trial-handover-enrichment-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/trial-handover-enrichment-runtime.sql" },
+  ] },
   { id: "trial-screenshot-confirmation-concurrency", source: "tests/sql/trial-screenshot-confirmation-concurrency-runtime.py", steps: [
     { kind: "python", file: "tests/sql/trial-screenshot-confirmation-concurrency-runtime.py" },
   ] },

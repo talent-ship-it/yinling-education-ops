@@ -70,6 +70,9 @@ export type TrialScheduleLink = Readonly<{
   teacherId: string | null;
   teacherName: string;
   plannerHint: JiaowubaoTrialPlannerHint;
+  durationMinutes?: number;
+  sharedAccountLabel?: string | null;
+  sharedAccountLetter?: string | null;
   matchedAt: string;
 }>;
 
@@ -82,6 +85,8 @@ export type TrialScheduleEventLike = Readonly<{
   teacherName?: string | null;
   visibleStudentIds: readonly string[];
   trialPlannerHint?: JiaowubaoTrialPlannerHint;
+  sharedAccountLabel?: string | null;
+  sharedAccountLetter?: string | null;
 }>;
 
 export type TrialScheduleMatch = Readonly<{
@@ -393,6 +398,14 @@ function trialScheduleStudentName(item: Readonly<{ trialIntake?: TrialIntake; fi
   if (item.trialIntake?.studentName) return item.trialIntake.studentName;
   return item.fields?.studentNameKnown === true ? text(item.fields.studentName) || fallback : fallback;
 }
+function trialEventSourceDetails(event: TrialScheduleEventLike) {
+  return {
+    durationMinutes: (new Date(event.endsAt).valueOf() - new Date(event.startsAt).valueOf()) / 60_000,
+    sharedAccountLabel: event.sharedAccountLabel ?? null,
+    sharedAccountLetter: event.sharedAccountLetter ?? null,
+  };
+}
+
 /**
  * Matches only unambiguous LP/student evidence. A direct student ID wins; the
  * course-title fallback also respects the A/B/C planner hint when available.
@@ -403,6 +416,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     studentId: string;
     workflowType?: string;
     stage?: string;
+    resultStatus?: string;
     requestedAt?: string;
     trialPaid?: unknown;
     fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
@@ -425,7 +439,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
   const candidatesByLp = input.lpItems
     .filter((candidate) => (
       candidate.workflowType === "试听 LP" || candidate.workflowType === "换老师试听"
-    ) && candidate.stage !== "完成")
+    ) && candidate.stage !== "完成" && candidate.resultStatus !== "已取消")
     .flatMap((item) => {
       const student = students.get(item.studentId);
       if (!student) return [];
@@ -497,6 +511,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)
           ?? "待核对老师映射",
         plannerHint: event.trialPlannerHint ?? null,
+        ...trialEventSourceDetails(event),
         matchedAt,
       }),
     }));

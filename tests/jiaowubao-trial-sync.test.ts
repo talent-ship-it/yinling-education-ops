@@ -205,6 +205,11 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   assert.equal((lp.trialSchedule as Record<string, unknown>).sourceRevision, command.snapshotRevision);
   assert.equal((lp.trialSchedule as Record<string, unknown>).studentName, "Heather孙晓琳");
   assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
+  assert.equal((lp.trialSchedule as Record<string, unknown>).durationMinutes, 60);
+  assert.equal((lp.trialSchedule as Record<string, unknown>).sharedAccountLabel, "试听学员A");
+  assert.equal((lp.trialSchedule as Record<string, unknown>).sharedAccountLetter, "a");
+  assert.equal((lp.fields as Record<string, unknown>).assignedTeacher, "Zara Baker");
+  assert.equal((lp.fields as Record<string, unknown>).trialDurationMinutes, 60);
   const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
   assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
     "trial.jiaowubao.lp-finalize-tomorrow-n3",
@@ -233,6 +238,42 @@ test("discovers the same unambiguous references without any browser-supplied pai
     matchedAt: "2026-08-28T03:00:00.000Z",
   });
   assert.deepEqual(projection.references, command.matches);
+});
+
+test("archived students never enter a trial sync batch through title or screenshot evidence", () => {
+  for (const importArchived of [true, "true"]) {
+    for (const pinned of [false, true]) {
+      const rows = fixtureRows();
+      const students = rows.find((entry) => entry.entity === "students")!.payload as Record<string, unknown>[];
+      students[0]!.importArchived = importArchived;
+      const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;
+      if (pinned) lp.trialScheduleReview = { source: "screenshot-review", eventId: rawEvent.eventId };
+      const input = {
+        rows,
+        rawEvents: [rawEvent],
+        snapshotRevision: command.snapshotRevision,
+        matchedAt: "2026-08-28T03:00:00.000Z",
+      };
+      const projection = prepareJiaowubaoTrialSyncProjection(input);
+      assert.deepEqual(projection.references, []);
+      assert.deepEqual(projection.nextLpItems, [lp]);
+      assert.deepEqual(projection.nextTasks, rows.find((entry) => entry.entity === "tasks")!.payload);
+      assert.throws(() => prepareJiaowubaoTrialSyncProjection({ ...input, references: command.matches }), /不能再无歧义匹配/);
+    }
+  }
+});
+
+test("cancelled trial LPs are preserved and excluded from sync references", () => {
+  const rows = fixtureRows();
+  const lp = (rows.find((entry) => entry.entity === "lpItems")!.payload as Record<string, unknown>[])[0]!;
+  lp.resultStatus = "已取消";
+  lp.trialScheduleReview = { source: "screenshot-review", eventId: rawEvent.eventId };
+  const input = { rows, rawEvents: [rawEvent], snapshotRevision: command.snapshotRevision, matchedAt: "2026-08-28T03:00:00.000Z" };
+  const projection = prepareJiaowubaoTrialSyncProjection(input);
+  assert.deepEqual(projection.references, []);
+  assert.deepEqual(projection.nextLpItems, [lp]);
+  assert.deepEqual(projection.nextTasks, rows.find((entry) => entry.entity === "tasks")!.payload);
+  assert.throws(() => prepareJiaowubaoTrialSyncProjection({ ...input, references: command.matches }), /不能再无歧义匹配/);
 });
 
 test("an explicit LP paid flag keeps the Jiaowubao payment reminder closed", () => {

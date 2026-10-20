@@ -27,6 +27,28 @@ create table internal.jiaowubao_open_api_schedule_snapshot_ingest_items(run_id u
 
 \ir ../../supabase/migrations/20261020113443_trial_screenshot_confirmation.sql
 
+create table internal.jiaowubao_open_api_schedule_projection_jobs(api_source_key text primary key,revision text,state text);
+create function internal.jiaowubao_schedule_projection_allows_stale_trial(p_revision text,p_actor text)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists(select 1 from internal.jiaowubao_open_api_schedule_projection_jobs projection_job
+    where projection_job.api_source_key='jwb-open-api-schedule' and projection_job.revision=p_revision and projection_job.state='authority_done')
+    and p_actor is not distinct from 'Ops Admin'
+$$;
+revoke all on function internal.jiaowubao_schedule_projection_allows_stale_trial(text,text) from public,anon,authenticated,service_role;
+do $bind_stale_trial_recovery$
+declare definition text; needle text:='pointer.published_at < clock_timestamp() - interval ''2 hours''';
+begin
+  select pg_catalog.pg_get_functiondef('public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) into definition;
+  if strpos(definition,needle)=0 then raise exception 'fixture_trial_sync_v2_freshness_guard_changed'; end if;
+  execute replace(definition,needle,'('||needle||' and not internal.jiaowubao_schedule_projection_allows_stale_trial(p_snapshot_revision,p_actor))');
+end;
+$bind_stale_trial_recovery$;
+
+create temporary table fixture_v2_definition as select pg_catalog.pg_get_functiondef('public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) as definition;
+\ir ../../supabase/migrations/20261020211253_jiaowubao_trial_handover_enrichment_v3.sql
+do $$ begin if (select definition from fixture_v2_definition) is distinct from pg_catalog.pg_get_functiondef('public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) then raise exception 'Released v2 function was changed'; end if; end $$;
+drop table fixture_v2_definition;
+
 create function internal.fixture_expect_failure(statement text,expected text) returns void language plpgsql as $$
 declare failed boolean := false;
 begin

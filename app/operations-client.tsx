@@ -9,6 +9,7 @@ import { createSharedStatePoller } from "@/lib/shared-state-poller";
 
 import { isLessonDuration } from "../lib/lesson-duration";
 import { LessonDurationInput } from "./lesson-duration-input";
+import { TrialScheduleDetails } from "./trial-schedule-details";
 import { useWorkspaceLocation } from "./use-workspace-location";
 import { TeacherLeavePanel } from "./teacher-leave-panel";
 import { RecordPicker } from "./record-picker";
@@ -8860,19 +8861,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </span>
       </div>;
     };
-    const trialIntakeDetails = (item: LpItem) => item.workflowType === "试听 LP" ? <details className="trial-intake-details">
-      <summary>查看试听交接详情</summary>
-      {!isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消" && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
-      <LpWorkflowDetails type="试听 LP" fields={item.fields ?? {}} />
-      {item.trialIntake ? <dl>
-        <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
-        <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), displayPreferences.timezone, displayPreferences)}</dd></div>
-        <div><dt>对接对象</dt><dd>{[item.trialIntake.contactParents ? "家长" : "", item.trialIntake.contactStudent ? "学生本人" : ""].filter(Boolean).join("、")}{item.trialIntake.contactNote ? ` · ${item.trialIntake.contactNote}` : ""}</dd></div>
-        <div><dt>写作</dt><dd>{item.trialIntake.writingRequired ? "需要" : "不需要"}{item.trialIntake.writingNote ? ` · ${item.trialIntake.writingNote}` : ""}</dd></div>
-        <div><dt>试卷</dt><dd>{item.trialIntake.paperRequired ? "需要发卷并收卷" : "不需要"}{item.trialIntake.paperNote ? ` · ${item.trialIntake.paperNote}` : ""}</dd></div>
-        <div><dt>试听时长</dt><dd>{item.trialIntake.trialDurationMinutes} 分钟{item.trialIntake.trialDurationNote ? ` · ${item.trialIntake.trialDurationNote}` : ""}</dd></div>
-      </dl> : <p>历史试听 LP 未包含新版手册字段。</p>}
-    </details> : null;
+    const trialScreenshotAllowed = (item: LpItem) => item.workflowType === "试听 LP" && !isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消";
+    const trialIntakeDetails = (item: LpItem) => {
+      if (item.workflowType !== "试听 LP" && item.workflowType !== "换老师试听") return null;
+      return <details className="trial-intake-details">
+        <summary>查看试听交接详情</summary>
+        {trialScreenshotAllowed(item) && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
+        <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} />
+        <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} />
+        {item.trialIntake ? <dl>
+          <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
+          <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), displayPreferences.timezone, displayPreferences)}</dd></div>
+          <div><dt>对接对象</dt><dd>{[item.trialIntake.contactParents ? "家长" : "", item.trialIntake.contactStudent ? "学生本人" : ""].filter(Boolean).join("、")}{item.trialIntake.contactNote ? ` · ${item.trialIntake.contactNote}` : ""}</dd></div>
+          <div><dt>写作</dt><dd>{item.trialIntake.writingRequired ? "需要" : "不需要"}{item.trialIntake.writingNote ? ` · ${item.trialIntake.writingNote}` : ""}</dd></div>
+          <div><dt>试卷</dt><dd>{item.trialIntake.paperRequired ? "需要发卷并收卷" : "不需要"}{item.trialIntake.paperNote ? ` · ${item.trialIntake.paperNote}` : ""}</dd></div>
+          <div><dt>交接试听时长</dt><dd>{item.trialIntake.trialDurationMinutes} 分钟{item.trialIntake.trialDurationNote ? ` · ${item.trialIntake.trialDurationNote}` : ""}</dd></div>
+        </dl> : item.workflowType === "试听 LP" ? <p>历史试听 LP 未包含新版手册字段。</p> : null}
+      </details>;
+    };
 
     return <>
       <ViewHeading eyebrow="试听与 LP" title="试听与 LP" actions={<>
@@ -8948,7 +8954,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {visibleTrialLedgerEntries.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
             <caption className="visually-hidden">试听 LP 销售复盘台账；自动值可逐列人工修正并恢复</caption>
-            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">试听状态</th><th scope="col">是否付费</th><th scope="col">备注</th></tr></thead>
+            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">试听状态</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th></tr></thead>
             <tbody>{visibleTrialLedgerEntries.map((entry) => {
               const { item, schedule, requestAt, resultOptions, automaticStudentName, automaticGuardianWechat, automaticScheduledAt, automaticLessonMonth, automaticPlanner, automaticSubject, automaticTeacher, automaticPaid, storedPaid } = entry;
               const paidKey = `${item.id}:trialPaid`;
@@ -8968,6 +8974,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td><div className={`ledger-edit-cell ${item.resultStatus ? "manual" : "automatic"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={effectiveTrialResultStatus(item) ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value as LpResultStatus)}>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : item.resultStatus ? "人工结果" : "新建默认值"}</small></span></div></td>
                 <td><div className={`ledger-edit-cell ${storedPaid === undefined ? "automatic" : "manual"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[paidKey] === true} value={storedPaid === undefined ? "" : storedPaid ? "true" : "false"} aria-label={`${automaticStudentName || item.id} 是否付费`} onChange={(event) => { const value = event.target.value === "" ? undefined : event.target.value === "true"; void saveTrialLedgerFieldAtomic(item, "trialPaid", value).catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败")); }}><option value="">自动 · {automaticPaid ? "是" : "否"}</option><option value="true">是</option><option value="false">否</option></select><span className="ledger-cell-meta"><small>{trialLedgerSaving[paidKey] ? "保存中…" : storedPaid === undefined ? "按付费方式自动判断" : "手动值"}</small></span></div></td>
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
+                <td><TrialScheduleDetails schedule={schedule} /></td>
               </tr>;
             })}</tbody>
           </table>
@@ -8976,7 +8983,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <datalist id="trial-ledger-subject-options">{Array.from(new Set([...courses.map((course) => course.name), ...scopedStudents.map((student) => student.course)].filter(Boolean))).map((subject) => <option value={subject} key={subject} />)}</datalist>
           <datalist id="trial-ledger-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.name} key={teacher.id} />)}</datalist>
         </div> : <div className="empty-inline trial-ledger-filter-empty">当前筛选没有符合条件的试听；清除筛选即可查看全部 {trialLedgerItems.length} 条。</div>}
-        </> : <div className="empty-inline">还没有试听 LP；创建后会自动进入 14 列台账。</div>}
+        </> : <div className="empty-inline">还没有试听 LP；创建后会自动进入台账。</div>}
       </section>
       <section className="panel collection-shell">
         <div className="view-bar">

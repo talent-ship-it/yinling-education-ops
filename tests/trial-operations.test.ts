@@ -128,6 +128,18 @@ test("matches a trial LP to real schedule evidence by full course-title name and
   assert.equal(matches[0]?.link.source, "jiaowubao-open-api");
 });
 
+test("a cancelled trial does not compete with an active trial candidate", () => {
+  const active = { id: "LP-ACTIVE", studentId: "STU-1", workflowType: "试听 LP", stage: "待跟进" };
+  const matches = matchTrialScheduleEvents({
+    lpItems: [active, { ...active, id: "LP-CANCELLED", resultStatus: "已取消" }],
+    students: [{ id: "STU-1", name: "Heather孙晓琳", owner: "Ella", planner: "Tara" }],
+    teachers: [],
+    events: [{ eventId: "evt-1", startsAt: "2026-08-30T03:00:00.000Z", endsAt: "2026-08-30T04:00:00.000Z", courseName: "English Heather孙晓琳试听", teacherId: null, visibleStudentIds: ["STU-1"], trialPlannerHint: "Tara" }],
+    matchedAt: "2026-08-28T03:00:00.000Z",
+  });
+  assert.deepEqual(matches.map((match) => match.lpItemId), ["LP-ACTIVE"]);
+});
+
 test("does not match when two source events are equally valid for one trial LP", () => {
   const event = {
     startsAt: "2026-08-30T03:00:00.000Z",

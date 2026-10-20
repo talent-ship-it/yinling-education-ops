@@ -91,6 +91,7 @@ type WorkspaceOptions = {
   sourcePage?: (url: URL) => SourcePage | Promise<SourcePage>;
   screenshotMatches?: ReturnType<typeof screenshotMatch>[];
   screenshotConfirmStatuses?: number[];
+  lpItems?: unknown[];
 };
 
 async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
@@ -110,7 +111,7 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   };
   const entities: Record<string, unknown> = {
     students: [student], teachers: [{ id: "SYNTH-LP-TEACHER-1", name: "Teacher Example", initials: "TE", subjects: ["Y8 English"], timezone: "Australia/Melbourne", availability: "", load: 0, capacity: 10, acceptsStudents: true, note: "", availabilityWindows: [] }],
-    tasks: [], bookings: [], courses: [], lpItems: [], operations: [], renewals: [], payroll: [], messages: [], files: [], audit: [],
+    tasks: [], bookings: [], courses: [], lpItems: options.lpItems ?? [], operations: [], renewals: [], payroll: [], messages: [], files: [], audit: [],
   };
   const versions: Record<string, number> = Object.fromEntries(Object.keys(entities).map((entity) => [entity, 1]));
   const snapshots = () => ({
@@ -562,5 +563,51 @@ test("applying a range discards an older page that resolves after the filter cha
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
   expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  assertClean(f);
+});
+
+
+test("trusted trial schedules remain readonly beside manual ledger overrides and both LP detail types", async ({ page }) => {
+  const candidate = screenshotCandidate();
+  const trialSchedule = {
+    ...candidate, source: "jiaowubao-open-api", teacherId: "SYNTH-LP-TEACHER-1", studentName: "Synthetic Student",
+    plannerHint: "Eileen", matchedAt: NOW,
+  };
+  const intake = {
+    planner: "Eileen", requestSentAt: NOW, contactParents: true, contactStudent: false,
+    writingRequired: false, paperRequired: false, trialDurationMinutes: 45,
+  };
+  const base = { studentId: STUDENT_ID, owner: "Ella", stage: "待资料", due: "2026-10-23" };
+  const f = await syntheticWorkspace(page, { lpItems: [
+    {
+      ...base, id: LP_ID, title: "Synthetic Trial Metadata", workflowType: "试听 LP", trialSchedule, trialIntake: intake,
+      fields: { assignedTeacher: "Synthetic Manual Teacher", subject: "Synthetic Manual Subject", trialDurationMinutes: 45 },
+      trialLedgerOverrides: { teacher: "Synthetic Manual Teacher", subject: "Synthetic Manual Subject", scheduledAt: "2026-10-22T22:30:00.000Z" },
+    },
+    {
+      ...base, id: "SYNTH-CHANGE-TRIAL", title: "Synthetic Teacher Change", workflowType: "换老师试听",
+      fields: { newTeacher: "Synthetic Change Teacher", subject: "Synthetic Change Subject" },
+      trialSchedule: { ...trialSchedule, eventId: "synthetic-change-schedule", courseName: "Synthetic Complete Change Course", sharedAccountLabel: "试听学员C2026", sharedAccountLetter: "c" },
+    },
+  ] });
+  const row = page.getByRole("row").filter({ has: page.getByRole("combobox", { name: "Synthetic Student 老师", exact: true }) }).first();
+  await expect(row.getByRole("combobox", { name: "Synthetic Student 老师", exact: true })).toHaveValue("Synthetic Manual Teacher");
+  await expect(row.getByRole("combobox", { name: "Synthetic Student 科目", exact: true })).toHaveValue("Synthetic Manual Subject");
+  await expect(row.getByLabel("Synthetic Student 上课日期", { exact: true })).toHaveValue("2026-10-23");
+  await expect(row.getByLabel("Synthetic Student 上课时间（墨尔本）", { exact: true })).toHaveValue("09:30");
+  const api = row.getByRole("region", { name: "教务宝小课表", exact: true });
+  for (const value of [candidate.teacherName, candidate.courseName, "2026-10-22", "19:05 – 20:05", "60 分钟", candidate.sharedAccountLabel]) await expect(api.getByText(value, { exact: true })).toBeVisible();
+  await expect(api.locator("input,select,button,textarea")).toHaveCount(0);
+  const trial = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Trial Metadata", exact: true }) });
+  await trial.locator("summary").click();
+  await expect(trial.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("60 分钟", { exact: true })).toBeVisible();
+  await expect(trial.getByText("交接试听时长", { exact: true }).locator("..")).toHaveText("交接试听时长45 分钟");
+  const change = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Teacher Change", exact: true }) });
+  await change.locator("summary").click();
+  await expect(change.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("Synthetic Complete Change Course", { exact: true })).toBeVisible();
+  await expect(change.getByText("试听学员C2026", { exact: true })).toBeVisible();
+  await expect(change.getByRole("button", { name: "补全教务宝小课表", exact: true })).toHaveCount(0);
+  expect(f.posted).toEqual([]);
+  expect(f.screenshotPosted).toEqual([]);
   assertClean(f);
 });

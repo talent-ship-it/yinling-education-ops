@@ -1,3 +1,5 @@
+import { trialAccountFromParticipants } from "./trial-account-label";
+import { enrichTrialHandover } from "./trial-handover-enrichment";
 import { mapJiaowubaoSnapshotParticipants } from "./jiaowubao-open-api-schedule-reader";
 import {
   completeTrialSchedulingReminderTasks,
@@ -91,7 +93,7 @@ function teacherIdFromSourceLabel(teachers: readonly RecordValue[], label: strin
 
 function sameScheduleLink(left: unknown, right: TrialScheduleLink) {
   if (!record(left)) return false;
-  const metadataKeys = new Set(["matchedAt", "studentName"]);
+  const metadataKeys = new Set(["matchedAt", "studentName", "durationMinutes", "sharedAccountLabel", "sharedAccountLetter"]);
   const leftSemantic = Object.fromEntries(Object.entries(left).filter(([key]) => !metadataKeys.has(key)));
   const rightSemantic = Object.fromEntries(Object.entries(right).filter(([key]) => !metadataKeys.has(key)));
   return JSON.stringify(leftSemantic) === JSON.stringify(rightSemantic);
@@ -151,6 +153,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   rawEvents: readonly RawScheduleEvent[];
   snapshotRevision: string;
   matchedAt: Date | string;
+  enrichHandover?: boolean;
 }>): JiaowubaoTrialSyncProjection {
   const lpItems = records(input.rows, "lpItems");
   const students = records(input.rows, "students");
@@ -169,8 +172,11 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   }
 
   // References select writes, never the competitors used to prove uniqueness.
+  const eligibleStudentIds = new Set(students.filter((student) => student.importArchived !== true
+    && normalise(student.importArchived) !== "true").map((student) => text(student.id)).filter(Boolean));
   const activeLpItems = lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
-      && text(item.stage) !== "完成");
+      && text(item.stage) !== "完成" && text(item.resultStatus) !== "已取消"
+      && eligibleStudentIds.has(text(item.studentId)));
   const allowedStudentIds = new Set(activeLpItems.map((item) => text(item.studentId)).filter(Boolean));
   const studentLookup = buildStudentLookup(students, allowedStudentIds);
   const matchedAt = new Date(input.matchedAt);
@@ -193,6 +199,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       teacherName: raw.sourceTeacherLabel,
       visibleStudentIds,
       trialPlannerHint: trialPlannerHintFromParticipants(raw.sourceParticipants),
+      ...trialAccountFromParticipants(raw.sourceParticipants),
     }];
   });
   const allMatches = matchTrialScheduleEvents({
@@ -260,7 +267,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     const link = sameScheduleLink(existing, match.link) && record(existing) && text(existing.matchedAt)
       ? { ...match.link, matchedAt: text(existing.matchedAt) }
       : match.link;
-    return { ...item, trialSchedule: link };
+    return { ...(input.enrichHandover === false ? item : enrichTrialHandover(item, eventById.get(link.eventId)!, students)), trialSchedule: link };
   });
 
   let nextTasks: OpsTask[] = tasks.filter((task) => task.status === "done"
