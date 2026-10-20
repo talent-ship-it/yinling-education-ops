@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TrialScheduleDetails } from "../app/trial-schedule-details";
+import { TrialScheduleDetails, trialSchedulePendingLabel } from "../app/trial-schedule-details";
 import type { TrialScheduleLink } from "../lib/trial-operations";
 
 const schedule: TrialScheduleLink = {
@@ -49,11 +49,41 @@ test("Melbourne rendering follows daylight saving and retains dates for lessons 
 });
 
 test("missing links and invalid legacy intervals stay explicitly incomplete", () => {
-  assert.match(renderToStaticMarkup(<TrialScheduleDetails />), /未关联/);
+  assert.match(renderToStaticMarkup(<TrialScheduleDetails />), /待匹配教务宝课表/);
   for (const endsAt of ["invalid", schedule.startsAt, "2026-10-22T08:00:00Z"]) {
     const html = render({ endsAt, durationMinutes: undefined });
     assert.match(html, /上课时间（墨尔本）<\/span><strong>未记录/);
     assert.match(html, /排课时长<\/span><strong>未记录/);
   }
   assert.match(render({ durationMinutes: undefined, endsAt: "2026-10-22T09:05:30Z" }), /排课时长<\/span><strong>未记录/);
+});
+
+const pendingContext = {
+  stage: "待资料", studentNameConfirmed: true, loading: false, sourceState: "complete",
+  windowStartsAt: "2026-10-20T13:00:00Z", requestAt: "2026-10-21T00:00:00Z",
+};
+
+test("inactive LPs are distinguished from active unmatched work even while source is loading", () => {
+  assert.match(trialSchedulePendingLabel({ ...pendingContext, archived: true, loading: true }), /已归档/);
+  assert.match(trialSchedulePendingLabel({ ...pendingContext, stage: "完成", loading: true }), /已完成/);
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, resultStatus: "已取消" }), "已取消");
+});
+
+test("active missing schedules distinguish unavailable source, unknown identity and historical requests", () => {
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, loading: true }), "正在读取教务宝");
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, sourceState: undefined }), "等待教务宝课表");
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, sourceState: "stale" }), "课表快照已过期");
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, studentNameConfirmed: false }), "待核对学生姓名");
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, requestAt: "2026-08-28T00:00:00Z" }), "历史交接 · 待核对课表");
+  assert.equal(trialSchedulePendingLabel({ ...pendingContext, requestAt: "invalid" }), "待匹配教务宝课表");
+});
+
+test("missing schedules expose the existing completion action only when authorized by the caller", () => {
+  const html = renderToStaticMarkup(<TrialScheduleDetails pendingLabel="待核对学生姓名" onComplete={() => {}} />);
+  assert.match(html, /待核对学生姓名/);
+  assert.match(html, /<button[^>]*type="button"[^>]*>补全教务宝小课表<\/button>/);
+  assert.doesNotMatch(renderToStaticMarkup(<TrialScheduleDetails pendingLabel="已归档 · 待核对历史课表" />), /<button/);
+  const linked = renderToStaticMarkup(<TrialScheduleDetails schedule={schedule} pendingLabel="待核对学生姓名" onComplete={() => {}} />);
+  assert.doesNotMatch(linked, /待核对学生姓名|<button/);
+  assert.match(linked, /Synthetic API Teacher/);
 });

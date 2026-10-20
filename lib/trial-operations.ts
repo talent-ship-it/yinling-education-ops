@@ -407,8 +407,8 @@ function trialEventSourceDetails(event: TrialScheduleEventLike) {
 }
 
 /**
- * Matches only unambiguous LP/student evidence. A direct student ID wins; the
- * course-title fallback also respects the A/B/C planner hint when available.
+ * Matches only unambiguous LP/student evidence. The course-title fallback
+ * also respects the A/B/C planner hint when available.
  */
 export function matchTrialScheduleEvents(input: Readonly<{
   lpItems: readonly Readonly<{
@@ -419,7 +419,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
     resultStatus?: string;
     requestedAt?: string;
     trialPaid?: unknown;
-    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
+    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; assignedTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
     trialIntake?: TrialIntake;
     trialSchedule?: TrialScheduleLink;
     trialScheduleReview?: Readonly<{ source: "screenshot-review"; eventId: string }>;
@@ -445,6 +445,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       if (!student) return [];
       const teacherChangeTrial = item.workflowType === "换老师试听";
       const expectedTeacherKey = teacherChangeTrial ? provenTeacherKey(item.fields?.newTeacher) : null;
+      const assignedTeacherKey = teacherChangeTrial ? null : provenTeacherKey(item.fields?.assignedTeacher);
       if (teacherChangeTrial && !expectedTeacherKey) return [];
       const existingStudentName = trialScheduleStudentName(item, student.name);
       const nameKey = normalize(existingStudentName);
@@ -453,7 +454,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       const paymentMethod = teacherChangeTrial ? undefined : trialPaymentMethod(item.fields?.trialPaymentMethod);
       const requestTime = requestedAt(item);
       const confirmedEventId = reviewedTrialEventId(item);
-      const candidates = input.events.filter((event) => {
+      let candidates = input.events.filter((event) => {
         if (!reviewedTrialEventAllowed(confirmedOwners, item.id, event.eventId, confirmedEventId)) return false;
         const start = new Date(event.startsAt).valueOf();
         if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
@@ -465,11 +466,17 @@ export function matchTrialScheduleEvents(input: Readonly<{
           || provenTeacherKey(event.teacherName) === expectedTeacherKey;
         return teacherMatches && (directStudentMatch || titleMatch && Boolean(hint) && plannerMatches);
       }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
-      return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates }];
+      const competingCandidates = candidates;
+      if (candidates.length > 1 && assignedTeacherKey) {
+        const teacherCandidates = candidates.filter((event) => provenTeacherKey(optionalText(event.teacherName)
+          ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)) === assignedTeacherKey);
+        if (teacherCandidates.length) candidates = teacherCandidates;
+      }
+      return [{ item, student, existingStudentName, plannerName, paymentMethod, requestTime, candidates, competingCandidates }];
     });
   const candidateLpCountByEvent = new Map<string, number>();
   for (const entry of candidatesByLp) {
-    for (const eventId of new Set(entry.candidates.map((event) => event.eventId))) {
+    for (const eventId of new Set(entry.competingCandidates.map((event) => event.eventId))) {
       candidateLpCountByEvent.set(eventId, (candidateLpCountByEvent.get(eventId) ?? 0) + 1);
     }
   }
