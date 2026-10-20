@@ -1,4 +1,10 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-lp-draft-concurrency", source: "tests/sql/wecom-lp-draft-concurrency-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/wecom-lp-draft-concurrency-runtime.py" },
+  ] },
+  { id: "wecom-lp-draft", source: "tests/sql/wecom-lp-draft-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-lp-draft-runtime.sql" },
+  ] },
   { id: "classroom-materials", source: "tests/sql/classroom-materials-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/classroom-materials-setup.sql" },
     { kind: "sql-fragment", file: "supabase/migrations/20260827000700_account_lifecycle.sql",
