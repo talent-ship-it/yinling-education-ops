@@ -121,18 +121,24 @@ const noteForField: Readonly<Record<string, string>> = {
   trialDurationMinutes: "trialDurationNote",
 };
 
+function preparationFollowUp(value: string): string | null {
+  const parsed = booleanValue(value);
+  return parsed === null ? null : parsed ? "是" : "否";
+}
+
+const fieldParsers: Readonly<Record<string, (value: string) => DraftValue | null>> = {
+  trialDurationMinutes: durationValue,
+  specifiedContentStatus: specifiedContent,
+  trialPaymentMethod: paymentMethod,
+  contactPerson,
+  preparationFollowUp,
+};
+
 function parsedValue(field: string, value: string): DraftValue | null {
   if (booleanFields.has(field)) return booleanValue(value);
   if (unknown(value)) return null;
-  if (field === "trialDurationMinutes") return durationValue(value);
-  if (field === "specifiedContentStatus") return specifiedContent(value);
-  if (field === "trialPaymentMethod") return paymentMethod(value);
-  if (field === "contactPerson") return contactPerson(value);
-  if (field === "preparationFollowUp") {
-    const parsed = booleanValue(value);
-    return parsed === null ? null : parsed ? "是" : "否";
-  }
-  return value;
+  const parser = fieldParsers[field];
+  return parser ? parser(value) : value;
 }
 
 function collectText(text: string, add: (field: string, value: string) => void) {
@@ -160,7 +166,13 @@ function collectText(text: string, add: (field: string, value: string) => void) 
   flush();
 }
 
-export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]): WecomLpDraft {
+type DraftState = {
+  values: Record<string, DraftValue>;
+  conflicts: WecomLpDraft["conflicts"][number][];
+  unresolvedValues: WecomLpDraft["unresolvedValues"][number][];
+};
+
+function collectRecordValues(records: readonly WecomLpDraftSourceRecord[]) {
   const raw = new Map<string, SourceValue[]>();
   const add = (field: string, value: string, messageId: string) => {
     const cleaned = cleanValue(value);
@@ -169,95 +181,125 @@ export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]):
     entries.push({ value: cleaned, messageId });
     raw.set(field, entries);
   };
-  const ordered = [...records].sort((a, b) => a.sentAt.localeCompare(b.sentAt) || a.messageId.localeCompare(b.messageId));
-  for (const record of ordered) {
+  for (const record of records) {
     collectText(record.text, (field, value) => add(field, value, record.messageId));
     for (const [field, value] of [
       ["studentName", record.studentNameHint], ["guardianWechat", record.guardianWechatHint],
       ["responsibleOperations", record.operationsOwnerHint], ["planner", record.coursePlannerHint],
     ] as const) if (value) add(field, value, record.messageId);
   }
+  return raw;
+}
 
-  const values: Record<string, DraftValue> = {};
-  const conflicts: WecomLpDraft["conflicts"][number][] = [];
-  const unresolvedValues: WecomLpDraft["unresolvedValues"][number][] = [];
-  const resolve = (field: string, entries: readonly SourceValue[]) => {
-    const byValue = new Map<string, { value: DraftValue; entries: SourceValue[] }>();
-    const unresolved: string[] = [];
-    for (const entry of entries) {
-      const parsed = parsedValue(field, entry.value);
-      if (parsed === null) {
-        unresolved.push(entry.value);
-        continue;
-      }
-      const key = typeof parsed === "string" ? parsed.replace(/[ \t]+/gu, " ").toLocaleLowerCase("en-AU") : JSON.stringify(parsed);
-      const existing = byValue.get(key);
-      if (existing) existing.entries.push(entry);
-      else byValue.set(key, { value: parsed, entries: [entry] });
+function resolveField(state: DraftState, field: string, entries: readonly SourceValue[]) {
+  const byValue = new Map<string, { value: DraftValue; entries: SourceValue[] }>();
+  const unresolved: string[] = [];
+  for (const entry of entries) {
+    const parsed = parsedValue(field, entry.value);
+    if (parsed === null) {
+      unresolved.push(entry.value);
+      continue;
     }
-    const label = labels.get(field) ?? field;
-    if (unresolved.length) unresolvedValues.push({ field, label, values: [...new Set(unresolved)] });
-    if (byValue.size > 1) {
-      conflicts.push({ field, label, values: [...new Set([...byValue.values()].flatMap((entry) => entry.entries.map((source) => source.value)))], messageIds: [...new Set(entries.map((entry) => entry.messageId))] });
-    } else if (byValue.size === 1) values[field] = [...byValue.values()][0]!.value;
-  };
-  for (const [field, entries] of raw) resolve(field, entries);
+    const key = typeof parsed === "string" ? parsed.replace(/[ \t]+/gu, " ").toLocaleLowerCase("en-AU") : JSON.stringify(parsed);
+    const existing = byValue.get(key);
+    if (existing) existing.entries.push(entry);
+    else byValue.set(key, { value: parsed, entries: [entry] });
+  }
+  const label = labels.get(field) ?? field;
+  if (unresolved.length) state.unresolvedValues.push({ field, label, values: [...new Set(unresolved)] });
+  if (byValue.size > 1) {
+    state.conflicts.push({ field, label, values: [...new Set([...byValue.values()].flatMap((entry) => entry.entries.map((source) => source.value)))], messageIds: [...new Set(entries.map((entry) => entry.messageId))] });
+  } else if (byValue.size === 1) state.values[field] = [...byValue.values()][0]!.value;
+}
 
+function resolveSourceFields(raw: ReadonlyMap<string, SourceValue[]>) {
+  const state: DraftState = { values: {}, conflicts: [], unresolvedValues: [] };
+  for (const [field, entries] of raw) resolveField(state, field, entries);
   for (const [field, noteField] of Object.entries(noteForField)) {
     const entries = raw.get(field)?.filter((entry) => /[\n(,，]/u.test(entry.value) || parsedValue(field, entry.value) === null);
-    if (entries?.length && !raw.has(noteField)) resolve(noteField, entries);
+    if (entries?.length && !raw.has(noteField)) resolveField(state, noteField, entries);
   }
+  return state;
+}
 
-  const hasConflict = (field: string) => conflicts.some((conflict) => conflict.field === field);
-  const addDerived = (field: string, value: DraftValue, sourceField: string) => {
-    if (hasConflict(field)) return;
-    if (values[field] === undefined || values[field] === value) values[field] = value;
-    else {
-      conflicts.push({ field, label: labels.get(field) ?? field, values: [String(values[field]), String(value)], messageIds: [...new Set([...(raw.get(field) ?? []), ...(raw.get(sourceField) ?? [])].map((entry) => entry.messageId))] });
-      delete values[field];
-    }
-  };
-  if (typeof values.studentName === "string" && !hasConflict("studentName") && !hasConflict("studentNameKnown")) {
-    const nameRecordIndex = ordered.findIndex((record) => raw.get("studentName")?.some((entry) => entry.messageId === record.messageId && !unknown(entry.value)));
-    const flagRecordIndex = ordered.reduce((latest, record, index) => raw.get("studentNameKnown")?.some((entry) => entry.messageId === record.messageId) ? index : latest, -1);
-    if (values.studentNameKnown === false && flagRecordIndex < nameRecordIndex) values.studentNameKnown = true;
-    else addDerived("studentNameKnown", true, "studentName");
-  }
-  else if (!hasConflict("studentName") && raw.get("studentName")?.every((entry) => unknown(entry.value))) {
-    addDerived("studentNameKnown", false, "studentName");
-  }
-  if (values.preferredTime !== undefined) addDerived("timeMentioned", true, "preferredTime");
-  if (values.contactPerson === "家长" || values.contactPerson === "学生本人") {
-    addDerived("contactParents", values.contactPerson === "家长", "contactPerson");
-    addDerived("contactStudent", values.contactPerson === "学生本人", "contactPerson");
-  }
+function hasFieldConflict(state: DraftState, field: string) {
+  return state.conflicts.some((conflict) => conflict.field === field);
+}
 
-  const studentName = typeof values.studentName === "string" ? values.studentName : null;
-  const guardianWechat = typeof values.guardianWechat === "string" ? values.guardianWechat : null;
-  const operationsOwner = typeof values.responsibleOperations === "string" ? values.responsibleOperations : null;
-  const planner = typeof values.planner === "string" ? values.planner : null;
-  delete values.guardianWechat;
-  if (planner) {
-    const canonicalPlanner = /^(Tara|Eileen|Abby)(?:\s*@\s*Insider\s*Leads)?$/iu.exec(planner)?.[1];
-    if (canonicalPlanner) values.planner = ["Tara", "Eileen", "Abby"].find((name) => name.toLowerCase() === canonicalPlanner.toLowerCase())!;
-    else {
-      delete values.planner;
-      unresolvedValues.push({ field: "planner", label: labels.get("planner")!, values: [planner] });
-    }
+function addDerivedValue(state: DraftState, raw: ReadonlyMap<string, SourceValue[]>, field: string, value: DraftValue, sourceField: string) {
+  if (hasFieldConflict(state, field)) return;
+  if (state.values[field] === undefined || state.values[field] === value) state.values[field] = value;
+  else {
+    state.conflicts.push({ field, label: labels.get(field) ?? field, values: [String(state.values[field]), String(value)], messageIds: [...new Set([...(raw.get(field) ?? []), ...(raw.get(sourceField) ?? [])].map((entry) => entry.messageId))] });
+    delete state.values[field];
   }
-  const earliestSource = ordered.filter((record) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(record.sentAt) && Number.isFinite(Date.parse(record.sentAt)))
+}
+
+function deriveStudentNameKnown(records: readonly WecomLpDraftSourceRecord[], raw: ReadonlyMap<string, SourceValue[]>, state: DraftState) {
+  if (typeof state.values.studentName === "string" && !hasFieldConflict(state, "studentName") && !hasFieldConflict(state, "studentNameKnown")) {
+    const nameRecordIndex = records.findIndex((record) => raw.get("studentName")?.some((entry) => entry.messageId === record.messageId && !unknown(entry.value)));
+    const flagRecordIndex = records.reduce((latest, record, index) => raw.get("studentNameKnown")?.some((entry) => entry.messageId === record.messageId) ? index : latest, -1);
+    if (state.values.studentNameKnown === false && flagRecordIndex < nameRecordIndex) state.values.studentNameKnown = true;
+    else addDerivedValue(state, raw, "studentNameKnown", true, "studentName");
+  } else if (!hasFieldConflict(state, "studentName") && raw.get("studentName")?.every((entry) => unknown(entry.value))) {
+    addDerivedValue(state, raw, "studentNameKnown", false, "studentName");
+  }
+}
+
+function deriveContactAndTime(raw: ReadonlyMap<string, SourceValue[]>, state: DraftState) {
+  if (state.values.preferredTime !== undefined) addDerivedValue(state, raw, "timeMentioned", true, "preferredTime");
+  if (state.values.contactPerson === "家长" || state.values.contactPerson === "学生本人") {
+    addDerivedValue(state, raw, "contactParents", state.values.contactPerson === "家长", "contactPerson");
+    addDerivedValue(state, raw, "contactStudent", state.values.contactPerson === "学生本人", "contactPerson");
+  }
+}
+
+function resolvePlanner(state: DraftState, planner: string | null) {
+  if (!planner) return;
+  const canonicalPlanner = /^(Tara|Eileen|Abby)(?:\s*@\s*Insider\s*Leads)?$/iu.exec(planner)?.[1];
+  if (canonicalPlanner) state.values.planner = ["Tara", "Eileen", "Abby"].find((name) => name.toLowerCase() === canonicalPlanner.toLowerCase())!;
+  else {
+    delete state.values.planner;
+    state.unresolvedValues.push({ field: "planner", label: labels.get("planner")!, values: [planner] });
+  }
+}
+
+function setSourceTimestamp(records: readonly WecomLpDraftSourceRecord[], values: Record<string, DraftValue>) {
+  const earliestSource = records.filter((record) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(record.sentAt) && Number.isFinite(Date.parse(record.sentAt)))
     .sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt))[0];
   if (earliestSource) values.requestSentAt = new Date(earliestSource.sentAt).toISOString();
+}
 
+function missingDraftFields(values: Record<string, DraftValue>, guardianWechat: string | null) {
   const requiredFields = [
     { key: "studentName", label: "学生姓名" }, { key: "guardianWechat", label: "微信名" },
     ...trialSchema.fields.filter((field) => field.requirement === "required" || (field.requirement === "university-only" && values.isUniversityStudent === true)),
   ];
-  const missingFields = requiredFields.filter((field) => field.key === "guardianWechat" ? guardianWechat === null : values[field.key] === undefined)
+  return requiredFields.filter((field) => field.key === "guardianWechat" ? guardianWechat === null : values[field.key] === undefined)
     .map((field) => ({ field: field.key, label: field.label }));
+}
+
+function stringValue(values: Record<string, DraftValue>, field: string) {
+  return typeof values[field] === "string" ? values[field] : null;
+}
+
+export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]): WecomLpDraft {
+  const ordered = [...records].sort((a, b) => a.sentAt.localeCompare(b.sentAt) || a.messageId.localeCompare(b.messageId));
+  const raw = collectRecordValues(ordered);
+  const state = resolveSourceFields(raw);
+  deriveStudentNameKnown(ordered, raw, state);
+  deriveContactAndTime(raw, state);
+  const { values, conflicts, unresolvedValues } = state;
+  const studentName = stringValue(values, "studentName");
+  const guardianWechat = stringValue(values, "guardianWechat");
+  const operationsOwner = stringValue(values, "responsibleOperations");
+  const planner = stringValue(values, "planner");
+  delete values.guardianWechat;
+  resolvePlanner(state, planner);
+  setSourceTimestamp(ordered, values);
   return {
     fields: values, studentName, guardianWechat, operationsOwner, planner,
-    conflicts, missingFields, unresolvedValues,
+    conflicts, missingFields: missingDraftFields(values, guardianWechat), unresolvedValues,
     sourceMessageIds: [...new Set(ordered.map((record) => record.messageId))],
   };
 }
