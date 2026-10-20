@@ -4601,9 +4601,10 @@ export function readWecomMirrorReview(input: { kind: string; query: string; page
   });
 }
 
-export function readWecomLpDrafts(input: { actor: string; fullAdmin: boolean; cursor: string | null }) {
-  return rpc<import("./wecom-lp-intake").WecomLpDraftPage>("read_wecom_lp_drafts", {
+export function readWecomLpDrafts(input: import("./wecom-lp-draft-query").WecomLpDraftQuery & { actor: string; fullAdmin: boolean }) {
+  return rpc<import("./wecom-lp-intake").WecomLpDraftPage>("read_wecom_lp_drafts_in_range", {
     p_secret: configuration().secret, p_actor: input.actor, p_full_admin: input.fullAdmin, p_cursor: input.cursor, p_limit: 30,
+    p_from: input.from, p_before: input.before,
   });
 }
 export function readWecomLpDraft(input: { sourceMessageId: string; actor: string; fullAdmin: boolean }) {

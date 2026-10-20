@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
 
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
@@ -17,14 +17,26 @@ type DraftPanelState = DraftPage & Readonly<{
   loadingMore: boolean;
 }>;
 
+export type HandoverTimeDisplay = Readonly<{
+  timezone: string;
+  label: string;
+  formatTime: (value: string) => string;
+}>;
+
+type DraftRange = Readonly<{ from: string; to: string }>;
+
 type WecomLpDraftsPanelProps = Readonly<{
+  timeDisplay: HandoverTimeDisplay;
   onSelect: (source: WecomLpDraftSource) => void;
   refreshKey: number;
 }>;
 
-async function readDrafts(signal: AbortSignal, cursor?: string | null): Promise<DraftPage> {
-  const query = cursor ? `?${new URLSearchParams({ cursor })}` : "";
-  const response = await fetch(`/api/operations/wecom-lp-drafts${query}`, { cache: "no-store", signal });
+async function readDrafts(signal: AbortSignal, range: DraftRange, timezone: string, cursor?: string | null): Promise<DraftPage> {
+  const query = new URLSearchParams({ timezone });
+  if (range.from) query.set("from", range.from);
+  if (range.to) query.set("to", range.to);
+  if (cursor) query.set("cursor", cursor);
+  const response = await fetch(`/api/operations/wecom-lp-drafts?${query}`, { cache: "no-store", signal });
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "读取机器人交接草稿失败");
   if (!Array.isArray(result.drafts)) throw new Error("机器人交接草稿返回格式异常");
@@ -74,25 +86,26 @@ function visibleDraftPage(state: DraftPanelState, key: string) {
   return { loading: false, busy: state.loadingMore, drafts: state.drafts, error: state.error, count: state.error ? null : state.total ?? state.drafts.length, nextCursor: state.nextCursor, loadingMore: state.loadingMore };
 }
 
-function useDraftPages(refreshKey: number) {
+function useDraftPages(refreshKey: number, range: DraftRange, timezone: string) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [state, setState] = useState<DraftPanelState>({ key: "", drafts: [], nextCursor: null, error: "", loadingMore: false });
   const controllerRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
-  const loadKey = `${refreshKey}:${refreshVersion}`;
+  const { from, to } = range;
+  const loadKey = `${refreshKey}:${refreshVersion}:${timezone}:${from}:${to}`;
   const current = state.key === loadKey;
 
   useEffect(() => {
     const controller = new AbortController();
     controllerRef.current = controller;
     loadingMoreRef.current = false;
-    void readDrafts(controller.signal).then((page) => {
+    void readDrafts(controller.signal, { from, to }, timezone).then((page) => {
       if (!controller.signal.aborted) setState({ ...page, key: loadKey, error: "", loadingMore: false });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setState({ key: loadKey, drafts: [], nextCursor: null, error: messageOf(error, "读取机器人交接草稿失败"), loadingMore: false });
     });
     return () => controller.abort();
-  }, [loadKey]);
+  }, [loadKey, from, to, timezone]);
 
   async function loadMore() {
     const request = nextPageRequest(state, current, controllerRef.current, loadingMoreRef.current);
@@ -101,7 +114,7 @@ function useDraftPages(refreshKey: number) {
     loadingMoreRef.current = true;
     setState((value) => ({ ...value, error: "", loadingMore: true }));
     try {
-      const page = await readDrafts(controller.signal, cursor);
+      const page = await readDrafts(controller.signal, range, timezone, cursor);
       if (!controller.signal.aborted) setState((value) => appendDraftPage(value, page, loadKey));
     } catch (error: unknown) {
       if (!controller.signal.aborted) setState((value) => withPageError(value, loadKey, error));
@@ -118,8 +131,14 @@ function draftActionLabel(source: WecomLpDraftSource, blocked: boolean) {
   return blocked ? "暂不可创建" : "核对并创建 LP";
 }
 
-function DraftRow({ source, onSelect }: Pick<WecomLpDraftsPanelProps, "onSelect"> & { source: WecomLpDraftSource }) {
+function handoverTime(source: WecomLpDraftSource) {
+  const timestamp = source.handoverAt ?? source.messages.find((message) => message.messageId === source.sourceMessageId)?.sentAt;
+  return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+}
+
+function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProps, "onSelect" | "timeDisplay"> & { source: WecomLpDraftSource }) {
   const status = draftStatus(source);
+  const sentAt = handoverTime(source);
   const name = source.studentName || source.wechatName || "待确认学生";
   const details = [fieldText(source.draft.fields.subject), fieldText(source.draft.fields.assignedTeacher)].filter(Boolean);
   const ownership = [source.operationsOwner ? `教务：${source.operationsOwner}` : "", source.coursePlanner ? `课程规划：${source.coursePlanner}` : ""].filter(Boolean);
@@ -128,16 +147,17 @@ function DraftRow({ source, onSelect }: Pick<WecomLpDraftsPanelProps, "onSelect"
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}><strong style={{ overflowWrap: "anywhere" }}>{name}</strong><span className={`status-pill ${status.tone}`}>{status.label}</span></div>
       <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>{details.join(" · ") || "科目、老师待核对"}</span>
       {ownership.length > 0 && <small style={{ overflowWrap: "anywhere" }}>{ownership.join(" · ")}</small>}
+      <small style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>交接时间：{sentAt ? <time dateTime={sentAt}>{timeDisplay.formatTime(sentAt)}</time> : "未记录"}</small>
     </div>
     <button className="primary-button" type="button" disabled={status.blocked} aria-label={`${name} ${source.confirmed ? "已创建 LP" : "核对并创建 LP"}`} onClick={() => onSelect(source)}>{draftActionLabel(source, status.blocked)}</button>
   </div>;
 }
 
-function DraftPanelBody({ loading, drafts, error, onSelect }: Pick<WecomLpDraftsPanelProps, "onSelect"> & { loading: boolean; drafts: WecomLpDraftSource[]; error: string }) {
+function DraftPanelBody({ loading, drafts, error, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProps, "onSelect" | "timeDisplay"> & { loading: boolean; drafts: WecomLpDraftSource[]; error: string }) {
   if (loading) return <div className="collection-empty" role="status"><strong>正在读取机器人交接草稿…</strong></div>;
-  if (drafts.length) return <div>{drafts.map((source) => <DraftRow key={source.id} source={source} onSelect={onSelect} />)}</div>;
+  if (drafts.length) return <div>{drafts.map((source) => <DraftRow key={source.id} source={source} onSelect={onSelect} timeDisplay={timeDisplay} />)}</div>;
   if (error) return null;
-  return <div className="collection-empty" role="status"><strong>暂无待核对的机器人交接草稿</strong></div>;
+  return <div className="collection-empty" role="status"><strong>暂无符合条件的机器人交接记录</strong></div>;
 }
 
 function DraftPanelFooter({ cursor, loading, loadMore }: { cursor: string | null; loading: boolean; loadMore: () => Promise<void> }) {
@@ -145,9 +165,36 @@ function DraftPanelFooter({ cursor, loading, loadMore }: { cursor: string | null
   return <footer style={{ display: "flex", justifyContent: "center", padding: 16 }}><button className="secondary-button" type="button" disabled={loading} onClick={() => { void loadMore(); }}>{loading ? "读取中…" : "加载更多"}</button></footer>;
 }
 
-export function WecomLpDraftsPanel({ onSelect, refreshKey }: WecomLpDraftsPanelProps) {
+function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; onApply: (range: DraftRange) => void; timeDisplay: HandoverTimeDisplay }) {
+  const [dates, setDates] = useState(range);
+  const [error, setError] = useState("");
+  const errorId = useId();
+  function apply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (dates.from && dates.to && dates.from > dates.to) { setError("开始日期不能晚于结束日期"); return; }
+    setError("");
+    onApply(dates);
+  }
+  function clear() {
+    const empty = { from: "", to: "" };
+    setDates(empty);
+    setError("");
+    onApply(empty);
+  }
+  return <form className="form-grid" aria-label="交接时间筛选" onSubmit={apply} style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: 12, margin: 16, paddingTop: 0 }}>
+    <label style={{ flex: "1 1 160px" }}>开始日期<input type="date" value={dates.from} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, from: event.target.value })); setError(""); }} /></label>
+    <label style={{ flex: "1 1 160px" }}>结束日期<input type="date" value={dates.to} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, to: event.target.value })); setError(""); }} /></label>
+    <button className="primary-button" type="submit">筛选</button>
+    <button className="secondary-button" type="button" onClick={clear}>清除</button>
+    <small style={{ color: "var(--muted)", flexBasis: "100%" }}>时区：{timeDisplay.label}（{timeDisplay.timezone}）</small>
+    {error && <p className="form-error" role="alert" id={errorId} style={{ margin: 0, flexBasis: "100%" }}>{error}</p>}
+  </form>;
+}
+
+export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay }: WecomLpDraftsPanelProps) {
   const headingId = useId();
-  const { view, refresh, loadMore } = useDraftPages(refreshKey);
+  const [range, setRange] = useState<DraftRange>({ from: "", to: "" });
+  const { view, refresh, loadMore } = useDraftPages(refreshKey, range, timeDisplay.timezone);
 
   return <section className="panel collection-shell" aria-labelledby={headingId} aria-busy={view.busy}>
     <header className="panel-header" style={{ gap: 12, flexWrap: "wrap" }}>
@@ -157,8 +204,9 @@ export function WecomLpDraftsPanel({ onSelect, refreshKey }: WecomLpDraftsPanelP
       </div>
       <button className="secondary-button" type="button" disabled={view.busy} onClick={refresh}><RefreshCw size={16} aria-hidden="true" />刷新</button>
     </header>
+    <DraftRangeFilter range={range} timeDisplay={timeDisplay} onApply={(value) => { setRange(value); refresh(); }} />
     {view.error && <p className="form-error" role="alert" style={{ margin: 16 }}>{view.error}</p>}
-    <DraftPanelBody loading={view.loading} drafts={view.drafts} error={view.error} onSelect={onSelect} />
+    <DraftPanelBody loading={view.loading} drafts={view.drafts} error={view.error} onSelect={onSelect} timeDisplay={timeDisplay} />
     <DraftPanelFooter cursor={view.nextCursor} loading={view.loadingMore} loadMore={loadMore} />
   </section>;
 }

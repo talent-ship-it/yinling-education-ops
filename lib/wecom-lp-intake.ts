@@ -10,7 +10,7 @@ export type WecomLpDraftSource = Readonly<{
   id: string; sourceMessageId: string; caseId: string; sourceRevision: string;
   wechatName: string; studentName: string | null; operationsOwner: string | null;
   coursePlanner: string | null; status: "awaiting_student_name" | "identified" | "identity_conflict" | "identity_ambiguous";
-  createdAt: string; messages: readonly WecomLpDraftSourceRecord[];
+  createdAt: string; handoverAt?: string; messages: readonly WecomLpDraftSourceRecord[];
   confirmed: null | Readonly<{ studentId: string; lpItemId: string }>;
   draft: WecomLpDraft; matchedStudentId?: string | null;
 }>;

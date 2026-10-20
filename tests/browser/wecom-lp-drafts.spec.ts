@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { buildWecomLpDraft } from "../../lib/wecom-lp-draft";
+import { defaultDisplayPreferences, displayPreferencesStorageKey } from "../../lib/display-preferences";
 
 const NOW = "2026-10-20T02:00:00.000Z";
 const SOURCE_ID = "synthetic-lp-handover-1";
@@ -44,10 +45,19 @@ function source(text = template, revision = "a".repeat(64), matched = false) {
   };
 }
 
-async function syntheticWorkspace(page: Page, options: { text?: string; matched?: boolean; postStatuses?: number[] } = {}) {
+type SourcePage = { drafts: unknown[]; nextCursor: string | null; total: number };
+type WorkspaceOptions = {
+  text?: string;
+  matched?: boolean;
+  postStatuses?: number[];
+  sourcePage?: (url: URL) => SourcePage | Promise<SourcePage>;
+};
+
+async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   let draftSource = source(options.text, undefined, options.matched);
   let committed = false;
   const posted: PostedCommand[] = [];
+  const reads: URL[] = [];
   const unexpected: string[] = [];
   const errors: string[] = [];
   const student = {
@@ -74,8 +84,15 @@ async function syntheticWorkspace(page: Page, options: { text?: string; matched?
     committed = true;
     return { committed: true, applied: true, studentId: selectedId, lpItemId: LP_ID, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") };
   }
+  async function sourceReadReply(route: Route) {
+    const url = new URL(route.request().url());
+    reads.push(url);
+    if (options.sourcePage) return route.fulfill({ json: await options.sourcePage(url) });
+    const confirmed = committed ? { studentId: STUDENT_ID, lpItemId: LP_ID } : null;
+    return route.fulfill({ json: { drafts: [{ ...draftSource, confirmed }], nextCursor: null, total: 1 } });
+  }
   function sourceReply(route: Route) {
-    if (route.request().method() === "GET") return route.fulfill({ json: { drafts: committed ? [] : [draftSource], nextCursor: null, total: committed ? 0 : 1 } });
+    if (route.request().method() === "GET") return sourceReadReply(route);
     const body = route.request().postDataJSON() as PostedCommand;
     posted.push(body);
     const status = options.postStatuses?.[posted.length - 1] ?? 200;
@@ -114,11 +131,12 @@ async function syntheticWorkspace(page: Page, options: { text?: string; matched?
     }
     return readReply(route, url);
   });
+  await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: displayPreferencesStorageKey("Nixon"), value: JSON.stringify(defaultDisplayPreferences()) });
   await page.clock.install({ time: new Date(NOW) });
   await page.goto("/#section=lp");
   await expect(page.getByRole("heading", { name: "机器人交接草稿", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /核对并创建 LP/u })).toBeVisible();
-  return { posted, errors, unexpected };
+  await expect(page.getByRole("button", { name: /核对并创建 LP/u }).first()).toBeVisible();
+  return { posted, reads, errors, unexpected };
 }
 
 async function openDraft(page: Page) {
@@ -155,6 +173,7 @@ test("new student's received handover prefills the review and confirms one LP", 
     expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 },
   });
   expect(f.posted[0].studentId).toBeUndefined();
+  await expect(page.getByRole("button", { name: "Synthetic Student 已创建 LP", exact: true })).toBeDisabled();
   await expect(page.getByText("交接已确认，学生档案、LP 和待办已保存", { exact: true })).toBeVisible();
   assertClean(f);
 });
@@ -215,5 +234,109 @@ test("retry after a temporary failure preserves the exact command UUID and input
   expect(f.posted).toHaveLength(2);
   expect(f.posted[0].commandKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
   expect(f.posted[1]).toEqual(f.posted[0]);
+  assertClean(f);
+});
+
+
+function timedSource(id: string, name: string, sentAt: string, confirmed = false) {
+  const initial = source(template.replace("Synthetic Student", name));
+  return {
+    ...initial, id, sourceMessageId: id, createdAt: NOW, handoverAt: sentAt,
+    messages: [{ messageId: id, text: template, sentAt }],
+    confirmed: confirmed ? { studentId: STUDENT_ID, lpItemId: LP_ID } : null,
+  };
+}
+
+const earliest = timedSource("synthetic-earliest", "Synthetic Earlier", "2026-10-19T12:00:00.000Z");
+const midnight = timedSource("synthetic-midnight", "Synthetic Midnight", "2026-10-19T13:00:00.000Z");
+const latest = { ...timedSource("synthetic-latest", "Synthetic Latest", "2026-10-20T12:59:00.000Z", true), handoverAt: undefined };
+
+function rangePage(url: URL): SourcePage {
+  if (!url.searchParams.has("from")) return url.searchParams.has("cursor")
+    ? { drafts: [midnight, latest], nextCursor: null, total: 3 }
+    : { drafts: [earliest], nextCursor: "all-next", total: 3 };
+  if (url.searchParams.has("cursor")) return { drafts: [latest], nextCursor: null, total: 2 };
+  return { drafts: [midnight], nextCursor: "day-next", total: 2 };
+}
+
+function draftPanel(page: Page) {
+  return page.getByRole("region", { name: "机器人交接草稿", exact: true });
+}
+
+async function filterDay(page: Page, from = "2026-10-20", to = from) {
+  const panel = draftPanel(page);
+  await panel.getByLabel("开始日期", { exact: true }).fill(from);
+  await panel.getByLabel("结束日期", { exact: true }).fill(to);
+  await panel.getByRole("button", { name: "筛选", exact: true }).click();
+}
+
+function queryOf(url: URL) {
+  return Object.fromEntries(url.searchParams);
+}
+
+test("date range paginates with the same timezone and refresh or clear resets its cursor", async ({ page }) => {
+  const f = await syntheticWorkspace(page, { sourcePage: rangePage });
+  const panel = draftPanel(page);
+  expect(queryOf(f.reads[0])).toEqual({ timezone: "Australia/Melbourne" });
+  await expect(panel.getByText("时区：墨尔本（Australia/Melbourne）", { exact: true })).toBeVisible();
+  await filterDay(page);
+  await expect(panel.getByRole("button", { name: "Synthetic Midnight 核对并创建 LP", exact: true })).toBeVisible();
+  await expect(panel.getByText("Synthetic Earlier", { exact: true })).toHaveCount(0);
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20" });
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  await expect(panel.locator("time")).toHaveText([/20\/10\/2026.*00:00/u, /20\/10\/2026.*23:59/u]);
+  expect(await panel.locator("time").evaluateAll((times) => times.map((time) => time.getAttribute("datetime")))).toEqual([midnight.handoverAt, latest.messages[0].sentAt]);
+  await expect(panel.getByText("2 条", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20" });
+  await panel.getByRole("button", { name: "清除", exact: true }).click();
+  await expect(panel.getByText("Synthetic Earlier", { exact: true })).toBeVisible();
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("");
+  await expect(panel.getByLabel("结束日期", { exact: true })).toHaveValue("");
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne" });
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.locator("time")).toHaveText([/19\/10\/2026.*23:00/u, /20\/10\/2026.*00:00/u, /20\/10\/2026.*23:59/u]);
+  await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", cursor: "all-next" });
+  assertClean(f);
+});
+
+test("an inverted date range shows an error without requesting or replacing the current page", async ({ page }) => {
+  const f = await syntheticWorkspace(page, { sourcePage: rangePage });
+  const count = f.reads.length;
+  await filterDay(page, "2026-10-21", "2026-10-20");
+  await expect(draftPanel(page).getByRole("alert")).toHaveText("开始日期不能晚于结束日期");
+  await expect(draftPanel(page).getByText("Synthetic Earlier", { exact: true })).toBeVisible();
+  expect(f.reads).toHaveLength(count);
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("applying a range discards an older page that resolves after the filter changed", async ({ page }) => {
+  let release: (value: SourcePage) => void = () => {};
+  let released = false;
+  const delayed = new Promise<SourcePage>((resolve) => { release = resolve; });
+  async function delayedPage(url: URL) {
+    if (url.searchParams.get("cursor") !== "all-next") return rangePage(url);
+    const result = await delayed;
+    released = true;
+    return result;
+  }
+  const f = await syntheticWorkspace(page, { sourcePage: delayedPage });
+  const panel = draftPanel(page);
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect.poll(() => f.reads.at(-1)?.searchParams.get("cursor")).toBe("all-next");
+  await filterDay(page);
+  await expect(panel.getByText("Synthetic Midnight", { exact: true })).toBeVisible();
+  release({ drafts: [earliest], nextCursor: "stale-page", total: 3 });
+  await expect.poll(() => released).toBe(true);
+  await expect(panel.getByText("Synthetic Earlier", { exact: true })).toHaveCount(0);
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
   assertClean(f);
 });
