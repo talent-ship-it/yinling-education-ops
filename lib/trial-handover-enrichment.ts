@@ -1,4 +1,5 @@
 import type { JiaowubaoOpenApiScheduleSnapshotWindow } from "./ops-store";
+import { trialAccountLetter } from "./trial-account-label";
 
 type RecordValue = Record<string, unknown>;
 type SourceEvent = JiaowubaoOpenApiScheduleSnapshotWindow["events"][number];
@@ -26,7 +27,8 @@ function sourceStudentName(value: string | null) {
 
 function provenStudentName(item: RecordValue, event: SourceEvent, students: readonly RecordValue[]) {
   const hint = sourceStudentName(event.courseName);
-  const identities = hint ? students.filter((student) => nameKey(student.name) === nameKey(hint)) : [];
+  if (!hint || trialAccountLetter(hint)) return undefined;
+  const identities = students.filter((student) => nameKey(student.name) === nameKey(hint));
   return identities.length === 1 && identities[0]!.id === item.studentId ? hint : undefined;
 }
 

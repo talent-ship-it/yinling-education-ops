@@ -81,3 +81,12 @@ test("legacy trial LPs without intake use the confirmed LP name without rewritin
   assert.equal(lp.trialIntake, undefined);
   assert.equal(((f.rows[0]!.payload as Record<string, unknown>[])[0]!).name, "Synthetic Parent");
 });
+
+test("screenshot confirmation preserves an empty intake name when the LP already knows the student", async () => {
+  const template = harness().lp;
+  const f = harness({ student: { id: "STU-1", name: "Synthetic Child", owner: "Ella", planner: "Tara" }, lp: { ...template, fields: { ...(template.fields as Record<string, unknown>), studentNameKnown: true, studentName: "Synthetic Child" }, trialIntake: { ...(template.trialIntake as Record<string, unknown>), studentName: "" } } });
+  assert.equal((await f.post()).status, 200);
+  const lp = f.saved()!.nextLpItems[0] as Record<string, unknown>;
+  assert.equal((lp.fields as Record<string, unknown>).studentName, "Synthetic Child");
+  assert.equal((lp.trialIntake as Record<string, unknown>).studentName, "");
+});

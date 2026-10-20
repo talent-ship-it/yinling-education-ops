@@ -70,3 +70,11 @@ test("missing source teacher remains incomplete and padded maximum-length names 
   const padded = enrichTrialHandover(lp, { ...event, courseName: ` ${name}试听 ` }, [{ id: lp.studentId, name }]);
   assert.equal((padded.fields as Record<string, unknown>).studentName, name);
 });
+
+test("recognized shared account names never become proven student identities", () => {
+  const name = "Trial account A";
+  const result = enrichTrialHandover({ ...lp, trialIntake: { studentName: "" } }, { ...event, courseName: `English - ${name}试听` }, [{ id: lp.studentId, name }]);
+  assert.equal((result.fields as Record<string, unknown>).studentNameKnown, false);
+  assert.equal((result.fields as Record<string, unknown>).studentName, undefined);
+  assert.equal((result.trialIntake as Record<string, unknown>).studentName, "");
+});

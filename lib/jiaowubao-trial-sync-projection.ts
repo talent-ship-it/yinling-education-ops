@@ -153,6 +153,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   rawEvents: readonly RawScheduleEvent[];
   snapshotRevision: string;
   matchedAt: Date | string;
+  enrichHandover?: boolean;
 }>): JiaowubaoTrialSyncProjection {
   const lpItems = records(input.rows, "lpItems");
   const students = records(input.rows, "students");
@@ -263,7 +264,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     const link = sameScheduleLink(existing, match.link) && record(existing) && text(existing.matchedAt)
       ? { ...match.link, matchedAt: text(existing.matchedAt) }
       : match.link;
-    return { ...enrichTrialHandover(item, eventById.get(link.eventId)!, students), trialSchedule: link };
+    return { ...(input.enrichHandover === false ? item : enrichTrialHandover(item, eventById.get(link.eventId)!, students)), trialSchedule: link };
   });
 
   let nextTasks: OpsTask[] = tasks.filter((task) => task.status === "done"
