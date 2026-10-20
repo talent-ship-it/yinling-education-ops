@@ -27,6 +27,11 @@ create table internal.jiaowubao_open_api_schedule_snapshot_ingest_items(run_id u
 
 \ir ../../supabase/migrations/20261020113443_trial_screenshot_confirmation.sql
 
+create temporary table fixture_v2_definition as select pg_catalog.pg_get_functiondef('public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) as definition;
+\ir ../../supabase/migrations/20261020211253_jiaowubao_trial_handover_enrichment_v3.sql
+do $$ begin if (select definition from fixture_v2_definition) is distinct from pg_catalog.pg_get_functiondef('public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure) then raise exception 'Released v2 function was changed'; end if; end $$;
+drop table fixture_v2_definition;
+
 create function internal.fixture_expect_failure(statement text,expected text) returns void language plpgsql as $$
 declare failed boolean := false;
 begin
