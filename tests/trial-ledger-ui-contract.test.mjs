@@ -4,7 +4,7 @@ import test from "node:test";
 
 const client = await readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8");
 
-test("shows the handbook's 14 review columns with Melbourne date and time separated", () => {
+test("preserves the handbook review columns and adds readonly Jiaowubao schedule metadata", () => {
   const header = client.match(/<table className="trial-ledger-table">[\s\S]*?<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] ?? "";
   const labels = [...header.matchAll(/<th(?:\s[^>]*)?>([^<]+)<\/th>/g)].map((match) => match[1]);
 
@@ -23,6 +23,7 @@ test("shows the handbook's 14 review columns with Melbourne date and time separa
     "试听状态",
     "是否付费",
     "备注",
+    "教务宝小课表",
   ]);
 });
 
