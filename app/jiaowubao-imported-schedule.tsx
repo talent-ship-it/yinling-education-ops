@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { CalendarClock, LockKeyhole } from "lucide-react";
 
 import type { InterfaceLanguage } from "@/lib/display-preferences";
+import { trialAccountLetter } from "@/lib/trial-account-label";
 import type { JiaowubaoTrialPlannerHint } from "@/lib/trial-operations";
 
 /**
@@ -22,6 +23,8 @@ export type JiaowubaoImportedScheduleEvent = Readonly<{
   courseName: string | null;
   teacherId: string | null;
   teacherName?: string | null;
+  sharedAccountLabel?: string | null;
+  sharedAccountLetter?: string | null;
   trialPlannerHint: JiaowubaoTrialPlannerHint;
   availabilityEffect: "display_only" | "blocks_teacher_ava";
   visibleStudentIds: readonly string[];
@@ -68,7 +71,7 @@ const SOURCE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SOURCE_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SNAPSHOT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const PAGE_FIELDS = new Set(["state", "events", "invalidTimeEventCount", "hasMore", "nextCursor", "revision", "freshness", "empty"]);
-const EVENT_FIELDS = new Set(["eventId", "sourceDate", "startsAt", "endsAt", "courseName", "teacherId", "teacherName", "trialPlannerHint", "availabilityEffect", "visibleStudentIds", "visibleStudentsTruncated"]);
+const EVENT_FIELDS = new Set(["eventId", "sourceDate", "startsAt", "endsAt", "courseName", "teacherId", "teacherName", "sharedAccountLabel", "sharedAccountLetter", "trialPlannerHint", "availabilityEffect", "visibleStudentIds", "visibleStudentsTruncated"]);
 const CURSOR_FIELDS = new Set(["token"]);
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -122,6 +125,13 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
       && (typeof event.teacherName !== "string" || !event.teacherName.trim() || event.teacherName.length > 240)) {
       throw new Error("教务宝同步课表老师姓名格式无效。");
     }
+    const sharedAccountLabel = event.sharedAccountLabel ?? null;
+    const sharedAccountLetter = event.sharedAccountLetter ?? null;
+    if (sharedAccountLabel !== null && (typeof sharedAccountLabel !== "string" || sharedAccountLabel.length > 240)
+      || sharedAccountLetter !== null && !["a", "b", "c"].includes(String(sharedAccountLetter))
+      || trialAccountLetter(sharedAccountLabel) !== sharedAccountLetter) {
+      throw new Error("教务宝同步课表试听账号格式无效。");
+    }
     const trialPlannerHint = event.trialPlannerHint ?? null;
     if (trialPlannerHint !== null && !["Tara", "Eileen", "Abby"].includes(String(trialPlannerHint))) {
       throw new Error("教务宝同步课表试听账号映射无效。");
@@ -141,6 +151,8 @@ export function parseJiaowubaoImportedSchedulePage(value: unknown): JiaowubaoImp
       courseName: event.courseName,
       teacherId: event.teacherId,
       ...(event.teacherName !== undefined ? { teacherName: event.teacherName as string | null } : {}),
+      ...(event.sharedAccountLabel !== undefined ? { sharedAccountLabel: sharedAccountLabel as string | null } : {}),
+      ...(event.sharedAccountLetter !== undefined ? { sharedAccountLetter: sharedAccountLetter as string | null } : {}),
       trialPlannerHint: trialPlannerHint as JiaowubaoTrialPlannerHint,
       availabilityEffect: event.availabilityEffect,
       visibleStudentIds: event.visibleStudentIds,

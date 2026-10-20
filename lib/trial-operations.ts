@@ -70,6 +70,9 @@ export type TrialScheduleLink = Readonly<{
   teacherId: string | null;
   teacherName: string;
   plannerHint: JiaowubaoTrialPlannerHint;
+  durationMinutes?: number;
+  sharedAccountLabel?: string | null;
+  sharedAccountLetter?: string | null;
   matchedAt: string;
 }>;
 
@@ -82,6 +85,8 @@ export type TrialScheduleEventLike = Readonly<{
   teacherName?: string | null;
   visibleStudentIds: readonly string[];
   trialPlannerHint?: JiaowubaoTrialPlannerHint;
+  sharedAccountLabel?: string | null;
+  sharedAccountLetter?: string | null;
 }>;
 
 export type TrialScheduleMatch = Readonly<{
@@ -497,6 +502,9 @@ export function matchTrialScheduleEvents(input: Readonly<{
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)
           ?? "待核对老师映射",
         plannerHint: event.trialPlannerHint ?? null,
+        durationMinutes: (new Date(event.endsAt).valueOf() - new Date(event.startsAt).valueOf()) / 60_000,
+        sharedAccountLabel: event.sharedAccountLabel ?? null,
+        sharedAccountLetter: event.sharedAccountLetter ?? null,
         matchedAt,
       }),
     }));

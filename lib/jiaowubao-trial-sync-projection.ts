@@ -1,3 +1,5 @@
+import { trialAccountFromParticipants } from "./trial-account-label";
+import { enrichTrialHandover } from "./trial-handover-enrichment";
 import { mapJiaowubaoSnapshotParticipants } from "./jiaowubao-open-api-schedule-reader";
 import {
   completeTrialSchedulingReminderTasks,
@@ -91,7 +93,7 @@ function teacherIdFromSourceLabel(teachers: readonly RecordValue[], label: strin
 
 function sameScheduleLink(left: unknown, right: TrialScheduleLink) {
   if (!record(left)) return false;
-  const metadataKeys = new Set(["matchedAt", "studentName"]);
+  const metadataKeys = new Set(["matchedAt", "studentName", "durationMinutes", "sharedAccountLabel", "sharedAccountLetter"]);
   const leftSemantic = Object.fromEntries(Object.entries(left).filter(([key]) => !metadataKeys.has(key)));
   const rightSemantic = Object.fromEntries(Object.entries(right).filter(([key]) => !metadataKeys.has(key)));
   return JSON.stringify(leftSemantic) === JSON.stringify(rightSemantic);
@@ -193,6 +195,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       teacherName: raw.sourceTeacherLabel,
       visibleStudentIds,
       trialPlannerHint: trialPlannerHintFromParticipants(raw.sourceParticipants),
+      ...trialAccountFromParticipants(raw.sourceParticipants),
     }];
   });
   const allMatches = matchTrialScheduleEvents({
@@ -260,7 +263,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
     const link = sameScheduleLink(existing, match.link) && record(existing) && text(existing.matchedAt)
       ? { ...match.link, matchedAt: text(existing.matchedAt) }
       : match.link;
-    return { ...item, trialSchedule: link };
+    return { ...enrichTrialHandover(item, eventById.get(link.eventId)!, students), trialSchedule: link };
   });
 
   let nextTasks: OpsTask[] = tasks.filter((task) => task.status === "done"

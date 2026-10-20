@@ -205,6 +205,11 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
   assert.equal((lp.trialSchedule as Record<string, unknown>).sourceRevision, command.snapshotRevision);
   assert.equal((lp.trialSchedule as Record<string, unknown>).studentName, "Heather孙晓琳");
   assert.equal((lp.trialSchedule as Record<string, unknown>).teacherName, "Zara Baker");
+  assert.equal((lp.trialSchedule as Record<string, unknown>).durationMinutes, 60);
+  assert.equal((lp.trialSchedule as Record<string, unknown>).sharedAccountLabel, "试听学员A");
+  assert.equal((lp.trialSchedule as Record<string, unknown>).sharedAccountLetter, "a");
+  assert.equal((lp.fields as Record<string, unknown>).assignedTeacher, "Zara Baker");
+  assert.equal((lp.fields as Record<string, unknown>).trialDurationMinutes, 60);
   const jwbTasks = projection.nextTasks.filter((task) => task.ruleKey?.startsWith("trial.jiaowubao."));
   assert.deepEqual(jwbTasks.map((task) => task.ruleKey).sort(), [
     "trial.jiaowubao.lp-finalize-tomorrow-n3",

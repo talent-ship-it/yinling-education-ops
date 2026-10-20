@@ -1,3 +1,4 @@
+import { trialAccountFromParticipants } from "@/lib/trial-account-label";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { cookies } from "next/headers";
@@ -466,6 +467,7 @@ function publicPage(
       // event has passed the authenticated trial/student scope check above;
       // raw source IDs and participant records remain server-only.
       ...(context.scope === "trial" ? { teacherName: event.sourceTeacherLabel } : {}),
+      ...(context.scope === "trial" ? trialAccountFromParticipants(event.sourceParticipants) : {}),
       trialPlannerHint: context.scope === "availability"
         ? null
         : trialPlannerHintFromParticipants(event.sourceParticipants),

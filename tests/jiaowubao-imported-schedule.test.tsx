@@ -352,6 +352,15 @@ test("parses fresh/stale snapshot DTOs and rejects raw source or price fields", 
   }), /禁止字段/);
 });
 
+test("preserves bounded shared trial account labels and rejects inconsistent pairs", () => {
+  const page = { state: "complete", events: [{ ...feed.events[0]!, sharedAccountLabel: "试听学员B（校长号1）2026", sharedAccountLetter: "b" }], invalidTimeEventCount: 0, hasMore: false, nextCursor: null };
+  const parsed = parseJiaowubaoImportedSchedulePage(page);
+  assert.equal(parsed.events[0]?.sharedAccountLabel, "试听学员B（校长号1）2026");
+  assert.equal(parsed.events[0]?.sharedAccountLetter, "b");
+  assert.throws(() => parseJiaowubaoImportedSchedulePage({ ...page, events: [{ ...page.events[0], sharedAccountLetter: "a" }] }), /试听账号格式无效/);
+  assert.throws(() => parseJiaowubaoImportedSchedulePage({ ...page, events: [{ ...page.events[0], sharedAccountLabel: "x".repeat(241) }] }), /试听账号格式无效/);
+});
+
 test("large imported schedules keep all records available but mount only one page", () => {
   const largeFeed = { ...feed, events: Array.from({ length: 2500 }, (_, index) => ({ ...feed.events[0]!, eventId: `fixture-${index}` })) };
   const html = renderToStaticMarkup(<JiaowubaoImportedSchedulePanel feed={largeFeed} loading={false} error={false} timezone="Australia/Melbourne" language="zh-CN" studentNameForId={() => "测试学生"} teacherNameForId={() => "测试老师"} />);
