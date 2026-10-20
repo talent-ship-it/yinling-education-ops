@@ -27,6 +27,7 @@ import {
   validateCompleteLpWorkflowFields,
 } from "../lib/lp-workflows";
 import { TRIAL_DURATIONS, TRIAL_PLANNERS } from "../lib/trial-operations";
+import { TrialScreenshotImport, type TrialScreenshotTarget } from "./trial-screenshot-import";
 
 export const LP_WORKFLOW_FORM_NAMES = Object.freeze({
   workflowType: "workflowType",
@@ -451,6 +452,7 @@ const trialOperationsOptions = TRIAL_OPERATIONS.map((value) => Object.freeze({ v
 const trialLocationOptions = TRIAL_LOCATION_OPTIONS.map((value) => Object.freeze({ value }));
 
 export type LpWorkflowFieldsProps = Readonly<{
+  screenshotTarget?: TrialScreenshotTarget;
   requireExplicitSelection?: boolean;
   initialType?: LpWorkflowType;
   initialValues?: Partial<TrialLpFields> & Partial<
@@ -508,15 +510,19 @@ function DatalistInput({
   defaultValue,
   options,
   required = true,
+  value,
+  onChange,
 }: Readonly<{
   name: LpWorkflowFormName;
   defaultValue?: string;
   options?: readonly LpFormOption[];
   required?: boolean;
+  value?: string;
+  onChange?: (value: string) => void;
 }>) {
   const listId = `lp-options-${name}`;
   return <>
-    <input name={name} list={options?.length ? listId : undefined} defaultValue={defaultValue} required={required} />
+    <input name={name} list={options?.length ? listId : undefined} defaultValue={value === undefined ? defaultValue : undefined} value={value} onChange={onChange ? (event) => onChange(event.target.value) : undefined} required={required} />
     {options?.length ? <datalist id={listId}>{options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</datalist> : null}
   </>;
 }
@@ -577,11 +583,16 @@ export function LpWorkflowFields({
   plannerOptions,
   coursePackageOptions,
   onTypeChange,
+  screenshotTarget,
 }: LpWorkflowFieldsProps) {
   const [workflowType, setWorkflowType] = useState<LpWorkflowType>(initialType);
   const [isUniversityStudent, setIsUniversityStudent] = useState(Boolean(initialValues.isUniversityStudent));
   const [timeMentioned, setTimeMentioned] = useState<boolean | null>(requireExplicitSelection && initialValues.timeMentioned === undefined ? null : Boolean(initialValues.timeMentioned));
   const [studentNameKnown, setStudentNameKnown] = useState<boolean | null>(requireExplicitSelection && initialValues.studentNameKnown === undefined ? null : Boolean(initialValues.studentNameKnown));
+  const [assignedTeacher, setAssignedTeacher] = useState(initialValues.assignedTeacher ?? "");
+  const [subject, setSubject] = useState(initialValues.subject ?? "");
+  const [studentName, setStudentName] = useState(initialValues.studentName ?? "");
+  const [trialDuration, setTrialDuration] = useState(String(initialValues.trialDurationMinutes ?? (requireExplicitSelection ? "" : 60)));
   const showsTrialFields = workflowType === "试听 LP" || workflowType === "学生直报（无试听）";
   const showsHours = workflowType === "学生直报（无试听）";
   const showsTeacherLp = workflowType === "老师新 LP" || workflowType === "老师 LP 修改";
@@ -598,6 +609,12 @@ export function LpWorkflowFields({
   };
 
   return <>
+    {workflowType === "试听 LP" && screenshotTarget && <TrialScreenshotImport target={screenshotTarget} currentFields={{ assignedTeacher, subject, studentName, trialDurationMinutes: trialDuration }} onApply={(fields) => {
+      if (typeof fields.assignedTeacher === "string") setAssignedTeacher(fields.assignedTeacher);
+      if (typeof fields.subject === "string") setSubject(fields.subject);
+      if (typeof fields.studentName === "string" && fields.studentName) { setStudentName(fields.studentName); setStudentNameKnown(true); }
+      if (fields.trialDurationMinutes === 45 || fields.trialDurationMinutes === 60) setTrialDuration(String(fields.trialDurationMinutes));
+    }} />}
     {requireExplicitSelection && <input type="hidden" name={LP_WORKFLOW_FORM_NAMES.workflowType} value={workflowType} />}
     <label>LP 类型
       <select name={LP_WORKFLOW_FORM_NAMES.workflowType} value={workflowType} onChange={changeWorkflowType} disabled={requireExplicitSelection}>
@@ -624,10 +641,10 @@ export function LpWorkflowFields({
           <input name={LP_WORKFLOW_FORM_NAMES.requestSentAt} type="datetime-local" defaultValue={requireExplicitSelection && !initialValues.requestSentAt ? "" : localDateTimeDefault(initialValues.requestSentAt)} required />
         </label>
         <label>安排老师（可自定义）
-          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.assignedTeacher} defaultValue={initialValues.assignedTeacher} options={teacherOptions} />
+          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.assignedTeacher} value={assignedTeacher} onChange={setAssignedTeacher} options={teacherOptions} />
         </label>
         <label>科目（可自定义）
-          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.subject} defaultValue={initialValues.subject} options={subjectOptions} />
+          <DatalistInput name={LP_WORKFLOW_FORM_NAMES.subject} value={subject} onChange={setSubject} options={subjectOptions} />
         </label>
       </> : <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />}
       <label className="span-2">一句话描述
@@ -674,9 +691,9 @@ export function LpWorkflowFields({
         <label>是否知道学生姓名
           <BooleanChoice name={LP_WORKFLOW_FORM_NAMES.studentNameKnown} value={studentNameKnown} onChange={setStudentNameKnown} allowEmpty={requireExplicitSelection} />
         </label>
-        {studentNameKnown ? <label>学生姓名<input name={LP_WORKFLOW_FORM_NAMES.studentName} defaultValue={initialValues.studentName} required /></label> : null}
+        {studentNameKnown ? <label>学生姓名<input name={LP_WORKFLOW_FORM_NAMES.studentName} value={studentName} onChange={(event) => setStudentName(event.target.value)} required /></label> : null}
         <label>试听时长
-          <select name={LP_WORKFLOW_FORM_NAMES.trialDurationMinutes} defaultValue={initialValues.trialDurationMinutes ?? (requireExplicitSelection ? "" : 60)} required>
+          <select name={LP_WORKFLOW_FORM_NAMES.trialDurationMinutes} value={trialDuration} onChange={(event) => setTrialDuration(event.target.value)} required>
             {requireExplicitSelection && <option value="">请选择试听时长</option>}
             <option value="60">1 小时</option><option value="45">45 分钟</option>
           </select>

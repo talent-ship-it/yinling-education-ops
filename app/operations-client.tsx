@@ -139,6 +139,7 @@ import {
   resolveAssignableOperationsOwner,
 } from "@/lib/demo-users";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
+import { resolveTaskTrialSchedule } from "@/lib/task-trial-schedule";
 import {
   DEFAULT_TEACHING_CONTROL_WATCHER,
   closeTrialEscalationTasks,
@@ -436,6 +437,8 @@ const LazyLpRevisionHistory = lazy(() => import("@/app/lp-workflow-fields").then
 function LpWorkflowFields(props: LpWorkflowFieldsProps) { return <Suspense fallback={null}><LazyLpWorkflowFields {...props} /></Suspense>; }
 function LpWorkflowDetails(props: LpWorkflowDetailsProps) { return <Suspense fallback={null}><LazyLpWorkflowDetails {...props} /></Suspense>; }
 function LpRevisionHistory(props: LpRevisionHistoryProps) { return <Suspense fallback={null}><LazyLpRevisionHistory {...props} /></Suspense>; }
+
+const TrialScreenshotConfirmWorkspace = lazy(() => import("@/app/trial-screenshot-confirm-workspace").then((module) => ({ default: module.TrialScreenshotConfirmWorkspace })));
 
 const WecomLpDraftWorkspace = lazy(() => import("@/app/wecom-lp-draft-workspace").then((module) => ({ default: module.WecomLpDraftWorkspace })));
 
@@ -3052,6 +3055,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [lpDraftType, setLpDraftType] = useState<LpWorkflowType>(LP_WORKFLOW_TYPES[0]);
   const [lpDraftStudentId, setLpDraftStudentId] = useState(defaults.defaultSelectedStudentId);
   const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
+  const [trialScreenshotItem, setTrialScreenshotItem] = useState<LpItem | null>(null);
   const [examDraft, setExamDraft] = useState<StudentExamRecord | null>(null);
   const [examFormResetToken, setExamFormResetToken] = useState(0);
   const [examSubmissionBusy, setExamSubmissionBusy] = useState(false);
@@ -4024,6 +4028,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     () => new Map(trialScheduleMatches.map((match) => [match.lpItemId, match])),
     [trialScheduleMatches],
   );
+  const trialTaskSchedule = useCallback((task: OpsTask) => resolveTaskTrialSchedule(task, {
+    lpItems: scopedLpItems,
+    bookings: scopedBookings,
+    bookingStartsAt: (booking) => bookingInstant(booking).toISOString(),
+  }), [scopedBookings, scopedLpItems]);
   const trialTaskTitle = useCallback((task: OpsTask) => {
     const schedule = task.requestAnchorBookingId
       ? lpItems.find((item) => item.id === task.requestAnchorBookingId)?.trialSchedule
@@ -8034,7 +8043,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return <>
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} taskSchedule={trialTaskSchedule} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
         <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={openDashboardLesson} /></article>
         <article className="panel risk-panel">
           <div className="panel-header">
@@ -8853,6 +8862,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     const trialIntakeDetails = (item: LpItem) => item.workflowType === "试听 LP" ? <details className="trial-intake-details">
       <summary>查看试听交接详情</summary>
+      {!isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消" && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
       <LpWorkflowDetails type="试听 LP" fields={item.fields ?? {}} />
       {item.trialIntake ? <dl>
         <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
@@ -8891,6 +8901,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
           filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
           setSelectedStudentId(body.studentId);
+        }}
+      /></Suspense>}
+      {trialScreenshotItem && !isTeacherView && scopedLpItems.some((item) => item.id === trialScreenshotItem.id) && <Suspense fallback={null}><TrialScreenshotConfirmWorkspace
+        key={`${sessionOperator}:${trialScreenshotItem.id}`}
+        item={trialScreenshotItem}
+        studentName={studentById(trialScreenshotItem.studentId)?.name ?? "姓名待补"}
+        expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version }}
+        Dialog={Dialog}
+        notify={notify}
+        onClose={() => setTrialScreenshotItem(null)}
+        onCommitted={(body) => {
+          lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
+          tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
         }}
       /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
@@ -14562,12 +14585,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </form>
       </Dialog>}
 
-      {modal === "legacyTaskDeadline" && legacyTaskDeadlineDraft && <Dialog title={legacyTaskDeadlineDraft.dueAt ? "调整历史任务截止时间" : "补充历史任务截止时间"} onClose={() => { if (!legacyTaskDeadlineBusy) { setLegacyTaskDeadlineDraft(null); setModal(null); } }}>
+      {modal === "legacyTaskDeadline" && legacyTaskDeadlineDraft && <Dialog title={legacyTaskDeadlineDraft.dueAt ? "调整待办截止时间" : "补充待办截止时间"} onClose={() => { if (!legacyTaskDeadlineBusy) { setLegacyTaskDeadlineDraft(null); setModal(null); } }}>
         <form className="form-grid" onSubmit={submitLegacyTaskDeadline}>
           <div className="form-notice span-2"><CircleAlert size={16} /> 请输入准确截止时间。</div>
           <label className="span-2">任务<input value={legacyTaskDeadlineDraft.title} disabled /></label>
-          <label className="span-2">截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : currentDateTimeValueInTimezone("Australia/Melbourne")} required /><small>按墨尔本时间保存。</small></label>
-          <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存准确时间"}</button></footer>
+          <label className="span-2">待办截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : ""} required /><small>按墨尔本时间保存。</small></label>
+          <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存截止时间"}</button></footer>
         </form>
       </Dialog>}
 

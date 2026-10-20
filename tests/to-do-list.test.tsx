@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "../app/to-do-list";
+import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter, type ToDoListProps } from "../app/to-do-list";
 import { timezoneLabelFor } from "../lib/display-preferences";
 import { OpsTask, TaskCategory, TaskStatus } from "../lib/ops-tasks";
 import { groupTasksByOwner } from "../lib/task-owner-groups";
@@ -36,6 +36,7 @@ function render(
   deadlineTimeZone: TaskDeadlineTimeZone = "Australia/Melbourne",
   deadlineTimeFormat: "24h" | "12h" = "24h",
   repairDeadlines = false,
+  taskSchedule?: ToDoListProps["taskSchedule"],
 ) {
   return renderToStaticMarkup(
     <ToDoList
@@ -44,6 +45,7 @@ function render(
       deadlineTimeZoneLabel={timezoneLabelFor(deadlineTimeZone, "zh-CN")}
       deadlineTimeFormat={deadlineTimeFormat}
       studentName={(studentId) => `学生 ${studentId}`}
+      taskSchedule={taskSchedule}
       filter={filter}
       onFilterChange={() => undefined}
       onComplete={() => undefined}
@@ -259,7 +261,7 @@ test("renders only the plain handbook action as the headline and demotes details
 test("does not present a descriptive legacy due string as an exact deadline", () => {
   const html = render([task("unknown", "LP", "today", "发布后立即")]);
   assert.match(html, /待补截止时间/);
-  assert.match(html, />待补时间</);
+  assert.match(html, />待补截止时间</);
   assert.doesNotMatch(html, /发布后立即/);
 });
 
@@ -275,7 +277,7 @@ test("keeps legacy tasks visible but non-actionable without deadline-repair auth
   };
   const html = render([legacy, managed, anchored]);
   assert.match(html, /待补截止时间/);
-  assert.equal((html.match(/>待补时间</g) ?? []).length, 3);
+  assert.equal((html.match(/<span class="due-label pending"[^>]*>待补截止时间<\/span>/g) ?? []).length, 3);
   assert.doesNotMatch(html, /class="deadline-edit-button"/);
   assert.doesNotMatch(html, /class="complete-button"/);
   assert.doesNotMatch(html, /class="cannot-do-button"/);
@@ -287,7 +289,8 @@ test("offers exact deadline repair only for unbound legacy tasks when authorized
   const anchored = { ...task("anchored", "LP", "waiting", "规则文案"), anchorBookingId: "LES-1" };
   const html = render([legacy, managed, anchored], "all", "Australia/Melbourne", "24h", true);
   assert.equal((html.match(/class="deadline-edit-button"/g) ?? []).length, 1);
-  assert.match(html, /class="deadline-edit-button"[^>]*>补时间<\/button>/);
+  assert.match(html, /class="deadline-edit-button"[^>]*>补截止时间<\/button>/);
+  assert.doesNotMatch(html, />补时间<|>待补时间</);
 });
 
 test("category filtering is exact and completed tasks stay hidden", () => {
@@ -402,4 +405,22 @@ test("does not invent dates for legacy, cleared, or invalid task notes", () => {
     { completionNote: undefined, completionNoteUpdatedAt: "2026-08-12T08:00:00.000Z" },
     { completionNote: "历史备注", completionNoteUpdatedAt: "not-a-date" },
   ]) assert.doesNotMatch(render([{ ...base, ...note }]), /task-note-date|备注于/);
+});
+
+
+test("shows the exact trial lesson instant separately from the task deadline in the selected timezone", () => {
+  const trial = { ...task("lesson-clock", "试听", "upcoming", "", "2026-10-19T08:00:00.000Z"), ruleKey: "trial.prep", anchorBookingId: "SYNTH-BOOKING-1" };
+  const schedule = () => ({ startsAt: "2026-10-20T13:30:00.000Z" });
+  const melbourne = render([trial], "all", "Australia/Melbourne", "24h", false, schedule);
+  assert.match(melbourne, /试听上课：<time dateTime="2026-10-20T13:30:00.000Z">2026年10月21日 00:30<\/time> · 墨尔本/);
+  assert.match(melbourne, /class="due-label upcoming" dateTime="2026-10-19T08:00:00.000Z"/);
+  const beijing = render([trial], "all", "Asia/Shanghai", "12h", false, schedule);
+  assert.match(beijing, /试听上课：<time dateTime="2026-10-20T13:30:00.000Z">2026年10月20日 下午09:30<\/time> · 北京时间（中国）/);
+});
+
+test("does not show a trial lesson timestamp without a trusted schedule", () => {
+  const trial = task("no-lesson", "试听", "upcoming", "今天");
+  assert.doesNotMatch(render([trial]), /试听上课：/);
+  assert.doesNotMatch(render([trial], "all", "Australia/Melbourne", "24h", false, () => null), /试听上课：/);
+  assert.doesNotMatch(render([trial], "all", "Australia/Melbourne", "24h", false, () => ({ startsAt: "2026-10-21" })), /试听上课：/);
 });

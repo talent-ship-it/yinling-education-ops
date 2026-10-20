@@ -1159,7 +1159,7 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
       }
     }
     if (!existing) continue;
-    if (!same(existing.trialSchedule, item.trialSchedule)) {
+    if (!same(existing.trialSchedule, item.trialSchedule) || !same(existing.trialScheduleReview, item.trialScheduleReview)) {
       forbidden("教务宝试听排课关联只能由专用原子同步流程修改。");
     }
     for (const field of ["revisions", "stageAudit", "resultAudit"] as const) {
@@ -1172,7 +1172,7 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
     }
   }
   for (const item of next) {
-    if (!currentById.has(requiredText(item.id, "lpItem.id")) && item.trialSchedule !== undefined) {
+    if (!currentById.has(requiredText(item.id, "lpItem.id")) && (item.trialSchedule !== undefined || item.trialScheduleReview !== undefined)) {
       forbidden("新增 LP 不能预写教务宝试听排课关联。");
     }
   }

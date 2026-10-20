@@ -47,3 +47,5 @@ next-env.d.ts
 /qa-evidence/
 /qa-screenshots/
 /CLAUDE.md
+
+/public/trial-ocr/

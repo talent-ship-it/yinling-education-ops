@@ -1,4 +1,10 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "trial-screenshot-confirmation-concurrency", source: "tests/sql/trial-screenshot-confirmation-concurrency-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/trial-screenshot-confirmation-concurrency-runtime.py" },
+  ] },
+  { id: "trial-screenshot-confirmation", source: "tests/sql/trial-screenshot-confirmation-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/trial-screenshot-confirmation-runtime.sql" },
+  ] },
   { id: "wecom-lp-handover-time-range", source: "tests/sql/wecom-lp-handover-time-range-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-lp-handover-time-range-runtime.sql" },
   ] },

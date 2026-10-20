@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { TrialScreenshotConfirmationInput, TrialScreenshotConfirmationResult } from "./trial-screenshot-confirm-service";
+
 import {
   resolveOpsRpcTiming,
   type OpsRpcBudgetOptions,
@@ -4620,5 +4622,20 @@ export function confirmWecomLpDraftAtomic(input: import("./wecom-lp-intake").Wec
     p_source_revision: input.sourceRevision, p_command_uuid: input.commandKey, p_student_id: input.studentId ?? null,
     p_new_student: input.newStudent ?? null, p_fields: input.fields, p_authorized_assignment: input.authorizedAssignment,
     p_expected_versions: input.expectedVersions, p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}
+
+export function confirmTrialScreenshotAtomic(input: TrialScreenshotConfirmationInput) {
+  return rpc<TrialScreenshotConfirmationResult[]>("confirm_trial_screenshot_atomic", {
+    p_secret: configuration().secret, p_command_uuid: input.commandKey, p_command_intent: input.commandIntent,
+    p_expected_versions: input.expectedVersions, p_next_lp_items: input.nextLpItems, p_next_tasks: input.nextTasks,
+    p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}
+
+export function getTrialScreenshotCommandResult(input: Pick<TrialScreenshotConfirmationInput, "commandKey" | "commandIntent" | "actor" | "fullAdmin">) {
+  return rpc<TrialScreenshotConfirmationResult[]>("get_trial_screenshot_command_result", {
+    p_secret: configuration().secret, p_command_uuid: input.commandKey, p_command_intent: input.commandIntent,
+    p_actor: input.actor, p_full_admin: input.fullAdmin,
   });
 }

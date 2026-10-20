@@ -82,14 +82,18 @@ test("legacy deadline route reauthorizes before replay and gates clear before on
   assert.doesNotMatch(deadlineModal, /发布后立即|N-1/);
   assert.match(deadlineModal, /Australia\/Melbourne/);
   assert.doesNotMatch(deadlineModal, /清除准确时间/);
-  assert.match(deadlineModal, /保存准确时间/);
+  assert.match(deadlineModal, /保存截止时间/);
+  assert.match(deadlineModal, /补充待办截止时间|调整待办截止时间/);
+  assert.match(deadlineModal, /待办截止时间（墨尔本）/);
+  assert.match(deadlineModal, /name="melbourneDateTime" type="datetime-local"[^>]*defaultValue=\{[^}]+: ""\} required/);
+  assert.doesNotMatch(deadlineModal, /currentDateTimeValueInTimezone/);
   const openDeadlineRepair = toDoList.indexOf('view === "todo" ? onRepairDeadline');
   const closedTaskReopen = toDoList.indexOf(': canReopen?.(task)', openDeadlineRepair);
   assert.ok(openDeadlineRepair >= 0, "open frozen tasks must expose the deadline repair action");
   assert.ok(closedTaskReopen > openDeadlineRepair, "closed tasks must branch to reopen instead of deadline repair");
   assert.match(toDoList, /className="deadline-edit-button"/);
   assert.match(toDoList, /onClick=\{\(\) => onRepairDeadline\(task\)\}/);
-  assert.match(toDoList, />补时间<\/button>/);
+  assert.match(toDoList, />补截止时间<\/button>/);
 });
 
 test("historical 191008 SQL locks students then tasks, replays before OCC, and changes only dueAt", async () => {
