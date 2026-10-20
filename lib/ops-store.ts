@@ -4600,3 +4600,24 @@ export function readWecomMirrorReview(input: { kind: string; query: string; page
     p_secret: secret, p_kind: input.kind, p_query: input.query, p_page: input.page, p_batch_id: input.batch,
   });
 }
+
+export function readWecomLpDrafts(input: { actor: string; fullAdmin: boolean; cursor: string | null }) {
+  return rpc<import("./wecom-lp-intake").WecomLpDraftPage>("read_wecom_lp_drafts", {
+    p_secret: configuration().secret, p_actor: input.actor, p_full_admin: input.fullAdmin, p_cursor: input.cursor, p_limit: 30,
+  });
+}
+export function readWecomLpDraft(input: { sourceMessageId: string; actor: string; fullAdmin: boolean }) {
+  return rpc<import("./wecom-lp-intake").WecomLpDraftRawSource | null>("read_wecom_lp_draft", {
+    p_secret: configuration().secret, p_source_message_id: input.sourceMessageId, p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}
+export function confirmWecomLpDraftAtomic(input: import("./wecom-lp-intake").WecomLpConfirmation & {
+  actor: string; fullAdmin: boolean; authorizedAssignment: Readonly<{ owner: string; planner: string; mayReassign: boolean }>;
+}) {
+  return rpc<LpAtomicCommitResult[]>("confirm_wecom_lp_draft_atomic", {
+    p_secret: configuration().secret, p_case_id: input.caseId, p_source_message_id: input.sourceMessageId,
+    p_source_revision: input.sourceRevision, p_command_uuid: input.commandKey, p_student_id: input.studentId ?? null,
+    p_new_student: input.newStudent ?? null, p_fields: input.fields, p_authorized_assignment: input.authorizedAssignment,
+    p_expected_versions: input.expectedVersions, p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}

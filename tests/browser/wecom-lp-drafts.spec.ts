@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { buildWecomLpDraft } from "../../lib/wecom-lp-draft";
 
 const NOW = "2026-10-20T02:00:00.000Z";
@@ -66,43 +66,53 @@ async function syntheticWorkspace(page: Page, options: { text?: string; matched?
   });
   const row = (entity: string) => ({ entity, payload: entities[entity] ?? [], version: versions[entity] ?? 1, updated_at: NOW, updated_by: "synthetic" });
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.route("**/*", async (route) => {
+  function committedReply(body: PostedCommand) {
+    const selectedId = body.studentId ?? "SYNTH-LP-NEW-STUDENT";
+    if (body.newStudent) entities.students = [...entities.students as unknown[], { ...student, id: selectedId, name: body.fields.studentName, guardianWechat: body.newStudent.guardianWechat, timezone: body.newStudent.timezone }];
+    entities.lpItems = [{ id: LP_ID, studentId: selectedId, title: "Synthetic Trial LP", workflowType: "试听 LP", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: body.fields }];
+    for (const entity of ["students", "lpItems", "tasks", "files"]) versions[entity]++;
+    committed = true;
+    return { committed: true, applied: true, studentId: selectedId, lpItemId: LP_ID, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") };
+  }
+  function sourceReply(route: Route) {
+    if (route.request().method() === "GET") return route.fulfill({ json: { drafts: committed ? [] : [draftSource], nextCursor: null, total: committed ? 0 : 1 } });
+    const body = route.request().postDataJSON() as PostedCommand;
+    posted.push(body);
+    const status = options.postStatuses?.[posted.length - 1] ?? 200;
+    if (status === 409) {
+      draftSource = source(template.replace("Y8 English", "Y8 Mathematics"), "b".repeat(64), options.matched);
+      return route.fulfill({ status, json: { error: "交接来源已变化，请刷新草稿。", code: "draft_conflict" } });
+    }
+    if (status !== 200) return route.fulfill({ status, json: { error: "合成服务暂不可用", code: "unavailable" } });
+    return route.fulfill({ json: committedReply(body) });
+  }
+  function sharedStateReply(url: URL) {
+    if (url.searchParams.get("mode") === "versions") return { versions: Object.keys(versions).map(row) };
+    const requested = (url.searchParams.get("entities") ?? "").split(",");
+    return { rows: requested.filter((entity) => entity in entities).map(row), ...snapshots() };
+  }
+  function readReply(route: Route, url: URL) {
+    switch (url.pathname) {
+      case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
+      case "/api/nixon-session": return route.fulfill({ json: { ok: true } });
+      case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
+      case "/api/app-state": return route.fulfill({ json: sharedStateReply(url) });
+      case "/api/audit": return route.fulfill({ json: { entries: [] } });
+      default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
+    }
+  }
+  await page.route("**/*", (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.hostname !== "127.0.0.1") { unexpected.push(url.origin); return route.abort(); }
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (url.pathname === "/api/demo-logout") return route.fulfill({ json: { serverSessionRevoked: true } });
-    if (url.pathname === "/api/operations/wecom-lp-drafts") {
-      if (request.method() === "GET") return route.fulfill({ json: { drafts: committed ? [] : [draftSource], nextCursor: null, total: committed ? 0 : 1 } });
-      const body = request.postDataJSON() as PostedCommand;
-      posted.push(body);
-      const status = options.postStatuses?.[posted.length - 1] ?? 200;
-      if (status === 409) {
-        draftSource = source(template.replace("Y8 English", "Y8 Mathematics"), "b".repeat(64), options.matched);
-        return route.fulfill({ status, json: { error: "交接来源已变化，请刷新草稿。", code: "draft_conflict" } });
-      }
-      if (status !== 200) return route.fulfill({ status, json: { error: "合成服务暂不可用", code: "unavailable" } });
-      const selectedId = body.studentId ?? "SYNTH-LP-NEW-STUDENT";
-      if (body.newStudent) entities.students = [...entities.students as unknown[], { ...student, id: selectedId, name: body.fields.studentName, guardianWechat: body.newStudent.guardianWechat, timezone: body.newStudent.timezone }];
-      entities.lpItems = [{ id: LP_ID, studentId: selectedId, title: "Synthetic Trial LP", workflowType: "试听 LP", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: body.fields }];
-      for (const entity of ["students", "lpItems", "tasks", "files"]) versions[entity]++;
-      committed = true;
-      return route.fulfill({ json: { committed: true, applied: true, studentId: selectedId, lpItemId: LP_ID, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") } });
-    }
+    if (url.pathname === "/api/operations/wecom-lp-drafts") return sourceReply(route);
     if (request.method() !== "GET") {
       unexpected.push(`${request.method()} ${url.pathname}`);
       return route.fulfill({ status: 403, json: { error: "Unbound synthetic write" } });
     }
-    if (url.pathname === "/api/demo-session") return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
-    if (url.pathname === "/api/nixon-session") return route.fulfill({ json: { ok: true } });
-    if (url.pathname === "/api/app-snapshot") return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
-    if (url.pathname === "/api/app-state") {
-      if (url.searchParams.get("mode") === "versions") return route.fulfill({ json: { versions: Object.keys(versions).map(row) } });
-      const requested = (url.searchParams.get("entities") ?? "").split(",");
-      return route.fulfill({ json: { rows: requested.filter((entity) => entity in entities).map(row), ...snapshots() } });
-    }
-    if (url.pathname === "/api/audit") return route.fulfill({ json: { entries: [] } });
-    return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
+    return readReply(route, url);
   });
   await page.clock.install({ time: new Date(NOW) });
   await page.goto("/#section=lp");
@@ -126,9 +136,9 @@ function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
 test("new student's received handover prefills the review and confirms one LP", async ({ page }) => {
   const f = await syntheticWorkspace(page);
   const dialog = await openDraft(page);
-  await expect(dialog.getByLabel("学生档案", { exact: true })).toHaveValue("new");
+  await expect(dialog.getByRole("combobox", { name: "学生档案", exact: true })).toHaveValue("new");
   await expect(dialog.getByLabel("家长微信名", { exact: true })).toHaveValue("Synthetic Parent");
-  await expect(dialog.getByLabel("学生时区", { exact: true })).toHaveValue("Australia/Melbourne");
+  await expect(dialog.getByRole("combobox", { name: "学生时区", exact: true })).toHaveValue("Australia/Melbourne");
   await expect(dialog.locator('[name="assignedTeacher"]')).toHaveValue("Teacher Example");
   await expect(dialog.locator('[name="subject"]')).toHaveValue("Y8 English");
   await expect(dialog.locator('[name="studentName"]')).toHaveValue("Synthetic Student");
@@ -152,7 +162,7 @@ test("new student's received handover prefills the review and confirms one LP", 
 test("matched handover selects the existing student without creating another record", async ({ page }) => {
   const f = await syntheticWorkspace(page, { matched: true });
   const dialog = await openDraft(page);
-  await expect(dialog.getByLabel("学生档案", { exact: true })).toHaveValue("existing");
+  await expect(dialog.getByRole("combobox", { name: "学生档案", exact: true })).toHaveValue("existing");
   await expect(dialog.getByRole("textbox", { name: "搜索学生姓名", exact: true })).toHaveValue("Synthetic Student");
   await expect(dialog.getByLabel("家长微信名", { exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
