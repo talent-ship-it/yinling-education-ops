@@ -29,14 +29,23 @@ revoke all on function internal.trial_handover_account_letter(text) from public,
 
 create function internal.trial_handover_schedule_metadata_valid(p_schedule jsonb,p_record jsonb,p_start timestamptz,p_end timestamptz)
 returns boolean language plpgsql immutable set search_path = '' as $$
-declare account_letter text; account_label text; letters integer;
+declare account_letter text; account_label text; letters integer; participants jsonb;
 begin
   if jsonb_typeof(p_schedule) is distinct from 'object' or jsonb_typeof(p_record->'stu_list') is distinct from 'array' then return false; end if;
-  select count(distinct internal.trial_handover_account_letter(value->>'name')) into letters from jsonb_array_elements(p_record->'stu_list');
+  select coalesce(jsonb_agg(jsonb_build_object('label',internal.trial_handover_trim(member.student_label)) order by coalesce(member.member_id,member.student_label)),'[]'::jsonb) into participants
+  from (
+    select distinct on (coalesce(nullif(btrim(value->>'mem_id'),''),btrim(value->>'name')))
+      nullif(btrim(value->>'mem_id'),'') as member_id,nullif(btrim(value->>'name'),'') as student_label
+    from jsonb_array_elements(p_record->'stu_list')
+    where nullif(btrim(value->>'mem_id'),'') is not null or nullif(btrim(value->>'name'),'') is not null
+    order by coalesce(nullif(btrim(value->>'mem_id'),''),btrim(value->>'name')),nullif(btrim(value->>'name'),'')
+    limit 101
+  ) member;
+  select count(distinct internal.trial_handover_account_letter(value->>'label')) into letters from jsonb_array_elements(participants);
   if letters=1 then
-    select internal.trial_handover_account_letter(value->>'name'),internal.trial_handover_trim(value->>'name') into account_letter,account_label
-    from jsonb_array_elements(p_record->'stu_list') with ordinality
-    where internal.trial_handover_account_letter(value->>'name') is not null order by ordinality limit 1;
+    select internal.trial_handover_account_letter(value->>'label'),value->>'label' into account_letter,account_label
+    from jsonb_array_elements(participants) with ordinality
+    where internal.trial_handover_account_letter(value->>'label') is not null order by ordinality limit 1;
   end if;
   return (not p_schedule?'durationMinutes' or p_schedule->'durationMinutes'=to_jsonb(extract(epoch from p_end-p_start)/60))
     and (not p_schedule?'sharedAccountLetter' or p_schedule->'sharedAccountLetter'=coalesce(to_jsonb(account_letter),'null'::jsonb))
@@ -57,10 +66,10 @@ begin
   if internal.trial_handover_empty(fields->'trialDurationMinutes') and p_duration in (45,60) then
     next_fields:=next_fields||jsonb_build_object('trialDurationMinutes',p_duration::integer);
   end if;
-  hint:=substring(normalize(coalesce(p_record->>'course_title',''),NFKC) from '^.*[-–—][[:space:]]+(.{1,80}?)[[:space:]]*试听(?:课)?[[:space:]]*$');
-  if hint is null then hint:=substring(normalize(coalesce(p_record->>'course_title',''),NFKC) from '^(.{1,80}?)[[:space:]]*试听(?:课)?[[:space:]]*$'); end if;
+  hint:=substring(internal.trial_handover_trim(normalize(coalesce(p_record->>'course_title',''),NFKC)) from '^.*[-–—][[:space:]]+(.{1,80}?)[[:space:]]*试听(?:课)?[[:space:]]*$');
+  if hint is null then hint:=substring(internal.trial_handover_trim(normalize(coalesce(p_record->>'course_title',''),NFKC)) from '^(.{1,80}?)[[:space:]]*试听(?:课)?[[:space:]]*$'); end if;
   hint:=regexp_replace(internal.trial_handover_trim(hint),'([A-Za-zÀ-ÖØ-öø-ÿĀ-ɏ0-9])[[:space:]]+([一-鿿])','\1\2','g');
-  if coalesce(hint,'') !~ '^[A-Za-zÀ-ÖØ-öø-ÿĀ-ɏ''’.-]+([[:space:]]+[A-Za-zÀ-ÖØ-öø-ÿĀ-ɏ''’.-]+){0,3}[一-鿿]{0,8}$' then hint:=null; end if;
+  if internal.trial_handover_account_letter(hint) is not null or coalesce(hint,'') !~ '^[A-Za-zÀ-ÖØ-öø-ÿĀ-ɏ''’.-]+([[:space:]]+[A-Za-zÀ-ÖØ-öø-ÿĀ-ɏ''’.-]+){0,3}[一-鿿]{0,8}$' then hint:=null; end if;
   if hint is not null then
     select count(*),min(value->>'id') into identities,identity_id from jsonb_array_elements(p_students)
     where internal.trial_handover_name_key(value->>'name')=internal.trial_handover_name_key(hint);
@@ -115,7 +124,7 @@ begin
   if jsonb_typeof(s.payload) is distinct from 'array' or jsonb_typeof(l.payload) is distinct from 'array' then raise exception using errcode='55000',message='trial_handover_state_unavailable'; end if;
   select * into pointer from internal.jiaowubao_open_api_schedule_snapshot_current c where c.api_source_key='jwb-open-api-schedule' for share;
   select * into source_run from internal.jiaowubao_open_api_schedule_snapshot_ingest_runs r where r.id=pointer.run_id and r.api_source_key=pointer.api_source_key and r.revision=pointer.revision and r.state='complete';
-  if pointer.api_source_key is null or pointer.revision is distinct from p_snapshot_revision or pointer.published_at is null or pointer.published_at<clock_timestamp()-interval '2 hours'
+  if pointer.api_source_key is null or pointer.revision is distinct from p_snapshot_revision or pointer.published_at is null or (pointer.published_at<clock_timestamp()-interval '2 hours' and not internal.jiaowubao_schedule_projection_allows_stale_trial(p_snapshot_revision,p_actor))
     or source_run.id is null or coalesce(source_run.query->>'start','')!~'^[0-9]{4}-[0-9]{2}-[0-9]{2}$' or coalesce(source_run.query->>'end','')!~'^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
     raise exception using errcode='40001',message='trial_handover_source_changed';
   end if;
@@ -142,11 +151,11 @@ begin
       source_end:=((source_day::text||' '||(source_record->>'time_end'))::timestamp at time zone 'Australia/Melbourne');
     exception when datetime_field_overflow or invalid_datetime_format then raise exception using errcode='22023',message='trial_handover_source_date_invalid'; end;
     schedule:=after_lp->'trialSchedule';
-    if source_end<=source_start or nullif(internal.trial_handover_trim(source_record->>'teacher_title'),'') is null
+    if source_end<=source_start
       or schedule->>'source' is distinct from 'jiaowubao-open-api' or schedule->>'sourceRevision' is distinct from p_snapshot_revision or schedule->>'eventId' is distinct from match->>'eventId'
       or schedule-'source'-'confirmation'-'sourceRevision'-'eventId'-'startsAt'-'endsAt'-'courseName'-'studentName'-'teacherId'-'teacherName'-'plannerHint'-'matchedAt'-'durationMinutes'-'sharedAccountLabel'-'sharedAccountLetter'<>'{}'::jsonb
       or (schedule->>'startsAt')::timestamptz is distinct from source_start or (schedule->>'endsAt')::timestamptz is distinct from source_end
-      or schedule->>'teacherName' is distinct from internal.trial_handover_trim(source_record->>'teacher_title') or schedule->>'courseName' is distinct from nullif(internal.trial_handover_trim(source_record->>'course_title'),'')
+      or schedule->>'teacherName' is distinct from coalesce(nullif(internal.trial_handover_trim(source_record->>'teacher_title'),''),'待核对老师映射') or schedule->>'courseName' is distinct from nullif(internal.trial_handover_trim(source_record->>'course_title'),'')
       or not internal.trial_handover_schedule_metadata_valid(schedule,source_record,source_start,source_end)
       or (schedule->'confirmation') is distinct from (case when before_lp#>>'{trialScheduleReview,source}'='screenshot-review' and before_lp#>>'{trialScheduleReview,eventId}'=match->>'eventId' then to_jsonb('screenshot-review'::text) else before_lp#>'{trialSchedule,confirmation}' end) then raise exception using errcode='22023',message='trial_handover_source_projection_invalid'; end if;
     expected_lp:=internal.trial_handover_enriched_lp(before_lp,source_record,s.payload,extract(epoch from source_end-source_start)/60);

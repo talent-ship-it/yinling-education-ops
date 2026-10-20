@@ -41,6 +41,65 @@ begin
   if (select payload from public.ops_state where entity='lpItems')<>jsonb_build_array(lp) or (select version from public.ops_state where entity='lpItems')<>1
     or (select count(*) from public.ops_mutation_log)<>(counts->>'mutations')::int or (select count(*) from internal.operational_contract_audit)<>(counts->>'audits')::int then raise exception 'Enrichment was not rolled back with delegate failure'; end if;
   begin
+    update internal.jiaowubao_open_api_schedule_snapshot_current set published_at=now()-interval '3 hours';
+    insert into internal.jiaowubao_open_api_schedule_projection_jobs values('jwb-open-api-schedule',seed->>'revision','pending');
+    perform internal.fixture_expect_failure(replace(statement,quote_literal('Ella'),quote_literal('Ops Admin')),'trial_handover_source_changed');
+    update internal.jiaowubao_open_api_schedule_projection_jobs set state='complete';
+    perform internal.fixture_expect_failure(replace(statement,quote_literal('Ella'),quote_literal('Ops Admin')),'trial_handover_source_changed');
+    update internal.jiaowubao_open_api_schedule_projection_jobs set state='authority_done',revision='sha256:'||repeat('b',64);
+    perform internal.fixture_expect_failure(replace(statement,quote_literal('Ella'),quote_literal('Ops Admin')),'trial_handover_source_changed');
+    update internal.jiaowubao_open_api_schedule_projection_jobs set revision=seed->>'revision';
+    perform internal.fixture_expect_failure(statement,'trial_handover_source_changed');
+    execute replace(statement,quote_literal('Ella'),quote_literal('Ops Admin')) into receipt;
+    if not receipt.applied or (receipt.lp_items_row).payload<>jsonb_build_array(next_lp) then raise exception 'Approved pinned recovery did not preserve released v2 stale guard'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  begin
+    raw_variant:=jsonb_set(source_record,'{course_title}','"English - Trial account A试听"'::jsonb);
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+    update public.ops_state set payload=jsonb_build_array((seed->'student')||'{"name":"Trial account A"}'::jsonb) where entity='students';
+    projected:=lp||jsonb_build_object('fields',(lp->'fields')||'{"assignedTeacher":"Synthetic Teacher","trialDurationMinutes":60}'::jsonb,'trialIntake',(lp->'trialIntake')||'{"trialDurationMinutes":60}'::jsonb,'trialSchedule',(seed->'link')||'{"courseName":"English - Trial account A试听","studentName":"Trial account A"}'::jsonb);
+    execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(projected),seed->'tasks') into receipt;
+    if (receipt.lp_items_row).payload<>jsonb_build_array(projected) then raise exception 'Shared trial account was filled as a real student identity'; end if;
+    variant:=projected||jsonb_build_object('fields',(projected->'fields')||'{"studentNameKnown":true,"studentName":"Trial account A"}'::jsonb,'trialIntake',(projected->'trialIntake')||'{"studentName":"Trial account A"}'::jsonb);
+    perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(variant),seed->'tasks','{"lpItems":2,"tasks":1}'::jsonb),'trial_handover_fields_projection_invalid');
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  for raw_variant in select jsonb_set(source_record,'{stu_list}',value) from (values
+    ('[{"mem_id":"9","name":"试听学员A"},{"mem_id":"2","name":"  Trial account A 2026  "},{"mem_id":"2","name":"Trial account B 2026"}]'::jsonb),
+    ('[{"mem_id":"2","name":"Trial account B 2026"},{"mem_id":"2","name":"  Trial account A 2026  "},{"mem_id":"9","name":"试听学员A"}]'::jsonb)
+  ) variants(value) loop
+    begin
+      update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+      projected:=jsonb_set(next_lp,'{trialSchedule,sharedAccountLabel}','"Trial account A 2026"'::jsonb);
+      perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(jsonb_set(projected,'{trialSchedule,sharedAccountLabel}','"试听学员A"'::jsonb)),seed->'tasks'),'trial_handover_source_projection_invalid');
+      execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(projected),seed->'tasks') into receipt;
+      if (receipt.lp_items_row).payload<>jsonb_build_array(projected) then raise exception 'Shared account metadata did not follow source participant deduplication and sort'; end if;
+      raise exception using errcode='P0042',message='fixture_rollback';
+    exception when sqlstate 'P0042' then null; end;
+  end loop;
+  for raw_variant in select jsonb_set(source_record,'{teacher_title}',value) from (values ('null'::jsonb),('"  "'::jsonb)) variants(value) loop
+    begin
+      update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+      projected:=next_lp||jsonb_build_object('fields',fields||jsonb_build_object('assignedTeacher',lp#>'{fields,assignedTeacher}'),'trialSchedule',(seed->'link')||'{"teacherName":"待核对老师映射"}'::jsonb);
+      perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(jsonb_set(projected,'{trialSchedule,teacherName}','"Forged Teacher"'::jsonb)),seed->'tasks'),'trial_handover_source_projection_invalid');
+      perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(jsonb_set(projected,'{fields,assignedTeacher}','"待核对老师映射"'::jsonb)),seed->'tasks'),'trial_handover_fields_projection_invalid');
+      execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(projected),seed->'tasks') into receipt;
+      if (receipt.lp_items_row).payload<>jsonb_build_array(projected) or (receipt.lp_items_row).payload#>'{0,fields,assignedTeacher}' is distinct from lp#>'{fields,assignedTeacher}' then raise exception 'Missing source teacher changed v2 schedule fallback or filled handover teacher'; end if;
+      raise exception using errcode='P0042',message='fixture_rollback';
+    exception when sqlstate 'P0042' then null; end;
+  end loop;
+  for raw_variant in select jsonb_set(source_record,'{course_title}',to_jsonb(value)) from (values ('  '||repeat('A',80)||'试听  '),('  English - '||repeat('A',80)||'试听  ')) variants(value) loop
+    begin
+      update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',raw_variant);
+      update public.ops_state set payload=jsonb_build_array((seed->'student')||jsonb_build_object('name',repeat('A',80))) where entity='students';
+      projected:=next_lp||jsonb_build_object('fields',fields||jsonb_build_object('studentName',repeat('A',80)),'trialIntake',intake||jsonb_build_object('studentName',repeat('A',80)),'trialSchedule',(seed->'link')||jsonb_build_object('courseName',internal.trial_handover_trim(raw_variant->>'course_title'),'studentName',repeat('A',80)));
+      execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(projected),seed->'tasks') into receipt;
+      if (receipt.lp_items_row).payload<>jsonb_build_array(projected) then raise exception 'Padded80 character course name diverged from TypeScript trim-first projection'; end if;
+      raise exception using errcode='P0042',message='fixture_rollback';
+    exception when sqlstate 'P0042' then null; end;
+  end loop;
+  begin
     variant:=lp||jsonb_build_object('fields',(lp->'fields')||'{"assignedTeacher":"Human Teacher","studentNameKnown":true,"studentName":"Reviewed Name","trialDurationMinutes":45}'::jsonb,'trialIntake',(lp->'trialIntake')||'{"studentName":"Reviewed Intake","trialDurationMinutes":30}'::jsonb);
     update public.ops_state set payload=jsonb_build_array(variant) where entity='lpItems';
     projected:=variant||jsonb_build_object('trialSchedule',seed->'link');
