@@ -9,7 +9,7 @@ import { createSharedStatePoller } from "@/lib/shared-state-poller";
 
 import { isLessonDuration } from "../lib/lesson-duration";
 import { LessonDurationInput } from "./lesson-duration-input";
-import { TrialScheduleDetails } from "./trial-schedule-details";
+import { TrialScheduleDetails, trialSchedulePendingLabel } from "./trial-schedule-details";
 import { useWorkspaceLocation } from "./use-workspace-location";
 import { TeacherLeavePanel } from "./teacher-leave-panel";
 import { RecordPicker } from "./record-picker";
@@ -8861,14 +8861,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </span>
       </div>;
     };
-    const trialScreenshotAllowed = (item: LpItem) => item.workflowType === "试听 LP" && !isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消";
+    const trialScreenshotAllowed = (item: LpItem) => item.workflowType === "试听 LP" && !isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消" && Boolean(studentById(item.studentId)) && !studentById(item.studentId)?.importArchived;
+    const pendingScheduleLabel = (item: LpItem) => trialSchedulePendingLabel({
+      archived: studentById(item.studentId)?.importArchived,
+      stage: item.stage,
+      resultStatus: item.resultStatus,
+      studentNameConfirmed: Boolean(studentById(item.studentId)?.jwbMatchStatus === "matched" || item.trialIntake?.studentName?.trim() || (item.fields?.studentNameKnown === true && String(item.fields.studentName ?? "").trim())),
+      requestAt: item.trialIntake?.requestSentAt ?? item.requestedAt,
+      windowStartsAt: trialScheduleWindow.startsAt,
+      loading: jiaowubaoImportedScheduleLoading,
+      sourceState: currentJiaowubaoImportedSchedule?.state,
+    });
     const trialIntakeDetails = (item: LpItem) => {
       if (item.workflowType !== "试听 LP" && item.workflowType !== "换老师试听") return null;
       return <details className="trial-intake-details">
         <summary>查看试听交接详情</summary>
         {trialScreenshotAllowed(item) && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
         <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} />
-        <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} />
+        <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} pendingLabel={pendingScheduleLabel(item)} />
         {item.trialIntake ? <dl>
           <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
           <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), displayPreferences.timezone, displayPreferences)}</dd></div>
@@ -8909,7 +8919,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           setSelectedStudentId(body.studentId);
         }}
       /></Suspense>}
-      {trialScreenshotItem && !isTeacherView && scopedLpItems.some((item) => item.id === trialScreenshotItem.id) && <Suspense fallback={null}><TrialScreenshotConfirmWorkspace
+      {trialScreenshotItem && !isTeacherView && scopedLpItems.some((item) => item.id === trialScreenshotItem.id && trialScreenshotAllowed(item)) && <Suspense fallback={null}><TrialScreenshotConfirmWorkspace
         key={`${sessionOperator}:${trialScreenshotItem.id}`}
         item={trialScreenshotItem}
         studentName={studentById(trialScreenshotItem.studentId)?.name ?? "姓名待补"}
@@ -8974,7 +8984,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td><div className={`ledger-edit-cell ${item.resultStatus ? "manual" : "automatic"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={effectiveTrialResultStatus(item) ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value as LpResultStatus)}>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : item.resultStatus ? "人工结果" : "新建默认值"}</small></span></div></td>
                 <td><div className={`ledger-edit-cell ${storedPaid === undefined ? "automatic" : "manual"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[paidKey] === true} value={storedPaid === undefined ? "" : storedPaid ? "true" : "false"} aria-label={`${automaticStudentName || item.id} 是否付费`} onChange={(event) => { const value = event.target.value === "" ? undefined : event.target.value === "true"; void saveTrialLedgerFieldAtomic(item, "trialPaid", value).catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败")); }}><option value="">自动 · {automaticPaid ? "是" : "否"}</option><option value="true">是</option><option value="false">否</option></select><span className="ledger-cell-meta"><small>{trialLedgerSaving[paidKey] ? "保存中…" : storedPaid === undefined ? "按付费方式自动判断" : "手动值"}</small></span></div></td>
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
-                <td><TrialScheduleDetails schedule={schedule} /></td>
+                <td><TrialScheduleDetails schedule={schedule} pendingLabel={pendingScheduleLabel(item)} onComplete={trialScreenshotAllowed(item) ? () => setTrialScreenshotItem(item) : undefined} /></td>
               </tr>;
             })}</tbody>
           </table>

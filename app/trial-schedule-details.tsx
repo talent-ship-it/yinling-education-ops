@@ -27,8 +27,37 @@ function sharedAccount(schedule: TrialScheduleLink) {
   return letter && /^[ABC]$/.test(letter) ? `试听账号 ${letter}` : "未关联";
 }
 
-export function TrialScheduleDetails({ schedule }: { schedule?: TrialScheduleLink }) {
-  if (!schedule || schedule.source !== "jiaowubao-open-api") return <span className="inline-meta">未关联</span>;
+export function trialSchedulePendingLabel(input: {
+  archived?: boolean;
+  stage: string;
+  resultStatus?: string;
+  studentNameConfirmed: boolean;
+  requestAt?: string;
+  windowStartsAt: string;
+  loading: boolean;
+  sourceState?: string;
+}) {
+  if (input.archived) return "已归档 · 待核对历史课表";
+  if (input.resultStatus === "已取消") return "已取消";
+  if (input.stage === "完成") return "已完成 · 待核对历史课表";
+  if (input.loading) return "正在读取教务宝";
+  if (input.sourceState === "stale") return "课表快照已过期";
+  if (input.sourceState !== "complete") return "等待教务宝课表";
+  if (!input.studentNameConfirmed) return "待核对学生姓名";
+  const requestTime = Date.parse(input.requestAt ?? "");
+  if (requestTime < Date.parse(input.windowStartsAt)) return "历史交接 · 待核对课表";
+  return "待匹配教务宝课表";
+}
+
+export function TrialScheduleDetails({ schedule, pendingLabel = "待匹配教务宝课表", onComplete }: {
+  schedule?: TrialScheduleLink;
+  pendingLabel?: string;
+  onComplete?: () => void;
+}) {
+  if (!schedule || schedule.source !== "jiaowubao-open-api") return <div className="ledger-edit-cell automatic">
+    <span className="inline-meta">{pendingLabel}</span>
+    {onComplete && <button className="secondary-button" type="button" onClick={onComplete}>补全教务宝小课表</button>}
+  </div>;
   const range = scheduleRange(schedule);
   const duration = isLessonDuration(schedule.durationMinutes) ? schedule.durationMinutes : range?.duration;
   const entries = [
