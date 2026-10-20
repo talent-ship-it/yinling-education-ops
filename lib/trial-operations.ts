@@ -454,7 +454,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       const paymentMethod = teacherChangeTrial ? undefined : trialPaymentMethod(item.fields?.trialPaymentMethod);
       const requestTime = requestedAt(item);
       const confirmedEventId = reviewedTrialEventId(item);
-      const eligibleCandidates = input.events.filter((event) => {
+      let candidates = input.events.filter((event) => {
         if (!reviewedTrialEventAllowed(confirmedOwners, item.id, event.eventId, confirmedEventId)) return false;
         const start = new Date(event.startsAt).valueOf();
         if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
@@ -466,8 +466,8 @@ export function matchTrialScheduleEvents(input: Readonly<{
           || provenTeacherKey(event.teacherName) === expectedTeacherKey;
         return teacherMatches && (directStudentMatch || titleMatch && Boolean(hint) && plannerMatches);
       }).sort((left, right) => new Date(left.startsAt).valueOf() - new Date(right.startsAt).valueOf());
-      const directCandidates = eligibleCandidates.filter((event) => eventDirectlyMatchesStudent(event, student.id, confirmedEventId));
-      let candidates = directCandidates.length ? directCandidates : eligibleCandidates;
+      const directCandidates = candidates.filter((event) => eventDirectlyMatchesStudent(event, student.id, confirmedEventId));
+      if (directCandidates.length) candidates = directCandidates;
       if (candidates.length > 1 && assignedTeacherKey) {
         const teacherCandidates = candidates.filter((event) => provenTeacherKey(optionalText(event.teacherName)
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)) === assignedTeacherKey);

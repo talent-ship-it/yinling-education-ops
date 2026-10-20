@@ -8862,16 +8862,24 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </div>;
     };
     const trialScreenshotAllowed = (item: LpItem) => item.workflowType === "试听 LP" && !isTeacherView && item.stage !== "完成" && item.resultStatus !== "已取消" && Boolean(studentById(item.studentId)) && !studentById(item.studentId)?.importArchived;
-    const pendingScheduleLabel = (item: LpItem) => trialSchedulePendingLabel({
-      archived: studentById(item.studentId)?.importArchived,
-      stage: item.stage,
-      resultStatus: item.resultStatus,
-      studentNameConfirmed: Boolean(studentById(item.studentId)?.jwbMatchStatus === "matched" || item.trialIntake?.studentName?.trim() || (item.fields?.studentNameKnown === true && String(item.fields.studentName ?? "").trim())),
-      requestAt: item.trialIntake?.requestSentAt ?? item.requestedAt,
-      windowStartsAt: trialScheduleWindow.startsAt,
-      loading: jiaowubaoImportedScheduleLoading,
-      sourceState: currentJiaowubaoImportedSchedule?.state,
-    });
+    const pendingScheduleLabel = (item: LpItem) => {
+      const student = studentById(item.studentId);
+      const fields = item.fields ?? {};
+      return trialSchedulePendingLabel({
+        archived: student?.importArchived,
+        stage: item.stage,
+        resultStatus: item.resultStatus,
+        studentNameConfirmed: [
+          student?.jwbMatchStatus === "matched",
+          item.trialIntake?.studentName,
+          fields.studentNameKnown === true && fields.studentName,
+        ].some(Boolean),
+        requestAt: item.trialIntake?.requestSentAt ?? item.requestedAt,
+        windowStartsAt: trialScheduleWindow.startsAt,
+        loading: jiaowubaoImportedScheduleLoading,
+        sourceState: currentJiaowubaoImportedSchedule?.state,
+      });
+    };
     const trialIntakeDetails = (item: LpItem) => {
       if (item.workflowType !== "试听 LP" && item.workflowType !== "换老师试听") return null;
       return <details className="trial-intake-details">
