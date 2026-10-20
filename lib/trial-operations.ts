@@ -402,6 +402,14 @@ function trialScheduleStudentName(item: Readonly<{ trialIntake?: TrialIntake; fi
  * Matches only unambiguous LP/student evidence. A direct student ID wins; the
  * course-title fallback also respects the A/B/C planner hint when available.
  */
+function trialEventSourceDetails(event: TrialScheduleEventLike) {
+  return {
+    durationMinutes: (new Date(event.endsAt).valueOf() - new Date(event.startsAt).valueOf()) / 60_000,
+    sharedAccountLabel: event.sharedAccountLabel ?? null,
+    sharedAccountLetter: event.sharedAccountLetter ?? null,
+  };
+}
+
 export function matchTrialScheduleEvents(input: Readonly<{
   lpItems: readonly Readonly<{
     id: string;
@@ -502,9 +510,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
           ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)
           ?? "待核对老师映射",
         plannerHint: event.trialPlannerHint ?? null,
-        durationMinutes: (new Date(event.endsAt).valueOf() - new Date(event.startsAt).valueOf()) / 60_000,
-        sharedAccountLabel: event.sharedAccountLabel ?? null,
-        sharedAccountLetter: event.sharedAccountLetter ?? null,
+        ...trialEventSourceDetails(event),
         matchedAt,
       }),
     }));

@@ -52,3 +52,13 @@ test("shared labels come from the exact event and conflicting account letters ar
   assert.deepEqual(trialAccountFromParticipants([{ label: "试听学员A" }, ...event.sourceParticipants]), { sharedAccountLabel: null, sharedAccountLetter: null });
   assert.deepEqual(trialAccountFromParticipants([{ label: "Morgan王同学" }]), { sharedAccountLabel: null, sharedAccountLetter: null });
 });
+
+test("unfamiliar name glyphs and punctuation stay for manual confirmation", () => {
+  for (const name of ["Ḿorgan王同学", "Morgan🙂王同学"]) {
+    const item = { ...lp, studentId: "fixture-glyph" };
+    const result = enrichTrialHandover(item, { ...event, courseName: `Y7 English - ${name}试听` }, [{ id: "fixture-glyph", name }]);
+    assert.equal((result.fields as Record<string, unknown>).studentName, undefined);
+  }
+  const result = enrichTrialHandover(lp, { ...event, courseName: "Y7 English - Morgan 王同学试听" }, students);
+  assert.equal((result.fields as Record<string, unknown>).studentName, "Morgan王同学");
+});
