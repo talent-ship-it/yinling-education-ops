@@ -53,6 +53,21 @@ function SourceNotes({ source }: { source: WecomLpDraftSource }) {
   </>;
 }
 
+function DraftStudentFields({ source, students, timezoneOptions, createStudent, onCreateStudentChange, studentId, onStudentIdChange }: {
+  source: WecomLpDraftSource;
+  students: Props["students"];
+  timezoneOptions: LpWorkflowFieldsProps["timezoneOptions"];
+  createStudent: boolean;
+  onCreateStudentChange: (value: boolean) => void;
+  studentId: string;
+  onStudentIdChange: (value: string) => void;
+}) {
+  return <>
+    <label>学生档案<select value={createStudent ? "new" : "existing"} onChange={(event) => onCreateStudentChange(event.target.value === "new")}><option value="existing">关联已有学生</option><option value="new">确认时创建学生档案</option></select></label>
+    {createStudent ? <><label>家长微信名<input name="wecomGuardianWechat" defaultValue={source.draft.guardianWechat ?? source.wechatName} required /></label><label>学生时区<select name="wecomStudentTimezone" defaultValue={wecomDraftTimezone(source.draft.fields.locationTimezone)} required><option value="">请选择时区</option>{timezoneOptions?.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</select></label></> : <label>关联学生<RecordPicker name="studentId" options={students.map((student) => ({ id: student.id, name: student.name, detail: student.course }))} value={studentId} onChange={onStudentIdChange} /></label>}
+  </>;
+}
+
 export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions, fieldOptions, Dialog, notify, onCommitted }: Props) {
   const [source, setSource] = useState<WecomLpDraftSource | null>(null);
   const [createStudent, setCreateStudent] = useState(false);
@@ -96,8 +111,7 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     <WecomLpDraftsPanel timeDisplay={timeDisplay} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(!draft.matchedStudentId); }} />
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
-      <label>学生档案<select value={createStudent ? "new" : "existing"} onChange={(event) => setCreateStudent(event.target.value === "new")}><option value="existing">关联已有学生</option><option value="new">确认时创建学生档案</option></select></label>
-      {createStudent ? <><label>家长微信名<input name="wecomGuardianWechat" defaultValue={source.draft.guardianWechat ?? source.wechatName} required /></label><label>学生时区<select name="wecomStudentTimezone" defaultValue={wecomDraftTimezone(source.draft.fields.locationTimezone)} required><option value="">请选择时区</option>{fieldOptions.timezoneOptions?.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</select></label></> : <label>关联学生<RecordPicker name="studentId" options={students.map((student) => ({ id: student.id, name: student.name, detail: student.course }))} value={studentId} onChange={setStudentId} /></label>}
+      <DraftStudentFields source={source} students={students} timezoneOptions={fieldOptions.timezoneOptions} createStudent={createStudent} onCreateStudentChange={setCreateStudent} studentId={studentId} onStudentIdChange={setStudentId} />
       <LpWorkflowFields initialType="试听 LP" requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
       <footer><button className="secondary-button" type="button" disabled={busy} onClick={close}>取消</button><button className="primary-button" type="submit" disabled={busy}><BookOpen size={16} />{busy ? "正在保存…" : "确认并创建 LP"}</button></footer>
     </form></Dialog>}
