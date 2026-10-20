@@ -58,6 +58,7 @@ export type JiaowubaoTrialPlannerHint = TrialPlanner | null;
 
 export type TrialScheduleLink = Readonly<{
   source: "jiaowubao-open-api";
+  confirmation?: "screenshot-review";
   /** Immutable publication used to derive this link; absent only on legacy rows. */
   sourceRevision?: string;
   eventId: string;
@@ -364,6 +365,30 @@ function requestedAt(item: Readonly<{ requestedAt?: string; trialIntake?: TrialI
   return parsed && Number.isFinite(parsed.valueOf()) ? parsed.valueOf() : Number.NEGATIVE_INFINITY;
 }
 
+type ReviewedTrialSchedule = Readonly<{ id: string; trialSchedule?: TrialScheduleLink; trialScheduleReview?: Readonly<{ source: "screenshot-review"; eventId: string }> }>;
+function reviewedTrialEventId(item: ReviewedTrialSchedule) {
+  if (item.trialScheduleReview?.source === "screenshot-review") return item.trialScheduleReview.eventId;
+  return item.trialSchedule?.confirmation === "screenshot-review" ? item.trialSchedule.eventId : null;
+}
+function reviewedTrialEventOwners(items: readonly ReviewedTrialSchedule[]) {
+  const owners = new Map<string, string[]>();
+  for (const item of items) {
+    const eventId = reviewedTrialEventId(item);
+    if (eventId) owners.set(eventId, [...(owners.get(eventId) ?? []), item.id]);
+  }
+  return owners;
+}
+function reviewedTrialEventAllowed(owners: ReadonlyMap<string, readonly string[]>, itemId: string, eventId: string, confirmedId: string | null) {
+  if (confirmedId && eventId !== confirmedId) return false;
+  const ids = owners.get(eventId);
+  return !ids || ids.length === 1 && ids[0] === itemId;
+}
+function reviewedTrialLinkMetadata(item: ReviewedTrialSchedule) {
+  return reviewedTrialEventId(item) ? { confirmation: "screenshot-review" as const } : {};
+}
+function eventDirectlyMatchesStudent(event: TrialScheduleEventLike, studentId: string, confirmedId: string | null) {
+  return event.visibleStudentIds.includes(studentId) || confirmedId === event.eventId;
+}
 /**
  * Matches only unambiguous LP/student evidence. A direct student ID wins; the
  * course-title fallback also respects the A/B/C planner hint when available.
@@ -378,6 +403,8 @@ export function matchTrialScheduleEvents(input: Readonly<{
     trialPaid?: unknown;
     fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown }>;
     trialIntake?: TrialIntake;
+    trialSchedule?: TrialScheduleLink;
+    trialScheduleReview?: Readonly<{ source: "screenshot-review"; eventId: string }>;
   }>[];
   students: readonly Readonly<{ id: string; name: string; owner: string; planner?: string }>[];
   teachers: readonly Readonly<{ id: string; name: string }>[];
@@ -390,6 +417,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
   const matchedAt = canonicalInstant(input.matchedAt, "matchedAt");
   const matches: TrialScheduleMatch[] = [];
 
+  const confirmedOwners = reviewedTrialEventOwners(input.lpItems);
   const candidatesByLp = input.lpItems
     .filter((candidate) => (
       candidate.workflowType === "试听 LP" || candidate.workflowType === "换老师试听"
@@ -406,10 +434,12 @@ export function matchTrialScheduleEvents(input: Readonly<{
       const plannerName = planner(item.trialIntake?.planner) || planner(student.planner) || "";
       const paymentMethod = teacherChangeTrial ? undefined : trialPaymentMethod(item.fields?.trialPaymentMethod);
       const requestTime = requestedAt(item);
+      const confirmedEventId = reviewedTrialEventId(item);
       const candidates = input.events.filter((event) => {
+        if (!reviewedTrialEventAllowed(confirmedOwners, item.id, event.eventId, confirmedEventId)) return false;
         const start = new Date(event.startsAt).valueOf();
         if (!Number.isFinite(start) || start < requestTime - 24 * 60 * 60 * 1_000) return false;
-        const directStudentMatch = event.visibleStudentIds.includes(student.id);
+        const directStudentMatch = eventDirectlyMatchesStudent(event, student.id, confirmedEventId);
         const titleMatch = courseTitleMatchesStudentName(event.courseName, existingStudentName);
         const hint = event.trialPlannerHint ?? null;
         const plannerMatches = !hint || normalize(hint) === normalize(plannerName);
@@ -448,6 +478,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
       link: Object.freeze({
         source: "jiaowubao-open-api",
+        ...reviewedTrialLinkMetadata(item),
         ...(typeof input.sourceRevision === "string"
           && /^sha256:[a-f0-9]{64}$/.test(input.sourceRevision)
           ? { sourceRevision: input.sourceRevision }

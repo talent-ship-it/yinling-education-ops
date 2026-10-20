@@ -991,6 +991,17 @@ test("generic LP saves cannot forge, edit, remove or prewrite Jiaowubao trial li
   ]), rejected);
 });
 
+test("generic LP saves cannot forge, remove, edit or prewrite reviewed event pins", () => {
+  const pin = { source: "screenshot-review", eventId: "event-1" };
+  const lp = { id: "LP-REVIEWED", studentId: "S-1", workflowType: "试听 LP", stage: "待资料", title: "Trial", trialScheduleReview: pin };
+  const rows = [...fixtureRows(), row("lpItems", [lp])];
+  assert.doesNotThrow(() => transition("lpItems", [lp], [{ ...lp, title: "Safe edit" }], rows));
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialScheduleReview: { ...pin, eventId: "event-2" } }], rows), rejected);
+  const removed = { ...lp }; Reflect.deleteProperty(removed, "trialScheduleReview");
+  assert.throws(() => transition("lpItems", [lp], [removed], rows), rejected);
+  assert.throws(() => transition("lpItems", [], [lp], [...fixtureRows(), row("lpItems", [])]), rejected);
+});
+
 test("generic saves cannot change import archive markers or mutate any archived-student business record", () => {
   const archivedStudent = {
     ...student,

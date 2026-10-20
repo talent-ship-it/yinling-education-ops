@@ -130,6 +130,13 @@ export type JiaowubaoTrialSyncProjection = Readonly<{
   }>[];
 }>;
 
+function reviewedScheduleMetadata(item: RecordValue) {
+  const metadata: { trialScheduleReview?: { source: "screenshot-review"; eventId: string }; trialSchedule?: TrialScheduleLink } = {};
+  if (record(item.trialScheduleReview) && item.trialScheduleReview.source === "screenshot-review" && text(item.trialScheduleReview.eventId)) metadata.trialScheduleReview = { source: "screenshot-review", eventId: text(item.trialScheduleReview.eventId) };
+  if (record(item.trialSchedule) && item.trialSchedule.confirmation === "screenshot-review") metadata.trialSchedule = item.trialSchedule as TrialScheduleLink;
+  return metadata;
+}
+
 /**
  * Rebuilds the whole narrow projection from current ops rows and raw immutable
  * JWB events. The browser's pairs are references only; they never provide a
@@ -198,6 +205,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       ...(typeof item.trialPaid === "boolean" ? { trialPaid: item.trialPaid } : {}),
       ...(record(item.fields) ? { fields: item.fields } : {}),
       ...(isTrialIntake(item.trialIntake) ? { trialIntake: item.trialIntake } : {}),
+      ...reviewedScheduleMetadata(item),
     })),
     students: students.map((student) => ({
       id: text(student.id),
