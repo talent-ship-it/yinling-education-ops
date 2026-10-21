@@ -110,10 +110,15 @@ function isActiveLessonBooking(booking: LpParentProgressBooking) {
 }
 
 function matchesTeacher(lp: LpParentProgressRecord, booking: LpParentProgressBooking, teachers: Input["teachers"]) {
-  const teacher = normalize(lp.fields?.teacher);
+  if (typeof lp.fields?.teacher !== "string") return false;
+  const teacher = lp.fields.teacher.trim();
   if (!teacher) return false;
-  const teacherName = teachers?.find((candidate) => candidate.id === booking.teacherId)?.name ?? booking.sourceTeacherName;
-  return [booking.teacherId, teacherName].map(normalize).includes(teacher);
+  const roster = teachers ?? [];
+  const exact = roster.find((candidate) => candidate.id === teacher);
+  if (exact) return booking.teacherId === exact.id;
+  const name = normalize(teacher);
+  const identities = new Set(roster.filter((candidate) => normalize(candidate.name) === name).map((candidate) => candidate.id));
+  return identities.size === 1 && identities.has(booking.teacherId ?? "");
 }
 
 function matchesSubject(lp: LpParentProgressRecord, booking: LpParentProgressBooking) {
@@ -126,6 +131,12 @@ function matches(lp: LpParentProgressRecord, booking: LpParentProgressBooking, t
   const anchors = [booking.lpId, booking.anchorBookingId, booking.requestAnchorBookingId].filter(Boolean);
   if (anchors.length) return anchors.every((anchor) => anchor === lp.id);
   return matchesTeacher(lp, booking, teachers) && matchesSubject(lp, booking);
+}
+
+function matchesRequestedOccurrence(lp: LpParentProgressRecord, booking: LpParentProgressBooking, teachers: Input["teachers"], startsAt: Date) {
+  const requestedAt = requestInstant(lp);
+  if (!requestedAt || startsAt < requestedAt) return false;
+  return matches(lp, booking, teachers);
 }
 
 function firstLesson(input: Input, anchor: Date) {
@@ -145,10 +156,10 @@ function firstLesson(input: Input, anchor: Date) {
             ...booking, studentId: occurrence.studentId ?? "", teacherId: occurrence.teacherId, subject: occurrence.subjectId, course: occurrence.subjectId,
             sourceTeacherName: occurrence.teacherId === booking.teacherId ? booking.sourceTeacherName : undefined,
           };
-          if (!matches(input.lp, actualBooking, input.teachers)) return [];
-          if (activeLps.filter((lp) => matches(lp, actualBooking, input.teachers)).length !== 1) return [];
           const startsAt = scheduleOccurrenceInstant({ ...occurrence, timezone: booking.timezone! });
-          return startsAt >= anchor ? [{ startsAt, occurrenceId: occurrence.occurrenceId }] : [];
+          if (!matchesRequestedOccurrence(input.lp, actualBooking, input.teachers, startsAt)) return [];
+          if (activeLps.filter((lp) => matchesRequestedOccurrence(lp, actualBooking, input.teachers, startsAt)).length !== 1) return [];
+          return [{ startsAt, occurrenceId: occurrence.occurrenceId }];
         });
     } catch { return []; }
   });

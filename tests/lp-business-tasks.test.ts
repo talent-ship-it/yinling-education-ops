@@ -165,3 +165,58 @@ test("cancelling the only matching override does not satisfy first scheduling", 
   assert.equal(tasks[0].ruleKey, "lp.scheduling");
   assert.notEqual(tasks[0].status, "done");
 });
+
+test("a later LP request cannot displace the earlier LP's first lesson or reopen its scheduling", () => {
+  const first = { ...booking, date: "2026-10-22" };
+  const before = reconcileAllLpParentProgressTasks({ tasks: [], lps: [newLp], bookings: [first], teachers, now });
+  const later = {
+    ...newLp, id: "LP-LATER", requestedAt: "2026-10-20T03:00:00.000Z",
+    fields: { ...newLp.fields, requestSentAt: "2026-10-23T03:00:00.000Z" },
+  };
+  const after = reconcileAllLpParentProgressTasks({ tasks: before, lps: [newLp, later], bookings: [first], teachers, now: "2026-10-23T04:00:00.000Z" });
+  assert.deepEqual(after.filter((task) => task.anchorBookingId === newLp.id), before);
+  const waiting = after.filter((task) => task.anchorBookingId === later.id);
+  assert.equal(waiting.length, 1);
+  assert.equal(waiting[0].ruleKey, "lp.scheduling");
+  assert.notEqual(waiting[0].status, "done");
+});
+
+test("only exact eligible request instants let another LP compete for an occurrence", () => {
+  const first = { ...booking, date: "2026-10-22" };
+  const noIntakeFields = { teacher: "Teacher A", subject: "English", preparationFollowUp: "是" };
+  const competitors = [
+    { ...newLp, id: "LATER", fields: noIntakeFields, requestedAt: "2026-10-23T03:00:00.000Z" },
+    { ...newLp, id: "UNKNOWN", fields: noIntakeFields },
+    { ...newLp, id: "DATE-ONLY", fields: noIntakeFields, requestedAt: "2026-10-21" },
+  ];
+  const tasks = reconcileAllLpParentProgressTasks({ tasks: [], lps: [newLp, ...competitors], bookings: [first], teachers, now });
+  assert.equal(tasks.find((task) => task.anchorBookingId === newLp.id && task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
+});
+
+test("duplicate teacher names cannot bind either roster identity through a name-valued LP", () => {
+  const duplicateRoster = [{ id: "T-1", name: "Teacher A" }, { id: "T-2", name: "Teacher A" }];
+  for (const teacherId of ["T-1", "T-2"]) {
+    const tasks = reconcileAllLpParentProgressTasks({ tasks: [], lps: [newLp], bookings: [{ ...booking, teacherId, sourceTeacherName: "Teacher A" }], teachers: duplicateRoster, now });
+    assert.equal(tasks.length, 1);
+    assert.notEqual(tasks[0].status, "done");
+  }
+});
+
+test("an exact teacher ID remains specific even when roster names are duplicated", () => {
+  const duplicateRoster = [{ id: "T-1", name: "Teacher A" }, { id: "T-2", name: "Teacher A" }];
+  const identified = { ...newLp, fields: { ...newLp.fields, teacher: "T-1" } };
+  const matching = reconcileAllLpParentProgressTasks({ tasks: [], lps: [identified], bookings: [booking], teachers: duplicateRoster, now });
+  assert.equal(matching.find((task) => task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
+  const other = reconcileAllLpParentProgressTasks({ tasks: [], lps: [identified], bookings: [{ ...booking, teacherId: "T-2" }], teachers: duplicateRoster, now });
+  assert.equal(other.length, 1);
+  assert.notEqual(other[0].status, "done");
+});
+
+test("source teacher text cannot invent an identity while an explicit LP binding remains authoritative", () => {
+  const unknownTeacher = { ...booking, teacherId: "EXTERNAL-UNKNOWN", sourceTeacherName: "Teacher A" };
+  const pending = runOccurrenceBooking(unknownTeacher);
+  assert.equal(pending.length, 1);
+  assert.notEqual(pending[0].status, "done");
+  const bound = runOccurrenceBooking({ ...unknownTeacher, lpId: newLp.id });
+  assert.equal(bound.find((task) => task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
+});
