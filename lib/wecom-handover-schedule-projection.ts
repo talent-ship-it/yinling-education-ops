@@ -3,9 +3,10 @@ import { mapJiaowubaoSnapshotParticipant, type JiaowubaoSnapshotStudentLookup } 
 import { normalizeStudentImportName, studentImportAutomaticJwbNameKey } from "./student-import";
 import { trialAccountFromParticipants, trialAccountLetter } from "./trial-account-label";
 import { isTrialIntake, jiaowubaoTrialCourseTitleMatchesStudentName, matchTrialScheduleEvents, trialPlannerHintFromParticipants, type TrialScheduleEventLike } from "./trial-operations";
+import { wecomHandoverScheduleTitleName } from "./wecom-handover-schedule-title";
 import { buildWecomLpDraft } from "./wecom-lp-draft";
 import type { WecomLpDraftRawSource } from "./wecom-lp-intake";
-import type { WecomHandoverScheduleCandidate, WecomHandoverScheduleEvidence, WecomHandoverScheduleEvent, WecomHandoverScheduleInput } from "./wecom-handover-schedule-types";
+import { WECOM_HANDOVER_SCHEDULE_ALGORITHM_VERSION, type WecomHandoverScheduleCandidate, type WecomHandoverScheduleEvidence, type WecomHandoverScheduleEvent, type WecomHandoverScheduleInput } from "./wecom-handover-schedule-types";
 
 type RecordValue = Record<string, unknown>;
 type Student = RecordValue & { id: string; name: string };
@@ -139,7 +140,8 @@ function teacherChoices(value: unknown, teachers: readonly RecordValue[]) {
   }
   const tokens = label.split(/\s+/u);
   const choices = tokens.map((token) => teachers.filter((teacher) => teacherKey(text(teacher.name).split(/\s+/u)[0]) === teacherKey(token)).map((teacher) => text(teacher.id)).filter(Boolean));
-  return { ids: choices.every((ids) => unique(ids).length === 1) ? unique(choices.flat()) : [], alias: true, provided: true };
+  const resolved = choices.every((ids) => unique(ids).length === 1) || tokens.every((token) => /^[A-Za-z]+$/u.test(token)) && choices.every((ids) => ids.length > 0);
+  return { ids: resolved ? unique(choices.flat()) : [], alias: true, provided: true };
 }
 function subjectKeys(value: unknown) {
   let label = text(value).normalize("NFKC").toLocaleLowerCase("en-AU")
@@ -202,7 +204,7 @@ function prepareEvent(raw: WecomHandoverScheduleEvent, students: readonly Studen
 function coarseMatch(context: Context, event: PreparedEvent) {
   return Boolean(context.teacher.ids.length && event.teacher.ids.some((id) => context.teacher.ids.includes(id))
     && context.subject && subjectMatches(context.subject, event.raw.courseName)
-    && context.planner && context.planner === key(event.event.trialPlannerHint));
+    && context.planner && sourcePlannerCompatible(context, event));
 }
 function inSourceWindow(context: Context, event: PreparedEvent) {
   const start = Date.parse(event.raw.startsAt);
@@ -226,7 +228,7 @@ function contentionProof(context: Context, event: PreparedEvent) {
   const teacher = event.teacher.ids.some((id) => context.contentionTeacherIds.includes(id))
     || context.contentionTeacherLabels.some((label) => teacherKey(label) === teacherKey(event.raw.sourceTeacherLabel));
   const subject = context.contentionSubjects.some((value) => subjectMatches(value, event.raw.courseName));
-  const planner = Boolean(event.event.trialPlannerHint && context.contentionPlanners.includes(key(event.event.trialPlannerHint)));
+  const planner = Boolean(context.contentionPlanners.length && (!event.event.trialPlannerHint || context.contentionPlanners.includes(key(event.event.trialPlannerHint))));
   return { teacher, subject, planner };
 }
 function contendedIdentityCompatible(context: Context, event: PreparedEvent, proof: ReturnType<typeof contentionProof>) {
@@ -324,7 +326,7 @@ function uncertainEventContention(context: Context, event: PreparedEvent, studen
 function candidateStudentAllowed(context: Context, id: string, students: readonly Student[]) {
   return (!context.allowed || context.allowed.includes(id)) && (!context.explicitNames.length || students.some((student) => student.id === id && nameKey(student.name) === context.explicitNames[0]));
 }
-function scheduleCandidate(event: PreparedEvent, student: Student, checkedAt: string): WecomHandoverScheduleCandidate {
+function scheduleCandidate(event: PreparedEvent, student: Readonly<{ id: string | null; name: string }>, checkedAt: string): WecomHandoverScheduleCandidate {
   return { studentId: student.id, studentName: student.name, sourceRunId: event.raw.sourceRunId, schedule: {
     source: "jiaowubao-open-api", sourceRevision: event.raw.sourceRevision, eventId: event.raw.eventId,
     startsAt: new Date(event.raw.startsAt).toISOString(), endsAt: new Date(event.raw.endsAt).toISOString(),
@@ -333,12 +335,23 @@ function scheduleCandidate(event: PreparedEvent, student: Student, checkedAt: st
     durationMinutes: (Date.parse(event.raw.endsAt) - Date.parse(event.raw.startsAt)) / 60_000, matchedAt: checkedAt,
   } };
 }
+function pureSharedParticipants(event: PreparedEvent) {
+  const letter = event.event.sharedAccountLetter;
+  return Boolean(letter && event.raw.sourceParticipants.length && event.raw.sourceParticipants.every((participant) => trialAccountLetter(participant.label) === letter));
+}
+function titleOnlyCandidate(context: Context, event: PreparedEvent, checkedAt: string) {
+  if (event.studentIds.length || context.allowed !== null || context.strong || !pureSharedParticipants(event)) return [];
+  const name = wecomHandoverScheduleTitleName(event.raw.courseName);
+  if (!name || !realName(name, context.source.wechatName) || context.explicitNames.some((value) => value !== nameKey(name))) return [];
+  return [scheduleCandidate(event, { id: null, name }, checkedAt)];
+}
 function eventCandidates(context: Context, event: PreparedEvent, scope: CandidateScope) {
+  if (!event.studentIds.length) return titleOnlyCandidate(context, event, scope.checkedAt);
   return event.studentIds.filter((id) => candidateStudentAllowed(context, id, scope.students))
     .map((id) => scheduleCandidate(event, scope.students.find((student) => student.id === id)!, scope.checkedAt));
 }
 function compareCandidates(left: WecomHandoverScheduleCandidate, right: WecomHandoverScheduleCandidate) {
-  return left.schedule.startsAt.localeCompare(right.schedule.startsAt) || left.schedule.eventId.localeCompare(right.schedule.eventId) || left.studentId.localeCompare(right.studentId);
+  return left.schedule.startsAt.localeCompare(right.schedule.startsAt) || left.schedule.eventId.localeCompare(right.schedule.eventId) || (left.studentId ?? "").localeCompare(right.studentId ?? "");
 }
 function sourceCandidates(context: Context, scope: CandidateScope) {
   const available = scope.events.filter((event) => !scope.occupied.has(event.raw.eventId));
@@ -380,7 +393,7 @@ function selectionProofSafe(entry: SourceCandidates, selection: Selection) {
 }
 function automaticMatch(entry: SourceCandidates, selection: Selection, scope: EvidenceScope) {
   const { candidate, event } = selection;
-  if (!candidate || !event) return false;
+  if (!candidate || !candidate.studentId || !event) return false;
   if (entry.context.strong !== candidate.studentId || !futureUniqueEvent(entry.context, event, scope.now)) return false;
   if (!selectionProofSafe(entry, selection)) return false;
   return scope.proven.some((match) => match.lpItemId === entry.context.source.sourceMessageId && match.link.eventId === candidate.schedule.eventId);
@@ -399,7 +412,7 @@ function evidenceStatus(entry: SourceCandidates, selection: Selection, automatic
 function sourceEvidence(entry: SourceCandidates, scope: EvidenceScope): WecomHandoverScheduleEvidence {
   const selection = sourceSelection(entry, scope);
   const automatic = automaticMatch(entry, selection, scope);
-  return { sourceMessageId: entry.context.source.sourceMessageId, sourceRevision: entry.context.source.sourceRevision, snapshotRevision: scope.snapshotRevision, checkedAt: scope.checkedAt,
+  return { algorithmVersion: WECOM_HANDOVER_SCHEDULE_ALGORITHM_VERSION, sourceMessageId: entry.context.source.sourceMessageId, sourceRevision: entry.context.source.sourceRevision, snapshotRevision: scope.snapshotRevision, checkedAt: scope.checkedAt,
     status: evidenceStatus(entry, selection, automatic), matchedStudentId: automatic ? selection.candidate!.studentId : null, candidates: entry.candidates.slice(0, MAX_CANDIDATES) };
 }
 export function prepareWecomHandoverScheduleProjection(input: WecomHandoverScheduleInput): readonly WecomHandoverScheduleEvidence[] {

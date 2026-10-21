@@ -15,7 +15,7 @@ const raw: WecomLpDraftRawSource = {
 const rows: OpsStateRow[] = [{ entity: "students", payload: [student], version: 1, updated_at: raw.createdAt, updated_by: "synthetic" }];
 const source = decorateWecomLpDraft(raw, [student], rows);
 const schedule = { source: "jiaowubao-open-api" as const, eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z", studentName: student.name, courseName: "English", teacherName: "Synthetic Teacher", teacherId: null, plannerHint: null, matchedAt: raw.createdAt, sourceRevision: `sha256:${"b".repeat(64)}`, sharedAccountLabel: null, sharedAccountLetter: null };
-const evidence: WecomHandoverScheduleEvidence = { sourceMessageId: raw.sourceMessageId, sourceRevision: raw.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: raw.createdAt, status: "matched", matchedStudentId: student.id, candidates: [{ studentId: student.id, studentName: student.name, sourceRunId: "private-run-id", schedule }] };
+const evidence: WecomHandoverScheduleEvidence = { algorithmVersion: "2", sourceMessageId: raw.sourceMessageId, sourceRevision: raw.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: raw.createdAt, status: "matched", matchedStudentId: student.id, candidates: [{ studentId: student.id, studentName: student.name, sourceRunId: "private-run-id", schedule }] };
 
 test("strong visible evidence fills the draft and whitelists the public schedule without mutating inputs", () => {
   const before = JSON.stringify({ source, rows, evidence });
@@ -37,6 +37,13 @@ test("teacher and subject candidates remain separate from identity and LP form s
   assert.equal(result.resolvedStudentName, null);
   assert.equal(result.trialSchedule, undefined);
   assert.equal(result.scheduleEvidence?.candidates[0].studentName, student.name);
+});
+
+test("evidence from missing, older, or unknown algorithms never reaches the draft", () => {
+  for (const algorithmVersion of [undefined, "1", "3"]) {
+    const stale = { ...evidence, algorithmVersion } as unknown as WecomHandoverScheduleEvidence;
+    assert.equal(applyWecomHandoverScheduleEvidence(source, stale, rows), source);
+  }
 });
 
 test("mixed visibility drops the whole candidate set rather than manufacturing uniqueness", () => {
@@ -65,4 +72,25 @@ test("confirmed LP evidence remains authoritative when reconciliation is pending
   const confirmed = { ...source, confirmed: { studentId: student.id, lpItemId: "LP-SYNTH" }, trialSchedule: schedule };
   assert.equal(applyWecomHandoverScheduleEvidence(confirmed, evidence, rows), confirmed);
   assert.equal(applyWecomHandoverScheduleEvidence(confirmed, undefined, rows), confirmed);
+});
+
+
+test("unregistered title-only candidates expose class details while leaving every identity field unresolved", () => {
+  const titleSchedule = { ...schedule, courseName: "English - New Child试听", studentName: "New Child", plannerHint: "Eileen" as const, sharedAccountLabel: "试听学员B2026", sharedAccountLetter: "b" };
+  const titleEvidence = { ...evidence, status: "candidate" as const, matchedStudentId: null, candidates: [{ ...evidence.candidates[0], studentId: null, studentName: "New Child", schedule: titleSchedule }] };
+  for (const status of ["candidate", "ambiguous"] as const) {
+    const result = applyWecomHandoverScheduleEvidence(source, { ...titleEvidence, status }, rows);
+    assert.equal(result.scheduleEvidence?.candidates[0].studentId, null);
+    assert.equal(result.scheduleEvidence?.candidates[0].studentName, "New Child");
+    assert.equal(result.scheduleEvidence?.candidates[0].schedule.startsAt, titleSchedule.startsAt);
+    assert.equal(result.draft.studentName, null);
+    assert.equal(result.matchedStudentId, null);
+    assert.equal(result.resolvedStudentName, null);
+    assert.equal(result.trialSchedule, undefined);
+  }
+  for (const schedule of [{ ...titleSchedule, sharedAccountLetter: "a" }, { ...titleSchedule, plannerHint: null }, { ...titleSchedule, sharedAccountLabel: null }, { ...titleSchedule, courseName: "English - Different Child试听" }, { ...titleSchedule, courseName: "English试听" }]) {
+    const invalid = { ...titleEvidence, candidates: [{ ...titleEvidence.candidates[0], schedule }] };
+    assert.equal(applyWecomHandoverScheduleEvidence(source, invalid, rows), source);
+  }
+  assert.equal(applyWecomHandoverScheduleEvidence(source, { ...titleEvidence, status: "matched" }, rows), source);
 });

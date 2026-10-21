@@ -133,7 +133,7 @@ test("evidence reads use the verified actor and never block readable handovers d
 
 
 test("GET joins persisted evidence by exact message revision and exposes only the public schedule", async () => {
-  const evidence = { sourceMessageId: command.sourceMessageId, sourceRevision: command.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: fields.requestSentAt, status: "matched" as const, matchedStudentId: "STU-1", candidates: [{ studentId: "STU-1", studentName: "Synthetic Child", sourceRunId: "private-snapshot-run", schedule: { source: "jiaowubao-open-api" as const, eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z", teacherName: "Synthetic Teacher", teacherId: null, courseName: "Y8 English", studentName: "Synthetic Child", plannerHint: null, matchedAt: fields.requestSentAt } }] };
+  const evidence = { algorithmVersion: "2" as const, sourceMessageId: command.sourceMessageId, sourceRevision: command.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: fields.requestSentAt, status: "matched" as const, matchedStudentId: "STU-1", candidates: [{ studentId: "STU-1", studentName: "Synthetic Child", sourceRunId: "private-snapshot-run", schedule: { source: "jiaowubao-open-api" as const, eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z", teacherName: "Synthetic Teacher", teacherId: null, courseName: "Y8 English", studentName: "Synthetic Child", plannerHint: null, matchedAt: fields.requestSentAt } }] };
   const f = harness({ evidence: [evidence] });
   const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
   const body = await response.json();
