@@ -6072,6 +6072,19 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
   };
 
+  const showLpStageView = (stage: LpStage) => {
+    const stageViews: Partial<Record<LpStage, string>> = {
+      "待资料": "waiting",
+      "待审核": "review",
+      "需修改": "revision",
+      "待备课确认": "waiting",
+    };
+    setLpFilter((current) => {
+      if (stage === "完成") return "complete";
+      return current === "all" || current === "active" || current === stageViews[stage] ? current : "active";
+    });
+  };
+
   const advanceLp = (item: LpItem) => {
     const currentIndex = lpStages.indexOf(item.stage);
     const nextStage = lpStages[Math.min(currentIndex + 1, lpStages.length - 1)];
@@ -6089,7 +6102,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       confirmLabel: `调整为 ${stage}`,
       onConfirm: async () => {
         const changedAt = new Date().toISOString();
-        await lpShared.mutateAndCommit((current) => current.map((entry) => {
+        const saved = await lpShared.mutateAndCommit((current) => current.map((entry) => {
           if (entry.id !== item.id) return entry;
           const changed = changeLpStage({
             id: entry.id,
@@ -6102,6 +6115,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           }, stage, { id: id("LPA"), at: changedAt, actor: operatorLabel(sessionOperator) });
           return { ...entry, stage: changed.stage, stageAudit: [...changed.audit] };
         }));
+        if (!saved.payload.some((entry) => entry.id === item.id && entry.stage === stage)) {
+          throw new Error("LP 阶段已变化，请刷新后重试");
+        }
+        showLpStageView(stage);
         addAudit("调整 LP 阶段", `${item.title}：${previousStage} → ${stage}`, stage === "完成" ? "green" : "blue");
         notify(`LP 已调整到「${stage}」`, () => {
           const revertedAt = new Date().toISOString();
@@ -6118,7 +6135,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             }, previousStage, { id: id("LPA"), at: revertedAt, actor: operatorLabel(sessionOperator) });
             return { ...entry, stage: reverted.stage, stageAudit: [...reverted.audit] };
           }))
-            .then(() => addAudit("撤销 LP 阶段调整", `${item.title}：${stage} → ${previousStage}`, "amber"))
+            .then((saved) => {
+              if (!saved.payload.some((entry) => entry.id === item.id && entry.stage === previousStage)) {
+                throw new Error("LP 阶段已变化，请刷新后重试");
+              }
+              showLpStageView(previousStage);
+              addAudit("撤销 LP 阶段调整", `${item.title}：${stage} → ${previousStage}`, "amber");
+            })
             .catch((error: unknown) => notify(error instanceof Error ? `撤销失败：${error.message}` : "撤销失败，请重试"));
         });
       },
@@ -8613,7 +8636,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const renderLp = () => {
     const visibleLp = scopedLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "revision" ? item.stage === "需修改" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
     const viewItems = [{ id: "active", label: "进行中", count: scopedLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: scopedLpItems.filter((item) => item.stage === "待审核").length }, { id: "revision", label: "需修改", count: scopedLpItems.filter((item) => item.stage === "需修改").length }, { id: "waiting", label: "等待资料/确认", count: scopedLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: scopedLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: scopedLpItems.length }];
-    const stageTone = (stage: LpItem["stage"]): Tone => stage === "完成" ? "green" : stage === "需修改" ? "red" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple";
+    const stageTone = (stage: LpItem["stage"]): Tone => (stage === "完成" || stage === "备课完成") ? "green" : stage === "需修改" ? "red" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple";
     const openLpCreate = () => {
       setLpDraftStudentId(selectedStudent.id);
       setModal("lp");
