@@ -1,4 +1,7 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-handover-schedule-title", source: "tests/sql/wecom-handover-schedule-title-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-title-runtime.sql" },
+  ] },
   { id: "wecom-handover-schedule-algorithm", source: "tests/sql/wecom-handover-schedule-algorithm-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-handover-schedule-algorithm-runtime.sql" },
   ] },

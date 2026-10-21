@@ -154,11 +154,39 @@ $$;
 revoke all on function public.read_wecom_handover_schedule_input(text,text,text[]) from public, anon, authenticated, service_role;
 grant execute on function public.read_wecom_handover_schedule_input(text,text,text[]) to anon, authenticated;
 
+create or replace function internal.wecom_schedule_account_letter(p_label text)
+returns text language sql immutable set search_path = '' as $$
+  with label as (select lower(btrim(normalize(p_label, NFKC))) as value), compact as (
+    select regexp_replace(value, '[[:space:][:punct:]＋＝￥€£●★☆✓✔♡♥・·｜—–～±×÷]+', '', 'g') as value from label
+  ) select case when (select value from label) ~ '^试听学员a\(tara龙\)[[:space:]]*2026$' then 'a'
+    else substring(value from U&'^(?:[试视]听(?:学[员生]|账号)?|trial(?:student|account)?)([abc])(?:(?:校长号|账号|account)[[:digit:]\FE0F\20E3]*|(?:year)?(?:19|20)[0-9]{2})*$') end from compact;
+$$;
+revoke all on function internal.wecom_schedule_account_letter(text) from public, anon, authenticated, service_role;
+
+create function internal.wecom_schedule_title_student_name(p_course text)
+returns text language plpgsql immutable set search_path = '' as $wecom_title_name$
+declare hint text; compact text;
+begin
+  hint := substring(btrim(normalize(coalesce(p_course,''),NFKC))
+    from '^.*[-–—][[:space:]]+(.{1,80}?)[[:space:]]*试听(?:课)?[[:space:]]*$');
+  hint := btrim(hint);
+  if coalesce(hint,'') !~ '^[A-Za-z ''’.一-鿿-]+$' then return null; end if;
+  hint := regexp_replace(hint,'([A-Za-z])[ .''’_-]+(?=[一-鿿])','\1','g');
+  if hint !~ '^[A-Za-z''’.-]+( +[A-Za-z''’.-]+){0,3}[一-鿿]{0,8}$'
+      or hint !~ '[A-Za-z]' or internal.wecom_schedule_account_letter(hint) is not null then return null; end if;
+  compact := replace(lower(hint),' ','');
+  if compact ~ '^(?:(?:english|mathematics|maths?|verbalreasoning|reading|writing|science|physics|chemistry|biology|aes|trial))+$'
+      or compact ~ '^(?:unknown|tbd|na|none|null|student|unknownstudent|newstudent|trialstudent|placeholder|pending|notprovided|notknown)$' then return null; end if;
+  return hint;
+end;
+$wecom_title_name$;
+revoke all on function internal.wecom_schedule_title_student_name(text) from public, anon, authenticated, service_role;
+
 create or replace function public.save_wecom_handover_schedule_evidence(
   p_secret text,p_snapshot_revision text,p_input_revision text,p_evidence jsonb,p_actor text default 'Ops Admin'
 ) returns jsonb language plpgsql security definer set search_path = '' set statement_timeout = '13s' set work_mem = '32MB' as $$
 declare epoch text; input jsonb; entry jsonb; candidate jsonb; schedule jsonb; source jsonb; event jsonb; student jsonb;
-  ids text[]; checked timestamptz; account_metadata jsonb; count_matched integer := 0; count_candidate integer := 0;
+  ids text[]; checked timestamptz; account_metadata jsonb; title_name text; title_only boolean; count_matched integer := 0; count_candidate integer := 0;
 begin
   if internal.verify_ops_secret(p_secret) is not true then raise exception using errcode = '42501', message = 'invalid_ops_secret'; end if;
   if p_actor is distinct from 'Ops Admin' or jsonb_typeof(p_evidence) is distinct from 'array'
@@ -210,15 +238,25 @@ begin
       if jsonb_typeof(candidate) is distinct from 'object'
          or candidate - array['studentId','studentName','schedule','sourceRunId']::text[] <> '{}'::jsonb
          or not(candidate ?& array['studentId','studentName','schedule','sourceRunId'])
-         or exists(select 1 from unnest(array['studentId','studentName','sourceRunId']) key
+         or exists(select 1 from unnest(array['studentName','sourceRunId']) key
            where jsonb_typeof(candidate -> key) is distinct from 'string')
-         or nullif(candidate ->> 'studentId','') is null or jsonb_typeof(candidate -> 'schedule') is distinct from 'object' then
+         or jsonb_typeof(candidate -> 'studentId') not in ('string','null')
+         or (candidate -> 'studentId' <> 'null'::jsonb and nullif(candidate ->> 'studentId','') is null)
+         or jsonb_typeof(candidate -> 'schedule') is distinct from 'object' then
         raise exception using errcode = '22023', message = 'invalid_wecom_schedule_candidate';
       end if;
-      select s into student from public.ops_state r cross join jsonb_array_elements(r.payload) s
-        where r.entity = 'students' and s ->> 'id' = candidate ->> 'studentId' and coalesce(s ->> 'importArchived','false') <> 'true';
-      if student is null or student ->> 'name' is distinct from candidate ->> 'studentName' then
-        raise exception using errcode = '22023', message = 'invalid_wecom_schedule_student';
+      title_only := candidate -> 'studentId' = 'null'::jsonb;
+      if title_only then
+        student := null;
+        if entry ->> 'status' not in ('candidate','ambiguous') then
+          raise exception using errcode = '22023', message = 'invalid_wecom_schedule_title_candidate';
+        end if;
+      else
+        select s into student from public.ops_state r cross join jsonb_array_elements(r.payload) s
+          where r.entity = 'students' and s ->> 'id' = candidate ->> 'studentId' and coalesce(s ->> 'importArchived','false') <> 'true';
+        if student is null or student ->> 'name' is distinct from candidate ->> 'studentName' then
+          raise exception using errcode = '22023', message = 'invalid_wecom_schedule_student';
+        end if;
       end if;
       schedule := candidate -> 'schedule';
       if schedule - array['source','eventId','startsAt','endsAt','courseName','studentName','teacherId','teacherName','plannerHint','matchedAt','sourceRevision','durationMinutes','sharedAccountLabel','sharedAccountLetter']::text[] <> '{}'::jsonb
@@ -230,13 +268,24 @@ begin
          or jsonb_typeof(schedule -> 'plannerHint') not in ('null','string')
          or (schedule ? 'durationMinutes' and jsonb_typeof(schedule -> 'durationMinutes') is distinct from 'number')
          or schedule ->> 'source' is distinct from 'jiaowubao-open-api'
-         or schedule ->> 'studentName' is distinct from student ->> 'name'
+         or schedule ->> 'studentName' is distinct from candidate ->> 'studentName'
          or schedule ->> 'matchedAt' is distinct from entry ->> 'checkedAt' then
         raise exception using errcode = '22023', message = 'invalid_wecom_schedule_link';
       end if;
       select value into event from jsonb_array_elements(input -> 'events')
         where value ->> 'eventId' = schedule ->> 'eventId' and value ->> 'sourceRunId' = candidate ->> 'sourceRunId';
       account_metadata := internal.wecom_schedule_account_metadata(event -> 'sourceParticipants');
+      if title_only then
+        title_name := internal.wecom_schedule_title_student_name(event ->> 'courseName');
+        if title_name is null or candidate ->> 'studentName' is distinct from title_name
+            or nullif(account_metadata ->> 'sharedAccountLetter','') is null
+            or jsonb_array_length(event -> 'sourceParticipants') = 0
+            or exists(select 1 from jsonb_array_elements(event -> 'sourceParticipants') participant
+              where internal.wecom_schedule_account_letter(participant ->> 'label')
+                is distinct from account_metadata ->> 'sharedAccountLetter') then
+          raise exception using errcode = '22023', message = 'invalid_wecom_schedule_title_candidate';
+        end if;
+      end if;
       if event is null or coalesce((event ->> 'sourceStudentsTruncated')::boolean,true)
          or schedule ->> 'sourceRevision' is distinct from event ->> 'sourceRevision'
          or (schedule ->> 'startsAt')::timestamptz is distinct from (event ->> 'startsAt')::timestamptz
@@ -292,11 +341,12 @@ begin
     and e.snapshot_revision = (select revision from internal.jiaowubao_open_api_schedule_snapshot_current where api_source_key='jwb-open-api-schedule')
     and source.value ->> 'sourceRevision' = e.source_revision and source.value -> 'confirmed' = 'null'::jsonb
     and (p_full_admin or source.value ->> 'operationsOwner' = btrim(p_actor))
-    and not exists(select 1 from jsonb_array_elements(e.evidence -> 'candidates') candidate where not exists(
-      select 1 from public.ops_state r cross join jsonb_array_elements(r.payload) student
-      where r.entity='students' and student ->> 'id'=candidate ->> 'studentId'
-        and coalesce(student ->> 'importArchived','false') <> 'true'
-        and (p_full_admin or student ->> 'owner'=btrim(p_actor))));
+    and not exists(select 1 from jsonb_array_elements(e.evidence -> 'candidates') candidate
+      where case when candidate -> 'studentId' = 'null'::jsonb then not p_full_admin else not exists(
+        select 1 from public.ops_state r cross join jsonb_array_elements(r.payload) student
+        where r.entity='students' and student ->> 'id'=candidate ->> 'studentId'
+          and coalesce(student ->> 'importArchived','false') <> 'true'
+          and (p_full_admin or student ->> 'owner'=btrim(p_actor))) end);
   return result;
 end;
 $$;
