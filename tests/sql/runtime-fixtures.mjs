@@ -1,4 +1,13 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-lp-business-handover", source: "tests/sql/wecom-lp-business-handover-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-lp-business-handover-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20261019000100_wecom_safe_guardian_identity.sql",
+      start: "create or replace function internal.wecom_guardian_identity_label(p_value text)",
+      end: "do $wecom_guardian_identity_patch$" },
+    { kind: "sql", file: "supabase/migrations/20261020104800_wecom_lp_handover_time_range.sql" },
+    { kind: "sql", file: "supabase/migrations/20261021112850_lp_business_handover_types.sql" },
+    { kind: "sql", file: "tests/sql/wecom-lp-business-handover-runtime.sql" },
+  ] },
   { id: "wecom-handover-schedule-title", source: "tests/sql/wecom-handover-schedule-title-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-handover-schedule-title-runtime.sql" },
   ] },
