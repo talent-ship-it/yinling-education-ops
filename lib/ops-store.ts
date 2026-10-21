@@ -4639,3 +4639,22 @@ export function getTrialScreenshotCommandResult(input: Pick<TrialScreenshotConfi
     p_actor: input.actor, p_full_admin: input.fullAdmin,
   });
 }
+
+export function readWecomHandoverScheduleInput(input: { snapshotRevision: string; sourceMessageIds?: readonly string[] }, options: OpsRpcOptions = {}) {
+  return rpc<import("./wecom-handover-schedule-types").WecomHandoverScheduleInput>("read_wecom_handover_schedule_input", {
+    p_secret: configuration().secret, p_snapshot_revision: input.snapshotRevision, p_source_message_ids: input.sourceMessageIds ?? null,
+  }, options);
+}
+export function saveWecomHandoverScheduleEvidence(input: {
+  snapshotRevision: string; inputRevision: string; evidence: readonly import("./wecom-handover-schedule-types").WecomHandoverScheduleEvidence[];
+}, options: OpsRpcOptions = {}) {
+  return rpc<import("./wecom-handover-schedule-reconciliation").WecomHandoverScheduleReceipt>("save_wecom_handover_schedule_evidence", {
+    p_secret: configuration().secret, p_snapshot_revision: input.snapshotRevision, p_input_revision: input.inputRevision,
+    p_evidence: input.evidence, p_actor: "Ops Admin",
+  }, options);
+}
+export function readWecomHandoverScheduleEvidence(input: { sourceMessageIds: readonly string[]; actor: string; fullAdmin: boolean }) {
+  return rpc<readonly import("./wecom-handover-schedule-types").WecomHandoverScheduleEvidence[]>("read_wecom_handover_schedule_evidence", {
+    p_secret: configuration().secret, p_source_message_ids: input.sourceMessageIds, p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}

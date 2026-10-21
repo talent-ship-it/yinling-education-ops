@@ -15,8 +15,10 @@ export type WecomLpDraftSource = Readonly<{
   confirmed: null | Readonly<{ studentId: string; lpItemId: string }>;
   draft: WecomLpDraft; matchedStudentId?: string | null;
   resolvedStudentName?: string | null; trialSchedule?: TrialScheduleLink;
+  scheduleEvidence?: import("./wecom-handover-schedule-display").WecomHandoverScheduleDisplay;
+  scheduleEvidenceUnavailable?: boolean;
 }>;
-export type WecomLpDraftRawSource = Omit<WecomLpDraftSource, "draft" | "matchedStudentId" | "resolvedStudentName" | "trialSchedule">;
+export type WecomLpDraftRawSource = Omit<WecomLpDraftSource, "draft" | "matchedStudentId" | "resolvedStudentName" | "trialSchedule" | "scheduleEvidence" | "scheduleEvidenceUnavailable">;
 export type WecomLpDraftPage = Readonly<{ rows: readonly WecomLpDraftRawSource[]; nextCursor: string | null; total: number }>;
 export type WecomLpConfirmation = Readonly<{
   commandKey: string; caseId: string; sourceMessageId: string; sourceRevision: string;

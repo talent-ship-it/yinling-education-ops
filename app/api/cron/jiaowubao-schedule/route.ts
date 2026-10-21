@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { runWecomHandoverScheduleReconciliation } from "@/lib/wecom-handover-schedule-reconciliation";
 
 import { NextResponse } from "next/server";
 
@@ -49,6 +50,8 @@ import {
   confirmJiaowubaoOpenApiScheduleSnapshotCurrent,
   getJiaowubaoOpenApiScheduleProjectionTarget,
   OpsStoreError,
+  readWecomHandoverScheduleInput,
+  saveWecomHandoverScheduleEvidence,
   prepareJiaowubaoOpenApiAuthority,
   projectJiaowubaoOpenApiAuthority,
   readJiaowubaoScheduleHorizonPages,
@@ -518,10 +521,16 @@ async function projectTrialHorizon(
   options: () => OpsRpcOptions,
   allowStalePinnedRevision: boolean,
 ) {
-  return runJiaowubaoTrialAutoSyncHorizon({
+  const trials = await runJiaowubaoTrialAutoSyncHorizon({
     snapshotRevision,
     windows: jiaowubaoScheduleCollectionWindows(window).map(jiaowubaoTrialProjectionWindow),
   }, options, allowStalePinnedRevision ? window : null);
+  const handovers = await runWecomHandoverScheduleReconciliation(snapshotRevision, {
+    readInput: (revision) => readWecomHandoverScheduleInput({ snapshotRevision: revision }, options()),
+    save: (input) => saveWecomHandoverScheduleEvidence(input, options()),
+    now: () => new Date(),
+  });
+  return { ...trials, handovers };
 }
 
 type AuthorityProjectionReceipt = Awaited<ReturnType<typeof projectAuthority>>;

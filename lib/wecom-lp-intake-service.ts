@@ -3,9 +3,10 @@ import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filte
 import { normaliseDemoUserName } from "./demo-users";
 import { LpAtomicError } from "./lp-atomic-service";
 import { decorateWecomLpDraft } from "./wecom-lp-draft-enrichment";
+import { applyWecomHandoverScheduleEvidence } from "./wecom-handover-schedule-display";
 import { parseWecomLpDraftQuery } from "./wecom-lp-draft-query";
 import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation } from "./wecom-lp-intake";
-import type { OpsStateRow, readWecomLpDraft, readWecomLpDrafts, confirmWecomLpDraftAtomic } from "./ops-store";
+import type { OpsStateRow, readWecomLpDraft, readWecomLpDrafts, readWecomHandoverScheduleEvidence, confirmWecomLpDraftAtomic } from "./ops-store";
 
 type Dependencies = {
   readSession: () => Promise<{ session: DemoSessionIdentity; fullAdmin: boolean } | { error: string; status: number }>;
@@ -13,6 +14,7 @@ type Dependencies = {
   readDraft: typeof readWecomLpDraft;
   readDrafts: typeof readWecomLpDrafts;
   confirm: typeof confirmWecomLpDraftAtomic;
+  readScheduleEvidence: typeof readWecomHandoverScheduleEvidence;
 };
 class IntakeError extends Error {
   constructor(readonly status: number, message: string, readonly code = "invalid_draft") { super(message); }
@@ -76,6 +78,18 @@ function committedResponse(result: Awaited<ReturnType<Dependencies["confirm"]>>[
   const visible = filterOpsStateRows(rows, buildOpsAccessContext(rows, ctx.session.user, ctx.fullAdmin, ctx.session));
   return json({ committed: true, applied: result.applied, studentId: result.student_id, lpItemId: result.lp_item_id, studentsRow: visible.find((row) => row.entity === "students"), lpItemsRow: visible.find((row) => row.entity === "lpItems"), tasksRow: visible.find((row) => row.entity === "tasks"), filesRow: visible.find((row) => row.entity === "files") });
 }
+async function decoratePage(dependencies: Dependencies, ctx: Context, sources: readonly import("./wecom-lp-intake").WecomLpDraftRawSource[]) {
+  const visible = filterOpsStateRows(ctx.rows, ctx.access);
+  const drafts = sources.map((source) => decorateWecomLpDraft(source, studentsFrom(ctx.rows), visible));
+  if (!drafts.length) return drafts;
+  try {
+    const evidence = await dependencies.readScheduleEvidence({ sourceMessageIds: sources.map((source) => source.sourceMessageId), actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
+    if (!Array.isArray(evidence)) throw new Error("invalid_handover_schedule_evidence");
+    return drafts.map((source) => applyWecomHandoverScheduleEvidence(source, evidence.find((entry) => entry.sourceMessageId === source.sourceMessageId), visible));
+  } catch {
+    return drafts.map((source) => ({ ...source, scheduleEvidenceUnavailable: true }));
+  }
+}
 export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
   return {
     GET: async (request: Request) => {
@@ -83,8 +97,7 @@ export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
         const ctx = await context(dependencies);
         const query = parseWecomLpDraftQuery(new URL(request.url).searchParams);
         const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, ...query });
-        const visible = filterOpsStateRows(ctx.rows, ctx.access);
-        return json({ drafts: page.rows.map((source) => decorateWecomLpDraft(source, studentsFrom(ctx.rows), visible)), nextCursor: page.nextCursor, total: page.total });
+        return json({ drafts: await decoratePage(dependencies, ctx, page.rows), nextCursor: page.nextCursor, total: page.total });
       } catch (error) { return failure(error); }
     },
     POST: async (request: Request) => {

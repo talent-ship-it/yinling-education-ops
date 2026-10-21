@@ -33,7 +33,7 @@ function scheduleMetadata(schedule: RecordValue) {
     sharedAccountLabel: nullableText(schedule.sharedAccountLabel), sharedAccountLetter: nullableText(schedule.sharedAccountLetter),
   };
 }
-function scheduleOf(lp: RecordValue | undefined): TrialScheduleLink | undefined {
+export function wecomLpScheduleOf(lp: RecordValue | undefined): TrialScheduleLink | undefined {
   const schedule = lp?.trialSchedule;
   if (!validSchedule(schedule)) return undefined;
   return {
@@ -57,6 +57,6 @@ export function decorateWecomLpDraft(source: WecomLpDraftRawSource, students: re
   const resolvedStudentName = conflicted ? null : source.studentName || draft.studentName || name;
   const enrichedDraft = name && !draft.studentName ? { ...draft, studentName: name, fields: { ...draft.fields, studentNameKnown: true, studentName: name },
     missingFields: draft.missingFields.filter((field) => !["studentName", "studentNameKnown"].includes(field.field)) } : draft;
-  const trialSchedule = scheduleOf(lp);
+  const trialSchedule = wecomLpScheduleOf(lp);
   return { ...source, draft: enrichedDraft, matchedStudentId, resolvedStudentName, ...(trialSchedule ? { trialSchedule } : {}) };
 }
