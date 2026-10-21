@@ -1,4 +1,11 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "lp-business-scheduler", source: "tests/sql/lp-business-scheduler-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/lp-business-scheduler-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20260819101800_enforce_task_canonical_deadlines.sql",
+      start: "set local lock_timeout = '1s';", end: "-- Replace the 191008 writer so a manual thaw is one transaction spanning the" },
+    { kind: "sql", file: "supabase/migrations/20261021114139_lp_business_scheduler_teacher_versions.sql" },
+    { kind: "sql", file: "tests/sql/lp-business-scheduler-runtime.sql" },
+  ] },
   { id: "wecom-lp-business-handover", source: "tests/sql/wecom-lp-business-handover-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-lp-business-handover-setup.sql" },
     { kind: "sql-fragment", file: "supabase/migrations/20261019000100_wecom_safe_guardian_identity.sql",
