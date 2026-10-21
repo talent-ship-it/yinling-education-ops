@@ -201,3 +201,13 @@ test("allows a historic task whose former student no longer has a current row", 
     fullAdmin: true,
   }));
 });
+
+test("automatic legacy trial deadlines cannot be manually supplied through the repair command", () => {
+  const automatic = task({ title: "试听收费确认", category: "试听", trigger: "试听 LP 收费提醒" });
+  assert.throws(() => authorizeLegacyTaskDeadlineCommand({
+    command: command(), rows: rows(student(), automatic), actor: "Nixon", role: "admin", fullAdmin: true,
+  }), (error) => errorCode(error) === "task_not_legacy");
+  assert.doesNotThrow(() => authorizeLegacyTaskDeadlineCommand({
+    command: command(), rows: rows(student(), { ...automatic, trigger: "人工创建" }), actor: "Nixon", role: "admin", fullAdmin: true,
+  }));
+});
