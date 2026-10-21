@@ -2,19 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createWecomLpIntakeHandlers } from "../lib/wecom-lp-intake-service";
 import type { DemoSessionIdentity } from "../lib/demo-session-token";
-import type { OpsStateRow, confirmWecomLpDraftAtomic, readWecomLpDrafts } from "../lib/ops-store";
+import type { OpsStateRow, confirmWecomLpDraftAtomic, readWecomLpDrafts, readWecomHandoverScheduleEvidence } from "../lib/ops-store";
 import type { WecomLpDraftRawSource } from "../lib/wecom-lp-intake";
 const fields = { responsibleOperations: "Ella", planner: "Eileen", requestSentAt: "2026-10-20T09:00:00.000Z", assignedTeacher: "Synthetic Teacher", subject: "Y8 English", oneSentenceDescription: "Synthetic learning needs", locationTimezone: "VIC", contactParents: true, contactStudent: false, contactPerson: "家长", timeMentioned: false, studentNameKnown: true, studentName: "Synthetic Child", trialDurationMinutes: 60, trialPaymentMethod: "后置付费试听", writingRequired: false, paperRequired: false, specifiedContentStatus: "无需指定", preparationFollowUp: "是", isUniversityStudent: false };
 const command = { commandKey: "b011aafd-7bb4-43d6-a52a-6c529221a55a", caseId: "d6385b25-691c-424f-a81b-5de3835ea703", sourceMessageId: "synthetic-handover-1", sourceRevision: "a".repeat(64), fields, expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 }, studentId: "STU-1" };
-function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string } = {}) {
+function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string; evidence?: Awaited<ReturnType<typeof readWecomHandoverScheduleEvidence>>; evidenceError?: boolean } = {}) {
   const student = { id: "STU-1", name: "Synthetic Child", owner: "Ella", planner: "Tara", guardianWechat: "Synthetic Parent" };
   const rows: OpsStateRow[] = ["students", "lpItems", "tasks", "files"].map((entity) => ({ entity, payload: entity === "students" ? [student, { ...student, id: "STU-OTHER", name: "Other Synthetic Child", guardianWechat: "Other Synthetic Parent", owner: "Tiffany" }] : [], version: 1, updated_at: fields.requestSentAt, updated_by: "synthetic" }));
   const source: WecomLpDraftRawSource = { id: command.sourceMessageId, sourceMessageId: command.sourceMessageId, caseId: command.caseId, sourceRevision: command.sourceRevision, wechatName: "Synthetic Parent", studentName: "Synthetic Child", operationsOwner: "Ella", coursePlanner: "Eileen", status: "identified", createdAt: fields.requestSentAt, messages: [{ messageId: command.sourceMessageId, text: "【安排教师】：Synthetic Teacher\n【安排科目】：Y8 English", sentAt: fields.requestSentAt }], confirmed: null };
   const saved: Parameters<typeof confirmWecomLpDraftAtomic>[0][] = [];
   const reads: Parameters<typeof readWecomLpDrafts>[0][] = [];
+  const evidenceReads: Parameters<typeof readWecomHandoverScheduleEvidence>[0][] = [];
   const handlers = createWecomLpIntakeHandlers({
     readSession: async () => ({ session: options.session ?? { user: "Ella", role: "staff", permissions: ["operations.read", "operations.write"] }, fullAdmin: options.fullAdmin ?? false }),
     readRows: async () => rows,
+    readScheduleEvidence: async (input) => { evidenceReads.push(input); if (options.evidenceError) throw new Error("private-database-error"); return options.evidence ?? []; },
     readDraft: async () => options.source === undefined ? source : options.source,
     readDrafts: async (input) => { reads.push(input); return { rows: options.source === null ? [] : [options.source ?? source], nextCursor: null, total: 1 }; },
     confirm: async (input) => {
@@ -24,7 +26,7 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
     },
   });
   const post = (input: unknown = command) => handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(input) }));
-  return { handlers, saved, reads, post, source, rows };
+  return { handlers, saved, reads, evidenceReads, post, source, rows };
 }
 test("confirmation keeps the existing roster planner and the handover planner separate", async () => {
   const f = harness(); const response = await f.post();
@@ -111,4 +113,35 @@ test("GET proves family uniqueness before filtering students by operations owner
   assert.equal(body.drafts[0].resolvedStudentName, null);
   assert.doesNotMatch(JSON.stringify(body), /Hidden Sibling|STU-HIDDEN-SIBLING/);
   assert.equal(f.saved.length, 0);
+});
+
+
+test("evidence reads use the verified actor and never block readable handovers during reconciliation outages", async () => {
+  const f = harness({ evidenceError: true });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.drafts[0].scheduleEvidenceUnavailable, true);
+  assert.equal(body.drafts[0].draft.fields.subject, "Y8 English");
+  assert.deepEqual(f.evidenceReads, [{ sourceMessageIds: [command.sourceMessageId], actor: "Ella", fullAdmin: false }]);
+  assert.equal(f.saved.length, 0);
+  assert.doesNotMatch(JSON.stringify(body), /private-database-error/);
+  const empty = harness({ source: null });
+  await empty.handlers.GET(new Request("https://synthetic.invalid/api"));
+  assert.equal(empty.evidenceReads.length, 0);
+});
+
+
+test("GET joins persisted evidence by exact message revision and exposes only the public schedule", async () => {
+  const evidence = { sourceMessageId: command.sourceMessageId, sourceRevision: command.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: fields.requestSentAt, status: "matched" as const, matchedStudentId: "STU-1", candidates: [{ studentId: "STU-1", studentName: "Synthetic Child", sourceRunId: "private-snapshot-run", schedule: { source: "jiaowubao-open-api" as const, eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z", teacherName: "Synthetic Teacher", teacherId: null, courseName: "Y8 English", studentName: "Synthetic Child", plannerHint: null, matchedAt: fields.requestSentAt } }] };
+  const f = harness({ evidence: [evidence] });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
+  const body = await response.json();
+  assert.equal(body.drafts[0].trialSchedule.eventId, "synthetic-event");
+  assert.equal(body.drafts[0].scheduleEvidence.status, "matched");
+  assert.doesNotMatch(JSON.stringify(body), /private-snapshot-run|snapshotRevision/);
+  assert.equal(f.saved.length, 0);
+  const stale = harness({ evidence: [{ ...evidence, sourceRevision: "c".repeat(64) }] });
+  const staleBody = await (await stale.handlers.GET(new Request("https://synthetic.invalid/api"))).json();
+  assert.equal(staleBody.drafts[0].trialSchedule, undefined);
 });

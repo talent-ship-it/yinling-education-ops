@@ -646,3 +646,63 @@ test("a roster-resolved draft name is visible and prefilled without silently cre
   expect(f.posted).toHaveLength(0);
   assertClean(f);
 });
+
+
+test("background refresh updates reconciled results while preserving loaded pages, filters and open edits", async ({ page }) => {
+  let updated = false;
+  const schedule = { source: "jiaowubao-open-api", ...screenshotCandidate(), matchedAt: NOW, studentName: "Synthetic Midnight", teacherId: null, plannerHint: null };
+  const f = await syntheticWorkspace(page, { sourcePage: (url) => {
+    const result = rangePage(url);
+    return updated ? { ...result, drafts: result.drafts.map((item) => (item as { id: string }).id === midnight.id ? { ...midnight, trialSchedule: schedule, resolvedStudentName: "Synthetic Midnight" } : item) } : result;
+  } });
+  await filterDay(page);
+  const panel = draftPanel(page);
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(2);
+  await panel.getByRole("button", { name: "Synthetic Midnight 核对并创建 LP", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "核对机器人交接", exact: true });
+  await dialog.locator('[name="subject"]').fill("Synthetic unsaved edit");
+  const before = f.reads.length;
+  updated = true;
+  await page.clock.runFor(60_001);
+  await expect.poll(() => f.reads.length).toBeGreaterThan(before);
+  await expect(panel.getByText("Synthetic Screenshot Teacher", { exact: true })).toBeVisible();
+  await expect(panel.locator(".collection-row")).toHaveCount(2);
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20");
+  await expect(dialog.locator('[name="subject"]')).toHaveValue("Synthetic unsaved edit");
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("candidate class information is visible without preselecting the student's identity", async ({ page }) => {
+  const unnamed = source(template.replace("【学生姓名】：Synthetic Student", "【学生姓名】："));
+  const candidate = { studentId: STUDENT_ID, studentName: "Synthetic Candidate Child", schedule: { source: "jiaowubao-open-api", ...screenshotCandidate(), matchedAt: NOW, studentName: "Synthetic Candidate Child", teacherId: null, plannerHint: null } };
+  const f = await syntheticWorkspace(page, { sourcePage: () => ({ drafts: [{ ...unnamed, scheduleEvidence: { status: "candidate", checkedAt: NOW, candidates: [candidate] } }], nextCursor: null, total: 1 }) });
+  const panel = draftPanel(page);
+  await expect(panel.getByText("候选课表，待核对学生", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Synthetic Candidate Child", { exact: true })).toBeVisible();
+  await expect(panel.getByText("19:05 – 20:05", { exact: true })).toBeVisible();
+  const dialog = await openDraft(page);
+  await expect(dialog.getByRole("combobox", { name: "学生档案", exact: true })).toHaveValue("new");
+  await expect(dialog.locator('[name="studentNameKnown"]')).toHaveValue("");
+  await expect(dialog.locator('[name="studentName"]')).toHaveCount(0);
+  await dialog.locator('[name="studentNameKnown"]').selectOption("是");
+  await expect(dialog.locator('[name="studentName"]')).toHaveValue("");
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("focus refresh withdraws invalidated schedule evidence without waiting for a manual refresh", async ({ page }) => {
+  let invalidated = false;
+  const initial = { ...source(), trialSchedule: { source: "jiaowubao-open-api", ...screenshotCandidate(), matchedAt: NOW, studentName: "Synthetic Student", teacherId: null, plannerHint: null } };
+  const f = await syntheticWorkspace(page, { sourcePage: () => ({ drafts: [invalidated ? source() : initial], nextCursor: null, total: 1 }) });
+  const panel = draftPanel(page);
+  await expect(panel.getByText("Synthetic Screenshot Teacher", { exact: true })).toBeVisible();
+  invalidated = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(panel.getByText("Synthetic Screenshot Teacher", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("上课时间：待核对教务宝课表", { exact: true })).toBeVisible();
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
