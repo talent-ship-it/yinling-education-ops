@@ -13,15 +13,21 @@ function workflowName(value: string) {
   return Object.hasOwn(workflowAliases, key) ? workflowAliases[key] : undefined;
 }
 
+export function wecomLpExplicitWorkflowTypes(text: string): readonly WecomLpWorkflowType[] {
+  return cleanValue(text).split("\n").flatMap((line) => {
+    const heading = line.replace(/\[Rose\]|\[玫瑰\]|🌹/giu, "").replace(/[\s【】\[\]]/gu, "");
+    const title = /^(.*?)信息交接(?:表|单)?$/u.exec(heading)?.[1];
+    const field = /^[\s【\[]*(?:LP类型|业务类型)[】\]]*\s*[:：]\s*(.*?)\s*$/u.exec(line)?.[1];
+    const type = workflowName(title ?? field ?? "");
+    return type ? [type] : [];
+  });
+}
+
 function sourceWorkflowTypes(records: readonly WecomLpDraftSourceRecord[]) {
   const found = new Map<WecomLpWorkflowType, string[]>();
   for (const record of records) {
-    for (const line of cleanValue(record.text).split("\n")) {
-      const heading = line.replace(/\[Rose\]|\[玫瑰\]|🌹/giu, "").replace(/[\s【】\[\]]/gu, "");
-      const title = /^(.*?)信息交接(?:表|单)?$/u.exec(heading)?.[1];
-      const field = /^[\s【\[]*(?:LP类型|业务类型)[】\]]*\s*[:：]\s*(.*?)\s*$/u.exec(line)?.[1];
-      const type = workflowName(title ?? field ?? "");
-      if (type) found.set(type, [...(found.get(type) ?? []), record.messageId]);
+    for (const type of wecomLpExplicitWorkflowTypes(record.text)) {
+      found.set(type, [...(found.get(type) ?? []), record.messageId]);
     }
   }
   return found;
