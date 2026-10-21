@@ -12,13 +12,14 @@ function sqlFunction(sql, signature) {
 }
 
 test("legacy deadline route reauthorizes before replay and gates clear before one atomic RPC", async () => {
-  const [route, executor, service, store, client, toDoList] = await Promise.all([
+  const [route, executor, service, store, client, toDoList, taskRules] = await Promise.all([
     readFile(new URL("../app/api/tasks/legacy-deadline/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/legacy-task-deadline-executor.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/legacy-task-deadline-service.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/ops-store.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/operations-client.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/to-do-list.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/ops-tasks.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /const MAX_REQUEST_BYTES = 1_024/);
@@ -46,8 +47,14 @@ test("legacy deadline route reauthorizes before replay and gates clear before on
   assert.match(service, /melbourne_time_nonexistent/);
   assert.match(service, /melbourne_time_ambiguous/);
   assert.match(service, /clear_disabled/);
-  assert.match(service, /Object\.hasOwn\(task, "ruleKey"\)/);
-  assert.match(service, /Object\.hasOwn\(task, "anchorBookingId"\)/);
+  assert.match(service, /if \(hasAutomaticTaskDeadline\(task\)\) \{\s*fail\("task_not_legacy"/);
+  const automaticGuardStart = taskRules.indexOf("export function hasAutomaticTaskDeadline(");
+  const automaticGuardEnd = taskRules.indexOf("export interface RuleBoundTask", automaticGuardStart);
+  assert.ok(automaticGuardStart >= 0);
+  assert.ok(automaticGuardEnd > automaticGuardStart);
+  const automaticGuard = taskRules.slice(automaticGuardStart, automaticGuardEnd);
+  assert.match(automaticGuard, /Object\.hasOwn\(task, "ruleKey"\)/);
+  assert.match(automaticGuard, /Object\.hasOwn\(task, "anchorBookingId"\)/);
   assert.match(service, /task\.status === "done"/);
   assert.match(service, /student\?\.importArchived === true/);
 
@@ -87,9 +94,9 @@ test("legacy deadline route reauthorizes before replay and gates clear before on
   assert.match(deadlineModal, /待办截止时间（墨尔本）/);
   assert.match(deadlineModal, /name="melbourneDateTime" type="datetime-local"[^>]*defaultValue=\{[^}]+: ""\} required/);
   assert.doesNotMatch(deadlineModal, /currentDateTimeValueInTimezone/);
-  const openDeadlineRepair = toDoList.indexOf('view === "todo" ? onRepairDeadline');
+  const openDeadlineRepair = toDoList.indexOf('view === "todo" ? !hasAutomaticTaskDeadline(task) && onRepairDeadline');
   const closedTaskReopen = toDoList.indexOf(': canReopen?.(task)', openDeadlineRepair);
-  assert.ok(openDeadlineRepair >= 0, "open frozen tasks must expose the deadline repair action");
+  assert.ok(openDeadlineRepair >= 0, "manual frozen tasks must expose the deadline repair action");
   assert.ok(closedTaskReopen > openDeadlineRepair, "closed tasks must branch to reopen instead of deadline repair");
   assert.match(toDoList, /className="deadline-edit-button"/);
   assert.match(toDoList, /onClick=\{\(\) => onRepairDeadline\(task\)\}/);

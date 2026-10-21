@@ -3,7 +3,7 @@
 import React from "react";
 import { Pencil, RotateCcw, X } from "lucide-react";
 
-import { formatCompactTaskDeadline, formatTaskDeadline, isExecutableOpenTask, matchesTaskDeadlineDate, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
+import { formatCompactTaskDeadline, formatTaskDeadline, hasAutomaticTaskDeadline, isExecutableOpenTask, matchesTaskDeadlineDate, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 import type { TaskTrialSchedule } from "../lib/task-trial-schedule";
 import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
@@ -190,7 +190,7 @@ function TaskRows({
                 aria-label={`完成：${title.primary}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button> : null}
-            </> : view === "todo" ? onRepairDeadline && canRepairDeadline?.(task) !== false ? <button
+            </> : view === "todo" ? !hasAutomaticTaskDeadline(task) && onRepairDeadline && canRepairDeadline?.(task) !== false ? <button
               className="deadline-edit-button"
               type="button"
               onClick={() => onRepairDeadline(task)}
@@ -212,8 +212,8 @@ function TaskRows({
               >{deadline}</time>;
               if (view === "todo" && !executable) return <span
                 className="due-label pending"
-                title="需要管理员补充准确截止时间后才可执行"
-              >待补截止时间</span>;
+                title={hasAutomaticTaskDeadline(task) ? undefined : "需要管理员补充准确截止时间后才可执行"}
+              >{hasAutomaticTaskDeadline(task) ? "待自动生成" : "待补截止时间"}</span>;
               return null;
             })()}
           </div>
@@ -260,7 +260,9 @@ function TaskSection({
 
 function TaskOwnerSection({ group, ...props }: Omit<Parameters<typeof TaskRows>[0], "tasks"> & { group: TaskOwnerGroup }) {
   const headingId = React.useId();
-  const pendingDeadline = sortTasksByDueAt(group.tasks.filter((task) => props.view === "todo" && !isExecutableOpenTask(task)));
+  const pending = sortTasksByDueAt(group.tasks.filter((task) => props.view === "todo" && !isExecutableOpenTask(task)));
+  const automaticDeadline = pending.filter(hasAutomaticTaskDeadline);
+  const pendingDeadline = pending.filter((task) => !hasAutomaticTaskDeadline(task));
   const actionable = props.view === "todo" ? group.tasks.filter(isExecutableOpenTask) : group.tasks;
   const today = sortTasksByDueAt(actionable.filter((task) => props.view !== "todo" || task.status === "today"));
   const overdue = sortTasksByDueAt(actionable.filter((task) => props.view === "todo" && task.status === "overdue"));
@@ -276,6 +278,7 @@ function TaskOwnerSection({ group, ...props }: Omit<Parameters<typeof TaskRows>[
       {today.length > 0 && <TaskSection title="今日到期" className="today" tasks={today} {...props} />}
       {overdue.length > 0 && <TaskSection title="已逾期" className="overdue" tasks={overdue} {...props} />}
       {remaining.length > 0 && <TaskSection title="其余任务" className="remaining" tasks={remaining} {...props} />}
+      {automaticDeadline.length > 0 && <TaskSection title="等待自动生成" className="pending-deadline" tasks={automaticDeadline} {...props} />}
       {pendingDeadline.length > 0 && <TaskSection title="待补截止时间" className="pending-deadline" tasks={pendingDeadline} {...props} />}
     </> : <TaskSection title={props.view === "done" ? "已完成" : "无法完成"} className={props.view} tasks={today} {...props} />}
   </section>;
