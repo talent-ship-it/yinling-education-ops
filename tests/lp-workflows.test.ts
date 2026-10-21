@@ -91,7 +91,7 @@ test("makes university major and year conditional rather than adding unconfirmed
   assert.equal(year?.requirement, "university-only");
 });
 
-test("aligns every dedicated workflow with the confirmed Tencent templates", () => {
+test("trial and direct-enrollment handovers use their confirmed fields and hour controls", () => {
   const trialKeys = fieldKeys("试听 LP");
   for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson", "timeMentioned", "preferredTime", "studentNameKnown", "trialPaymentMethod"]) {
     assert.ok(trialKeys.includes(key as never));
@@ -105,17 +105,20 @@ test("aligns every dedicated workflow with the confirmed Tencent templates", () 
   assert.equal(directSchema.fields.find((field) => field.key === "purchasedHours")?.min, 0);
   assert.equal(directSchema.fields.find((field) => field.key === "bonusHours")?.min, 0);
 
+});
+
+test("dedicated LP handovers retain source time and optional document sections", () => {
   const expected = {
     "老师新 LP": ["requestSentAt", "writingRequired", "writingNote", "paperRequired", "paperNote", "teacher", "subject", "documentUrl", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"],
     "老师 LP 修改": ["requestSentAt", "teacher", "subject", "documentUrl", "modificationRequirements"],
     "换老师试听": ["requestSentAt", "originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"],
-    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "comments", "lastHomework", "lastLessonRecordingUrl"],
-    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes"],
+    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "comments", "lastHomework", "lastLessonRecordingUrl", "requestSentAt"],
+    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes", "requestSentAt"],
   } as const;
   for (const [type, keys] of Object.entries(expected)) {
     const schema = getLpWorkflowSchema(type as keyof typeof expected);
     assert.equal(schema.typeSpecificFieldsDocumented, true);
-    assert.deepEqual(fieldKeys(type as keyof typeof expected), [...commonKeys, ...keys, ...(!keys.some((key) => key === "requestSentAt") ? ["requestSentAt"] : [])]);
+    assert.deepEqual(fieldKeys(type as keyof typeof expected), [...commonKeys, ...keys]);
     for (const key of keys) assert.ok(schema.fields.find((field) => field.key === key)?.label);
   }
   assert.equal(getLpWorkflowSchema("老师新 LP").fields.find((field) => field.key === "documentUrl")?.control, "url");

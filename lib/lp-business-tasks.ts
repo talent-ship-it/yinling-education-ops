@@ -68,29 +68,64 @@ function task(lp: LpParentProgressRecord, ruleKey: string, title: string, dueAt:
   };
 }
 
+function preservesCompletion(task: OpsTask) {
+  return task.status === "done" && !AUTOMATIC_RESULTS.has(task.result ?? "");
+}
+
+function sameTask(candidate: OpsTask, incoming: OpsTask) {
+  return candidate.ruleKey === incoming.ruleKey && candidate.anchorBookingId === incoming.anchorBookingId && candidate.studentId === incoming.studentId;
+}
+
+function reopenAutomaticTask(tasks: readonly OpsTask[], incoming: OpsTask, existing?: OpsTask) {
+  if (incoming.status === "done" || existing?.status !== "done") return tasks;
+  if (!AUTOMATIC_RESULTS.has(existing.result ?? "")) return tasks;
+  return tasks.map((candidate) => candidate === existing
+    ? { ...candidate, status: incoming.status, result: undefined, closedAt: undefined, completionOutcome: undefined }
+    : candidate);
+}
+
+function preserveRecipients(incoming: OpsTask, existing?: OpsTask) {
+  if (!existing) return incoming;
+  return {
+    ...incoming, owner: existing.owner, assignees: existing.assignees ?? [existing.owner],
+    watchers: [...new Set([...(existing.watchers ?? []), DEFAULT_TEACHING_CONTROL_WATCHER])],
+  };
+}
+
 function upsert(tasks: readonly OpsTask[], incoming: OpsTask) {
-  const existing = tasks.find((candidate) => candidate.ruleKey === incoming.ruleKey && candidate.anchorBookingId === incoming.anchorBookingId && candidate.studentId === incoming.studentId);
-  if (existing && (isFrozenLegacyTask(existing) || existing.status === "done" && !AUTOMATIC_RESULTS.has(existing.result ?? ""))) return [...tasks];
-  const source = incoming.status !== "done" && existing?.status === "done" && AUTOMATIC_RESULTS.has(existing.result ?? "")
-    ? tasks.map((candidate) => candidate === existing ? { ...candidate, status: incoming.status, result: undefined, closedAt: undefined, completionOutcome: undefined } : candidate)
-    : tasks;
-  return upsertTaskByRule(source, existing ? { ...incoming, owner: existing.owner, assignees: existing.assignees ?? [existing.owner], watchers: [...new Set([...(existing.watchers ?? []), DEFAULT_TEACHING_CONTROL_WATCHER])] } : incoming);
+  const existing = tasks.find((candidate) => sameTask(candidate, incoming));
+  if (existing && (isFrozenLegacyTask(existing) || preservesCompletion(existing))) return [...tasks];
+  const source = reopenAutomaticTask(tasks, incoming, existing);
+  return upsertTaskByRule(source, preserveRecipients(incoming, existing));
 }
 
 function normalize(value: unknown) {
   return typeof value === "string" ? value.normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/g, "") : "";
 }
 
+function isActiveLessonBooking(booking: LpParentProgressBooking) {
+  if (CANCELLED.has(booking.status ?? "")) return false;
+  if (CANCELLED.has(booking.occurrenceStatus ?? "")) return false;
+  return ["试听", "常规课", "trial", "regular"].includes(booking.kind ?? "");
+}
+
+function matchesTeacher(lp: LpParentProgressRecord, booking: LpParentProgressBooking, teachers: Input["teachers"]) {
+  const teacher = normalize(lp.fields?.teacher);
+  if (!teacher) return false;
+  const teacherName = teachers?.find((candidate) => candidate.id === booking.teacherId)?.name ?? booking.sourceTeacherName;
+  return [booking.teacherId, teacherName].map(normalize).includes(teacher);
+}
+
+function matchesSubject(lp: LpParentProgressRecord, booking: LpParentProgressBooking) {
+  const subject = normalize(lp.fields?.subject);
+  return Boolean(subject && normalize(booking.course ?? booking.subject) === subject);
+}
+
 function matches(lp: LpParentProgressRecord, booking: LpParentProgressBooking, teachers: Input["teachers"]) {
-  if (lp.studentId !== booking.studentId || CANCELLED.has(booking.status ?? "") || CANCELLED.has(booking.occurrenceStatus ?? "")
-    || !["试听", "常规课", "trial", "regular"].includes(booking.kind ?? "")) return false;
+  if (lp.studentId !== booking.studentId || !isActiveLessonBooking(booking)) return false;
   const anchors = [booking.lpId, booking.anchorBookingId, booking.requestAnchorBookingId].filter(Boolean);
   if (anchors.length) return anchors.every((anchor) => anchor === lp.id);
-  const teacher = normalize(lp.fields?.teacher);
-  const subject = normalize(lp.fields?.subject);
-  const teacherName = teachers?.find((candidate) => candidate.id === booking.teacherId)?.name ?? booking.sourceTeacherName;
-  const teacherNames = [booking.teacherId, teacherName].map(normalize);
-  return Boolean(teacher && subject && teacherNames.includes(teacher) && normalize(booking.course ?? booking.subject) === subject);
+  return matchesTeacher(lp, booking, teachers) && matchesSubject(lp, booking);
 }
 
 function firstLesson(input: Input, anchor: Date) {
@@ -118,6 +153,64 @@ function firstLesson(input: Input, anchor: Date) {
   return candidates.sort((left, right) => left.startsAt.valueOf() - right.startsAt.valueOf() || left.occurrenceId.localeCompare(right.occurrenceId))[0];
 }
 
+function completedReviewCycle(task: OpsTask) {
+  if (task.ruleKey === LP_MODIFICATION_REVIEW_RULE) return 1;
+  return Number(task.ruleKey?.match(/^lp\.modification-review\.([1-9]\d*)$/)?.[1] ?? 0);
+}
+
+function currentReviewCycle(input: Input, anchor: Date, now: Date) {
+  const elapsedDays = (now.valueOf() - anchor.valueOf()) / 86_400_000;
+  const previous = input.tasks.filter((candidate) => related(candidate, input.lp) && preservesCompletion(candidate)).map(completedReviewCycle);
+  return Math.max(1, Math.floor(elapsedDays / 7), ...previous.map((value) => value + 1));
+}
+
+function isReviewRule(ruleKey?: string) {
+  return ruleKey === LP_MODIFICATION_REVIEW_RULE || ruleKey?.startsWith(`${LP_MODIFICATION_REVIEW_RULE}.`);
+}
+
+function reconcileWeeklyModification(input: Input, anchor: Date, now: Date) {
+  const cycle = currentReviewCycle(input, anchor, now);
+  const ruleKey = cycle === 1 ? LP_MODIFICATION_REVIEW_RULE : `${LP_MODIFICATION_REVIEW_RULE}.${cycle}`;
+  const obsolete = input.tasks.filter((candidate) => isReviewRule(candidate.ruleKey) && candidate.ruleKey !== ruleKey).map((candidate) => candidate.ruleKey!);
+  const closed = close(input.tasks, input.lp, now, LP_MODIFICATION_REVIEW_ADVANCED_RESULT, obsolete);
+  const due = new Date(anchor.valueOf() + cycle * 7 * 86_400_000);
+  return upsert(closed, task(input.lp, ruleKey, "LP 修改：检查完成情况及截图", due, now, `LP 修改交接后每周复查（第 ${cycle} 次）`));
+}
+
+function firstLessonDeadlines(startsAt: Date, anchor: Date) {
+  const leadDays = (Date.parse(`${scheduleDateInTimezone(startsAt, ZONE)}T00:00:00Z`) - Date.parse(`${scheduleDateInTimezone(anchor, ZONE)}T00:00:00Z`)) / 86_400_000;
+  const finalizeDue = leadDays <= 2 ? new Date(Math.min(startsAt.valueOf(), Math.max(anchor.valueOf(), deadline(anchor, 0).valueOf()))) : deadline(startsAt, -2);
+  const prepDue = leadDays <= 1 ? finalizeDue : deadline(startsAt, -1);
+  return { finalizeDue, prepDue };
+}
+
+function completedByStage(generated: OpsTask, completed: boolean, result: string, now: Date): OpsTask {
+  return completed ? { ...generated, status: "done", tone: "green", result, closedAt: now.toISOString() } : generated;
+}
+
+function reconcileFirstLessonProduction(tasks: readonly OpsTask[], lp: LpParentProgressRecord, lesson: { startsAt: Date; occurrenceId: string }, anchor: Date, now: Date) {
+  const { finalizeDue, prepDue } = firstLessonDeadlines(lesson.startsAt, anchor);
+  const finalized = task(lp, LP_FIRST_LESSON_TASK_RULES[1], "老生新 LP：首次课前定稿并发老师", finalizeDue, now, `首次课 N-2 定稿 · ${lesson.occurrenceId}`);
+  const wasFinalized = ["已发老师", "待备课确认", "备课完成"].includes(lp.stage ?? "");
+  const reconciled = upsert(tasks, completedByStage(finalized, wasFinalized, LP_BUSINESS_FINALIZED_RESULT, now));
+  if (lp.fields?.preparationFollowUp !== "是") return close(reconciled, lp, now, LP_BUSINESS_SCHEDULE_REMOVED_RESULT, [LP_FIRST_LESSON_TASK_RULES[2]]);
+  const preparation = task(lp, LP_FIRST_LESSON_TASK_RULES[2], "老生新 LP：首次课备课内容及截图", prepDue, now, `首次课 N-1 跟进备课 · ${lesson.occurrenceId}`);
+  return upsert(reconciled, completedByStage(preparation, lp.stage === "备课完成", LP_BUSINESS_PREPARED_RESULT, now));
+}
+
+function reconcileFirstLessonTasks(input: Input, anchor: Date, now: Date) {
+  const lp = input.lp;
+  const lesson = firstLesson(input, anchor);
+  const scheduling = task(lp, LP_FIRST_LESSON_TASK_RULES[0], "老生新 LP：完成首次排课", new Date(anchor.valueOf() + 48 * 60 * 60 * 1_000), now, "老生新 LP 交接后最迟 N+2 完成首次排课", "排课");
+  if (!lesson) return close(upsert(input.tasks, scheduling), lp, now, LP_BUSINESS_SCHEDULE_REMOVED_RESULT, LP_FIRST_LESSON_TASK_RULES.slice(1));
+  const tasks = upsert(input.tasks, { ...scheduling, status: "done", tone: "green", result: LP_BUSINESS_SCHEDULED_RESULT, closedAt: now.toISOString() });
+  return reconcileFirstLessonProduction(tasks, lp, lesson, anchor, now);
+}
+
+function hasBusinessIdentity(lp: LpParentProgressRecord) {
+  return lp.id.trim() && lp.studentId.trim() && lp.owner.trim();
+}
+
 export function reconcileLpBusinessTasks(input: Input): OpsTask[] {
   const now = new Date(input.now);
   if (!Number.isFinite(now.valueOf())) throw new TypeError("now must be a valid timestamp");
@@ -125,34 +218,8 @@ export function reconcileLpBusinessTasks(input: Input): OpsTask[] {
   if (!["老师新 LP", "老师 LP 修改"].includes(lp.workflowType ?? "")) return [...input.tasks];
   if (ended(lp)) return close(input.tasks, lp, now, LP_BUSINESS_CLOSED_RESULT);
   const anchor = requestInstant(lp);
-  if (!anchor || !lp.id.trim() || !lp.studentId.trim() || !lp.owner.trim()) return [...input.tasks];
-  if (lp.workflowType === "老师 LP 修改") {
-    const elapsedDays = (now.valueOf() - anchor.valueOf()) / 86_400_000;
-    const previous = input.tasks.filter((candidate) => related(candidate, lp) && candidate.status === "done" && !AUTOMATIC_RESULTS.has(candidate.result ?? ""))
-      .map((candidate) => (candidate.ruleKey === LP_MODIFICATION_REVIEW_RULE ? 1 : Number(candidate.ruleKey?.match(/^lp\.modification-review\.([1-9]\d*)$/)?.[1] ?? 0)));
-    const cycle = Math.max(1, Math.floor(elapsedDays / 7), ...previous.map((value) => value + 1));
-    const ruleKey = cycle === 1 ? LP_MODIFICATION_REVIEW_RULE : `${LP_MODIFICATION_REVIEW_RULE}.${cycle}`;
-    const obsolete = input.tasks.filter((candidate) => (candidate.ruleKey === LP_MODIFICATION_REVIEW_RULE || candidate.ruleKey?.startsWith(`${LP_MODIFICATION_REVIEW_RULE}.`)) && candidate.ruleKey !== ruleKey).map((candidate) => candidate.ruleKey!);
-    const closed = close(input.tasks, lp, now, LP_MODIFICATION_REVIEW_ADVANCED_RESULT, obsolete);
-    return upsert(closed, task(lp, ruleKey, "LP 修改：检查完成情况及截图", new Date(anchor.valueOf() + cycle * 7 * 86_400_000), now, `LP 修改交接后每周复查（第 ${cycle} 次）`));
-  }
-
-  const lesson = firstLesson(input, anchor);
-  const scheduling = task(lp, LP_FIRST_LESSON_TASK_RULES[0], "老生新 LP：完成首次排课", new Date(anchor.valueOf() + 48 * 60 * 60 * 1_000), now, "老生新 LP 交接后最迟 N+2 完成首次排课", "排课");
-  if (!lesson) return close(upsert(input.tasks, scheduling), lp, now, LP_BUSINESS_SCHEDULE_REMOVED_RESULT, LP_FIRST_LESSON_TASK_RULES.slice(1));
-  let tasks = upsert(input.tasks, { ...scheduling, status: "done", tone: "green", result: LP_BUSINESS_SCHEDULED_RESULT, closedAt: now.toISOString() });
-  const leadDays = (Date.parse(`${scheduleDateInTimezone(lesson.startsAt, ZONE)}T00:00:00Z`) - Date.parse(`${scheduleDateInTimezone(anchor, ZONE)}T00:00:00Z`)) / 86_400_000;
-  const finalizeDue = leadDays <= 2 ? new Date(Math.min(lesson.startsAt.valueOf(), Math.max(anchor.valueOf(), deadline(anchor, 0).valueOf()))) : deadline(lesson.startsAt, -2);
-  const prepDue = leadDays <= 1 ? finalizeDue : deadline(lesson.startsAt, -1);
-  const finalized = task(lp, LP_FIRST_LESSON_TASK_RULES[1], "老生新 LP：首次课前定稿并发老师", finalizeDue, now, `首次课 N-2 定稿 · ${lesson.occurrenceId}`);
-  tasks = upsert(tasks, ["已发老师", "待备课确认", "备课完成"].includes(lp.stage ?? "")
-    ? { ...finalized, status: "done", tone: "green", result: LP_BUSINESS_FINALIZED_RESULT, closedAt: now.toISOString() }
-    : finalized);
-  if (lp.fields?.preparationFollowUp === "是") {
-    const preparation = task(lp, LP_FIRST_LESSON_TASK_RULES[2], "老生新 LP：首次课备课内容及截图", prepDue, now, `首次课 N-1 跟进备课 · ${lesson.occurrenceId}`);
-    tasks = upsert(tasks, lp.stage === "备课完成"
-      ? { ...preparation, status: "done", tone: "green", result: LP_BUSINESS_PREPARED_RESULT, closedAt: now.toISOString() }
-      : preparation);
-  } else tasks = close(tasks, lp, now, LP_BUSINESS_SCHEDULE_REMOVED_RESULT, [LP_FIRST_LESSON_TASK_RULES[2]]);
-  return tasks;
+  if (!anchor || !hasBusinessIdentity(lp)) return [...input.tasks];
+  return lp.workflowType === "老师 LP 修改"
+    ? reconcileWeeklyModification(input, anchor, now)
+    : reconcileFirstLessonTasks(input, anchor, now);
 }
