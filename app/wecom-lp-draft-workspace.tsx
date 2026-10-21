@@ -26,10 +26,10 @@ class DraftSaveError extends Error {
 }
 function sourceConflict(error: unknown): error is DraftSaveError { return error instanceof DraftSaveError && error.status === 409; }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "交接草稿确认失败，可重试"; }
-function reviewedFields(data: FormData, notify: Props["notify"]) {
+function reviewedFields(data: FormData, notify: Props["notify"], expectedType: WecomLpDraftSource["draft"]["workflowType"]) {
   try {
     const parsed = parseLpWorkflowFormData(data);
-    if (!WECOM_LP_WORKFLOW_TYPES.some((type) => type === parsed.workflowType)) throw new Error("不支持此交接类型");
+    if (!expectedType || parsed.workflowType !== expectedType || !WECOM_LP_WORKFLOW_TYPES.some((type) => type === parsed.workflowType)) throw new Error("不支持此交接类型");
     return parsed;
   } catch (error) { notify(errorMessage(error)); return null; }
 }
@@ -83,8 +83,8 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     event.preventDefault();
     if (!source || busyRef.current) return;
     const data = new FormData(event.currentTarget);
-    const reviewed = reviewedFields(data, notify);
-    if (!reviewed || !source.draft.workflowType) return;
+    const reviewed = reviewedFields(data, notify, source.draft.workflowType);
+    if (!reviewed) return;
     const { workflowType, fields } = reviewed;
     const target = confirmationTarget(createStudent, data, studentId);
     const intent = JSON.stringify({ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision, workflowType, ...target, fields });

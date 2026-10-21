@@ -63,11 +63,14 @@ function authorizeAssignment(ctx: Context, command: WecomLpConfirmation) {
   if (!ctx.fullAdmin && normaliseDemoUserName(String(command.fields.responsibleOperations)) !== normaliseDemoUserName(ctx.session.user)) fail(403, "教务只能处理自己负责的学生交接。");
   if (command.newStudent && !canWriteOpsTransaction(ctx.access, "students", ["students", "lpItems", "tasks", "files"])) fail(403, "当前账号不能创建学生档案。");
 }
+function assertSourceWorkflowType(source: import("./wecom-lp-intake").WecomLpDraftRawSource, command: WecomLpConfirmation) {
+  const draft = buildWecomLpDraft(source.messages);
+  if (!draft.workflowType || draft.workflowType !== command.workflowType) fail(409, "交接类型与原文不一致，请核对交接来源。", "workflow_conflict");
+}
 async function prepareTarget(dependencies: Dependencies, ctx: Context, command: WecomLpConfirmation) {
   const source = await dependencies.readDraft({ sourceMessageId: command.sourceMessageId, actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
   if (!source || source.caseId !== command.caseId) fail(404, "未找到可处理的交接来源。");
-  const draft = buildWecomLpDraft(source.messages);
-  if (!draft.workflowType || draft.workflowType !== command.workflowType) fail(409, "交接类型与原文不一致，请核对交接来源。", "workflow_conflict");
+  assertSourceWorkflowType(source, command);
   const students = studentsFrom(ctx.rows);
   const student = students.find((row) => row.id === command.studentId);
   authorizeExisting(ctx, command, student);
