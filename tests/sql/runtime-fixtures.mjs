@@ -14,7 +14,7 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "supabase/migrations/20261020104800_wecom_lp_handover_time_range.sql" },
     { kind: "sql", file: "supabase/migrations/20261021112850_lp_business_handover_types.sql" },
     { kind: "sql", file: "tests/sql/wecom-lp-business-handover-runtime.sql" },
-    ] },
+  ] },
   { id: "wecom-handover-schedule-history-anti", source: "tests/sql/wecom-handover-schedule-history-anti-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-anti-runtime.sql" },
   ] },
