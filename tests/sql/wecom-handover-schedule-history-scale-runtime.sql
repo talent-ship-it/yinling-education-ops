@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 \ir wecom-handover-schedule-evidence-runtime.sql
 \ir ../../supabase/migrations/20261021080306_stabilize_wecom_handover_schedule_history_plan.sql
+\ir ../../supabase/migrations/20261021085243_batch_wecom_handover_schedule_history_reads.sql
 
 set jit = off;
 set plan_cache_mode = force_generic_plan;
