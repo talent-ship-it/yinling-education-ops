@@ -1,4 +1,4 @@
-import { TRIAL_OPERATIONS } from "./lp-workflows";
+import { TRIAL_LEDGER_RESULT_STATUSES, TRIAL_OPERATIONS } from "./lp-workflows";
 import {
   effectiveTrialResultStatus,
   isTrialLedgerWorkflow,
@@ -50,7 +50,7 @@ const TENCENT_TRIAL_LEDGER_OPTIONS = {
   workflowType: ["试听 LP", "换老师试听"],
   operationsOwner: TRIAL_OPERATIONS,
   planner: ["Tara", "Eileen", "Abby"],
-  resultStatus: ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"],
+  resultStatus: TRIAL_LEDGER_RESULT_STATUSES,
 } as const;
 
 const TENCENT_TRIAL_LEDGER_OPTION_ALIASES: Readonly<Record<string, string>> = {

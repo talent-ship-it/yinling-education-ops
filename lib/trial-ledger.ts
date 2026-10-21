@@ -145,7 +145,7 @@ export function normalizeTrialLedgerFieldValue(
     case "resultStatus": {
       const normalized = requiredText(value, field, 40);
       if (!(TRIAL_LEDGER_RESULT_STATUSES as readonly string[]).includes(normalized)) {
-        throw new TrialLedgerError("invalid_command", "试听状态不在手册规定的六种结果中。");
+        throw new TrialLedgerError("invalid_command", "试听状态不在允许的结果中。");
       }
       return normalized;
     }

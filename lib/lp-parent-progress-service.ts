@@ -26,6 +26,7 @@ const TERMINAL_RESULT_STATUSES = new Set([
   "在读试听成功",
   "在读试听失败",
   "家长取消",
+  "被家长取消",
   "家长不继续",
   "不继续",
 ]);

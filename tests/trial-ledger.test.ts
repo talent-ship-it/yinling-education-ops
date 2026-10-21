@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   TRIAL_LEDGER_FIELDS,
   TrialLedgerError,
+  effectiveTrialResultStatus,
   normalizeTrialLedgerFieldValue,
   parseTrialLedgerCommand,
   trialLedgerCommandIntent,
@@ -110,4 +111,21 @@ test("rejects extra command properties and reports stored manual values only", (
   assert.equal(trialLedgerStoredValue(item, "resultStatus"), "试听成功");
   assert.equal(trialLedgerStoredValue(item, "trialPaid"), false);
   assert.equal(trialLedgerStoredValue(item, "trialLedgerNote"), "Sales follow-up");
+});
+
+test("accepts cancelled and NIL trial results through field-level commands", () => {
+  for (const resultStatus of ["被家长取消", "NIL"] as const) {
+    const command = parseTrialLedgerCommand({
+      commandKey,
+      lpItemId: "LP-TRIAL-1",
+      field: "resultStatus",
+      expectedValue: resultStatus,
+      value: resultStatus,
+    });
+    assert.equal(command.expectedValue, resultStatus);
+    assert.equal(command.value, resultStatus);
+    for (const workflowType of ["试听 LP", "换老师试听"]) {
+      assert.equal(effectiveTrialResultStatus({ workflowType, resultStatus }), resultStatus);
+    }
+  }
 });
