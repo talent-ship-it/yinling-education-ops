@@ -451,7 +451,10 @@ test("new LP and modification handovers cannot compete for a trial event", () =>
   assert.equal(result.status, "matched");
   assert.equal(result.matchedStudentId, child.id);
   for (const entry of business) {
-    assert.throws(() => project({ sources: [source(), entry], targetSourceMessageIds: [entry.sourceMessageId] }), /not a trial handover/);
+    const unresolved = project({ sources: [source(), entry], targetSourceMessageIds: [entry.sourceMessageId] });
+    assert.equal(unresolved.status, "ambiguous");
+    assert.deepEqual(unresolved.candidates, []);
+    assert.equal(unresolved.matchedStudentId, null);
   }
 });
 
@@ -468,4 +471,24 @@ test("repeat trial uses the new teacher and ignores the original teacher event",
   assert.equal(result.candidates.length, 1);
   assert.equal(result.candidates[0]!.schedule.eventId, "repeat-event");
   assert.equal(project({ sources: [repeat], events: [wrong] }).status, "no_match");
+});
+
+
+test("a conflicting or reclassified followup cannot abort or claim another target's trial", () => {
+  for (const heading of ["试听LP 信息交接\n", ""]) {
+    const original = source("workflow-followup");
+    const invalid = { ...original, messages: [
+      { ...original.messages[0]!, text: heading + original.messages[0]!.text },
+      { messageId: "type-followup", text: "业务类型：老师LP修改", sentAt: "2026-10-20T01:00:00.000Z" },
+    ] };
+    const result = prepareWecomHandoverScheduleProjection(input({
+      sources: [invalid, source()], targetSourceMessageIds: [invalid.sourceMessageId, "handover-1"],
+    }));
+    assert.deepEqual(result.map(({ sourceMessageId, status, matchedStudentId }) => ({ sourceMessageId, status, matchedStudentId })), [
+      { sourceMessageId: "workflow-followup", status: "ambiguous", matchedStudentId: null },
+      { sourceMessageId: "handover-1", status: "matched", matchedStudentId: child.id },
+    ]);
+    assert.deepEqual(result[0]!.candidates, []);
+    assert.equal(result[1]!.candidates[0]!.schedule.eventId, "event-1");
+  }
 });

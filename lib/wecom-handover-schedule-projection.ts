@@ -422,9 +422,6 @@ export function prepareWecomHandoverScheduleProjection(input: WecomHandoverSched
   const authority = projectionAuthority(input.rows);
   const contexts = input.sources.map((source) => sourceContext(source, authority.students, authority.teachers))
     .filter((context) => context.draft.workflowType === "试听 LP" || context.draft.workflowType === "换老师试听");
-  if (input.targetSourceMessageIds.some((id) => !contexts.some((context) => context.source.sourceMessageId === id))) {
-    throw new TypeError("schedule target is not a trial handover");
-  }
   const events = projectionEvents(input, authority, clock.now);
   const occupied = occupiedEvents(events, authority, clock.checkedAt);
   const candidateScope = { students: authority.students, events, occupied, checkedAt: clock.checkedAt };
@@ -432,5 +429,12 @@ export function prepareWecomHandoverScheduleProjection(input: WecomHandoverSched
   const scope = { ...candidateScope, ...clock, snapshotRevision: input.snapshotRevision, coverage: input.coverage,
     competition: candidateCompetition(entries), proven: provenSourceMatches(contexts, candidateScope, authority) };
   const evidence = new Map(entries.map((entry) => [entry.context.source.sourceMessageId, sourceEvidence(entry, scope)]));
-  return input.targetSourceMessageIds.map((id) => evidence.get(id)!);
+  return input.targetSourceMessageIds.map((id): WecomHandoverScheduleEvidence => {
+    const entry = evidence.get(id);
+    if (entry) return entry;
+    const source = input.sources.find((source) => source.sourceMessageId === id)!;
+    return { algorithmVersion: WECOM_HANDOVER_SCHEDULE_ALGORITHM_VERSION, sourceMessageId: id, sourceRevision: source.sourceRevision,
+      snapshotRevision: input.snapshotRevision, checkedAt: clock.checkedAt,
+      status: ["identity_conflict", "identity_ambiguous"].includes(source.status) ? "identity_conflict" : "ambiguous", matchedStudentId: null, candidates: [] };
+  });
 }
