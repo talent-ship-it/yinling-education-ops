@@ -3,6 +3,7 @@ import test from "node:test";
 import type { OpsStateRow } from "../lib/ops-store";
 import type { WecomLpDraftRawSource } from "../lib/wecom-lp-intake";
 import type { WecomHandoverScheduleEvent, WecomHandoverScheduleInput } from "../lib/wecom-handover-schedule-types";
+import { wecomHandoverScheduleTitleName } from "../lib/wecom-handover-schedule-title";
 import { prepareWecomHandoverScheduleProjection } from "../lib/wecom-handover-schedule-projection";
 
 const checkedAt = "2026-10-21T00:00:00.000Z";
@@ -32,6 +33,7 @@ test("a unique exact family and current full-source event produce reproducible i
   const data = input();
   const before = JSON.stringify(data);
   const result = prepareWecomHandoverScheduleProjection(data)[0]!;
+  assert.equal(result.algorithmVersion, "2");
   assert.equal(result.status, "matched");
   assert.equal(result.matchedStudentId, child.id);
   assert.equal(result.sourceRevision, data.sources[0]!.sourceRevision);
@@ -40,6 +42,11 @@ test("a unique exact family and current full-source event produce reproducible i
   assert.deepEqual(result.candidates[0]!.schedule, { source: "jiaowubao-open-api", sourceRevision: event().sourceRevision, eventId: "event-1", startsAt: event().startsAt, endsAt: event().endsAt, courseName: event().courseName, studentName: child.name, teacherId: teacher.id, teacherName: teacher.name, plannerHint: "Eileen", sharedAccountLabel: "试听学员B2026", sharedAccountLetter: "b", durationMinutes: 60, matchedAt: checkedAt });
   assert.deepEqual(prepareWecomHandoverScheduleProjection(data), [result]);
   assert.equal(JSON.stringify(data), before);
+});
+
+test("algorithm version comes from this build even when the input claims a different version", () => {
+  const data = { ...input(), algorithmVersion: "untrusted-version" };
+  assert.equal(prepareWecomHandoverScheduleProjection(data)[0]!.algorithmVersion, "2");
 });
 
 test("new competing messages invalidate an unchanged source even when only that source is targeted", () => {
@@ -148,13 +155,54 @@ test("candidate matching needs teacher, subject, planner and a nearby handover",
     event("event-1", { sourceTeacherLabel: "Different Teacher" }),
     event("event-1", { courseName: "Child One - Math试听" }),
     event("event-1", { sourceParticipants: [{ memberId: "shared-a", label: "试听学员A2026" }] }),
-    event("event-1", { sourceParticipants: [{ memberId: "member-1", label: "Child One" }] }),
     event("event-1", { startsAt: "2026-11-21T08:00:00.000Z", endsAt: "2026-11-21T09:00:00.000Z" }),
   ]) {
     const result = project({ sources: [unknown], events: [wrong] });
     assert.equal(result.status, "needs_identity");
     assert.equal(result.candidates.length, 0);
   }
+});
+
+test("native participant schedules without a planner hint show candidates without establishing identity", () => {
+  const unknown = messageSource("handover-1", "New Parent");
+  const direct = event("direct", { courseName: "English试听", sourceParticipants: [{ memberId: "member-1", label: child.name }] });
+  for (const planner of [child.planner, "Another Planner"]) {
+    const result = project({ sources: [unknown], rows: rows([{ ...child, planner }]), events: [direct] });
+    assert.equal(result.status, "candidate");
+    assert.equal(result.matchedStudentId, null);
+    assert.equal(result.candidates[0]!.studentId, child.id);
+    assert.equal(result.candidates[0]!.schedule.startsAt, direct.startsAt);
+    assert.equal(result.candidates[0]!.schedule.endsAt, direct.endsAt);
+    assert.equal(result.candidates[0]!.schedule.plannerHint, null);
+  }
+  const contradiction = { ...direct, sourceParticipants: [...direct.sourceParticipants, { memberId: "shared-a", label: "试听学员A2026" }] };
+  assert.equal(project({ sources: [unknown], events: [contradiction] }).candidates.length, 0);
+  const unknownParticipant = { ...direct, sourceParticipants: [{ memberId: "unknown-member", label: child.name }] };
+  assert.equal(project({ sources: [unknown], events: [unknownParticipant] }).status, "ambiguous");
+});
+
+test("missing source scheduling clues cannot claim native participants without planner hints", () => {
+  const unknown = messageSource("handover-1", "New Parent");
+  const direct = event("direct", { sourceParticipants: [{ memberId: "member-1", label: child.name }] });
+  for (const field of ["安排教师", "安排科目", "课程规划"]) {
+    const incomplete = { ...unknown, coursePlanner: null, messages: unknown.messages.map((message) => ({ ...message, text: message.text.split("\n").filter((line) => !line.startsWith(`【${field}】`)).join("\n") })) };
+    assert.equal(project({ sources: [incomplete], events: [direct] }).candidates.length, 0);
+  }
+});
+
+test("unanchored conflicts reserve native participant events without a planner hint", () => {
+  const direct = event("direct", { sourceParticipants: [{ memberId: "member-1", label: child.name }] });
+  for (const status of ["identity_conflict", "identity_ambiguous"] as const) {
+    const rival = messageSource("handover-2", "Unknown Parent", "", { status });
+    const result = prepareWecomHandoverScheduleProjection(input({ sources: [source(), rival], targetSourceMessageIds: ["handover-1", "handover-2"], events: [direct] }));
+    assert.equal(result[0]!.status, "ambiguous");
+    assert.equal(result[0]!.matchedStudentId, null);
+    assert.equal(result[1]!.status, "identity_conflict");
+    assert.equal(result[1]!.candidates.length, 0);
+  }
+  const rival = messageSource("handover-2", "Unknown Parent");
+  const conflict = { ...rival, messages: [...rival.messages, { messageId: "follow-up", text: "【安排教师】：Different Teacher", sentAt: checkedAt }] };
+  assert.equal(project({ sources: [source(), conflict], events: [direct] }).status, "ambiguous");
 });
 
 test("combined subjects allow English/Math candidates without matching fragments inside student names", () => {
@@ -165,7 +213,7 @@ test("combined subjects allow English/Math candidates without matching fragments
   assert.equal(project({ sources: [math], rows: rows([{ ...child, name: "Mathilda" }]), events: [event("event-1", { courseName: "Mathilda - English试听" })] }).candidates.length, 0);
 });
 
-test("composite teacher first names support candidates only when each native alias is unique", () => {
+test("composite teacher first names preserve every exact alias as candidates", () => {
   const teachers = [{ id: "TEA-1", name: "Sharyn Smith" }, { id: "TEA-2", name: "Kelly Jones" }];
   const composite = source("handover-1", { messages: source().messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", "Sharyn Kelly") })) });
   const result = project({ sources: [composite], rows: rows([child], [], teachers), events: [event("event-1", { sourceTeacherLabel: "Sharyn Smith" })] });
@@ -176,7 +224,21 @@ test("composite teacher first names support candidates only when each native ali
   assert.equal(short.status, "candidate");
   assert.equal(short.candidates[0]!.schedule.teacherId, null);
   assert.equal(short.candidates[0]!.schedule.teacherName, "Sharyn");
-  assert.equal(project({ sources: [composite], rows: rows([child], [], [...teachers, { id: "TEA-3", name: "Sharyn Other" }]), events: [event("event-1", { sourceTeacherLabel: "Sharyn Smith" })] }).candidates.length, 0);
+  const directory = [...teachers, { id: "TEA-3", name: "Sharyn Other" }];
+  const first = event("event-1", { sourceTeacherLabel: "Sharyn Smith" });
+  const second = event("event-2", { sourceTeacherLabel: "Sharyn Other" });
+  const both = project({ sources: [composite], rows: rows([child], [], directory), events: [first, second] });
+  assert.equal(both.status, "ambiguous");
+  assert.equal(both.candidates.length, 2);
+  const onlySecond = project({ sources: [composite], rows: rows([child], [], directory), events: [second] });
+  assert.equal(onlySecond.status, "candidate");
+  assert.equal(onlySecond.matchedStudentId, null);
+  assert.equal(onlySecond.candidates[0]!.schedule.teacherId, "TEA-3");
+  const unresolved = { ...composite, messages: composite.messages.map((message) => ({ ...message, text: message.text.replace("Sharyn Kelly", "Sharyn Unknown") })) };
+  assert.equal(project({ sources: [unresolved], rows: rows([child], [], directory), events: [second] }).candidates.length, 0);
+  const rival = { ...composite, id: "rival", sourceMessageId: "rival", status: "identity_conflict" };
+  const exact = { ...source(), messages: source().messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", "Sharyn Other") })) };
+  assert.equal(project({ sources: [exact, rival], rows: rows([child], [], directory), events: [second] }).status, "ambiguous");
 });
 
 test("reschedules use the current snapshot and a canceled historical future event never returns", () => {
@@ -315,4 +377,65 @@ test("delayed ingestion uses the source message timestamp and explicit handover 
   for (const invalid of [{ ...archived, handoverAt: "invalid" }, { ...archived, handoverAt: "" }, { ...archived, messages: archived.messages.map((message) => ({ ...message, sentAt: "invalid" })) }]) {
     assert.throws(() => project({ sources: [invalid] }), /handover timestamp/);
   }
+});
+
+
+test("shared trial titles can show a name and time without creating a native identity", () => {
+  const unknown = messageSource("handover-1", "New Parent");
+  const titled = event("title-only", { courseName: "English - New Child试听" });
+  const data = input({ sources: [unknown], events: [titled] });
+  const before = JSON.stringify(data);
+  const result = prepareWecomHandoverScheduleProjection(data)[0]!;
+  assert.equal(result.status, "candidate");
+  assert.equal(result.matchedStudentId, null);
+  assert.equal(result.candidates[0]!.studentId, null);
+  assert.equal(result.candidates[0]!.studentName, "New Child");
+  assert.equal(result.candidates[0]!.schedule.studentName, "New Child");
+  assert.equal(result.candidates[0]!.schedule.startsAt, titled.startsAt);
+  assert.equal(JSON.stringify(data), before);
+  const known = { ...child, name: "New Child" };
+  assert.equal(project({ sources: [unknown], events: [titled], rows: rows([known]) }).candidates[0]!.studentId, child.id);
+  const named = { ...unknown, studentName: "New Child" };
+  assert.equal(project({ sources: [named], events: [titled] }).candidates[0]!.studentId, null);
+  const historical = { ...titled, startsAt: "2026-10-20T08:00:00.000Z", endsAt: "2026-10-20T09:00:00.000Z", historical: true };
+  const coverage = [{ startsAt: "2026-09-01T00:00:00.000Z", endsAt: checkedAt, historical: true }, { startsAt: checkedAt, endsAt: "2026-12-01T00:00:00.000Z", historical: false }];
+  assert.equal(project({ sources: [unknown], events: [historical], coverage }).status, "candidate");
+});
+
+test("title-only evidence retains all contention and never overrides identity or occupancy", () => {
+  const unknown = messageSource("handover-1", "New Parent");
+  const titled = event("title-only", { courseName: "English - New Child试听" });
+  for (const rival of [messageSource("handover-2", "Another Parent"), messageSource("handover-2", "Another Parent", "", { status: "identity_conflict" })]) {
+    const result = project({ sources: [unknown, rival], events: [titled] });
+    assert.equal(result.status, "ambiguous");
+    assert.equal(result.matchedStudentId, null);
+    assert.equal(result.candidates[0]!.studentId, null);
+  }
+  for (const anchored of [source(), { ...unknown, studentName: "Different Name" }, { ...unknown, messages: unknown.messages.map((message) => ({ ...message, studentId: child.id })) }]) {
+    assert.equal(project({ sources: [anchored], events: [titled] }).candidates.length, 0);
+  }
+  const occupied = rows([child], [{ id: "LP-1", studentId: child.id, trialSchedule: { eventId: titled.eventId } }]);
+  assert.equal(project({ sources: [unknown], events: [titled], rows: occupied }).candidates.length, 0);
+  const emptyParticipant = { ...titled, sourceParticipants: [...titled.sourceParticipants, { memberId: null, label: null }] };
+  assert.equal(project({ sources: [unknown], events: [emptyParticipant] }).candidates.length, 0);
+  const unsafe = { ...titled, sourceParticipants: [...titled.sourceParticipants, { memberId: "unknown", label: "Unknown Child" }] };
+  assert.equal(project({ sources: [unknown], events: [unsafe] }).candidates.length, 0);
+});
+
+test("title-only names use the shared conservative ASCII and BMP surname subset", () => {
+  for (const [title, name] of [["English - New Child试听", "New Child"], ["English - O'Neil 汉字试听课", "O'Neil汉字"], ["English - Ａｌｉｃｅ试听", "Alice"]]) {
+    assert.equal(wecomHandoverScheduleTitleName(title), name);
+  }
+  for (const title of ["English试听", "English - English Math试听", "English - Unknown试听", "English - Student试听", "English - Unknown Student试听", "English - Trial Account B试听", "English - João试听", "English - Alice✨试听", "English - Alice\u0301试听", "English - Alice𠀀试听", "English - Alice\tHan试听", "English - One Two Three Four Five试听", "English - New Child trial"]) {
+    assert.equal(wecomHandoverScheduleTitleName(title), null, title);
+  }
+});
+
+
+test("ambiguous teacher first-name expansion is limited to complete ASCII words", () => {
+  const accented = { ...source(), messages: source().messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", "Élise") })) };
+  const directory = [{ id: "TEA-1", name: "Élise Smith" }];
+  const titled = event("event-1", { sourceTeacherLabel: "Élise Smith" });
+  assert.equal(project({ sources: [accented], rows: rows([child], [], directory), events: [titled] }).status, "candidate");
+  assert.equal(project({ sources: [accented], rows: rows([child], [], [...directory, { id: "TEA-2", name: "Élise Other" }]), events: [titled] }).candidates.length, 0);
 });

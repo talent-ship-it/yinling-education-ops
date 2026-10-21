@@ -1,6 +1,24 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-handover-schedule-title", source: "tests/sql/wecom-handover-schedule-title-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-title-runtime.sql" },
+  ] },
+  { id: "wecom-handover-schedule-algorithm", source: "tests/sql/wecom-handover-schedule-algorithm-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-algorithm-runtime.sql" },
+  ] },
+  { id: "wecom-handover-schedule-history-retained", source: "tests/sql/wecom-handover-schedule-history-retained-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-retained-runtime.sql" },
+  ] },
+  { id: "wecom-handover-schedule-history-batch", source: "tests/sql/wecom-handover-schedule-history-batch-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-batch-runtime.sql" },
+  ] },
+  { id: "wecom-handover-schedule-history-scale", source: "tests/sql/wecom-handover-schedule-history-scale-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-scale-runtime.sql" },
+  ] },
   { id: "trial-ledger-result-statuses", source: "tests/sql/trial-ledger-result-statuses-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/trial-ledger-result-statuses-runtime.sql" },
+  ] },
+  { id: "wecom-handover-schedule-history-cache", source: "tests/sql/wecom-handover-schedule-history-cache-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-cache-runtime.sql" },
   ] },
   { id: "wecom-handover-schedule-evidence-concurrency", source: "tests/sql/wecom-handover-schedule-evidence-concurrency-runtime.py", steps: [
     { kind: "python", file: "tests/sql/wecom-handover-schedule-evidence-concurrency-runtime.py" },
