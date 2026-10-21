@@ -161,3 +161,23 @@ test("removes the duplicate Tara option while retaining Tara龙 and both names�
   assert.equal(filterAndSortTrialLedgerRows(source, state).length, source.length);
   assert.deepEqual(source, original);
 });
+
+test("restores and filters cancelled and NIL statuses without changing resolved trial rates", () => {
+  const added = ["被家长取消", "NIL"].map((resultStatus, index) => ({
+    ...rows[0]!, id: `LP-NEW-${index}`, resultStatus,
+  }));
+  const source = [...rows, ...added];
+  for (const row of added) {
+    const state = parseTrialLedgerViewState(JSON.stringify({
+      ...defaultTrialLedgerViewState(), resultStatus: row.resultStatus,
+    }));
+    assert.equal(state.resultStatus, row.resultStatus);
+    assert.deepEqual(filterAndSortTrialLedgerRows(source, state), [row]);
+  }
+  const stats = trialLedgerViewStats(source);
+  assert.equal(stats.total, 5);
+  assert.equal(stats.byStatus["被家长取消"], 1);
+  assert.equal(stats.byStatus.NIL, 1);
+  assert.equal(stats.resolved, 2);
+  assert.equal(stats.successRate, 50);
+});

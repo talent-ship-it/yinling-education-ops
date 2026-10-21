@@ -131,3 +131,13 @@ test("normalizes legacy aliases and replaces invalid trial status with the handb
   assert.equal(row.values.课程规划老师, "Tara");
   assert.equal(row.values.试听状态, "试听未进行");
 });
+
+test("preserves cancelled and NIL trial statuses in Tencent mirror values", () => {
+  const rows = buildTencentTrialLedgerMirrorRows({
+    students: [],
+    lpItems: ["被家长取消", "NIL"].map((resultStatus, index) => ({
+      id: `LP-${index}`, studentId: "STU-1", workflowType: "试听 LP", resultStatus,
+    })),
+  });
+  assert.deepEqual(rows.map((row) => row.values.试听状态), ["被家长取消", "NIL"]);
+});

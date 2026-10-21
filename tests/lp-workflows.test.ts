@@ -195,7 +195,7 @@ test("new submissions require the complete current handover template", () => {
 });
 
 test("keeps business result independent from stage and restricts it by workflow type", () => {
-  const trialLedgerStatuses = ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败"];
+  const trialLedgerStatuses = ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败", "被家长取消", "NIL"];
   assert.deepEqual(TRIAL_LEDGER_RESULT_STATUSES, trialLedgerStatuses);
   assert.deepEqual(allowedLpResultStatuses("试听 LP"), trialLedgerStatuses);
   assert.deepEqual(allowedLpResultStatuses("换老师试听"), trialLedgerStatuses);
@@ -206,7 +206,14 @@ test("keeps business result independent from stage and restricts it by workflow 
     assert.doesNotThrow(() => validateLpResultStatus(type, "已取消"));
     assert.throws(() => validateLpResultStatus(type, "试听成功"), /not valid/);
   }
-  assert.deepEqual(LP_RESULT_STATUSES, ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败", "已完成", "已取消"]);
+  assert.deepEqual(LP_RESULT_STATUSES, [...trialLedgerStatuses, "已完成", "已取消"]);
+  for (const resultStatus of ["被家长取消", "NIL"] as const) {
+    assert.doesNotThrow(() => validateLpResultStatus("试听 LP", resultStatus));
+    assert.doesNotThrow(() => validateLpResultStatus("换老师试听", resultStatus));
+    for (const type of nonTrialTypes) {
+      assert.throws(() => validateLpResultStatus(type, resultStatus), /not valid/);
+    }
+  }
   assert.doesNotThrow(() => validateLpResultStatus("试听 LP", "有希望报名"));
   assert.doesNotThrow(() => validateLpResultStatus("试听 LP", "在读试听成功"));
   assert.doesNotThrow(() => validateLpResultStatus("换老师试听", "试听成功"));
