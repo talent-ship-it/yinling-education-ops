@@ -1,3 +1,5 @@
+import { reconcileLpBusinessTasks } from "./lp-business-tasks";
+import type { LessonOccurrenceOverride } from "./lesson-occurrences";
 import {
   closeTrialEscalationTasks,
   DEFAULT_TEACHING_CONTROL_WATCHER,
@@ -63,6 +65,7 @@ export type LpParentProgressRecord = Readonly<{
   resultStatus?: string;
   status?: string;
   closed?: boolean;
+  fields?: Readonly<Record<string, unknown>>;
   requestAt?: Date | string;
   requestedAt?: Date | string;
   requestedAtExact?: Date | string;
@@ -76,7 +79,6 @@ export type LpParentProgressRecord = Readonly<{
 }>;
 
 /**
- * Only legacy trial LP workflows participate in the recurring progress rule.
  * Handbook trial intake already owns explicit 24h/48h tasks, so feeding those
  * LPs into this scheduler would recreate the superseded duplicate chain.
  */
@@ -94,6 +96,7 @@ export function eligibleLpParentProgressRecords(records: readonly unknown[]): Lp
       && typeof (trialIntake as Record<string, unknown>).contactParents === "boolean"
       && typeof (trialIntake as Record<string, unknown>).contactStudent === "boolean",
     );
+    if (workflowType === "老师新 LP" || workflowType === "老师 LP 修改") return true;
     return (workflowType === "试听 LP" || workflowType === "换老师试听")
       && !usesHandbookProgressChain;
   });
@@ -122,12 +125,24 @@ export type LpParentProgressBooking = Readonly<{
   date?: string;
   start?: string;
   timezone?: string;
+  teacherId?: string;
+  sourceTeacherName?: string;
+  subject?: string;
+  course?: string;
+  duration?: number;
+  recurring?: boolean;
+  repeatCount?: number;
+  recurrenceIntervalDays?: number;
+  recurrenceEndDate?: string;
+  occurrenceOverrides?: readonly LessonOccurrenceOverride[];
 }>;
 
 export type ReconcileLpParentProgressInput = Readonly<{
   tasks: readonly OpsTask[];
   lp: LpParentProgressRecord;
   bookings?: readonly LpParentProgressBooking[];
+  teachers?: readonly Readonly<{ id: string; name: string }>[];
+  lps?: readonly LpParentProgressRecord[];
   now: Date | string;
   timeZone?: string;
   /** Legacy compatibility only; reconciliation always uses deterministic IDs. */
@@ -283,6 +298,7 @@ function deduplicateProgressTasks(tasks: readonly OpsTask[], lpId: string, stude
  * automatically superseded before the next cycle is upserted.
  */
 export function reconcileLpParentProgressTasks(input: ReconcileLpParentProgressInput): OpsTask[] {
+  if (input.lp.workflowType === "老师新 LP" || input.lp.workflowType === "老师 LP 修改") return reconcileLpBusinessTasks(input);
   const lpId = requiredText(input.lp.id, "lp.id");
   const studentId = requiredText(input.lp.studentId, "lp.studentId");
   requiredText(input.lp.owner, "lp.owner");
@@ -373,6 +389,7 @@ export function reconcileAllLpParentProgressTasks(input: Readonly<{
   tasks: readonly OpsTask[];
   lps: readonly LpParentProgressRecord[];
   bookings?: readonly LpParentProgressBooking[];
+  teachers?: readonly Readonly<{ id: string; name: string }>[];
   now: Date | string;
   timeZone?: string;
   /** Legacy compatibility only; reconciliation always uses deterministic IDs. */
@@ -383,6 +400,8 @@ export function reconcileAllLpParentProgressTasks(input: Readonly<{
       tasks,
       lp,
       bookings: input.bookings,
+      teachers: input.teachers,
+      lps: input.lps,
       now: input.now,
       timeZone: input.timeZone,
     }),

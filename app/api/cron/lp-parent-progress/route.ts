@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const MAX_OCC_RETRIES = 3;
-const ENTITIES = ["lpItems", "bookings", "tasks"] as const;
+const ENTITIES = ["lpItems", "bookings", "tasks", "teachers"] as const;
 
 function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, {
@@ -39,9 +39,9 @@ function rowFor(rows: readonly OpsStateRow[], entity: string) {
   return row;
 }
 
-function sourceDigest(lpItems: unknown, bookings: unknown) {
+function sourceDigest(lpItems: unknown, bookings: unknown, teachers: unknown) {
   return createHash("sha256")
-    .update(JSON.stringify({ lpItems, bookings }))
+    .update(JSON.stringify({ lpItems, bookings, teachers }))
     .digest("hex");
 }
 
@@ -80,12 +80,14 @@ export async function GET(request: Request) {
       const lpItemsRow = rowFor(rows, "lpItems");
       const bookingsRow = rowFor(rows, "bookings");
       const tasksRow = rowFor(rows, "tasks");
+      const teachersRow = rowFor(rows, "teachers");
       const sourceVersions = {
         lpItems: lpItemsRow.version,
         bookings: bookingsRow.version,
         tasks: tasksRow.version,
+        teachers: teachersRow.version,
       };
-      const digest = sourceDigest(lpItemsRow.payload, bookingsRow.payload);
+      const digest = sourceDigest(lpItemsRow.payload, bookingsRow.payload, teachersRow.payload);
       const now = new Date();
       const lpItems = lpItemsRow.payload as Array<Record<string, unknown>>;
       const bookings = bookingsRow.payload as Array<Record<string, unknown>>;
@@ -96,6 +98,7 @@ export async function GET(request: Request) {
         tasks,
         lps: eligibleLpItems,
         bookings: bookings as never,
+        teachers: teachersRow.payload as Array<{ id: string; name: string }>,
         now,
         timeZone: "Australia/Melbourne",
       });

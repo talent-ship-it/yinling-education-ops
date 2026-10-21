@@ -15,6 +15,10 @@ test("LP scheduler is a secret-gated fixed-frequency server route", () => {
   assert.match(route, /reconcileAllLpParentProgressTasks/);
   assert.match(route, /eligibleLpParentProgressRecords\(lpItems\)/);
   assert.match(route, /lps: eligibleLpItems/);
+  assert.match(route, /const ENTITIES = \["lpItems", "bookings", "tasks", "teachers"\]/);
+  assert.match(route, /teachers: teachersRow\.version/);
+  assert.match(route, /sourceDigest\(lpItemsRow\.payload, bookingsRow\.payload, teachersRow\.payload\)/);
+  assert.match(route, /teachers: teachersRow\.payload/);
   assert.match(route, /recoverStaleLpParentProgressSchedulerRuns\(\)/);
   assert.match(route, /timeZone: "Australia\/Melbourne"/);
   assert.match(route, /putLpParentProgressSchedulerTasks\(/);
