@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LP_BUSINESS_CLOSED_RESULT, LP_BUSINESS_SCHEDULED_RESULT, LP_MODIFICATION_REVIEW_ADVANCED_RESULT } from "../lib/lp-business-tasks";
-import { eligibleLpParentProgressRecords, reconcileAllLpParentProgressTasks, reconcileLpParentProgressTasks, type LpParentProgressRecord } from "../lib/lp-parent-progress-service";
+import { eligibleLpParentProgressRecords, reconcileAllLpParentProgressTasks, reconcileLpParentProgressTasks, type LpParentProgressRecord, type LpParentProgressBooking } from "../lib/lp-parent-progress-service";
 import { deterministicTaskId, type OpsTask } from "../lib/ops-tasks";
 
 const anchor = "2026-10-21T03:00:00.000Z";
@@ -122,4 +122,46 @@ test("delivery and preparation stages close only their matching reminders and re
 test("N+2 scheduling retains the source handover instant across daylight saving", () => {
   const tasks = runNew([], [], { ...newLp, fields: { ...newLp.fields, requestSentAt: "2026-10-02T02:00:00.000Z" } });
   assert.equal(tasks[0].dueAt, "2026-10-04T02:00:00.000Z");
+});
+
+function runOccurrenceBooking(actual: LpParentProgressBooking, lps = [newLp]) {
+  return reconcileAllLpParentProgressTasks({ tasks: [], lps, bookings: [actual], teachers, now });
+}
+
+test("the first occurrence can override a different series teacher to the LP teacher", () => {
+  const actual = { ...booking, teacherId: "T-2", recurring: true, repeatCount: 2, occurrenceOverrides: [{ occurrenceId: "BOOK-1:2026-10-30", teacherId: "T-1" }] };
+  const tasks = runOccurrenceBooking(actual);
+  assert.equal(tasks.find((task) => task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
+  assert.equal(tasks.find((task) => task.ruleKey === "lp.first-lesson-finalize-n2")?.dueAt, "2026-10-28T07:00:00.000Z");
+});
+
+test("first-lesson matching uses the actual occurrence student and subject", () => {
+  const overridden = { ...booking, studentId: "OTHER", course: "Math", occurrenceOverrides: [{ occurrenceId: "BOOK-1:2026-10-30", studentId: "STU-1", subjectId: "English" }] };
+  const tasks = runOccurrenceBooking(overridden);
+  assert.equal(tasks.find((task) => task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
+  for (const override of [{ studentId: "OTHER" }, { subjectId: "Math" }]) {
+    const mismatch = runOccurrenceBooking({ ...booking, occurrenceOverrides: [{ occurrenceId: "BOOK-1:2026-10-30", ...override }] });
+    assert.equal(mismatch.length, 1);
+    assert.notEqual(mismatch[0].status, "done");
+  }
+});
+
+test("occurrence overrides determine ambiguity separately from the series identity", () => {
+  const teacherB = { ...newLp, id: "LP-B", fields: { ...newLp.fields, teacher: "Teacher B" } };
+  const actual = { ...booking, teacherId: "T-2", recurring: true, repeatCount: 2, occurrenceOverrides: [{ occurrenceId: "BOOK-1:2026-10-30", teacherId: "T-1" }] };
+  const tasks = runOccurrenceBooking(actual, [newLp, teacherB]);
+  const firstA = tasks.find((task) => task.anchorBookingId === newLp.id && task.ruleKey === "lp.first-lesson-finalize-n2");
+  const firstB = tasks.find((task) => task.anchorBookingId === teacherB.id && task.ruleKey === "lp.first-lesson-finalize-n2");
+  assert.equal(firstA?.dueAt, "2026-10-28T07:00:00.000Z");
+  assert.equal(firstB?.dueAt, "2026-11-04T07:00:00.000Z");
+  const ambiguous = runOccurrenceBooking(actual, [newLp, { ...newLp, id: "LP-DUPLICATE" }]);
+  assert.ok(ambiguous.every((task) => task.ruleKey === "lp.scheduling" && task.status !== "done"));
+});
+
+test("cancelling the only matching override does not satisfy first scheduling", () => {
+  const actual = { ...booking, teacherId: "T-2", recurring: true, repeatCount: 2, occurrenceOverrides: [{ occurrenceId: "BOOK-1:2026-10-30", teacherId: "T-1", status: "cancelled" as const }] };
+  const tasks = runOccurrenceBooking(actual);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].ruleKey, "lp.scheduling");
+  assert.notEqual(tasks[0].status, "done");
 });

@@ -131,8 +131,7 @@ function matches(lp: LpParentProgressRecord, booking: LpParentProgressBooking, t
 function firstLesson(input: Input, anchor: Date) {
   const activeLps = (input.lps ?? [input.lp]).filter((lp) => lp.workflowType === "老师新 LP" && !ended(lp));
   const candidates = (input.bookings ?? []).flatMap((booking) => {
-    if (!matches(input.lp, booking, input.teachers)) return [];
-    if (activeLps.filter((lp) => matches(lp, booking, input.teachers)).length !== 1) return [];
+    if (!isActiveLessonBooking(booking)) return [];
     if (!booking.date || !booking.start || !booking.timezone) return [];
     try {
       const rangeStart = scheduleDateInTimezone(anchor, booking.timezone);
@@ -140,11 +139,14 @@ function firstLesson(input: Input, anchor: Date) {
       const overrides = booking.occurrenceOverrides ?? [];
       const range = lessonOccurrenceSourceRangeForTargetRange(rangeStart, rangeEnd, overrides);
       return expandLessonOccurrences({ ...booking, date: booking.date, start: booking.start, duration: booking.duration ?? 1 }, { ...range, overrides })
-        .filter((occurrence) => !CANCELLED.has(occurrence.status) && matches(input.lp, {
-          ...booking, studentId: occurrence.studentId ?? "", teacherId: occurrence.teacherId, subject: occurrence.subjectId, course: occurrence.subjectId,
-          sourceTeacherName: occurrence.teacherId === booking.teacherId ? booking.sourceTeacherName : undefined,
-        }, input.teachers))
+        .filter((occurrence) => !CANCELLED.has(occurrence.status))
         .flatMap((occurrence) => {
+          const actualBooking = {
+            ...booking, studentId: occurrence.studentId ?? "", teacherId: occurrence.teacherId, subject: occurrence.subjectId, course: occurrence.subjectId,
+            sourceTeacherName: occurrence.teacherId === booking.teacherId ? booking.sourceTeacherName : undefined,
+          };
+          if (!matches(input.lp, actualBooking, input.teachers)) return [];
+          if (activeLps.filter((lp) => matches(lp, actualBooking, input.teachers)).length !== 1) return [];
           const startsAt = scheduleOccurrenceInstant({ ...occurrence, timezone: booking.timezone! });
           return startsAt >= anchor ? [{ startsAt, occurrenceId: occurrence.occurrenceId }] : [];
         });

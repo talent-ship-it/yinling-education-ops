@@ -310,7 +310,7 @@ test("two independent reconciles produce one deterministic task after merge", ()
   assert.equal(merged.filter((entry) => entry.ruleKey === "trial.parent-progress-sync.1").length, 1);
 });
 
-test("scheduler eligibility excludes every non-trial LP workflow even with an exact request instant", () => {
+test("legacy daily progress excludes handbook and teacher-change trial intake", () => {
   const records = [
     { ...lp, workflowType: "试听 LP" },
     { ...lp, id: "LP-REPLACEMENT", workflowType: "换老师试听" },
@@ -330,7 +330,7 @@ test("scheduler eligibility excludes every non-trial LP workflow even with an ex
   ];
 
   const eligible = eligibleLpParentProgressRecords(records);
-  assert.deepEqual(eligible.map((record) => record.id), ["LP-1", "LP-REPLACEMENT"]);
+  assert.deepEqual(eligible.map((record) => record.id), ["LP-1"]);
 
   const tasks = reconcileAllLpParentProgressTasks({
     tasks: [],
@@ -358,4 +358,19 @@ test("parent-cancelled trial results close legacy progress reminders while NIL k
   });
   assert.equal(nil.length, 1);
   assert.notEqual(nil[0].status, "done");
+});
+
+test("teacher-change trials never recreate daily intake progress and retain scheduled LP/preparation tasks", () => {
+  const replacement = { ...lp, workflowType: "换老师试听", fields: { requestSentAt: lp.requestedAt, newTeacher: "Teacher B", subject: "English", changeReason: "Teaching style" } };
+  const intended = [
+    task({ id: "handover", ruleKey: "lp.handover" }),
+    task({ id: "scheduling", ruleKey: "trial.scheduling" }),
+    task({ id: "finalize", ruleKey: "trial.jiaowubao.lp-materials-n2", anchorBookingId: "JWB:EVENT-2", requestAnchorBookingId: lp.id }),
+    task({ id: "preparation", ruleKey: "trial.jiaowubao.prep-n1", anchorBookingId: "JWB:EVENT-2", requestAnchorBookingId: lp.id }),
+  ];
+  const eligible = eligibleLpParentProgressRecords([replacement]);
+  assert.deepEqual(eligible, []);
+  assert.deepEqual(reconcileAllLpParentProgressTasks({ tasks: intended, lps: eligible, now: "2026-08-12T12:00:00.000Z" }), intended);
+  assert.deepEqual(reconcileAllLpParentProgressTasks({ tasks: intended, lps: [replacement], now: "2026-08-12T12:00:00.000Z" }), intended);
+  assert.deepEqual(reconcileLpParentProgressTasks({ tasks: intended, lp: replacement, now: "2026-08-13T12:00:00.000Z" }), intended);
 });

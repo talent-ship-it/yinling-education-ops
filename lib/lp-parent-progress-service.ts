@@ -97,8 +97,7 @@ export function eligibleLpParentProgressRecords(records: readonly unknown[]): Lp
       && typeof (trialIntake as Record<string, unknown>).contactStudent === "boolean",
     );
     if (workflowType === "老师新 LP" || workflowType === "老师 LP 修改") return true;
-    return (workflowType === "试听 LP" || workflowType === "换老师试听")
-      && !usesHandbookProgressChain;
+    return workflowType === "试听 LP" && !usesHandbookProgressChain;
   });
 }
 
@@ -298,6 +297,7 @@ function deduplicateProgressTasks(tasks: readonly OpsTask[], lpId: string, stude
  * automatically superseded before the next cycle is upserted.
  */
 export function reconcileLpParentProgressTasks(input: ReconcileLpParentProgressInput): OpsTask[] {
+  if (input.lp.workflowType === "换老师试听") return [...input.tasks];
   if (input.lp.workflowType === "老师新 LP" || input.lp.workflowType === "老师 LP 修改") return reconcileLpBusinessTasks(input);
   const lpId = requiredText(input.lp.id, "lp.id");
   const studentId = requiredText(input.lp.studentId, "lp.studentId");
