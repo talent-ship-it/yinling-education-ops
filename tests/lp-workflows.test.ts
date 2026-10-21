@@ -115,7 +115,7 @@ test("aligns every dedicated workflow with the confirmed Tencent templates", () 
   for (const [type, keys] of Object.entries(expected)) {
     const schema = getLpWorkflowSchema(type as keyof typeof expected);
     assert.equal(schema.typeSpecificFieldsDocumented, true);
-    assert.deepEqual(fieldKeys(type as keyof typeof expected), [...commonKeys, ...keys]);
+    assert.deepEqual(fieldKeys(type as keyof typeof expected), [...commonKeys, ...keys, ...(!keys.some((key) => key === "requestSentAt") ? ["requestSentAt"] : [])]);
     for (const key of keys) assert.ok(schema.fields.find((field) => field.key === key)?.label);
   }
   assert.equal(getLpWorkflowSchema("老师新 LP").fields.find((field) => field.key === "documentUrl")?.control, "url");

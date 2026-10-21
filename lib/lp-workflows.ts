@@ -380,6 +380,9 @@ function schema(
         ? Object.freeze({ ...field, requirement: "optional" as const })
         : field),
       ...typeSpecificFields,
+      ...(!typeSpecificFields.some((field) => field.key === "requestSentAt")
+        ? [Object.freeze({ key: "requestSentAt", label: "LP 交接时间", control: "text", requirement: "optional" } as const)]
+        : []),
     ]),
     typeSpecificFieldsDocumented,
   });
