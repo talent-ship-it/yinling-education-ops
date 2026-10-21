@@ -1,4 +1,10 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-handover-schedule-evidence-concurrency", source: "tests/sql/wecom-handover-schedule-evidence-concurrency-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/wecom-handover-schedule-evidence-concurrency-runtime.py" },
+  ] },
+  { id: "wecom-handover-schedule-evidence", source: "tests/sql/wecom-handover-schedule-evidence-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-evidence-runtime.sql" },
+  ] },
   { id: "trial-handover-enrichment-concurrency", source: "tests/sql/trial-handover-enrichment-concurrency-runtime.py", steps: [
     { kind: "python", file: "tests/sql/trial-handover-enrichment-concurrency-runtime.py" },
   ] },
