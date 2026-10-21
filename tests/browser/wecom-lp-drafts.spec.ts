@@ -611,3 +611,38 @@ test("trusted trial schedules remain readonly beside manual ledger overrides and
   expect(f.screenshotPosted).toEqual([]);
   assertClean(f);
 });
+
+test("handover rows show the proven student and confirmed Jiaowubao class time separately from handover time", async ({ page }) => {
+  const candidate = screenshotCandidate();
+  const pending = source(template.replace("【学生姓名】：Synthetic Student", "【学生姓名】："));
+  const linked = { ...pending, id: "synthetic-linked-handover", sourceMessageId: "synthetic-linked-handover", resolvedStudentName: "Synthetic Proven Child",
+    confirmed: { studentId: STUDENT_ID, lpItemId: LP_ID },
+    trialSchedule: { source: "jiaowubao-open-api", eventId: candidate.eventId, startsAt: candidate.startsAt, endsAt: candidate.endsAt,
+      courseName: candidate.courseName, studentName: "Synthetic Proven Child", teacherId: null, teacherName: candidate.teacherName,
+      plannerHint: null, matchedAt: NOW, durationMinutes: 60, sharedAccountLabel: candidate.sharedAccountLabel, sharedAccountLetter: "b" } };
+  const f = await syntheticWorkspace(page, { sourcePage: () => ({ drafts: [pending, linked], nextCursor: null, total: 2 }) });
+  const panel = page.getByRole("region", { name: "机器人交接草稿", exact: true });
+  await expect(panel.getByText("Synthetic Proven Child", { exact: true })).toBeVisible();
+  const schedule = panel.getByRole("region", { name: "教务宝小课表" });
+  await expect(schedule.getByText("2026-10-22", { exact: true })).toBeVisible();
+  await expect(schedule.getByText("19:05 – 20:05", { exact: true })).toBeVisible();
+  await expect(schedule.getByText("上课时间（墨尔本）", { exact: true })).toBeVisible();
+  await expect(panel.getByText("上课时间：待核对教务宝课表", { exact: true })).toBeVisible();
+  await expect(panel.getByText("待补学生姓名", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/交接时间：/u)).toHaveCount(2);
+  expect(f.posted).toHaveLength(0);
+  assertClean(f);
+});
+
+test("a roster-resolved draft name is visible and prefilled without silently creating an LP", async ({ page }) => {
+  const unknown = source(template.replace("【学生姓名】：Synthetic Student", "【学生姓名】："));
+  const resolved = { ...unknown, resolvedStudentName: "Synthetic Proven Child", matchedStudentId: STUDENT_ID,
+    draft: { ...unknown.draft, studentName: "Synthetic Proven Child", fields: { ...unknown.draft.fields, studentNameKnown: true, studentName: "Synthetic Proven Child" } } };
+  const f = await syntheticWorkspace(page, { sourcePage: () => ({ drafts: [resolved], nextCursor: null, total: 1 }) });
+  await expect(page.getByRole("button", { name: "Synthetic Proven Child 核对并创建 LP", exact: true })).toBeVisible();
+  await expect(page.getByText("待补学生姓名", { exact: true })).toHaveCount(0);
+  const dialog = await openDraft(page);
+  await expect(dialog.locator('[name="studentName"]')).toHaveValue("Synthetic Proven Child");
+  expect(f.posted).toHaveLength(0);
+  assertClean(f);
+});

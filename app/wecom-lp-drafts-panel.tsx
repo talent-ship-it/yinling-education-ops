@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
 
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
+import { TrialScheduleDetails } from "./trial-schedule-details";
 
 type DraftPage = Readonly<{
   drafts: WecomLpDraftSource[];
@@ -52,7 +53,7 @@ function draftStatus(source: WecomLpDraftSource) {
   switch (source.status) {
     case "identity_conflict": return { label: "学生身份冲突", tone: "red", blocked: true };
     case "identity_ambiguous": return { label: "学生匹配不唯一", tone: "amber", blocked: true };
-    case "awaiting_student_name": return { label: "待补学生姓名", tone: "amber", blocked: false };
+    case "awaiting_student_name": return source.resolvedStudentName ? { label: "待核对", tone: "blue", blocked: false } : { label: "待补学生姓名", tone: "amber", blocked: false };
     default: return { label: "待核对", tone: "blue", blocked: false };
   }
 }
@@ -136,10 +137,14 @@ function handoverTime(source: WecomLpDraftSource) {
   return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
 }
 
+function draftName(source: WecomLpDraftSource) {
+  return source.studentName || source.resolvedStudentName || source.wechatName || "待确认学生";
+}
+
 function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProps, "onSelect" | "timeDisplay"> & { source: WecomLpDraftSource }) {
   const status = draftStatus(source);
   const sentAt = handoverTime(source);
-  const name = source.studentName || source.wechatName || "待确认学生";
+  const name = draftName(source);
   const details = [fieldText(source.draft.fields.subject), fieldText(source.draft.fields.assignedTeacher)].filter(Boolean);
   const ownership = [source.operationsOwner ? `教务：${source.operationsOwner}` : "", source.coursePlanner ? `课程规划：${source.coursePlanner}` : ""].filter(Boolean);
   return <div className="collection-row" style={{ display: "flex", flexWrap: "wrap", gap: 12, minWidth: 0, cursor: "default", justifyContent: "space-between" }}>
@@ -147,6 +152,7 @@ function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProp
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}><strong style={{ overflowWrap: "anywhere" }}>{name}</strong><span className={`status-pill ${status.tone}`}>{status.label}</span></div>
       <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>{details.join(" · ") || "科目、老师待核对"}</span>
       {ownership.length > 0 && <small style={{ overflowWrap: "anywhere" }}>{ownership.join(" · ")}</small>}
+      <TrialScheduleDetails schedule={source.trialSchedule} pendingLabel="上课时间：待核对教务宝课表" />
       <small style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>交接时间：{sentAt ? <time dateTime={sentAt}>{timeDisplay.formatTime(sentAt)}</time> : "未记录"}</small>
     </div>
     <button className="primary-button" type="button" disabled={status.blocked} aria-label={`${name} ${source.confirmed ? "已创建 LP" : "核对并创建 LP"}`} onClick={() => onSelect(source)}>{draftActionLabel(source, status.blocked)}</button>

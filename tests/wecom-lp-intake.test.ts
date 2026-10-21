@@ -64,3 +64,27 @@ test("source data stays read-only when generating a draft", () => {
   buildWecomLpDraft(source.messages);
   assert.equal(JSON.stringify(source), before);
 });
+
+test("guardian mentions are formatting while distinct names and placeholders stay separate", () => {
+  const student = { id: "STU-1", name: "Synthetic Child", guardianWechat: "Synthetic Parent" };
+  for (const wechatName of ["Synthetic Parent@教务AI助手", "Ｓｙｎｔｈｅｔｉｃ Parent＠教务AI助手", "Synthetic Parent @教务 AI 助手 @教务AI助手"]) {
+    assert.equal(matchWecomDraftStudent({ ...source, wechatName }, [student]), "STU-1");
+  }
+  for (const wechatName of ["@教务AI助手", "-@教务AI助手", "待确认@教务AI助手", "教务AI助手", "N/A"]) {
+    assert.equal(matchWecomDraftStudent({ ...source, wechatName }, [{ ...student, guardianWechat: wechatName }]), null);
+  }
+  assert.equal(matchWecomDraftStudent({ ...source, wechatName: "DJ@教务AI助手" }, [{ ...student, guardianWechat: "J" }]), null);
+  for (const status of ["identity_conflict", "identity_ambiguous"] as const) {
+    assert.equal(matchWecomDraftStudent({ ...source, status }, [student]), null);
+  }
+});
+
+test("a legacy case cannot lend its family identity to a different message guardian", () => {
+  const student = { id: "STU-1", name: "Synthetic Child", guardianWechat: "DJ" };
+  const base = { ...source, wechatName: "DJ@教务AI助手", studentName: null };
+  const messages = [{ ...source.messages[0], text: "【微信名】：J@教务AI助手" }];
+  assert.equal(matchWecomDraftStudent({ ...base, messages }, [student]), null);
+  assert.equal(matchWecomDraftStudent({ ...base, messages: [{ ...messages[0], studentId: "STU-1" }] }, [student]), null);
+  assert.equal(matchWecomDraftStudent({ ...base, messages: [{ ...messages[0], text: "【微信名】：DJ@教务AI助手" }] }, [student]), "STU-1");
+  assert.equal(matchWecomDraftStudent({ ...base, messages: [{ ...messages[0], text: "【微信名】：DJ@教务AI助手" }, { ...messages[0], messageId: "synthetic-other", text: "【微信名】：J@教务AI助手" }] }, [student]), null);
+});
