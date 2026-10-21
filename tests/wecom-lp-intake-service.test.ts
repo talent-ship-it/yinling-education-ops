@@ -134,13 +134,18 @@ test("evidence reads use the verified actor and never block readable handovers d
 
 test("GET joins persisted evidence by exact message revision and exposes only the public schedule", async () => {
   const evidence = { algorithmVersion: "2" as const, sourceMessageId: command.sourceMessageId, sourceRevision: command.sourceRevision, snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: fields.requestSentAt, status: "matched" as const, matchedStudentId: "STU-1", candidates: [{ studentId: "STU-1", studentName: "Synthetic Child", sourceRunId: "private-snapshot-run", schedule: { source: "jiaowubao-open-api" as const, eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z", teacherName: "Synthetic Teacher", teacherId: null, courseName: "Y8 English", studentName: "Synthetic Child", plannerHint: null, matchedAt: fields.requestSentAt } }] };
-  const f = harness({ evidence: [evidence] });
-  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
-  const body = await response.json();
-  assert.equal(body.drafts[0].trialSchedule.eventId, "synthetic-event");
-  assert.equal(body.drafts[0].scheduleEvidence.status, "matched");
-  assert.doesNotMatch(JSON.stringify(body), /private-snapshot-run|snapshotRevision/);
-  assert.equal(f.saved.length, 0);
+  for (const heading of ["", "二次试听 信息交接\n"]) {
+    const original = harness().source;
+    const source = { ...original, messages: [{ ...original.messages[0], text: heading + original.messages[0].text }] };
+    const f = harness({ source, evidence: [evidence] });
+    const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
+    const body = await response.json();
+    assert.equal(body.drafts[0].trialSchedule.eventId, "synthetic-event");
+    assert.equal(body.drafts[0].scheduleEvidence.status, "matched");
+    assert.doesNotMatch(JSON.stringify(body), /private-snapshot-run|snapshotRevision/);
+    assert.equal(f.evidenceReads.length, 1);
+    assert.equal(f.saved.length, 0);
+  }
   const stale = harness({ evidence: [{ ...evidence, sourceRevision: "c".repeat(64) }] });
   const staleBody = await (await stale.handlers.GET(new Request("https://synthetic.invalid/api"))).json();
   assert.equal(staleBody.drafts[0].trialSchedule, undefined);
@@ -159,7 +164,7 @@ test("source business type cannot be changed or confirmed while its headings con
   }
 });
 
-test("nontrial draft pages never acquire trial schedule identity evidence", async () => {
+test("LP modification draft pages never acquire trial schedule identity evidence", async () => {
   const original = harness().source;
   const source = { ...original, messages: [{ ...original.messages[0], text: "老生LP修改 信息交接\n【学生姓名】：Synthetic Child\n【涉及科目】：English\n【变动内容】：Update the learning goal." }] };
   const f = harness({ source, evidenceError: true });

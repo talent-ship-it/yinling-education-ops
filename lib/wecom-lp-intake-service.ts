@@ -87,14 +87,15 @@ function committedResponse(result: Awaited<ReturnType<Dependencies["confirm"]>>[
 async function decoratePage(dependencies: Dependencies, ctx: Context, sources: readonly import("./wecom-lp-intake").WecomLpDraftRawSource[]) {
   const visible = filterOpsStateRows(ctx.rows, ctx.access);
   const drafts = sources.map((source) => decorateWecomLpDraft(source, studentsFrom(ctx.rows), visible));
-  const trialDrafts = drafts.filter((source) => source.draft.workflowType === "试听 LP");
+  const isTrialDraft = (source: typeof drafts[number]) => source.draft.workflowType === "试听 LP" || source.draft.workflowType === "换老师试听";
+  const trialDrafts = drafts.filter(isTrialDraft);
   if (!trialDrafts.length) return drafts;
   try {
     const evidence = await dependencies.readScheduleEvidence({ sourceMessageIds: trialDrafts.map((source) => source.sourceMessageId), actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
     if (!Array.isArray(evidence)) throw new Error("invalid_handover_schedule_evidence");
-    return drafts.map((source) => source.draft.workflowType === "试听 LP" ? applyWecomHandoverScheduleEvidence(source, evidence.find((entry) => entry.sourceMessageId === source.sourceMessageId), visible) : source);
+    return drafts.map((source) => isTrialDraft(source) ? applyWecomHandoverScheduleEvidence(source, evidence.find((entry) => entry.sourceMessageId === source.sourceMessageId), visible) : source);
   } catch {
-    return drafts.map((source) => source.draft.workflowType === "试听 LP" ? { ...source, scheduleEvidenceUnavailable: true } : source);
+    return drafts.map((source) => isTrialDraft(source) ? { ...source, scheduleEvidenceUnavailable: true } : source);
   }
 }
 export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
