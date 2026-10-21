@@ -50,7 +50,8 @@ test("legacy deadline route reauthorizes before replay and gates clear before on
   assert.match(service, /if \(hasAutomaticTaskDeadline\(task\)\) \{\s*fail\("task_not_legacy"/);
   const automaticGuardStart = taskRules.indexOf("export function hasAutomaticTaskDeadline(");
   const automaticGuardEnd = taskRules.indexOf("export interface RuleBoundTask", automaticGuardStart);
-  assert.ok(automaticGuardStart >= 0 && automaticGuardEnd > automaticGuardStart);
+  assert.ok(automaticGuardStart >= 0);
+  assert.ok(automaticGuardEnd > automaticGuardStart);
   const automaticGuard = taskRules.slice(automaticGuardStart, automaticGuardEnd);
   assert.match(automaticGuard, /Object\.hasOwn\(task, "ruleKey"\)/);
   assert.match(automaticGuard, /Object\.hasOwn\(task, "anchorBookingId"\)/);
