@@ -56,7 +56,7 @@ function source(type: BusinessType, revision = "a".repeat(64), changed = false) 
   };
 }
 
-async function syntheticWorkspace(page: Page, type: BusinessType, postStatuses: number[] = []) {
+async function syntheticWorkspace(page: Page, type: BusinessType, postStatuses: number[] = [], courseNames: readonly string[] = []) {
   let draftSource = source(type);
   let committed = false;
   const posted: Command[] = [];
@@ -68,7 +68,7 @@ async function syntheticWorkspace(page: Page, type: BusinessType, postStatuses: 
   };
   const entities: Record<string, unknown[]> = {
     students: [student], teachers: [{ id: "SYNTH-ARRANGED-TEACHER", name: TEACHER, initials: "ST", subjects: [SUBJECT], timezone: "Australia/Melbourne", availability: "", load: 0, capacity: 10, acceptsStudents: true, note: "", availabilityWindows: [] }],
-    lpItems: [structuredClone(oldLp)], tasks: [], bookings: [], courses: [], operations: [], renewals: [], payroll: [], messages: [], files: [], audit: [],
+    lpItems: [structuredClone(oldLp)], tasks: [], bookings: [], courses: courseNames.map((name, index) => ({ id: `SYNTH-COURSE-${index}`, name, status: "在用", source: "synthetic" })), operations: [], renewals: [], payroll: [], messages: [], files: [], audit: [],
   };
   const versions = Object.fromEntries(Object.keys(entities).map((entity) => [entity, 1]));
   const row = (entity: string) => ({ entity, payload: entities[entity] ?? [], version: versions[entity] ?? 1, updated_at: NOW, updated_by: "synthetic" });
@@ -147,7 +147,7 @@ async function openDraft(page: Page, type: BusinessType) {
   return dialog;
 }
 
-async function reviewMissingFields(dialog: Locator) {
+async function reviewSharedFields(dialog: Locator) {
   for (const [name, value] of [["responsibleOperations", "Ella"], ["specifiedContentStatus", "无需指定"], ["preparationFollowUp", "否"]]) {
     const control = dialog.locator(`[name="${name}"]`);
     if (await control.count() && !await control.inputValue()) {
@@ -155,6 +155,10 @@ async function reviewMissingFields(dialog: Locator) {
       else await control.fill(value);
     }
   }
+}
+
+async function reviewMissingFields(dialog: Locator) {
+  await reviewSharedFields(dialog);
   const subject = dialog.locator('[name="subject"]');
   if (await subject.count() && !await subject.inputValue()) {
     if (await subject.evaluate((element) => element.tagName === "SELECT")) await subject.selectOption(SUBJECT);
@@ -213,6 +217,27 @@ for (const type of TYPES) test(`${type}: minimal existing-student handover prese
   await expect(page.getByRole("button", { name: `${STUDENT} 已创建 LP`, exact: true })).toBeDisabled();
   await views.getByRole("button", { name: /^已完成/u }).click();
   await expect(page.getByRole("combobox", { name: "Synthetic Historical LP 当前阶段", exact: true })).toHaveValue("完成");
+  assertClean(f);
+});
+
+test("retrial with a populated course list requires an explicit missing-subject choice", async ({ page }) => {
+  const f = await syntheticWorkspace(page, "换老师试听", [], ["Y8 Mathematics", SUBJECT]);
+  const dialog = await openDraft(page, "换老师试听");
+  const subject = dialog.locator('select[name="subject"]');
+  await expect(subject).toHaveValue("");
+  await expect(subject.getByRole("option", { name: "请选择", exact: true })).toHaveAttribute("value", "");
+  await expect(subject.getByRole("option", { name: "Y8 Mathematics", exact: true })).toHaveAttribute("value", "Y8 Mathematics");
+  await expect(dialog.locator('[name="newTeacher"]')).toHaveValue(TEACHER);
+  await reviewSharedFields(dialog);
+  await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
+  await expect(dialog).toBeVisible();
+  expect(f.posted).toEqual([]);
+  expect(await subject.evaluate((element) => (element as HTMLSelectElement).checkValidity())).toBe(false);
+  await subject.selectOption(SUBJECT);
+  await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(f.posted).toHaveLength(1);
+  expect(f.posted[0]).toMatchObject({ workflowType: "换老师试听", studentId: STUDENT_ID, fields: { subject: SUBJECT, newTeacher: TEACHER } });
   assertClean(f);
 });
 
