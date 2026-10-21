@@ -54,7 +54,7 @@ revoke all on function internal.wecom_is_lp_template(text) from public, anon, au
 
 create function internal.resolve_wecom_lp_business_identity()
 returns trigger language plpgsql security invoker set search_path = '' as $$
-declare student jsonb; candidates jsonb; name_hint text; guardian text;
+declare student jsonb; candidates jsonb; name_hint text;
 begin
   if new.ingested_by <> 'WeCom Bot Receiver' or new.message_type <> 'text'
      or new.classification <> 'handover' or new.trial_handover_id is not null
@@ -73,12 +73,9 @@ begin
     and internal.wecom_name_key(item ->> 'name') = internal.wecom_name_key(name_hint);
   if jsonb_array_length(candidates) <> 1 then return new; end if;
   student := candidates -> 0;
-  guardian := internal.wecom_guardian_identity_label(coalesce(nullif(btrim(student ->> 'guardianWechat'),''),student ->> 'guardian'));
   new.student_name_hint := name_hint;
   new.operations_owner_hint := coalesce(new.operations_owner_hint, nullif(btrim(student ->> 'owner'),''));
   new.course_planner_hint := coalesce(new.course_planner_hint, nullif(btrim(student ->> 'planner'),''));
-  if guardian is null then return new; end if;
-  new.guardian_wechat_hint := guardian;
   return new;
 end;
 $$;

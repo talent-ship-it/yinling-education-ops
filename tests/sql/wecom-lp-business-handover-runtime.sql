@@ -69,7 +69,8 @@ begin
       E'[Rose]老生LP修改 信息交接[Rose]\n学生姓名：Draft Student\n涉及科目：English\n变动内容：增加写作',
       'handover','pending','WeCom Bot Receiver');
   if exists (select 1 from internal.wecom_archive_messages where message_id like 'bot:business:%'
-      and (trial_handover_id is null or guardian_wechat_hint <> 'Draft Parent' or operations_owner_hint <> 'Abby')) then
+      and (trial_handover_id is not null or guardian_wechat_hint is not null
+        or operations_owner_hint is distinct from 'Abby' or course_planner_hint is distinct from 'Tara')) then
     raise exception 'unique_student_business_source_without_wechat_not_eligible';
   end if;
   if (public.read_wecom_lp_drafts_in_range('wecom-fixture-secret','Abby',false,null,30,'2099-01-03','2099-01-04'))->>'total' <> '3' then
@@ -376,3 +377,62 @@ end;
 $trial_source_scope$;
 rollback;
 select 'wecom_lp_trial_source_scope_runtime_ok' as result;
+
+
+begin;
+do $name_only_siblings$
+declare source jsonb; sibling_source jsonb; receipt record; message_id_value text; selected_id text; command_value text;
+  assignment jsonb := '{"owner":"Abby","planner":"Tara","mayReassign":false}';
+  fields jsonb := '{"responsibleOperations":"Abby","subject":"English","specifiedContentStatus":"无需指定","preparationFollowUp":"否","isUniversityStudent":false,"modificationRequirements":"增加写作","requestSentAt":"2099-01-10T00:00:00.000Z"}';
+begin
+  update public.ops_state set payload=payload||'[
+    {"id":"STU-SIBLING-ONE","name":"Sibling One","guardianWechat":"Shared Sibling Parent","owner":"Abby","planner":"Tara"},
+    {"id":"STU-SIBLING-TWO","name":"Sibling Two","guardianWechat":"Shared Sibling Parent","owner":"Abby","planner":"Tara"}
+  ]'::jsonb where entity='students';
+  insert into internal.wecom_archive_messages(message_id,content_sha256,chat_id,sender_id,sent_at,
+    message_type,body,classification,match_status,ingested_by)
+  values ('bot:sibling:one',repeat('7',64),'shared-sibling-chat','sales','2099-01-10','text',
+    E'老生LP修改 信息交接\n学生姓名：Sibling One\n涉及科目：English\n变动内容：增加写作','handover','pending','WeCom Bot Receiver'),
+    ('bot:sibling:two',repeat('8',64),'shared-sibling-chat','sales','2099-01-10T01:00:00Z','text',
+    E'老生LP修改 信息交接\n学生姓名：Sibling Two\n涉及科目：English\n变动内容：增加写作','handover','pending','WeCom Bot Receiver');
+  if exists(select 1 from internal.wecom_archive_messages where message_id in ('bot:sibling:one','bot:sibling:two')
+      and (guardian_wechat_hint is not null or trial_handover_id is not null or operations_owner_hint <> 'Abby' or course_planner_hint <> 'Tara'))
+      or (select count(distinct id) from internal.wecom_lp_business_sources where source_message_id in ('bot:sibling:one','bot:sibling:two')) <> 2 then
+    raise exception 'name_only_siblings_promoted_roster_guardian_or_shared_case';
+  end if;
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:sibling:one','Abby',false);
+  sibling_source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:sibling:two','Abby',false);
+  if source is null or sibling_source is null or source->>'caseId'=sibling_source->>'caseId'
+      or source->>'sourceKind' <> 'business' or sibling_source->>'sourceKind' <> 'business'
+      or source->>'wechatName' <> '' or sibling_source->>'wechatName' <> ''
+      or source->>'studentName' <> 'Sibling One' or sibling_source->>'studentName' <> 'Sibling Two'
+      or source->>'status' in ('identity_conflict','identity_ambiguous')
+      or sibling_source->>'status' in ('identity_conflict','identity_ambiguous')
+      or not exists(select 1 from jsonb_array_elements(public.read_wecom_lp_drafts('wecom-fixture-secret','Abby',false)->'rows') s where s->>'sourceMessageId'='bot:sibling:one')
+      or not exists(select 1 from jsonb_array_elements(public.read_wecom_lp_drafts('wecom-fixture-secret','Abby',false)->'rows') s where s->>'sourceMessageId'='bot:sibling:two') then
+    raise exception 'name_only_siblings_not_independently_reviewable';
+  end if;
+  for message_id_value,selected_id,command_value in select * from (values
+    ('bot:sibling:one','STU-SIBLING-ONE','20000000-0000-4000-8000-000000000040'),
+    ('bot:sibling:two','STU-SIBLING-TWO','20000000-0000-4000-8000-000000000041')
+  ) selections(message_id_value,selected_id,command_value) loop
+    source := public.read_wecom_lp_draft('wecom-fixture-secret',message_id_value,'Abby',false);
+    select * into receipt from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      message_id_value,source->>'sourceRevision',command_value,selected_id,null,fields,assignment,
+      internal.fixture_wecom_lp_versions(),'Abby',false,'老师 LP 修改');
+    if not receipt.applied or receipt.student_id <> selected_id
+        or not exists(select 1 from internal.wecom_lp_confirmations c where c.source_message_id=message_id_value
+          and c.student_id=selected_id and c.case_id is null and c.business_case_id=(source->>'caseId')::uuid)
+        or not exists(select 1 from jsonb_array_elements((receipt.lp_items_row).payload) lp
+          where lp->>'id'=receipt.lp_item_id and lp->>'studentId'=selected_id and lp->>'workflowType'='老师 LP 修改') then
+      raise exception 'name_only_sibling_manual_confirmation_failed';
+    end if;
+    if message_id_value='bot:sibling:one'
+        and public.read_wecom_lp_draft('wecom-fixture-secret','bot:sibling:two','Abby',false) is distinct from sibling_source then
+      raise exception 'name_only_sibling_confirmation_mutated_other_source';
+    end if;
+  end loop;
+end;
+$name_only_siblings$;
+rollback;
+select 'wecom_lp_name_only_siblings_runtime_ok' as result;
