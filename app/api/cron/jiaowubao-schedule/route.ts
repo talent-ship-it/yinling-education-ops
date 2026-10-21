@@ -521,13 +521,28 @@ async function projectTrialHorizon(
   options: () => OpsRpcOptions,
   allowStalePinnedRevision: boolean,
 ) {
+  const rpcNames = new Set([
+    "get_jiaowubao_open_api_schedule_snapshot_window", "get_ops_state",
+    "sync_jiaowubao_trial_matches_atomic_v3", "get_jiaowubao_trial_sync_command_result",
+    "read_wecom_handover_schedule_input", "save_wecom_handover_schedule_evidence",
+  ]);
+  const checkedOptions = (): OpsRpcOptions => ({
+    ...options(),
+    onDiagnostic: ({ rpc, code, httpStatus, elapsedMs }) => {
+      if (!code || !rpcNames.has(rpc)) return;
+      console.error("jiaowubao_schedule_rpc_failed", {
+        rpc, code: /^[A-Z0-9]{5}$|^(?:timeout|deadline|cancelled|transport)$/u.test(code) ? code : "ops_rpc",
+        httpStatus, elapsedMs,
+      });
+    },
+  });
   const trials = await runJiaowubaoTrialAutoSyncHorizon({
     snapshotRevision,
     windows: jiaowubaoScheduleCollectionWindows(window).map(jiaowubaoTrialProjectionWindow),
-  }, options, allowStalePinnedRevision ? window : null);
+  }, checkedOptions, allowStalePinnedRevision ? window : null);
   const handovers = await runWecomHandoverScheduleReconciliation(snapshotRevision, {
-    readInput: (revision) => readWecomHandoverScheduleInput({ snapshotRevision: revision }, options()),
-    save: (input) => saveWecomHandoverScheduleEvidence(input, options()),
+    readInput: (revision) => readWecomHandoverScheduleInput({ snapshotRevision: revision }, checkedOptions()),
+    save: (input) => saveWecomHandoverScheduleEvidence(input, checkedOptions()),
     now: () => new Date(),
   });
   return { ...trials, handovers };

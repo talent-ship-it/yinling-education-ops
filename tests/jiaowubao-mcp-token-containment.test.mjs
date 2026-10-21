@@ -77,14 +77,22 @@ async function loopback(cont, transform = (_message, result) => result) {
   } };
 }
 
-function routeHarness(fetchImpl) {
+function routeHarness(fetchImpl, projectionDiagnostic = null) {
   const state = { staged: [], snapshotStaged: 0, published: 0, confirmations: 0, released: 0, logs: [], envelope: null };
   let active = { revision: `sha256:${"a".repeat(64)}`, publishedAt: new Date(Date.now() - 91 * 60_000).toISOString(), rowCount: 1 };
   const originalActive = JSON.stringify(active);
   let window;
   let cursor = { runId: RPC_ID, state: "collecting", passNumber: 0, windowIndex: 0, nextPage: 1, firstPassCount: 0, secondPassCount: 0 };
   class OpsStoreError extends Error {}
+  const rejectDiagnostic = (options) => {
+    options.onDiagnostic(projectionDiagnostic);
+    const error = new OpsStoreError("synthetic RPC failure");
+    error.code = "57014";
+    throw error;
+  };
   const ops = {
+    readWecomHandoverScheduleInput: async (_input, options) => projectionDiagnostic.location === "read" ? rejectDiagnostic(options) : {},
+    saveWecomHandoverScheduleEvidence: async (_input, options) => rejectDiagnostic(options),
     OpsStoreError,
     claimJiaowubaoOpenApiScheduleSyncLease: async (input) => ({ acquired: true, runKey: input.runKey, retryAfterSeconds: 0 }),
     releaseJiaowubaoOpenApiScheduleSyncLease: async () => { state.released++; },
@@ -143,9 +151,26 @@ function routeHarness(fetchImpl) {
       jiaowubaoScheduleRpcOptions,
       jiaowubaoScheduleWorkDeadline,
     },
-    "@/lib/jiaowubao-schedule-projection-runner": { runOrQueueJiaowubaoScheduleProjectionTarget: async () => ({ projectionState: "complete" }) },
-    "@/lib/jiaowubao-trial-auto-sync": {},
-    "@/lib/wecom-handover-schedule-reconciliation": {},
+    "@/lib/jiaowubao-schedule-projection-runner": {
+      runOrQueueJiaowubaoScheduleProjectionTarget: async (target, dependencies, setPhase) => {
+        if (!projectionDiagnostic) return { projectionState: "complete" };
+        setPhase("project_trials");
+        return dependencies.projectTrials(target, false);
+      },
+    },
+    "@/lib/jiaowubao-trial-auto-sync": {
+      jiaowubaoTrialProjectionWindow: (value) => value,
+      runJiaowubaoTrialAutoSyncHorizon: async (_input, options) => {
+        if (projectionDiagnostic.location) return {};
+        return rejectDiagnostic(options());
+      },
+    },
+    "@/lib/wecom-handover-schedule-reconciliation": {
+      runWecomHandoverScheduleReconciliation: async (revision, dependencies) => {
+        await dependencies.readInput(revision);
+        return dependencies.save({});
+      },
+    },
     "@/lib/jiaowubao-schedule-provider": { createJiaowubaoScheduleReader: () => createJiaowubaoScheduleReader({ env: { JIAOWUBAO_SCHEDULE_SOURCE: "mcp", INSIDERLEADS_JWB_MCP_TOKEN: TOKEN }, fetchImpl }) },
     "@/lib/ops-store": ops,
   };
@@ -341,3 +366,27 @@ test("MCP containment preserves benign JSON, encodings, duplicate values and mal
   assert.ok(result.state.staged.every((page) => JSON.stringify(page.rows[0].record.cont) === JSON.stringify(cont)));
   assert.deepEqual(result.state.logs, []);
 });
+
+for (const [rpc, code, expected, location] of [
+  ["read_wecom_handover_schedule_input", "57014", "57014", "read"],
+  ["save_wecom_handover_schedule_evidence", "57014", "57014", "save"],
+  ["get_jiaowubao_open_api_schedule_snapshot_window", "57014", "57014"],
+  ["sync_jiaowubao_trial_matches_atomic_v3", "timeout", "timeout"],
+  ["save_wecom_handover_schedule_evidence", TOKEN, "ops_rpc"],
+  [TOKEN, "57014", null],
+  ["get_ops_state", null, null],
+]) {
+  test(`projection diagnostics contain only fixed failure metadata: ${expected ?? "omitted"} ${rpc === TOKEN ? "unknown" : rpc}`, async () => {
+    const fixture = await loopback("safe note");
+    try {
+      const harness = routeHarness(fixture.fetchImpl, { rpc, code, location, httpStatus: 500, elapsedMs: 3000, upstreamRequestId: TOKEN, payload: TOKEN });
+      const response = await harness.get();
+      assert.equal(response.status, 503);
+      const logs = JSON.parse(JSON.stringify(harness.state.logs));
+      const diagnostic = logs.filter(([name]) => name === "jiaowubao_schedule_rpc_failed");
+      assert.deepEqual(diagnostic, expected ? [["jiaowubao_schedule_rpc_failed", { rpc, code: expected, httpStatus: 500, elapsedMs: 3000 }]] : []);
+      assertSafe({ logs, body: await response.json() }, TOKEN);
+      assert.equal(harness.state.released, 1);
+    } finally { await fixture.close(); }
+  });
+}
