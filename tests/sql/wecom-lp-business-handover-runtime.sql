@@ -9,6 +9,9 @@ declare source jsonb; fields jsonb; receipt record; replay record; legacy record
 begin
   if internal.wecom_lp_draft_source('bot:business:historical') is null then raise exception 'historical_business_source_not_backfilled'; end if;
   if public.read_wecom_lp_draft('wecom-fixture-secret','bot:independent:historical','Abby',false)->>'sourceKind' is distinct from 'business' then raise exception 'historical_independent_source_not_backfilled'; end if;
+  if internal.wecom_lp_template_type((select body from internal.wecom_archive_messages where message_id='bot:lp-draft:one')) <> '老师新 LP' then
+    raise exception 'legacy_replay_fixture_missing_reclassified_heading';
+  end if;
   select * into legacy from internal.fixture_legacy_wecom_confirmation;
   source := internal.wecom_lp_draft_source('bot:lp-draft:one');
   select * into replay from public.confirm_wecom_lp_draft_atomic(
@@ -28,6 +31,16 @@ begin
       internal.fixture_wecom_lp_versions(),'Abby',false,'老师新 LP'
     );
     raise exception 'legacy_confirmation_changed_type_allowed';
+  exception when unique_violation then null; end;
+
+  begin
+    perform public.confirm_wecom_lp_draft_atomic(
+      'wecom-fixture-secret',(source->>'caseId')::uuid,'bot:lp-draft:one',
+      (select confirmation_intent->>'sourceRevision' from internal.wecom_lp_confirmations where source_message_id='bot:lp-draft:one'),
+      legacy.command_key,'STU-DRAFT-1',null,internal.fixture_wecom_lp_fields() || '{"assignedTeacher":"Changed Teacher"}'::jsonb,assignment,
+      internal.fixture_wecom_lp_versions(),'Abby',false
+    );
+    raise exception 'legacy_confirmation_changed_fields_allowed';
   exception when unique_violation then null; end;
 
   if not internal.wecom_is_lp_template(E'[Rose]二次试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Tynan\n二次试听原因 + 注意事项：换教学方式')
@@ -299,3 +312,67 @@ end;
 $business_handover$;
 rollback;
 select 'wecom_lp_business_handover_runtime_ok' as result;
+
+
+begin;
+do $trial_source_scope$
+declare input jsonb; pending jsonb; source jsonb; bad_id text;
+begin
+  update public.ops_state set payload=payload||'[{"id":"STU-SCOPE-NO-GUARDIAN","name":"Scope No Guardian","owner":"Abby","planner":"Tara"}]'::jsonb where entity='students';
+  insert into internal.wecom_archive_messages(message_id,content_sha256,chat_id,sender_id,sent_at,
+    message_type,body,classification,student_name_hint,guardian_wechat_hint,operations_owner_hint,course_planner_hint,match_status,ingested_by)
+  values
+    ('bot:scope:trial',repeat('1',64),'scope-trial','sales','2099-01-09','text',
+      E'试听LP 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
+      'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:scope:new',repeat('2',64),'scope-new','sales','2099-01-09','text',
+      E'老生新LP 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
+      'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:scope:modify',repeat('3',64),'scope-modify','sales','2099-01-09','text',
+      E'老生LP修改 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English\n变动内容：更改重点',
+      'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:scope:repeat',repeat('4',64),'scope-repeat','sales','2099-01-09','text',
+      E'二次试听 信息交接\n学生姓名：Draft Student\n安排教师：Tynan\n安排科目：English\n重听原因：更换教师',
+      'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:scope:repeat-independent',repeat('5',64),'scope-repeat-independent','sales','2099-01-09','text',
+      E'二次试听 信息交接\n学生姓名：Scope No Guardian\n安排教师：Tynan\n重听原因：更换教师',
+      'handover','Scope No Guardian',null,'Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:scope:modify-independent',repeat('6',64),'scope-modify-independent','sales','2099-01-09','text',
+      E'老生LP修改 信息交接\n学生姓名：Scope No Guardian\n涉及科目：English\n变动内容：更改重点',
+      'handover','Scope No Guardian',null,'Abby','Tara','pending','WeCom Bot Receiver');
+  if not exists(select 1 from internal.wecom_archive_messages where message_id='bot:scope:modify' and trial_handover_id is not null)
+      or not exists(select 1 from internal.wecom_lp_business_sources where source_message_id='bot:scope:repeat-independent') then
+    raise exception 'trial_source_scope_case_fixture_missing';
+  end if;
+  input := public.read_wecom_handover_schedule_input('wecom-fixture-secret','retained-current',array['bot:scope:trial']);
+  if exists(select 1 from jsonb_array_elements(input->'sources') s where s->>'sourceMessageId' in ('bot:scope:new','bot:scope:modify','bot:scope:modify-independent'))
+      or not exists(select 1 from jsonb_array_elements(input->'sources') s where s->>'sourceMessageId'='bot:scope:repeat')
+      or not exists(select 1 from jsonb_array_elements(input->'sources') s where s->>'sourceMessageId'='bot:scope:repeat-independent' and s->>'sourceKind'='business') then
+    raise exception 'trial_source_scope_competition_includes_nontrial_or_loses_repeat';
+  end if;
+  pending := public.read_wecom_handover_schedule_input('wecom-fixture-secret','retained-current',null);
+  if pending->'targetSourceMessageIds' ?| array['bot:scope:new','bot:scope:modify','bot:scope:modify-independent']
+      or not(pending->'targetSourceMessageIds' ?& array['bot:scope:trial','bot:scope:repeat','bot:scope:repeat-independent']) then
+    raise exception 'trial_source_scope_pending_targets_incorrect';
+  end if;
+  input := public.read_wecom_handover_schedule_input('wecom-fixture-secret','retained-current',array['bot:scope:repeat-independent']);
+  if input->'targetSourceMessageIds' <> '["bot:scope:repeat-independent"]'::jsonb then
+    raise exception 'trial_source_scope_independent_repeat_not_targetable';
+  end if;
+  foreach bad_id in array array['bot:scope:new','bot:scope:modify','bot:scope:modify-independent'] loop
+    begin
+      perform public.read_wecom_handover_schedule_input('wecom-fixture-secret','retained-current',array['bot:scope:trial',bad_id]);
+      raise exception 'trial_source_scope_explicit_nontrial_target_allowed';
+    exception when serialization_failure then
+      if sqlerrm <> 'wecom_schedule_source_changed' then raise; end if;
+    end;
+  end loop;
+  if has_function_privilege('anon','internal.wecom_is_trial_lp_template(text)','execute')
+      or has_function_privilege('authenticated','internal.wecom_is_trial_lp_template(text)','execute')
+      or has_function_privilege('service_role','internal.wecom_is_trial_lp_template(text)','execute') then
+    raise exception 'trial_source_scope_helper_grants_changed';
+  end if;
+end;
+$trial_source_scope$;
+rollback;
+select 'wecom_lp_trial_source_scope_runtime_ok' as result;

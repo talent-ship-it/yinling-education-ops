@@ -439,3 +439,33 @@ test("ambiguous teacher first-name expansion is limited to complete ASCII words"
   assert.equal(project({ sources: [accented], rows: rows([child], [], directory), events: [titled] }).status, "candidate");
   assert.equal(project({ sources: [accented], rows: rows([child], [], [...directory, { id: "TEA-2", name: "Élise Other" }]), events: [titled] }).candidates.length, 0);
 });
+
+
+test("new LP and modification handovers cannot compete for a trial event", () => {
+  const business = ["老生新LP 信息交接", "老生LP修改 信息交接"].map((heading, index) => {
+    const original = source(`business-${index}`);
+    return { ...original, messages: original.messages.map((message) => ({ ...message,
+      text: `${heading}\n学生姓名：Child One\n涉及科目：English\n变动内容：增加写作\n${message.text}` })) };
+  });
+  const result = project({ sources: [source(), ...business] });
+  assert.equal(result.status, "matched");
+  assert.equal(result.matchedStudentId, child.id);
+  for (const entry of business) {
+    assert.throws(() => project({ sources: [source(), entry], targetSourceMessageIds: [entry.sourceMessageId] }), /not a trial handover/);
+  }
+});
+
+test("repeat trial uses the new teacher and ignores the original teacher event", () => {
+  const original = source();
+  const repeat = { ...original, messages: original.messages.map((message) => ({ ...message,
+    text: `二次试听 信息交接\n学生姓名：Child One\n原任课老师：Original Teacher\n二次试听原因：更换老师\n${message.text}` })) };
+  const wrong = event("original-event", { sourceTeacherLabel: "Original Teacher" });
+  const correct = event("repeat-event");
+  const result = project({ sources: [repeat], events: [wrong, correct],
+    rows: rows([child], [], [teacher, { id: "TEA-OLD", name: "Original Teacher" }]) });
+  assert.equal(result.status, "matched");
+  assert.equal(result.matchedStudentId, child.id);
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0]!.schedule.eventId, "repeat-event");
+  assert.equal(project({ sources: [repeat], events: [wrong] }).status, "no_match");
+});

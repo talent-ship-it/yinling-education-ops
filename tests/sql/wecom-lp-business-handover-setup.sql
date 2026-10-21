@@ -1,5 +1,5 @@
 \set ON_ERROR_STOP on
-\ir wecom-lp-draft-setup.sql
+\ir wecom-handover-schedule-algorithm-runtime.sql
 create table internal.fixture_legacy_wecom_confirmation as
 select * from public.confirm_wecom_lp_draft_atomic(
   'wecom-fixture-secret',
@@ -10,6 +10,8 @@ select * from public.confirm_wecom_lp_draft_atomic(
   '{"owner":"Abby","planner":"Tara","mayReassign":false}',
   internal.fixture_wecom_lp_versions(),'Abby',false
 );
+
+update internal.wecom_archive_messages set body=E'老生新LP 信息交接\n' || body where message_id='bot:lp-draft:one';
 
 insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
   message_type, body, classification, student_name_hint, match_status, ingested_by)

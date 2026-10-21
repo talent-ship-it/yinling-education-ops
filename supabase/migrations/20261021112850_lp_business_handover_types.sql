@@ -563,3 +563,37 @@ begin
   end loop;
 end;
 $business_source_readers$;
+
+create function internal.wecom_is_trial_lp_template(p_body text)
+returns boolean language sql immutable strict set search_path = '' as $$
+  select internal.wecom_is_lp_template(p_body)
+    and internal.wecom_lp_template_type(p_body) in ('试听 LP','换老师试听');
+$$;
+revoke all on function internal.wecom_is_trial_lp_template(text) from public, anon, authenticated, service_role;
+
+do $trial_schedule_source_scope$
+declare definition text; old_fragment text; new_fragment text;
+begin
+  definition := pg_catalog.pg_get_functiondef('public.read_wecom_handover_schedule_input(text,text,text[])'::pg_catalog.regprocedure);
+  old_fragment := 'join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id';
+  new_fragment := 'left join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id
+    left join internal.wecom_lp_business_sources b on b.source_message_id = m.message_id';
+  if (length(definition)-length(replace(definition,old_fragment,'')))/length(old_fragment) <> 4 then
+    raise exception 'wecom_trial_schedule_source_join_drift';
+  end if;
+  definition := replace(definition,old_fragment,new_fragment);
+  old_fragment := 'and internal.wecom_is_lp_template(m.body)';
+  new_fragment := 'and internal.wecom_is_trial_lp_template(m.body) and (c.id is not null or b.id is not null)';
+  if (length(definition)-length(replace(definition,old_fragment,'')))/length(old_fragment) <> 4 then
+    raise exception 'wecom_trial_schedule_source_scope_drift';
+  end if;
+  definition := replace(definition,old_fragment,new_fragment);
+  old_fragment := 'and internal.wecom_lp_draft_source(m.message_id) is not null';
+  if (length(definition)-length(replace(definition,old_fragment,'')))/length(old_fragment) <> 1 then
+    raise exception 'wecom_trial_schedule_target_scope_drift';
+  end if;
+  execute replace(definition,old_fragment,
+    'and internal.wecom_is_trial_lp_template(m.body) and internal.wecom_lp_draft_source(m.message_id) is not null');
+  update internal.wecom_handover_schedule_epoch set revision = revision + 1 where singleton;
+end;
+$trial_schedule_source_scope$;
