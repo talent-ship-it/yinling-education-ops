@@ -9,7 +9,7 @@ import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
 import { wecomDraftTimezone } from "@/lib/wecom-lp-draft-timezone";
 import type { LpAtomicExpectedVersions } from "@/lib/lp-atomic-service";
 
-type Commit = Readonly<{ studentId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
+type Commit = Readonly<{ studentId: string; lpItemId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
 type Props = Readonly<{
   timeDisplay: HandoverTimeDisplay;
   students: readonly { id: string; name: string; course: string }[];

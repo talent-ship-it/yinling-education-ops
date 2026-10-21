@@ -6085,6 +6085,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     });
   };
 
+  const showCommittedLpView = (lpItemId: unknown) => {
+    const item = lpShared.getCurrentValue().find((entry) => entry.id === lpItemId);
+    if (item) showLpStageView(item.stage);
+  };
+
   const advanceLp = (item: LpItem) => {
     const currentIndex = lpStages.indexOf(item.stage);
     const nextStage = lpStages[Math.min(currentIndex + 1, lpStages.length - 1)];
@@ -8947,6 +8952,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
           tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
           filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+          showCommittedLpView(body.lpItemId);
           setSelectedStudentId(body.studentId);
         }}
       /></Suspense>}
@@ -13152,6 +13158,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             clearDirectEnrollmentPendingCommands(directEnrollmentStorage, sessionOperator);
           }
           addAudit("创建学生直报 LP", `${workflowStudent.name} · ${subject} · ${purchasedHours}+${bonusHours}`, "green");
+          showCommittedLpView(body.lpItemId);
           setSelectedStudentId(studentId);
           setModal(null);
           setActive("lp");
@@ -13213,6 +13220,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         const committedStudentId = typeof body.studentId === "string" ? body.studentId : studentId;
         lpAtomicCommandKeysRef.current = removeLpAtomicPendingCommand(lpAtomicCommandKeysRef.current.values(), intent);
         persistLpAtomicPendingCommands(directEnrollmentStorage, sessionOperator, lpAtomicCommandKeysRef.current.values());
+        showCommittedLpView(body.lpItemId);
         setSelectedStudentId(committedStudentId);
         setModal(null);
         setActive("lp");
