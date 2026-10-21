@@ -118,6 +118,7 @@ const englishInterfacePhrases: Record<string, string> = {
   "待审核": "Awaiting review",
   "已发老师": "Sent to teacher",
   "待备课确认": "Awaiting lesson-preparation confirmation",
+  "备课完成": "Lesson preparation complete",
   "学生请假": "Student leave",
   "老师请假": "Teacher leave",
   "老师离职": "Teacher departure",

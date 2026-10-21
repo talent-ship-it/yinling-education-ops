@@ -290,6 +290,27 @@ test("creates an immutable revision without mutating the current workflow or cal
   assert.deepEqual(revised.revisions[0].after.nested, { topic: "calculus" });
 });
 
+test("tracks lesson preparation separately from LP delivery and final completion", () => {
+  const stages = ["已发老师", "待备课确认", "备课完成", "完成"] as const;
+  const firstStage = LP_STAGES.indexOf(stages[0]);
+  assert.deepEqual(LP_STAGES.slice(firstStage), stages);
+
+  let current: LpWorkflowRecord = { ...workflow(), stage: stages[0], resultStatus: "试听未进行" };
+  for (const [index, stage] of stages.slice(1).entries()) {
+    const previous = current;
+    current = changeLpStage(current, stage, {
+      id: `AUD-PREP-${index}`,
+      at: "2026-10-21T00:00:00.000Z",
+      actor: "Synthetic operator",
+    });
+    assert.equal(current.stage, stage);
+    assert.equal(current.resultStatus, "试听未进行");
+    assert.equal(current.audit.length, index + 1);
+    assert.equal(current.audit.at(-1)?.fromStage, previous.stage);
+    assert.equal(current.audit.at(-1)?.toStage, stage);
+  }
+});
+
 test("records every real stage change in the audit history and ignores no-op transitions", () => {
   const current = workflow();
   const changed = changeLpStage(current, "需修改", {

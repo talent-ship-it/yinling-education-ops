@@ -601,7 +601,7 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
     "学生直报（无试听）",
     "学生报名交接",
   ]) assert.match(lpWorkflows, new RegExp(workflowType));
-  assert.match(lpWorkflows, /LP_STAGES = \["待资料", "写作中", "待审核", "需修改", "已发老师", "待备课确认", "完成"\]/);
+  assert.match(lpWorkflows, /LP_STAGES = \["待资料", "写作中", "待审核", "需修改", "已发老师", "待备课确认", "备课完成", "完成"\]/);
   assert.match(lpWorkflows, /export function reviseLpWorkflow/);
   assert.match(lpWorkflows, /export function changeLpStage/);
   assert.match(lpFields, /export function parseLpWorkflowFormData/);

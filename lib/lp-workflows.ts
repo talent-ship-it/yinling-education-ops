@@ -389,7 +389,7 @@ export function getLpWorkflowSchema(type: LpWorkflowType): LpWorkflowSchema {
   return LP_WORKFLOW_SCHEMAS[type];
 }
 
-export const LP_STAGES = ["待资料", "写作中", "待审核", "需修改", "已发老师", "待备课确认", "完成"] as const;
+export const LP_STAGES = ["待资料", "写作中", "待审核", "需修改", "已发老师", "待备课确认", "备课完成", "完成"] as const;
 export type LpStage = (typeof LP_STAGES)[number];
 
 /** Business outcome is deliberately independent from the production stage. */
