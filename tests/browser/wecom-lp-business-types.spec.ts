@@ -95,26 +95,39 @@ async function syntheticWorkspace(page: Page, type: BusinessType, postStatuses: 
     committed = true;
     return route.fulfill({ json: { committed: true, applied: true, studentId: STUDENT_ID, lpItemId: NEW_LP_ID, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") } });
   }
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.context().route("**/*", (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (url.hostname !== "127.0.0.1") { unexpected.push(url.origin); return route.abort(); }
-    if (!url.pathname.startsWith("/api/")) return route.continue();
-    if (url.pathname === "/api/operations/wecom-lp-drafts") return request.method() === "POST" ? confirm(route)
-      : route.fulfill({ json: { drafts: [{ ...draftSource, confirmed: committed ? { studentId: STUDENT_ID, lpItemId: NEW_LP_ID } : null }], nextCursor: null, total: 1 } });
-    if (url.pathname === "/api/demo-logout") return route.fulfill({ json: { serverSessionRevoked: true } });
-    if (request.method() !== "GET") { unexpected.push(`${request.method()} ${url.pathname}`); return route.fulfill({ status: 403, json: { error: "Unbound synthetic write" } }); }
+  function sharedStateReply(url: URL) {
+    if (url.searchParams.get("mode") === "versions") return { versions: Object.keys(versions).map(row) };
+    const requested = (url.searchParams.get("entities") ?? "").split(",");
+    return { rows: requested.filter((entity) => entity in entities).map(row), ...snapshots() };
+  }
+  function draftReply(route: Route) {
+    if (route.request().method() === "POST") return confirm(route);
+    const confirmed = committed ? { studentId: STUDENT_ID, lpItemId: NEW_LP_ID } : null;
+    return route.fulfill({ json: { drafts: [{ ...draftSource, confirmed }], nextCursor: null, total: 1 } });
+  }
+  function readReply(route: Route, url: URL) {
     switch (url.pathname) {
       case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
       case "/api/nixon-session": return route.fulfill({ json: { ok: true } });
       case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
-      case "/api/app-state": return route.fulfill({ json: url.searchParams.get("mode") === "versions" ? { versions: Object.keys(versions).map(row) }
-        : { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(row), ...snapshots() } });
+      case "/api/app-state": return route.fulfill({ json: sharedStateReply(url) });
       case "/api/audit": return route.fulfill({ json: { entries: [] } });
       default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
     }
-  });
+  }
+  function handleRoute(route: Route) {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.hostname !== "127.0.0.1") { unexpected.push(url.origin); return route.abort(); }
+    if (!url.pathname.startsWith("/api/")) return route.continue();
+    if (url.pathname === "/api/operations/wecom-lp-drafts") return draftReply(route);
+    if (url.pathname === "/api/demo-logout") return route.fulfill({ json: { serverSessionRevoked: true } });
+    if (request.method() === "GET") return readReply(route, url);
+    unexpected.push(`${request.method()} ${url.pathname}`);
+    return route.fulfill({ status: 403, json: { error: "Unbound synthetic write" } });
+  }
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.context().route("**/*", handleRoute);
   await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: displayPreferencesStorageKey("Nixon"), value: JSON.stringify(defaultDisplayPreferences()) });
   await page.clock.install({ time: new Date(NOW) });
   await page.goto("/#section=lp");
@@ -155,11 +168,7 @@ function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
   expect(fixture.entities.lpItems.find((lp) => (lp as { id: string }).id === OLD_LP_ID)).toEqual(oldLp);
 }
 
-for (const type of TYPES) test(`${type}: minimal existing-student handover preserves its business type and LP history`, async ({ page }) => {
-  const f = await syntheticWorkspace(page, type);
-  const views = page.getByRole("group", { name: "LP 保存视图", exact: true });
-  await views.getByRole("button", { name: /^已完成/u }).click();
-  const dialog = await openDraft(page, type);
+async function assertSourceFields(dialog: Locator, type: BusinessType) {
   if (type === "老师新 LP") {
     await expect(dialog.locator('[name="teacher"]')).toHaveValue(TEACHER);
     await expect(dialog.locator('[name="writingRequired"]')).toHaveValue("是");
@@ -174,19 +183,31 @@ for (const type of TYPES) test(`${type}: minimal existing-student handover prese
     const teacher = dialog.locator('[name="teacher"]');
     if (await teacher.count()) await expect(teacher).toHaveValue("");
   }
+}
+
+function assertSubmittedFields(command: Command, type: BusinessType) {
+  expect(command.fields.subject).toBe(SUBJECT);
+  if (type === "老师新 LP") expect(command.fields).toMatchObject({ teacher: TEACHER, writingRequired: true, paperRequired: false, preparationFollowUp: "是" });
+  if (type === "换老师试听") {
+    expect(command.fields).toMatchObject({ newTeacher: TEACHER, changeReason: "Reassess pacing; allow time for questions." });
+    expect(command.fields.originalTeacher ?? "").toBe("");
+  }
+  if (type === "老师 LP 修改") expect(command.fields.teacher ?? "").toBe("");
+}
+
+for (const type of TYPES) test(`${type}: minimal existing-student handover preserves its business type and LP history`, async ({ page }) => {
+  const f = await syntheticWorkspace(page, type);
+  const views = page.getByRole("group", { name: "LP 保存视图", exact: true });
+  await views.getByRole("button", { name: /^已完成/u }).click();
+  const dialog = await openDraft(page, type);
+  await assertSourceFields(dialog, type);
   await reviewMissingFields(dialog);
   await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect(f.posted).toHaveLength(1);
   expect(f.posted[0]).toMatchObject({ workflowType: type, studentId: STUDENT_ID, sourceMessageId: SOURCE_ID, sourceRevision: "a".repeat(64) });
   expect(f.posted[0].newStudent).toBeUndefined();
-  expect(f.posted[0].fields.subject).toBe(SUBJECT);
-  if (type === "老师新 LP") expect(f.posted[0].fields).toMatchObject({ teacher: TEACHER, writingRequired: true, paperRequired: false, preparationFollowUp: "是" });
-  if (type === "换老师试听") {
-    expect(f.posted[0].fields).toMatchObject({ newTeacher: TEACHER, changeReason: "Reassess pacing; allow time for questions." });
-    expect(f.posted[0].fields.originalTeacher ?? "").toBe("");
-  }
-  if (type === "老师 LP 修改") expect(f.posted[0].fields.teacher ?? "").toBe("");
+  assertSubmittedFields(f.posted[0], type);
   await expect(views.getByRole("button", { name: /^进行中/u })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("combobox", { name: `Synthetic ${type} 当前阶段`, exact: true })).toHaveValue("待资料");
   await expect(page.getByRole("button", { name: `${STUDENT} 已创建 LP`, exact: true })).toBeDisabled();
