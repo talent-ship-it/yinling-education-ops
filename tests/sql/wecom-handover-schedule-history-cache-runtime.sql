@@ -217,3 +217,41 @@ begin
   end if;
 end;
 $save_reconstitutes_optimized_input$;
+
+create temporary table fixture_trial_account_cases as
+  select value->>'label' as label,value->>'letter' as letter,(value->>'include')::boolean as include
+  from jsonb_array_elements($trial_accounts$[
+    {"label":"试听学员B账号٣","letter":"b","include":true},
+    {"label":"试听学员B账号́","letter":"b","include":true},
+    {"label":"试听学员C账号١٢","letter":"c","include":true},
+    {"label":"试听学员Ａ账号²","letter":"a","include":true},
+    {"label":"试✨听学员B","letter":"b","include":true},
+    {"label":"trial★account C","letter":"c","include":true},
+    {"label":"试听学员A(Tara龙) 2026","letter":"a","include":true},
+    {"label":"trialaccountbaccount́","letter":"b","include":true},
+    {"label":"Actual Student A","letter":null,"include":false},
+    {"label":"试听学员Bunrecognized","letter":null,"include":true}
+  ]$trial_accounts$::jsonb);
+do $trial_account_superset$
+begin
+  if exists(select 1 from fixture_trial_account_cases where internal.is_wecom_schedule_trial_record(
+      jsonb_build_object('course_title','English','stu_list',jsonb_build_array(jsonb_build_object('name',label)))) is distinct from include) then
+    raise exception 'unicode_trial_account_was_filtered';
+  end if;
+end;
+$trial_account_superset$;
+
+begin;
+do $unicode_account_event_competition$
+declare row jsonb; input jsonb;
+begin
+  row := jsonb_set(internal.fixture_wecom_history_record('unicode-account','2099-01-04'),'{record,course_title}','"English"');
+  row := jsonb_set(row,'{record,stu_list}','[{"mem_id":"SYNTHETIC-UNICODE","name":"试听学员B账号٣"}]');
+  perform internal.fixture_wecom_schedule_run('cache-unicode-account','2099-01-04','2099-01-04','2099-01-11T00:00:00Z',jsonb_build_array(row));
+  input := public.read_wecom_handover_schedule_input('wecom-fixture-secret','cache-current',array['bot:lp-draft:one']);
+  if not exists(select 1 from jsonb_array_elements(input->'events') e where e->>'eventId'='jwb-open-api:schedule:unicode-account') then
+    raise exception 'unicode_account_competitor_event_missing';
+  end if;
+end;
+$unicode_account_event_competition$;
+rollback;

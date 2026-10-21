@@ -39,9 +39,10 @@ $index_complete_sources$;
 create function internal.is_wecom_schedule_trial_record(p_record jsonb)
 returns boolean language sql immutable set search_path = '' as $$
   select case when jsonb_typeof(p_record -> 'stu_list') is distinct from 'array' then true
-    else coalesce(p_record ->> 'course_title','') ~ '(试听|视听|(^|[^A-Za-z0-9_ſK])[tT][rR][iI][aA][lL]([^A-Za-z0-9_ſK]|$))'
+    else coalesce(p_record ->> 'course_title','') collate "C" ~ '(试听|视听|(^|[^A-Za-z0-9_ſK])[tT][rR][iI][aA][lL]([^A-Za-z0-9_ſK]|$))'
       or exists(select 1 from jsonb_array_elements(p_record -> 'stu_list') member
-        where internal.wecom_schedule_account_letter(member ->> 'name') is not null)
+        where regexp_replace(lower(normalize(member ->> 'name', NFKC)) collate "C",
+          '[^a-z试视听学员生账号]', '', 'g') ~ '^([试视]听(学[员生]|账号)?|trial(student|account)?)[abc]')
     end;
 $$;
 revoke all on function internal.is_wecom_schedule_trial_record(jsonb) from public, anon, authenticated, service_role;
