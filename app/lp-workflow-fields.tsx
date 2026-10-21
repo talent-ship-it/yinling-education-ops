@@ -470,8 +470,9 @@ function SelectOrInput({
   if (!options?.length) {
     return <input name={name} type={type} defaultValue={defaultValue} required={required} />;
   }
-  return <select name={name} defaultValue={defaultValue || (required && !requireExplicitSelection ? options[0]?.value : "")} required={required}>
-    {(!required || requireExplicitSelection) && <option value="">{required ? "请选择" : "未指定"}</option>}
+  const allowEmpty = !required || requireExplicitSelection;
+  return <select name={name} defaultValue={defaultValue || (allowEmpty ? "" : options[0]?.value)} required={required}>
+    {allowEmpty && <option value="">{required ? "请选择" : "未指定"}</option>}
     {options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
   </select>;
 }
