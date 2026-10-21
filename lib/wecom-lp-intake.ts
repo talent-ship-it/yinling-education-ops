@@ -4,7 +4,7 @@ import { displayTimezoneOptions } from "./display-preferences";
 import { isRetiredOperationsIdentity, normaliseDemoUserName, resolveDemoOperationsName, resolveDemoStaffName } from "./demo-users";
 import type { LpFieldValues } from "./lp-workflows";
 import type { StudentCreationFields } from "./student-creation-service";
-import { buildWecomLpDraft, type WecomLpDraft, type WecomLpDraftSourceRecord } from "./wecom-lp-draft";
+import { buildWecomLpDraft, WECOM_LP_WORKFLOW_TYPES, type WecomLpWorkflowType, type WecomLpDraft, type WecomLpDraftSourceRecord } from "./wecom-lp-draft";
 import type { TrialScheduleLink } from "./trial-operations";
 
 export type WecomLpDraftSource = Readonly<{
@@ -22,7 +22,7 @@ export type WecomLpDraftRawSource = Omit<WecomLpDraftSource, "draft" | "matchedS
 export type WecomLpDraftPage = Readonly<{ rows: readonly WecomLpDraftRawSource[]; nextCursor: string | null; total: number }>;
 export type WecomLpConfirmation = Readonly<{
   commandKey: string; caseId: string; sourceMessageId: string; sourceRevision: string;
-  studentId?: string; newStudent?: StudentCreationFields; fields: LpFieldValues;
+  studentId?: string; newStudent?: StudentCreationFields; workflowType: WecomLpWorkflowType; fields: LpFieldValues;
   expectedVersions: LpAtomicExpectedVersions;
 }>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -30,7 +30,7 @@ function record(value: unknown): value is Record<string, unknown> { return Boole
 function text(value: unknown, max: number) { return typeof value === "string" && value.trim().length <= max ? value.trim() : ""; }
 function fail(message: string): never { throw new LpAtomicError("invalid_command", message); }
 function parseConfirmationSource(input: Record<string, unknown>) {
-  const allowed = ["commandKey", "caseId", "sourceMessageId", "sourceRevision", "studentId", "newStudent", "fields", "expectedVersions"];
+  const allowed = ["commandKey", "caseId", "sourceMessageId", "sourceRevision", "studentId", "newStudent", "workflowType", "fields", "expectedVersions"];
   if (Object.keys(input).some((key) => !allowed.includes(key))) fail("交接确认包含未允许的字段。");
   const caseId = text(input.caseId, 36);
   const sourceMessageId = text(input.sourceMessageId, 240);
@@ -61,11 +61,14 @@ function deriveNewStudent(input: unknown, fields: LpFieldValues): StudentCreatio
 export function parseWecomLpConfirmation(input: unknown): WecomLpConfirmation {
   if (!record(input)) fail("交接确认参数无效。");
   const source = parseConfirmationSource(input);
+  const workflowType = input.workflowType === undefined ? "试听 LP" : input.workflowType;
+  if (!WECOM_LP_WORKFLOW_TYPES.includes(workflowType as WecomLpWorkflowType)) fail("不支持此交接类型。");
   const hasNewStudent = input.newStudent !== undefined;
+  if (hasNewStudent && workflowType !== "试听 LP") fail("此交接需要关联已有学生档案。");
   if (hasNewStudent === (input.studentId !== undefined)) fail("请选择已有学生，或确认创建学生档案。");
-  const parsed = parseLpAtomicCommand({ commandKey: input.commandKey, operation: "create", workflowType: "试听 LP", studentId: hasNewStudent ? "STU-WECOM-DRAFT" : input.studentId, fields: input.fields, expectedVersions: input.expectedVersions });
+  const parsed = parseLpAtomicCommand({ commandKey: input.commandKey, operation: "create", workflowType, studentId: hasNewStudent ? "STU-WECOM-DRAFT" : input.studentId, fields: input.fields, expectedVersions: input.expectedVersions });
   const newStudent = hasNewStudent ? deriveNewStudent(input.newStudent, parsed.fields) : undefined;
-  return { commandKey: parsed.commandKey, ...source, ...(newStudent ? { newStudent } : { studentId: parsed.studentId }), fields: parsed.fields, expectedVersions: parsed.expectedVersions };
+  return { commandKey: parsed.commandKey, workflowType: workflowType as WecomLpWorkflowType, ...source, ...(newStudent ? { newStudent } : { studentId: parsed.studentId }), fields: parsed.fields, expectedVersions: parsed.expectedVersions };
 }
 function guardianKey(value: unknown) {
   if (typeof value !== "string") return "";
@@ -81,12 +84,16 @@ export function matchWecomDraftStudent(source: WecomLpDraftRawSource, students: 
   const key = (value: unknown) => typeof value === "string" ? normaliseDemoUserName(value).replace(/\s+/gu, "") : "";
   const guardian = guardianKey(source.wechatName);
   const draft = buildWecomLpDraft(source.messages);
+  if (!draft.workflowType || draft.workflowType !== "试听 LP" && draft.conflicts.some((conflict) => conflict.field === "studentName")) return null;
   const messageGuardian = guardianKey(draft.guardianWechat);
   if (draft.conflicts.some((conflict) => conflict.field === "guardianWechat") || messageGuardian && messageGuardian !== guardian) return null;
+  const sourceName = source.studentName ?? draft.studentName;
+  const nameOnly = draft.workflowType !== "试听 LP" && draft.workflowType !== null && !guardian && Boolean(sourceName);
   const candidates = students.filter((student) => student.importArchived !== true && (
     hintedIds.size === 1 ? hintedIds.has(String(student.id))
-      : guardian && guardianKey(student.guardianWechat) === guardian
-        && (!source.studentName || key(student.name) === key(source.studentName))
+      : nameOnly ? key(student.name) === key(sourceName)
+        : guardian && guardianKey(student.guardianWechat) === guardian
+          && (!source.studentName || key(student.name) === key(source.studentName))
   ));
   return candidates.length === 1 && typeof candidates[0].id === "string" ? candidates[0].id : null;
 }

@@ -7,12 +7,13 @@ import { LpWorkflowFields, parseLpWorkflowFormData, type LpWorkflowFieldsProps }
 import { WecomLpDraftsPanel, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
 import { wecomDraftTimezone } from "@/lib/wecom-lp-draft-timezone";
+import { WECOM_LP_WORKFLOW_TYPES } from "@/lib/wecom-lp-draft";
 import type { LpAtomicExpectedVersions } from "@/lib/lp-atomic-service";
 
 type Commit = Readonly<{ studentId: string; lpItemId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
 type Props = Readonly<{
   timeDisplay: HandoverTimeDisplay;
-  students: readonly { id: string; name: string; course: string }[];
+  students: readonly { id: string; name: string; course: string; owner?: string; planner?: string }[];
   expectedVersions: LpAtomicExpectedVersions;
   fieldOptions: Pick<LpWorkflowFieldsProps, "responsibleOperationsOptions" | "teacherOptions" | "subjectOptions" | "timezoneOptions" | "plannerOptions">;
   Dialog: ComponentType<{ title: string; children: ReactNode; onClose: () => void }>;
@@ -28,8 +29,8 @@ function errorMessage(error: unknown) { return error instanceof Error ? error.me
 function reviewedFields(data: FormData, notify: Props["notify"]) {
   try {
     const parsed = parseLpWorkflowFormData(data);
-    if (parsed.workflowType !== "试听 LP") throw new Error("机器人试听交接只能确认为试听 LP");
-    return parsed.fields;
+    if (!WECOM_LP_WORKFLOW_TYPES.some((type) => type === parsed.workflowType)) throw new Error("不支持此交接类型");
+    return parsed;
   } catch (error) { notify(errorMessage(error)); return null; }
 }
 function confirmationTarget(createStudent: boolean, data: FormData, studentId: string) {
@@ -62,9 +63,10 @@ function DraftStudentFields({ source, students, timezoneOptions, createStudent, 
   studentId: string;
   onStudentIdChange: (value: string) => void;
 }) {
+  const isTrial = source.draft.workflowType === "试听 LP";
   return <>
-    <label>学生档案<select value={createStudent ? "new" : "existing"} onChange={(event) => onCreateStudentChange(event.target.value === "new")}><option value="existing">关联已有学生</option><option value="new">确认时创建学生档案</option></select></label>
-    {createStudent ? <><label>家长微信名<input name="wecomGuardianWechat" defaultValue={source.draft.guardianWechat ?? source.wechatName} required /></label><label>学生时区<select name="wecomStudentTimezone" defaultValue={wecomDraftTimezone(source.draft.fields.locationTimezone)} required><option value="">请选择时区</option>{timezoneOptions?.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</select></label></> : <label>关联学生<RecordPicker name="studentId" options={students.map((student) => ({ id: student.id, name: student.name, detail: student.course }))} value={studentId} onChange={onStudentIdChange} /></label>}
+    {isTrial && <label>学生档案<select value={createStudent ? "new" : "existing"} onChange={(event) => onCreateStudentChange(event.target.value === "new")}><option value="existing">关联已有学生</option><option value="new">确认时创建学生档案</option></select></label>}
+    {isTrial && createStudent ? <><label>家长微信名<input name="wecomGuardianWechat" defaultValue={source.draft.guardianWechat ?? source.wechatName} required /></label><label>学生时区<select name="wecomStudentTimezone" defaultValue={wecomDraftTimezone(source.draft.fields.locationTimezone)} required><option value="">请选择时区</option>{timezoneOptions?.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}</select></label></> : <label>关联学生<RecordPicker name="studentId" options={students.map((student) => ({ id: student.id, name: student.name, detail: student.course }))} value={studentId} onChange={onStudentIdChange} /></label>}
   </>;
 }
 
@@ -81,17 +83,18 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     event.preventDefault();
     if (!source || busyRef.current) return;
     const data = new FormData(event.currentTarget);
-    const fields = reviewedFields(data, notify);
-    if (!fields) return;
+    const reviewed = reviewedFields(data, notify);
+    if (!reviewed || !source.draft.workflowType) return;
+    const { workflowType, fields } = reviewed;
     const target = confirmationTarget(createStudent, data, studentId);
-    const intent = JSON.stringify({ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision, ...target, fields });
+    const intent = JSON.stringify({ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision, workflowType, ...target, fields });
     const prior = commands.current.get(source.sourceMessageId);
     const pending = prior?.intent === intent ? prior : { intent, commandKey: crypto.randomUUID(), expectedVersions };
     commands.current.set(source.sourceMessageId, pending);
     busyRef.current = true;
     setBusy(true);
     try {
-      const body = await saveDraft({ commandKey: pending.commandKey, caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision, ...target, fields, expectedVersions: pending.expectedVersions });
+      const body = await saveDraft({ commandKey: pending.commandKey, caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision, workflowType, ...target, fields, expectedVersions: pending.expectedVersions });
       onCommitted(body as Commit);
       commands.current.delete(source.sourceMessageId);
       setSource(null);
@@ -108,12 +111,12 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     finally { busyRef.current = false; setBusy(false); }
   }
   return <>
-    <WecomLpDraftsPanel timeDisplay={timeDisplay} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(!draft.matchedStudentId); }} />
+    <WecomLpDraftsPanel timeDisplay={timeDisplay} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(draft.draft.workflowType === "试听 LP" && !draft.matchedStudentId); }} />
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
       <DraftStudentFields source={source} students={students} timezoneOptions={fieldOptions.timezoneOptions} createStudent={createStudent} onCreateStudentChange={setCreateStudent} studentId={studentId} onStudentIdChange={setStudentId} />
-      <LpWorkflowFields screenshotTarget={{ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision }} initialType="试听 LP" requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
-      <footer><button className="secondary-button" type="button" disabled={busy} onClick={close}>取消</button><button className="primary-button" type="submit" disabled={busy}><BookOpen size={16} />{busy ? "正在保存…" : "确认并创建 LP"}</button></footer>
+      <LpWorkflowFields screenshotTarget={{ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision }} key={`${source.sourceMessageId}:${studentId}`} initialType={source.draft.workflowType ?? "试听 LP"} requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? students.find((student) => student.id === studentId)?.owner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
+      <footer><button className="secondary-button" type="button" disabled={busy} onClick={close}>取消</button><button className="primary-button" type="submit" disabled={busy || !source.draft.workflowType}><BookOpen size={16} />{busy ? "正在保存…" : "确认并创建 LP"}</button></footer>
     </form></Dialog>}
   </>;
 }

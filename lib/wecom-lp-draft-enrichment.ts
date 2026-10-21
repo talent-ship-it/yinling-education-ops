@@ -50,13 +50,13 @@ export function decorateWecomLpDraft(source: WecomLpDraftRawSource, students: re
   const student = rowsOf(visibleRows, "students").find((row) => row.id === studentId && row.importArchived !== true);
   const matchedStudentId = student ? text(student.id) : null;
   const lp = student && source.confirmed ? rowsOf(visibleRows, "lpItems").find((row) => row.id === source.confirmed!.lpItemId
-    && row.studentId === student.id && row.workflowType === "试听 LP") : undefined;
+    && row.studentId === student.id && row.workflowType === draft.workflowType) : undefined;
   const lpFields = record(lp?.fields) ? lp.fields : {};
   const name = student && !draft.conflicts.some((conflict) => ["studentName", "studentNameKnown"].includes(conflict.field))
     ? realName(lpFields.studentNameKnown === true ? lpFields.studentName : student.name, student) : null;
   const resolvedStudentName = conflicted ? null : source.studentName || draft.studentName || name;
-  const enrichedDraft = name && !draft.studentName ? { ...draft, studentName: name, fields: { ...draft.fields, studentNameKnown: true, studentName: name },
+  const enrichedDraft = draft.workflowType === "试听 LP" && name && !draft.studentName ? { ...draft, studentName: name, fields: { ...draft.fields, studentNameKnown: true, studentName: name },
     missingFields: draft.missingFields.filter((field) => !["studentName", "studentNameKnown"].includes(field.field)) } : draft;
-  const trialSchedule = wecomLpScheduleOf(lp);
+  const trialSchedule = draft.workflowType === "试听 LP" || draft.workflowType === "换老师试听" ? wecomLpScheduleOf(lp) : null;
   return { ...source, draft: enrichedDraft, matchedStudentId, resolvedStudentName, ...(trialSchedule ? { trialSchedule } : {}) };
 }

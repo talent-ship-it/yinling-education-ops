@@ -145,3 +145,29 @@ test("GET joins persisted evidence by exact message revision and exposes only th
   const staleBody = await (await stale.handlers.GET(new Request("https://synthetic.invalid/api"))).json();
   assert.equal(staleBody.drafts[0].trialSchedule, undefined);
 });
+
+
+test("source business type cannot be changed or confirmed while its headings conflict", async () => {
+  const original = harness().source;
+  for (const title of ["老生LP修改 信息交接", "老生新LP 信息交接\n二次试听 信息交接"]) {
+    const source = { ...original, messages: [{ ...original.messages[0], text: `${title}\n【学生】：Synthetic Child` }] };
+    const f = harness({ source });
+    const response = await f.post();
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, "workflow_conflict");
+    assert.equal(f.saved.length, 0);
+  }
+});
+
+test("nontrial draft pages never acquire trial schedule identity evidence", async () => {
+  const original = harness().source;
+  const source = { ...original, messages: [{ ...original.messages[0], text: "老生LP修改 信息交接\n【学生姓名】：Synthetic Child\n【涉及科目】：English\n【变动内容】：Update the learning goal." }] };
+  const f = harness({ source, evidenceError: true });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.drafts[0].draft.workflowType, "老师 LP 修改");
+  assert.equal(body.drafts[0].trialSchedule, undefined);
+  assert.equal(body.drafts[0].scheduleEvidenceUnavailable, undefined);
+  assert.equal(f.evidenceReads.length, 0);
+});
