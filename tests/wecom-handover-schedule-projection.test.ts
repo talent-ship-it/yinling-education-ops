@@ -191,7 +191,7 @@ test("reschedules use the current snapshot and a canceled historical future even
 });
 
 test("past historical events are candidates and current date coverage supersedes history", () => {
-  const oldSource = source("handover-1", { createdAt: "2026-10-01T00:00:00.000Z" });
+  const oldSource = source("handover-1", { createdAt: "2026-10-01T00:00:00.000Z", messages: source().messages.map((message) => ({ ...message, sentAt: "2026-10-01T00:00:00.000Z" })) });
   const old = event("past-event", { startsAt: "2026-10-03T08:00:00.000Z", endsAt: "2026-10-03T09:00:00.000Z", historical: true });
   const coverage = [{ startsAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-10-15T00:00:00.000Z", historical: true }, { startsAt: "2026-10-15T00:00:00.000Z", endsAt: "2026-12-01T00:00:00.000Z", historical: false }];
   const result = project({ sources: [oldSource], coverage, events: [old] });
@@ -286,7 +286,7 @@ test("conflicted drafts keep their potential claim in global contention while ex
   assert.equal(project({ sources: [source(), teacherConflict] }).status, "ambiguous");
   const linkedConflict = source("handover-2", { status: "identity_conflict", messages: [{ messageId: "handover-2", text: "", sentAt: source().createdAt, studentId: child.id }] });
   assert.equal(project({ sources: [source(), linkedConflict] }).status, "ambiguous");
-  const unrelated = messageSource("handover-2", "Unknown Parent", "", { status: "identity_conflict", createdAt: "2026-08-01T00:00:00.000Z" });
+  const unrelated = messageSource("handover-2", "Unknown Parent", "", { status: "identity_conflict", createdAt: "2026-08-01T00:00:00.000Z", messages: source("handover-2").messages.map((message) => ({ ...message, sentAt: "2026-08-01T00:00:00.000Z" })) });
   assert.equal(project({ sources: [source(), unrelated] }).status, "matched");
 });
 
@@ -299,4 +299,20 @@ test("missing real student names remain unresolved and unknown participant label
   const result = project({ events: [mismatched] });
   assert.equal(result.status, "ambiguous");
   assert.equal(result.candidates.length, 0);
+});
+
+
+test("delayed ingestion uses the source message timestamp and explicit handover timestamps remain authoritative", () => {
+  const archived = source("handover-1", { createdAt: "2026-11-01T00:00:00.000Z", messages: source().messages.map((message) => ({ ...message, sentAt: "2026-10-01T00:00:00.000Z" })) });
+  const historical = event("historical", { startsAt: "2026-10-03T08:00:00.000Z", endsAt: "2026-10-03T09:00:00.000Z", historical: true });
+  const coverage = [{ startsAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-10-15T00:00:00.000Z", historical: true }, { startsAt: "2026-10-15T00:00:00.000Z", endsAt: "2026-12-01T00:00:00.000Z", historical: false }];
+  const result = project({ sources: [archived], events: [historical], coverage });
+  assert.equal(result.status, "candidate");
+  assert.equal(result.candidates[0]!.schedule.eventId, "historical");
+  const recent = { ...archived, messages: [...source().messages, { messageId: "different-source", sentAt: "2026-08-01T00:00:00.000Z", text: "" }] };
+  assert.equal(project({ sources: [recent] }).status, "matched");
+  assert.equal(project({ sources: [{ ...archived, handoverAt: source().createdAt }] }).status, "matched");
+  for (const invalid of [{ ...archived, handoverAt: "invalid" }, { ...archived, handoverAt: "" }, { ...archived, messages: archived.messages.map((message) => ({ ...message, sentAt: "invalid" })) }]) {
+    assert.throws(() => project({ sources: [invalid] }), /handover timestamp/);
+  }
 });

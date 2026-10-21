@@ -77,7 +77,7 @@ function sourceContext(source: WecomLpDraftRawSource, students: readonly Student
   const contentionTeacherIds = unique(contentionTeacherLabels.flatMap((label) => teacherChoices(label, teachers).ids));
   const contentionSubjects = valuesFor("subject");
   const contentionPlanners = unique([source.coursePlanner, ...valuesFor("planner")].map(key).filter(Boolean));
-  const handover = Date.parse(source.handoverAt ?? source.createdAt);
+  const handover = Date.parse(source.handoverAt ?? source.messages.find((message) => message.messageId === source.sourceMessageId)?.sentAt ?? source.createdAt);
   if (!Number.isFinite(handover)) throw new TypeError("handover timestamp is invalid");
   return { source, draft, conflict, allowed, strong, explicitNames, possibleIds: unique(anchoredSets.flat()), contentionTeacherLabels, contentionTeacherIds, contentionSubjects, contentionPlanners, planner: plannerValues.length === 1 ? plannerValues[0]! : "", schedulingConflict: plannerValues.length > 1 || draft.conflicts.some((entry) => ["planner", "assignedTeacher", "subject"].includes(entry.field)), teacher, subject: text(draft.fields.subject), lower: handover - DAY, upper: handover + 31 * DAY };
 }
