@@ -16,3 +16,9 @@ insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id,
 values('bot:business:historical',repeat('a',64),'business-historical','sales','2099-01-02','text',
   E'老生LP修改 信息交接\n学生姓名：Draft Student\n涉及科目：English\n变动内容：更改重点',
   'handover','Draft Student','pending','WeCom Bot Receiver');
+
+insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+  message_type, body, classification, student_name_hint, operations_owner_hint, match_status, ingested_by)
+values('bot:independent:historical',repeat('a',64),'independent-historical','sales','2099-01-08','text',
+  E'老生LP修改 信息交接\n学生姓名：Unknown Historical Student\n涉及科目：English\n变动内容：更改重点',
+  'handover','Unknown Historical Student','Abby','pending','WeCom Bot Receiver');

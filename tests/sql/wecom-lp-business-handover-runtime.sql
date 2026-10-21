@@ -8,6 +8,7 @@ declare source jsonb; fields jsonb; receipt record; replay record; legacy record
   item jsonb; kind text; message_id_value text; command_value text; caught text; lp_count int;
 begin
   if internal.wecom_lp_draft_source('bot:business:historical') is null then raise exception 'historical_business_source_not_backfilled'; end if;
+  if public.read_wecom_lp_draft('wecom-fixture-secret','bot:independent:historical','Abby',false)->>'sourceKind' is distinct from 'business' then raise exception 'historical_independent_source_not_backfilled'; end if;
   select * into legacy from internal.fixture_legacy_wecom_confirmation;
   source := internal.wecom_lp_draft_source('bot:lp-draft:one');
   select * into replay from public.confirm_wecom_lp_draft_atomic(
@@ -197,6 +198,97 @@ begin
      and (guardian_wechat_hint is not null or trial_handover_id is not null)) then
     raise exception 'ambiguous_business_identity_auto_bound';
   end if;
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:business:ambiguous','Nixon',true);
+  if source is null or source->>'sourceKind' <> 'business' or source->>'wechatName' <> ''
+     or source->'messages'->0->>'studentId' is not null then raise exception 'ambiguous_business_source_lost_or_auto_selected'; end if;
+  begin
+    perform public.read_wecom_lp_draft('wecom-fixture-secret','bot:business:ambiguous','Abby',false);
+    raise exception 'unowned_business_source_visible_to_non_admin';
+  exception when insufficient_privilege then null; end;
+  fields := common || '{"subject":"English","modificationRequirements":"人工核对重名学生","requestSentAt":"2099-01-04T00:00:00.000Z"}'::jsonb;
+  select * into receipt from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+    'bot:business:ambiguous',source->>'sourceRevision','20000000-0000-4000-8000-000000000030','STU-DUPLICATE',null,
+    fields,assignment,internal.fixture_wecom_lp_versions(),'Nixon',true,'老师 LP 修改');
+  if not receipt.applied or receipt.student_id <> 'STU-DUPLICATE' or not exists (
+    select 1 from internal.wecom_lp_confirmations c where c.source_message_id='bot:business:ambiguous'
+      and c.case_id is null and c.business_case_id=(source->>'caseId')::uuid
+  ) then raise exception 'ambiguous_business_manual_confirmation_failed'; end if;
+
+  update public.ops_state set payload=payload||'[{"id":"STU-NO-GUARDIAN","name":"Business No Guardian","owner":"Abby","planner":"Tara","files":0}]'::jsonb where entity='students';
+  before_versions := internal.fixture_wecom_lp_versions();
+  insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+    message_type, body, classification, student_name_hint, match_status, ingested_by)
+  values('bot:business:no-guardian',repeat('1',64),'business-no-guardian','sales','2099-01-06','text',
+    E'老师LP修改 信息交接\n学生姓名：Business No Guardian\n涉及科目：English\n变动内容：调整目标',
+    'handover','Business No Guardian','pending','WeCom Bot Receiver');
+  if internal.fixture_wecom_lp_versions() <> before_versions then raise exception 'independent_business_source_created_operational_data'; end if;
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:business:no-guardian','Abby',false);
+  if source is null or source->>'wechatName' <> '' or source->>'sourceKind' <> 'business'
+     or source->>'studentName' <> 'Business No Guardian' or source->>'operationsOwner' <> 'Abby'
+     or exists (select 1 from internal.wecom_archive_messages m where m.message_id='bot:business:no-guardian' and m.trial_handover_id is not null) then
+    raise exception 'business_without_guardian_hidden_or_fabricated_wechat';
+  end if;
+  if (public.read_wecom_lp_drafts_in_range('wecom-fixture-secret','Abby',false,null,30,'2099-01-06','2099-01-07'))->>'total' <> '1'
+     or not exists (select 1 from jsonb_array_elements((public.read_wecom_lp_drafts('wecom-fixture-secret','Abby',false))->'rows') draft where draft->>'sourceMessageId'='bot:business:no-guardian') then
+    raise exception 'independent_business_source_missing_from_scoped_readers';
+  end if;
+  begin
+    perform public.read_wecom_lp_draft('wecom-fixture-secret','bot:business:no-guardian','Ella',false);
+    raise exception 'independent_business_read_crossed_owner_scope';
+  exception when insufficient_privilege then null; end;
+  fields := common || '{"subject":"English","modificationRequirements":"调整目标","requestSentAt":"2099-01-06T00:00:00.000Z"}'::jsonb;
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      'bot:business:no-guardian',source->>'sourceRevision','20000000-0000-4000-8000-000000000031','STU-NO-GUARDIAN',null,
+      fields,assignment,before_versions,'Ella',false,'老师 LP 修改');
+    raise exception 'independent_business_confirmation_crossed_owner_scope';
+  exception when insufficient_privilege then null; end;
+  update internal.wecom_archive_messages set body=body||E'\n备注：已核对' where message_id='bot:business:no-guardian';
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      'bot:business:no-guardian',source->>'sourceRevision','20000000-0000-4000-8000-000000000031','STU-NO-GUARDIAN',null,
+      fields,assignment,before_versions,'Abby',false,'老师 LP 修改');
+    raise exception 'independent_business_source_revision_not_checked';
+  exception when serialization_failure then null; end;
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:business:no-guardian','Abby',false);
+  select * into receipt from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+    'bot:business:no-guardian',source->>'sourceRevision','20000000-0000-4000-8000-000000000031','STU-NO-GUARDIAN',null,
+    fields,assignment,before_versions,'Abby',false,'老师 LP 修改');
+  select * into replay from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+    'bot:business:no-guardian',source->>'sourceRevision','20000000-0000-4000-8000-000000000031','STU-NO-GUARDIAN',null,
+    fields,assignment,before_versions,'Abby',false,'老师 LP 修改');
+  if not receipt.applied or replay.applied or receipt.lp_item_id <> replay.lp_item_id then raise exception 'independent_business_retry_duplicated_lp'; end if;
+  begin
+    update internal.wecom_lp_confirmations set business_case_id=(select id from internal.wecom_lp_business_sources where source_message_id='bot:business:ambiguous') where source_message_id='bot:business:no-guardian';
+    raise exception 'independent_business_case_not_bound_to_source_fk';
+  exception when foreign_key_violation then null; end;
+  if exists (select 1 from jsonb_array_elements((public.read_wecom_lp_drafts('wecom-fixture-secret','Abby',false))->'rows') draft where draft->>'sourceMessageId'='bot:business:no-guardian')
+     or (public.read_wecom_lp_drafts_in_range('wecom-fixture-secret','Abby',false,null,30,'2099-01-06','2099-01-07'))->'rows'->0->'confirmed'->>'lpItemId' <> receipt.lp_item_id
+     or has_table_privilege('anon','internal.wecom_lp_business_sources','select')
+     or has_function_privilege('anon','internal.wecom_lp_trial_draft_source(text)','execute') then
+    raise exception 'independent_business_confirmation_readback_or_privacy_failed';
+  end if;
+  insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+    message_type, body, classification, student_name_hint, operations_owner_hint, course_planner_hint, match_status, ingested_by)
+  values('bot:independent:new',repeat('2',64),'independent-new','sales','2099-01-07','text',
+    E'老生新LP 信息交接\n学生姓名：Business No Guardian\n安排教师：Grace\n安排科目：English',
+    'handover','Business No Guardian','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:independent:repeat',repeat('3',64),'independent-repeat','sales','2099-01-07','text',
+    E'二次试听 信息交接\n学生：Business No Guardian\n安排教师：Tynan\n重听原因：更换教学方式',
+    'handover','Business No Guardian','Abby','Tara','pending','WeCom Bot Receiver');
+  for kind,message_id_value,command_value,fields in select * from (values
+    ('老师新 LP','bot:independent:new','20000000-0000-4000-8000-000000000032',common||'{"teacher":"Grace","subject":"English","writingRequired":false,"paperRequired":false}'::jsonb),
+    ('换老师试听','bot:independent:repeat','20000000-0000-4000-8000-000000000033',common||'{"newTeacher":"Tynan","subject":"English","changeReason":"更换教学方式"}'::jsonb)
+  ) cases(kind,message_id_value,command_value,fields) loop
+    source := public.read_wecom_lp_draft('wecom-fixture-secret',message_id_value,'Abby',false);
+    if source is null or source->>'sourceKind' <> 'business' then raise exception 'independent_other_business_type_not_readable'; end if;
+    select * into receipt from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      message_id_value,source->>'sourceRevision',command_value,'STU-NO-GUARDIAN',null,fields,assignment,
+      internal.fixture_wecom_lp_versions(),'Abby',false,kind);
+    if not receipt.applied or not exists (select 1 from jsonb_array_elements((receipt.lp_items_row).payload) lp where lp->>'id'=receipt.lp_item_id and lp->>'workflowType'=kind) then
+      raise exception 'independent_business_type_confirmation_failed';
+    end if;
+  end loop;
   if to_regprocedure('public.confirm_wecom_lp_draft_atomic(text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,boolean)') is not null
      or has_function_privilege('service_role','public.confirm_wecom_lp_draft_atomic(text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,boolean,text)','execute')
      or not has_function_privilege('authenticated','public.confirm_wecom_lp_draft_atomic(text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,boolean,text)','execute')

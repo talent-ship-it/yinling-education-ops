@@ -74,11 +74,11 @@ begin
   if jsonb_array_length(candidates) <> 1 then return new; end if;
   student := candidates -> 0;
   guardian := internal.wecom_guardian_identity_label(coalesce(nullif(btrim(student ->> 'guardianWechat'),''),student ->> 'guardian'));
-  if guardian is null then return new; end if;
   new.student_name_hint := name_hint;
-  new.guardian_wechat_hint := guardian;
   new.operations_owner_hint := coalesce(new.operations_owner_hint, nullif(btrim(student ->> 'owner'),''));
   new.course_planner_hint := coalesce(new.course_planner_hint, nullif(btrim(student ->> 'planner'),''));
+  if guardian is null then return new; end if;
+  new.guardian_wechat_hint := guardian;
   return new;
 end;
 $$;
@@ -88,6 +88,21 @@ before insert or update of body, classification, student_name_hint, guardian_wec
   operations_owner_hint, course_planner_hint
 on internal.wecom_archive_messages
 for each row execute function internal.resolve_wecom_lp_business_identity();
+
+create table internal.wecom_lp_business_sources (
+  source_message_id text primary key references internal.wecom_archive_messages(message_id) on delete restrict,
+  id uuid not null unique default pg_catalog.gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  unique (source_message_id,id)
+);
+alter table internal.wecom_lp_business_sources enable row level security;
+revoke all on table internal.wecom_lp_business_sources from public, anon, authenticated, service_role;
+alter table internal.wecom_lp_confirmations
+  alter column case_id drop not null,
+  add column business_case_id uuid,
+  add constraint wecom_lp_confirmation_case_kind check (pg_catalog.num_nonnulls(case_id,business_case_id) = 1),
+  add constraint wecom_lp_confirmation_business_source foreign key (source_message_id,business_case_id)
+    references internal.wecom_lp_business_sources(source_message_id,id) on delete restrict;
 
 drop function public.confirm_wecom_lp_draft_atomic(text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,boolean);
 
@@ -104,7 +119,7 @@ declare source jsonb; prior internal.wecom_lp_confirmations%rowtype; command_pri
   confirmation jsonb; inner_intent jsonb; next_versions jsonb; student_fields jsonb; source_types text[];
   s public.ops_state%rowtype; l public.ops_state%rowtype; t public.ops_state%rowtype; f public.ops_state%rowtype;
   selected_student jsonb; selected_id text; created record; receipt record; audit_id_value uuid;
-  command_value text := lower(btrim(p_command_uuid));
+  command_value text := lower(btrim(p_command_uuid)); business_case_value uuid;
 begin
   if not internal.verify_ops_secret(p_secret) then
     raise exception using errcode = '42501', message = 'invalid_ops_secret';
@@ -123,7 +138,15 @@ begin
   end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('wecom-lp:' || p_source_message_id, 0));
   begin
-    perform 1 from internal.wecom_trial_handover_cases where id = p_case_id for update nowait;
+    select b.id into business_case_value from internal.wecom_lp_business_sources b
+    join internal.wecom_archive_messages m on m.message_id = b.source_message_id
+    where b.id = p_case_id and b.source_message_id = p_source_message_id
+      and (m.trial_handover_id is null or exists (
+        select 1 from internal.wecom_lp_confirmations c where c.source_message_id = p_source_message_id and c.business_case_id = b.id
+      )) for update of b nowait;
+    if business_case_value is null then
+      perform 1 from internal.wecom_trial_handover_cases where id = p_case_id for update nowait;
+    end if;
     select * into f from public.ops_state where entity = 'files' for update nowait;
     select * into s from public.ops_state where entity = 'students' for update nowait;
     select * into l from public.ops_state where entity = 'lpItems' for update nowait;
@@ -243,9 +266,10 @@ begin
     p_source_message_id, jsonb_build_object('caseId', p_case_id, 'sourceRevision', p_source_revision,
       'workflowType', p_workflow_type, 'commandUuid', command_value, 'studentId', receipt.student_id, 'lpItemId', receipt.lp_item_id,
       'lpAuditId', receipt.audit_entry_id));
-  insert into internal.wecom_lp_confirmations(source_message_id, case_id, command_uuid, confirmation_intent,
+  insert into internal.wecom_lp_confirmations(source_message_id, case_id, business_case_id, command_uuid, confirmation_intent,
     student_id, lp_item_id, actor, audit_id)
-  values(p_source_message_id, p_case_id, command_value, confirmation,
+  values(p_source_message_id, case when business_case_value is null then p_case_id else null end,
+    business_case_value, command_value, confirmation,
     receipt.student_id, receipt.lp_item_id, btrim(p_actor), audit_id_value);
   return query select command_value, 'create'::text, receipt.applied, receipt.student_id, receipt.lp_item_id,
     receipt.students_row, receipt.lp_items_row, receipt.tasks_row, receipt.files_row, audit_id_value;
@@ -454,3 +478,88 @@ begin
     and internal.wecom_is_lp_template(body);
 end;
 $existing_business_handover_identity$;
+
+create function internal.capture_wecom_lp_business_source()
+returns trigger language plpgsql security invoker set search_path = '' as $$
+begin
+  insert into internal.wecom_lp_business_sources(source_message_id)
+  select m.message_id from internal.wecom_archive_messages m
+  where m.message_id = new.message_id and m.trial_handover_id is null
+    and m.ingested_by = 'WeCom Bot Receiver' and m.message_type = 'text' and m.classification = 'handover'
+    and internal.wecom_is_lp_template(m.body)
+    and internal.wecom_lp_explicit_types(m.body) && array['老师新 LP','老师 LP 修改','换老师试听']::text[]
+  on conflict (source_message_id) do nothing;
+  return new;
+end;
+$$;
+revoke all on function internal.capture_wecom_lp_business_source() from public, anon, authenticated, service_role;
+create trigger zz_capture_wecom_lp_business_source
+  after insert or update of body,classification,student_name_hint,guardian_wechat_hint,operations_owner_hint,course_planner_hint
+  on internal.wecom_archive_messages for each row execute function internal.capture_wecom_lp_business_source();
+
+insert into internal.wecom_lp_business_sources(source_message_id)
+select m.message_id from internal.wecom_archive_messages m
+where m.trial_handover_id is null and m.ingested_by = 'WeCom Bot Receiver'
+  and m.message_type = 'text' and m.classification = 'handover' and internal.wecom_is_lp_template(m.body)
+  and internal.wecom_lp_explicit_types(m.body) && array['老师新 LP','老师 LP 修改','换老师试听']::text[]
+on conflict (source_message_id) do nothing;
+
+alter function internal.wecom_lp_draft_source(text) rename to wecom_lp_trial_draft_source;
+revoke all on function internal.wecom_lp_trial_draft_source(text) from public, anon, authenticated, service_role;
+
+create function internal.wecom_lp_draft_source(p_source_message_id text)
+returns jsonb language plpgsql stable security invoker set search_path = '' as $$
+declare source jsonb; payload jsonb;
+begin
+  if not exists (select 1 from internal.wecom_lp_confirmations c where c.source_message_id = p_source_message_id and c.business_case_id is not null) then
+    source := internal.wecom_lp_trial_draft_source(p_source_message_id);
+    if source is not null then return source; end if;
+  end if;
+  select jsonb_build_object(
+    'id',m.message_id,'sourceMessageId',m.message_id,'caseId',b.id,'sourceKind','business','wechatName','',
+    'studentName',coalesce(m.student_name_hint,nullif(btrim((regexp_match(m.body,
+      E'(?m)^[[:space:]]*[【\\[]?(?:学生姓名|学生|姓名)[】\\]]?[[:space:]]*[:：][[:space:]]*([^\\n\\r]{1,240})'))[1]),'')),
+    'operationsOwner',m.operations_owner_hint,'coursePlanner',m.course_planner_hint,
+    'status',case when m.student_id is not null and m.match_status = 'linked' then 'identified' else 'awaiting_student_name' end,
+    'createdAt',m.ingested_at,
+    'messages',jsonb_build_array(jsonb_build_object('messageId',m.message_id,'text',m.body,'sentAt',m.sent_at,
+      'studentId',m.student_id,'studentNameHint',m.student_name_hint,'guardianWechatHint',m.guardian_wechat_hint,
+      'operationsOwnerHint',m.operations_owner_hint,'coursePlannerHint',m.course_planner_hint))
+  ) into payload
+  from internal.wecom_lp_business_sources b join internal.wecom_archive_messages m on m.message_id = b.source_message_id
+  where b.source_message_id = p_source_message_id and m.ingested_by = 'WeCom Bot Receiver'
+    and m.message_type = 'text' and m.classification = 'handover' and internal.wecom_is_lp_template(m.body)
+    and internal.wecom_lp_explicit_types(m.body) && array['老师新 LP','老师 LP 修改','换老师试听']::text[];
+  if payload is null then return null; end if;
+  return payload || jsonb_build_object('sourceRevision',encode(extensions.digest(payload::text,'sha256'),'hex'),
+    'confirmed',(select jsonb_build_object('studentId',c.student_id,'lpItemId',c.lp_item_id)
+      from internal.wecom_lp_confirmations c where c.source_message_id = p_source_message_id));
+end;
+$$;
+revoke all on function internal.wecom_lp_draft_source(text) from public, anon, authenticated, service_role;
+
+do $business_source_readers$
+declare definition text; signature text; old_fragment text; new_fragment text;
+begin
+  old_fragment := $old$join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id$old$;
+  new_fragment := $new$left join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id
+    left join internal.wecom_lp_business_sources b on b.source_message_id = m.message_id$new$;
+  foreach signature in array array[
+    'public.read_wecom_lp_drafts(text,text,boolean,text,integer)',
+    'public.read_wecom_lp_drafts_in_range(text,text,boolean,text,integer,timestamptz,timestamptz)'
+  ] loop
+    definition := pg_catalog.pg_get_functiondef(signature::pg_catalog.regprocedure);
+    if strpos(definition,old_fragment) = 0 then raise exception 'wecom_lp_business_reader_contract_drift'; end if;
+    definition := replace(definition,old_fragment,new_fragment);
+    old_fragment := $old$and m.classification = 'handover' and internal.wecom_is_lp_template(m.body)$old$;
+    new_fragment := $new$and m.classification = 'handover' and internal.wecom_is_lp_template(m.body)
+      and (c.id is not null or (b.id is not null
+        and internal.wecom_lp_explicit_types(m.body) && array['老师新 LP','老师 LP 修改','换老师试听']::text[]))$new$;
+    if strpos(definition,old_fragment) = 0 then raise exception 'wecom_lp_business_reader_scope_drift'; end if;
+    execute replace(definition,old_fragment,new_fragment);
+    old_fragment := $old$join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id$old$;
+    new_fragment := $new$left join internal.wecom_trial_handover_cases c on c.id = m.trial_handover_id
+    left join internal.wecom_lp_business_sources b on b.source_message_id = m.message_id$new$;
+  end loop;
+end;
+$business_source_readers$;
