@@ -24,6 +24,10 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "supabase/migrations/20261021112850_lp_business_handover_types.sql" },
     { kind: "typescript", file: "tests/sql/wecom-handover-schedule-workflow-batch-runtime.ts", databaseArgument: true },
   ] },
+  { id: "wecom-handover-schedule-run-metadata", source: "tests/sql/wecom-handover-schedule-run-metadata-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-handover-schedule-run-metadata-runtime.sql" },
+    { kind: "python", file: "tests/sql/wecom-handover-schedule-run-metadata-concurrency.py" },
+  ] },
   { id: "wecom-handover-schedule-history-anti", source: "tests/sql/wecom-handover-schedule-history-anti-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/wecom-handover-schedule-history-anti-runtime.sql" },
   ] },
