@@ -6073,13 +6073,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const showLpStageView = (stage: LpStage) => {
+    const stageViews: Partial<Record<LpStage, string>> = {
+      "待资料": "waiting",
+      "待审核": "review",
+      "需修改": "revision",
+      "待备课确认": "waiting",
+    };
     setLpFilter((current) => {
       if (stage === "完成") return "complete";
-      if (current === "all" || current === "active"
-        || (current === "review" && stage === "待审核")
-        || (current === "revision" && stage === "需修改")
-        || (current === "waiting" && (stage === "待资料" || stage === "待备课确认"))) return current;
-      return "active";
+      return current === "all" || current === "active" || current === stageViews[stage] ? current : "active";
     });
   };
 
