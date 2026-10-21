@@ -237,8 +237,10 @@ test("new student's received handover prefills the review and confirms one LP", 
   assertClean(f);
 });
 
-test("matched handover selects the existing student without creating another record", async ({ page }) => {
+test("matched handover leaves the completed view to show the new LP for the existing student", async ({ page }) => {
   const f = await syntheticWorkspace(page, { matched: true });
+  const views = page.getByRole("group", { name: "LP 保存视图", exact: true });
+  await views.getByRole("button", { name: /^已完成/u }).click();
   const dialog = await openDraft(page);
   await expect(dialog.getByRole("combobox", { name: "学生档案", exact: true })).toHaveValue("existing");
   await expect(dialog.getByRole("textbox", { name: "搜索学生姓名", exact: true })).toHaveValue("Synthetic Student");
@@ -248,6 +250,8 @@ test("matched handover selects the existing student without creating another rec
   expect(f.posted).toHaveLength(1);
   expect(f.posted[0].studentId).toBe(STUDENT_ID);
   expect(f.posted[0].newStudent).toBeUndefined();
+  await expect(views.getByRole("button", { name: /^进行中/u })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("combobox", { name: "Synthetic Trial LP 当前阶段", exact: true })).toHaveValue("待资料");
   assertClean(f);
 });
 
