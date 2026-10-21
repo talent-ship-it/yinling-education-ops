@@ -165,19 +165,19 @@ function instantValue(formData: FormData, fieldName: LpWorkflowFormName) {
   return value.toISOString();
 }
 
-function parseCommonFields(formData: FormData): LpCommonFields {
+function parseCommonFields(formData: FormData, workflowType: LpWorkflowType): LpCommonFields {
   const isUniversityStudent = checked(formData, LP_WORKFLOW_FORM_NAMES.isUniversityStudent);
   const specialNotes = stringValue(formData, LP_WORKFLOW_FORM_NAMES.specialNotes);
 
   return {
     responsibleOperations: requiredString(formData, LP_WORKFLOW_FORM_NAMES.responsibleOperations),
-    specifiedContentStatus: enumValue(
+    specifiedContentStatus: workflowType === "老师 LP 修改" ? "无需指定" : enumValue(
       formData,
       LP_WORKFLOW_FORM_NAMES.specifiedContentStatus,
       SPECIFIED_CONTENT_STATUSES,
     ),
     ...(specialNotes ? { specialNotes } : {}),
-    preparationFollowUp: enumValue(
+    preparationFollowUp: workflowType === "老师 LP 修改" ? "否" : enumValue(
       formData,
       LP_WORKFLOW_FORM_NAMES.preparationFollowUp,
       PREPARATION_FOLLOW_UP_OPTIONS,
@@ -265,63 +265,43 @@ function optionalString(formData: FormData, fieldName: LpWorkflowFormName) {
   return value || undefined;
 }
 
+function optionalHandoverFields(formData: FormData, names: readonly LpWorkflowFormName[]) {
+  return Object.fromEntries(names.flatMap((name) => {
+    const value = optionalString(formData, name);
+    return value ? [[name, value]] : [];
+  }));
+}
+
 function parseTeacherLpFields(formData: FormData, common: LpCommonFields): TeacherLpFields {
-  const documentUrl = optionalString(formData, LP_WORKFLOW_FORM_NAMES.documentUrl);
-  const comments = optionalString(formData, LP_WORKFLOW_FORM_NAMES.comments);
   return {
     ...common,
+    requestSentAt: instantValue(formData, LP_WORKFLOW_FORM_NAMES.requestSentAt),
     teacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teacher),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
-    ...(documentUrl ? { documentUrl } : {}),
-    additionalNotes: requiredString(formData, LP_WORKFLOW_FORM_NAMES.additionalNotes),
-    basicInfo: requiredString(formData, LP_WORKFLOW_FORM_NAMES.basicInfo),
-    studentFoundation: requiredString(formData, LP_WORKFLOW_FORM_NAMES.studentFoundation),
-    learningGoal: requiredString(formData, LP_WORKFLOW_FORM_NAMES.learningGoal),
-    recommendedResources: requiredString(formData, LP_WORKFLOW_FORM_NAMES.recommendedResources),
-    teachingLanguage: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teachingLanguage),
-    firstLessonContent: requiredString(formData, LP_WORKFLOW_FORM_NAMES.firstLessonContent),
-    lessonSchedule: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lessonSchedule),
-    ...(comments ? { comments } : {}),
+    writingRequired: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.writingRequired),
+    paperRequired: yesNoValue(formData, LP_WORKFLOW_FORM_NAMES.paperRequired),
+    ...optionalHandoverFields(formData, ["documentUrl", "writingNote", "paperNote", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"]),
   };
 }
 
-function parseTeacherLpModificationFields(
-  formData: FormData,
-  common: LpCommonFields,
-): TeacherLpModificationFields {
-  const documentUrl = optionalString(formData, LP_WORKFLOW_FORM_NAMES.documentUrl);
+function parseTeacherLpModificationFields(formData: FormData, common: LpCommonFields): TeacherLpModificationFields {
   return {
     ...common,
-    teacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.teacher),
+    requestSentAt: instantValue(formData, LP_WORKFLOW_FORM_NAMES.requestSentAt),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
-    ...(documentUrl ? { documentUrl } : {}),
-    modificationRequirements: requiredString(
-      formData,
-      LP_WORKFLOW_FORM_NAMES.modificationRequirements,
-    ),
+    modificationRequirements: requiredString(formData, LP_WORKFLOW_FORM_NAMES.modificationRequirements),
+    ...optionalHandoverFields(formData, ["teacher", "documentUrl"]),
   };
 }
 
-function parseTeacherChangeTrialFields(
-  formData: FormData,
-  common: LpCommonFields,
-): TeacherChangeTrialFields {
+function parseTeacherChangeTrialFields(formData: FormData, common: LpCommonFields): TeacherChangeTrialFields {
   return {
     ...common,
-    originalTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.originalTeacher),
+    requestSentAt: instantValue(formData, LP_WORKFLOW_FORM_NAMES.requestSentAt),
     newTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.newTeacher),
     subject: requiredString(formData, LP_WORKFLOW_FORM_NAMES.subject),
     changeReason: requiredString(formData, LP_WORKFLOW_FORM_NAMES.changeReason),
-    trialInformation: requiredString(formData, LP_WORKFLOW_FORM_NAMES.trialInformation),
-    handoverFromTeacher: requiredString(formData, LP_WORKFLOW_FORM_NAMES.handoverFromTeacher),
-    materialsAndContentTaught: requiredString(formData, LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught),
-    recommendedNextContent: requiredString(formData, LP_WORKFLOW_FORM_NAMES.recommendedNextContent),
-    studentStrengthsAndLearningProfile: requiredString(
-      formData,
-      LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile,
-    ),
-    lastHomework: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastHomework),
-    lastLessonRecordingUrl: requiredString(formData, LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl),
+    ...optionalHandoverFields(formData, ["originalTeacher", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"]),
   };
 }
 
@@ -391,7 +371,7 @@ function validateParsedFields<Type extends LpWorkflowType>(
 /** Parses only fields confirmed for the selected workflow type; stale hidden controls are ignored. */
 export function parseLpWorkflowFormData(formData: FormData): ParsedLpWorkflowForm {
   const workflowType = enumValue(formData, LP_WORKFLOW_FORM_NAMES.workflowType, LP_WORKFLOW_TYPES);
-  const common = parseCommonFields(formData);
+  const common = parseCommonFields(formData, workflowType);
 
   if (workflowType === "试听 LP") {
     const fields = parseTrialFields(formData, common);
@@ -488,7 +468,8 @@ function SelectOrInput({
   if (!options?.length) {
     return <input name={name} type={type} defaultValue={defaultValue} required={required} />;
   }
-  return <select name={name} defaultValue={defaultValue || options[0]?.value} required={required}>
+  return <select name={name} defaultValue={defaultValue || (required ? options[0]?.value : "")} required={required}>
+    {!required && <option value="">未指定</option>}
     {options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
   </select>;
 }
@@ -544,14 +525,16 @@ function TeacherField({
   name,
   defaultValue,
   teacherOptions,
+  required = true,
 }: Readonly<{
   label: string;
   name: LpWorkflowFormName;
   defaultValue?: string;
   teacherOptions?: readonly LpFormOption[];
+  required?: boolean;
 }>) {
   return <label>{label}
-    <SelectOrInput name={name} defaultValue={defaultValue} options={teacherOptions} />
+    <SelectOrInput name={name} defaultValue={defaultValue} options={teacherOptions} required={required} />
   </label>;
 }
 
@@ -708,10 +691,15 @@ export function LpWorkflowFields({
       </> : null}
     </> : null}
 
+    {showsTeacherLp || showsTeacherChange ? <label>LP 交接时间
+      <input name={LP_WORKFLOW_FORM_NAMES.requestSentAt} type="datetime-local" defaultValue={requireExplicitSelection && !initialValues.requestSentAt ? "" : localDateTimeDefault(initialValues.requestSentAt)} required />
+    </label> : null}
+
     {showsTeacherLp ? <>
       <TeacherField
         label="老师"
         name={LP_WORKFLOW_FORM_NAMES.teacher}
+        required={workflowType !== "老师 LP 修改"}
         defaultValue={initialValues.teacher}
         teacherOptions={teacherOptions}
       />
@@ -726,14 +714,18 @@ export function LpWorkflowFields({
       {workflowType === "老师 LP 修改" ? <label className="span-2">修改要求
         <textarea name={LP_WORKFLOW_FORM_NAMES.modificationRequirements} defaultValue={initialValues.modificationRequirements} rows={4} required />
       </label> : <>
-        <label className="span-2">补充注意事项<textarea name={LP_WORKFLOW_FORM_NAMES.additionalNotes} defaultValue={initialValues.additionalNotes} rows={3} required /></label>
-        <label className="span-2">基本信息<textarea name={LP_WORKFLOW_FORM_NAMES.basicInfo} defaultValue={initialValues.basicInfo} rows={3} required /></label>
-        <label className="span-2">学生基础<textarea name={LP_WORKFLOW_FORM_NAMES.studentFoundation} defaultValue={initialValues.studentFoundation} rows={3} required /></label>
-        <label className="span-2">学习目的<textarea name={LP_WORKFLOW_FORM_NAMES.learningGoal} defaultValue={initialValues.learningGoal} rows={3} required /></label>
-        <label className="span-2">建议资料库<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedResources} defaultValue={initialValues.recommendedResources} rows={3} required /></label>
-        <label>授课语言<input name={LP_WORKFLOW_FORM_NAMES.teachingLanguage} defaultValue={initialValues.teachingLanguage} required /></label>
-        <label>课时计划<input name={LP_WORKFLOW_FORM_NAMES.lessonSchedule} defaultValue={initialValues.lessonSchedule} required /></label>
-        <label className="span-2">试听课 / 首次课内容<textarea name={LP_WORKFLOW_FORM_NAMES.firstLessonContent} defaultValue={initialValues.firstLessonContent} rows={4} required /></label>
+        <label>是否要写作<select name={LP_WORKFLOW_FORM_NAMES.writingRequired} defaultValue={initialValues.writingRequired === undefined && requireExplicitSelection ? "" : initialValues.writingRequired ? "是" : "否"} required>{requireExplicitSelection && <option value="">请选择</option>}<option value="否">否</option><option value="是">是</option></select></label>
+        <label>写作备注<input name={LP_WORKFLOW_FORM_NAMES.writingNote} defaultValue={initialValues.writingNote} /></label>
+        <label>是否发试卷、收试卷<select name={LP_WORKFLOW_FORM_NAMES.paperRequired} defaultValue={initialValues.paperRequired === undefined && requireExplicitSelection ? "" : initialValues.paperRequired ? "是" : "否"} required>{requireExplicitSelection && <option value="">请选择</option>}<option value="否">否</option><option value="是">是</option></select></label>
+        <label>试卷备注<input name={LP_WORKFLOW_FORM_NAMES.paperNote} defaultValue={initialValues.paperNote} /></label>
+        <label className="span-2">补充注意事项<textarea name={LP_WORKFLOW_FORM_NAMES.additionalNotes} defaultValue={initialValues.additionalNotes} rows={3} /></label>
+        <label className="span-2">基本信息<textarea name={LP_WORKFLOW_FORM_NAMES.basicInfo} defaultValue={initialValues.basicInfo} rows={3} /></label>
+        <label className="span-2">学生基础<textarea name={LP_WORKFLOW_FORM_NAMES.studentFoundation} defaultValue={initialValues.studentFoundation} rows={3} /></label>
+        <label className="span-2">学习目的<textarea name={LP_WORKFLOW_FORM_NAMES.learningGoal} defaultValue={initialValues.learningGoal} rows={3} /></label>
+        <label className="span-2">建议资料库<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedResources} defaultValue={initialValues.recommendedResources} rows={3} /></label>
+        <label>授课语言<input name={LP_WORKFLOW_FORM_NAMES.teachingLanguage} defaultValue={initialValues.teachingLanguage} /></label>
+        <label>课时计划<input name={LP_WORKFLOW_FORM_NAMES.lessonSchedule} defaultValue={initialValues.lessonSchedule} /></label>
+        <label className="span-2">试听课 / 首次课内容<textarea name={LP_WORKFLOW_FORM_NAMES.firstLessonContent} defaultValue={initialValues.firstLessonContent} rows={4} /></label>
         <label className="span-2">备注<textarea name={LP_WORKFLOW_FORM_NAMES.comments} defaultValue={initialValues.comments} rows={2} /></label>
       </>}
     </> : null}
@@ -742,6 +734,7 @@ export function LpWorkflowFields({
       <TeacherField
         label="原老师"
         name={LP_WORKFLOW_FORM_NAMES.originalTeacher}
+        required={false}
         defaultValue={initialValues.originalTeacher}
         teacherOptions={teacherOptions}
       />
@@ -752,7 +745,7 @@ export function LpWorkflowFields({
         teacherOptions={teacherOptions}
       />
       <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
-      <label className="span-2">更换原因
+      <label className="span-2">重听原因及注意事项
         <textarea
           name={LP_WORKFLOW_FORM_NAMES.changeReason}
           defaultValue={initialValues.changeReason}
@@ -765,15 +758,14 @@ export function LpWorkflowFields({
           name={LP_WORKFLOW_FORM_NAMES.trialInformation}
           defaultValue={initialValues.trialInformation}
           rows={3}
-          required
         />
       </label>
-      <TeacherField label="交接老师" name={LP_WORKFLOW_FORM_NAMES.handoverFromTeacher} defaultValue={initialValues.handoverFromTeacher} teacherOptions={teacherOptions} />
-      <label className="span-2">已使用资料、已教内容<textarea name={LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught} defaultValue={initialValues.materialsAndContentTaught} rows={4} required /></label>
-      <label className="span-2">建议后续内容与资料<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedNextContent} defaultValue={initialValues.recommendedNextContent} rows={4} required /></label>
-      <label className="span-2">学生强项、进步方向与学习特点<textarea name={LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile} defaultValue={initialValues.studentStrengthsAndLearningProfile} rows={4} required /></label>
-      <label className="span-2">上节课作业<textarea name={LP_WORKFLOW_FORM_NAMES.lastHomework} defaultValue={initialValues.lastHomework} rows={3} required /></label>
-      <label className="span-2">上次课录像 URL<input type="url" name={LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl} defaultValue={initialValues.lastLessonRecordingUrl} required /></label>
+      <TeacherField label="交接老师" name={LP_WORKFLOW_FORM_NAMES.handoverFromTeacher} required={false} defaultValue={initialValues.handoverFromTeacher} teacherOptions={teacherOptions} />
+      <label className="span-2">已使用资料、已教内容<textarea name={LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught} defaultValue={initialValues.materialsAndContentTaught} rows={4} /></label>
+      <label className="span-2">建议后续内容与资料<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedNextContent} defaultValue={initialValues.recommendedNextContent} rows={4} /></label>
+      <label className="span-2">学生强项、进步方向与学习特点<textarea name={LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile} defaultValue={initialValues.studentStrengthsAndLearningProfile} rows={4} /></label>
+      <label className="span-2">上节课作业<textarea name={LP_WORKFLOW_FORM_NAMES.lastHomework} defaultValue={initialValues.lastHomework} rows={3} /></label>
+      <label className="span-2">上次课录像 URL<input type="url" name={LP_WORKFLOW_FORM_NAMES.lastLessonRecordingUrl} defaultValue={initialValues.lastLessonRecordingUrl} /></label>
     </> : null}
 
     {showsSubstitute ? <>
@@ -872,6 +864,7 @@ export function LpWorkflowFields({
       </label>
     </> : null}
 
+    {workflowType !== "老师 LP 修改" ? <>
     <label>{showsTrialFields ? "是否要指定内容" : "指定内容"}
       <select
         name={LP_WORKFLOW_FORM_NAMES.specifiedContentStatus}
@@ -892,6 +885,7 @@ export function LpWorkflowFields({
         {PREPARATION_FOLLOW_UP_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
       </select>
     </label>
+    </> : null}
     {workflowType === "试听 LP" ? <label className="span-2">备课跟进备注
       <textarea name={LP_WORKFLOW_FORM_NAMES.preparationNote} defaultValue={initialValues.preparationNote} rows={2} />
     </label> : null}
