@@ -70,7 +70,7 @@ function assertSourceWorkflowType(source: import("./wecom-lp-intake").WecomLpDra
 async function prepareTarget(dependencies: Dependencies, ctx: Context, command: WecomLpConfirmation) {
   const source = await dependencies.readDraft({ sourceMessageId: command.sourceMessageId, actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
   if (!source || source.caseId !== command.caseId) fail(404, "未找到可处理的交接来源。");
-  assertSourceWorkflowType(source, command);
+  if (!source.confirmed) assertSourceWorkflowType(source, command);
   const students = studentsFrom(ctx.rows);
   const student = students.find((row) => row.id === command.studentId);
   authorizeExisting(ctx, command, student);

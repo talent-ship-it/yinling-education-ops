@@ -532,3 +532,26 @@ test("handover controls require the source template fields and keep historical d
   assert.match(modification, /<option value="" selected="">未指定<\/option>/);
   assert.doesNotMatch(modification, /<(?:input|select)[^>]*name="teacher"[^>]*required/);
 });
+
+
+test("business drafts keep missing roster choices empty until explicitly selected", () => {
+  for (const initialType of ["老师新 LP", "换老师试听", "老师 LP 修改"] as const) {
+    const html = renderToStaticMarkup(<LpWorkflowFields initialType={initialType} requireExplicitSelection
+      subjectOptions={[{ value: "English" }, { value: "Maths" }]} teacherOptions={[{ value: "Teacher A" }]} />);
+    const subject = html.match(/<select[^>]*name="subject"[^>]*>([\s\S]*?)<\/select>/);
+    assert.ok(subject);
+    assert.match(subject[1], /<option value="" selected="">请选择<\/option>/);
+    assert.doesNotMatch(subject[1], /value="English" selected/);
+    const teacherName = initialType === "换老师试听" ? "newTeacher" : "teacher";
+    const teacher = html.match(new RegExp(`<select[^>]*name="${teacherName}"[^>]*>([\\s\\S]*?)</select>`));
+    assert.ok(teacher);
+    assert.match(teacher[1], /<option value="" selected="">/);
+  }
+  const explicit = renderToStaticMarkup(<LpWorkflowFields initialType="换老师试听" requireExplicitSelection
+    initialValues={{ subject: "Maths", newTeacher: "Teacher B" }} subjectOptions={[{ value: "English" }, { value: "Maths" }]}
+    teacherOptions={[{ value: "Teacher A" }, { value: "Teacher B" }]} />);
+  assert.match(explicit, /value="Maths" selected=""/);
+  assert.match(explicit, /value="Teacher B" selected=""/);
+  const manual = renderToStaticMarkup(<LpWorkflowFields initialType="老师新 LP" subjectOptions={[{ value: "English" }]} />);
+  assert.match(manual, /value="English" selected=""/);
+});

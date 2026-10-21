@@ -6,7 +6,7 @@ import type { OpsStateRow, confirmWecomLpDraftAtomic, readWecomLpDrafts, readWec
 import type { WecomLpDraftRawSource } from "../lib/wecom-lp-intake";
 const fields = { responsibleOperations: "Ella", planner: "Eileen", requestSentAt: "2026-10-20T09:00:00.000Z", assignedTeacher: "Synthetic Teacher", subject: "Y8 English", oneSentenceDescription: "Synthetic learning needs", locationTimezone: "VIC", contactParents: true, contactStudent: false, contactPerson: "家长", timeMentioned: false, studentNameKnown: true, studentName: "Synthetic Child", trialDurationMinutes: 60, trialPaymentMethod: "后置付费试听", writingRequired: false, paperRequired: false, specifiedContentStatus: "无需指定", preparationFollowUp: "是", isUniversityStudent: false };
 const command = { commandKey: "b011aafd-7bb4-43d6-a52a-6c529221a55a", caseId: "d6385b25-691c-424f-a81b-5de3835ea703", sourceMessageId: "synthetic-handover-1", sourceRevision: "a".repeat(64), fields, expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 }, studentId: "STU-1" };
-function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string; evidence?: Awaited<ReturnType<typeof readWecomHandoverScheduleEvidence>>; evidenceError?: boolean } = {}) {
+function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string; applied?: boolean; evidence?: Awaited<ReturnType<typeof readWecomHandoverScheduleEvidence>>; evidenceError?: boolean } = {}) {
   const student = { id: "STU-1", name: "Synthetic Child", owner: "Ella", planner: "Tara", guardianWechat: "Synthetic Parent" };
   const rows: OpsStateRow[] = ["students", "lpItems", "tasks", "files"].map((entity) => ({ entity, payload: entity === "students" ? [student, { ...student, id: "STU-OTHER", name: "Other Synthetic Child", guardianWechat: "Other Synthetic Parent", owner: "Tiffany" }] : [], version: 1, updated_at: fields.requestSentAt, updated_by: "synthetic" }));
   const source: WecomLpDraftRawSource = { id: command.sourceMessageId, sourceMessageId: command.sourceMessageId, caseId: command.caseId, sourceRevision: command.sourceRevision, wechatName: "Synthetic Parent", studentName: "Synthetic Child", operationsOwner: "Ella", coursePlanner: "Eileen", status: "identified", createdAt: fields.requestSentAt, messages: [{ messageId: command.sourceMessageId, text: "【安排教师】：Synthetic Teacher\n【安排科目】：Y8 English", sentAt: fields.requestSentAt }], confirmed: null };
@@ -22,7 +22,7 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
     confirm: async (input) => {
       saved.push(input);
       if (options.errorCode) throw Object.assign(new Error("synthetic database failure"), { code: options.errorCode });
-      return [{ command_key: input.commandKey, operation: "create", applied: true, student_id: "STU-1", lp_item_id: "LP-SYNTHETIC", students_row: rows[0], lp_items_row: rows[1], tasks_row: rows[2], files_row: rows[3], audit_entry_id: "synthetic" }] as Awaited<ReturnType<typeof confirmWecomLpDraftAtomic>>;
+      return [{ command_key: input.commandKey, operation: "create", applied: options.applied ?? true, student_id: "STU-1", lp_item_id: "LP-SYNTHETIC", students_row: rows[0], lp_items_row: rows[1], tasks_row: rows[2], files_row: rows[3], audit_entry_id: "synthetic" }] as Awaited<ReturnType<typeof confirmWecomLpDraftAtomic>>;
     },
   });
   const post = (input: unknown = command) => handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(input) }));
@@ -170,4 +170,25 @@ test("nontrial draft pages never acquire trial schedule identity evidence", asyn
   assert.equal(body.drafts[0].trialSchedule, undefined);
   assert.equal(body.drafts[0].scheduleEvidenceUnavailable, undefined);
   assert.equal(f.evidenceReads.length, 0);
+});
+
+
+test("committed legacy handovers replay their stored trial intent after business classification changes", async () => {
+  const original = harness().source;
+  const source = { ...original, confirmed: { studentId: "STU-1", lpItemId: "LP-SYNTHETIC" },
+    messages: [{ ...original.messages[0], text: `老生新LP 信息交接\n${original.messages[0].text}` }] };
+  const f = harness({ source, applied: false });
+  const response = await f.post();
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.applied, false);
+  assert.equal(body.lpItemId, "LP-SYNTHETIC");
+  assert.equal(f.saved.length, 1);
+  assert.equal(f.saved[0].workflowType, "试听 LP");
+  assert.deepEqual(f.saved[0].fields, fields);
+  const changed = harness({ source, errorCode: "23505" });
+  const conflict = await changed.post({ ...command, fields: { ...fields, subject: "Maths" } });
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).code, "draft_conflict");
+  assert.equal(changed.saved.length, 1);
 });

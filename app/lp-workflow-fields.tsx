@@ -457,19 +457,21 @@ function SelectOrInput({
   defaultValue,
   options,
   required = true,
+  requireExplicitSelection = false,
   type = "text",
 }: Readonly<{
   name: LpWorkflowFormName;
   defaultValue?: string;
   options?: readonly LpFormOption[];
   required?: boolean;
+  requireExplicitSelection?: boolean;
   type?: "text" | "url" | "date";
 }>) {
   if (!options?.length) {
     return <input name={name} type={type} defaultValue={defaultValue} required={required} />;
   }
-  return <select name={name} defaultValue={defaultValue || (required ? options[0]?.value : "")} required={required}>
-    {!required && <option value="">未指定</option>}
+  return <select name={name} defaultValue={defaultValue || (required && !requireExplicitSelection ? options[0]?.value : "")} required={required}>
+    {(!required || requireExplicitSelection) && <option value="">{required ? "请选择" : "未指定"}</option>}
     {options.map((option) => <option value={option.value} key={option.value}>{option.label ?? option.value}</option>)}
   </select>;
 }
@@ -526,30 +528,35 @@ function TeacherField({
   defaultValue,
   teacherOptions,
   required = true,
+  requireExplicitSelection,
 }: Readonly<{
   label: string;
   name: LpWorkflowFormName;
   defaultValue?: string;
   teacherOptions?: readonly LpFormOption[];
   required?: boolean;
+  requireExplicitSelection?: boolean;
 }>) {
   return <label>{label}
-    <SelectOrInput name={name} defaultValue={defaultValue} options={teacherOptions} required={required} />
+    <SelectOrInput name={name} defaultValue={defaultValue} options={teacherOptions} required={required} requireExplicitSelection={requireExplicitSelection} />
   </label>;
 }
 
 function SubjectField({
   defaultValue,
   subjectOptions,
+  requireExplicitSelection,
 }: Readonly<{
   defaultValue?: string;
   subjectOptions?: readonly LpFormOption[];
+  requireExplicitSelection?: boolean;
 }>) {
   return <label>科目
     <SelectOrInput
       name={LP_WORKFLOW_FORM_NAMES.subject}
       defaultValue={defaultValue}
       options={subjectOptions}
+      requireExplicitSelection={requireExplicitSelection}
     />
   </label>;
 }
@@ -629,7 +636,7 @@ export function LpWorkflowFields({
         <label>科目（可自定义）
           <DatalistInput name={LP_WORKFLOW_FORM_NAMES.subject} value={subject} onChange={setSubject} options={subjectOptions} />
         </label>
-      </> : <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />}
+      </> : <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} requireExplicitSelection={requireExplicitSelection} />}
       <label className="span-2">一句话描述
         <textarea
           name={LP_WORKFLOW_FORM_NAMES.oneSentenceDescription}
@@ -697,13 +704,14 @@ export function LpWorkflowFields({
 
     {showsTeacherLp ? <>
       <TeacherField
+        requireExplicitSelection={requireExplicitSelection}
         label="老师"
         name={LP_WORKFLOW_FORM_NAMES.teacher}
         required={workflowType !== "老师 LP 修改"}
         defaultValue={initialValues.teacher}
         teacherOptions={teacherOptions}
       />
-      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
+      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} requireExplicitSelection={requireExplicitSelection} />
       <label className="span-2">文档 URL
         <input
           name={LP_WORKFLOW_FORM_NAMES.documentUrl}
@@ -732,6 +740,7 @@ export function LpWorkflowFields({
 
     {showsTeacherChange ? <>
       <TeacherField
+        requireExplicitSelection={requireExplicitSelection}
         label="原老师"
         name={LP_WORKFLOW_FORM_NAMES.originalTeacher}
         required={false}
@@ -739,12 +748,13 @@ export function LpWorkflowFields({
         teacherOptions={teacherOptions}
       />
       <TeacherField
+        requireExplicitSelection={requireExplicitSelection}
         label="新老师"
         name={LP_WORKFLOW_FORM_NAMES.newTeacher}
         defaultValue={initialValues.newTeacher}
         teacherOptions={teacherOptions}
       />
-      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
+      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} requireExplicitSelection={requireExplicitSelection} />
       <label className="span-2">重听原因及注意事项
         <textarea
           name={LP_WORKFLOW_FORM_NAMES.changeReason}
@@ -760,7 +770,7 @@ export function LpWorkflowFields({
           rows={3}
         />
       </label>
-      <TeacherField label="交接老师" name={LP_WORKFLOW_FORM_NAMES.handoverFromTeacher} required={false} defaultValue={initialValues.handoverFromTeacher} teacherOptions={teacherOptions} />
+      <TeacherField requireExplicitSelection={requireExplicitSelection} label="交接老师" name={LP_WORKFLOW_FORM_NAMES.handoverFromTeacher} required={false} defaultValue={initialValues.handoverFromTeacher} teacherOptions={teacherOptions} />
       <label className="span-2">已使用资料、已教内容<textarea name={LP_WORKFLOW_FORM_NAMES.materialsAndContentTaught} defaultValue={initialValues.materialsAndContentTaught} rows={4} /></label>
       <label className="span-2">建议后续内容与资料<textarea name={LP_WORKFLOW_FORM_NAMES.recommendedNextContent} defaultValue={initialValues.recommendedNextContent} rows={4} /></label>
       <label className="span-2">学生强项、进步方向与学习特点<textarea name={LP_WORKFLOW_FORM_NAMES.studentStrengthsAndLearningProfile} defaultValue={initialValues.studentStrengthsAndLearningProfile} rows={4} /></label>
@@ -770,18 +780,20 @@ export function LpWorkflowFields({
 
     {showsSubstitute ? <>
       <TeacherField
+        requireExplicitSelection={requireExplicitSelection}
         label="原老师"
         name={LP_WORKFLOW_FORM_NAMES.originalTeacher}
         defaultValue={initialValues.originalTeacher}
         teacherOptions={teacherOptions}
       />
       <TeacherField
+        requireExplicitSelection={requireExplicitSelection}
         label="代课老师"
         name={LP_WORKFLOW_FORM_NAMES.substituteTeacher}
         defaultValue={initialValues.substituteTeacher}
         teacherOptions={teacherOptions}
       />
-      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
+      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} requireExplicitSelection={requireExplicitSelection} />
       <label>开始日期
         <input
           name={LP_WORKFLOW_FORM_NAMES.coverageStartDate}
@@ -824,7 +836,7 @@ export function LpWorkflowFields({
           options={coursePackageOptions}
         />
       </label>
-      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} />
+      <SubjectField defaultValue={initialValues.subject} subjectOptions={subjectOptions} requireExplicitSelection={requireExplicitSelection} />
       <label>购买课时<input name={LP_WORKFLOW_FORM_NAMES.purchasedHours} type="number" min="0" step="any" defaultValue={initialValues.purchasedHours ?? ""} required /></label>
       <label>赠送课时<input name={LP_WORKFLOW_FORM_NAMES.bonusHours} type="number" min="0" step="any" defaultValue={initialValues.bonusHours ?? 0} required /></label>
       <label>排课频率<input name={LP_WORKFLOW_FORM_NAMES.lessonFrequency} defaultValue={initialValues.lessonFrequency} required /></label>
