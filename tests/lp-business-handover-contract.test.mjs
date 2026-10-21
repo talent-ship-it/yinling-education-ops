@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { sqlRuntimeFixtures } from "./sql/runtime-fixtures.mjs";
 
-const migration = readFileSync(new URL("../supabase/migrations/20261021112850_lp_business_handover_types.sql", import.meta.url), "utf8");
+const migration = readFileSync(new URL("../supabase/migrations/20261021130241_lp_business_handover_types.sql", import.meta.url), "utf8");
 
 test("business handover confirmation has one compatible signature and preserves its secret and scope gates", () => {
   assert.match(migration, /drop function public\.confirm_wecom_lp_draft_atomic\(text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,text,boolean\);/u);
@@ -25,7 +25,7 @@ test("business handover confirmation has one compatible signature and preserves 
 test("the release gate registers local behavioral acceptance for template routing, retries, tasks and identity ambiguity", () => {
   const fixture = sqlRuntimeFixtures.find(({ id }) => id === "wecom-lp-business-handover");
   assert.ok(fixture);
-  assert.ok(fixture.steps.some(({ file }) => file.endsWith("20261021112850_lp_business_handover_types.sql")));
+  assert.ok(fixture.steps.some(({ file }) => file.endsWith("20261021130241_lp_business_handover_types.sql")));
   const runtime = readFileSync(new URL("./sql/wecom-lp-business-handover-runtime.sql", import.meta.url), "utf8");
   for (const expectation of [
     "legacy_confirmation_default_type_replay_failed",
