@@ -9,7 +9,17 @@ import type { WecomHandoverScheduleCandidate, WecomHandoverScheduleEvidence, Wec
 
 type RecordValue = Record<string, unknown>;
 type Student = RecordValue & { id: string; name: string };
+type Draft = ReturnType<typeof buildWecomLpDraft>;
 type Context = ReturnType<typeof sourceContext>;
+type Participant = WecomHandoverScheduleEvent["sourceParticipants"][number];
+type Authority = ReturnType<typeof projectionAuthority>;
+type CandidateScope = Readonly<{ students: readonly Student[]; events: readonly PreparedEvent[]; occupied: ReadonlySet<string>; checkedAt: string }>;
+type SourceCandidates = ReturnType<typeof sourceCandidates>;
+type Selection = ReturnType<typeof sourceSelection>;
+type EvidenceScope = CandidateScope & Readonly<{
+  now: number; snapshotRevision: string; coverage: WecomHandoverScheduleInput["coverage"];
+  competition: ReadonlyMap<string, number>; proven: ReturnType<typeof matchTrialScheduleEvents>;
+}>;
 type PreparedEvent = Readonly<{ raw: WecomHandoverScheduleEvent; event: TrialScheduleEventLike; studentIds: readonly string[]; teacher: ReturnType<typeof teacherChoices>; unsafe: boolean }>;
 const DAY = 86_400_000;
 const MAX_CANDIDATES = 8;
@@ -52,34 +62,70 @@ function buildLookup(students: readonly Student[]): JiaowubaoSnapshotStudentLook
   const uniqueMap = (map: Map<string, string[]>) => new Map([...map].flatMap(([label, ids]) => ids.length === 1 ? [[label, ids[0]!] as const] : []));
   return { memberCandidates, nameCandidates, internalByMember: uniqueMap(memberCandidates), internalByNameKey: uniqueMap(nameCandidates) };
 }
-function sourceContext(source: WecomLpDraftRawSource, students: readonly Student[], teachers: readonly RecordValue[]) {
-  const draft = buildWecomLpDraft(source.messages);
-  const guardian = guardianKey(source.wechatName);
+function sourceNames(source: WecomLpDraftRawSource, draft: Draft) {
+  return unique([source.studentName, draft.studentName].flatMap((value) => realName(value, source.wechatName) ? [nameKey(value)] : []));
+}
+function sourceHintedIds(source: WecomLpDraftRawSource) {
+  return unique([source.confirmed?.studentId, ...source.messages.map((message) => message.studentId)].map(text).filter(Boolean));
+}
+function originalIdentityConflict(source: WecomLpDraftRawSource, draft: Draft, hintedIds: readonly string[], explicitNames: readonly string[]) {
   const originalGuardian = guardianKey(draft.guardianWechat);
-  const explicitNames = unique([source.studentName, draft.studentName].flatMap((value) => realName(value, source.wechatName) ? [nameKey(value)] : []));
-  const hintedIds = unique([source.confirmed?.studentId, ...source.messages.map((message) => message.studentId)].flatMap((id) => text(id) ? [text(id)] : []));
-  let conflict = ["identity_conflict", "identity_ambiguous"].includes(source.status) || hintedIds.length > 1 || explicitNames.length > 1
-    || Boolean(originalGuardian && originalGuardian !== guardian)
+  const guardianMismatch = Boolean(originalGuardian && originalGuardian !== guardianKey(source.wechatName));
+  return ["identity_conflict", "identity_ambiguous"].includes(source.status) || hintedIds.length > 1 || explicitNames.length > 1 || guardianMismatch
     || draft.conflicts.some((entry) => ["guardianWechat", "studentName", "studentNameKnown"].includes(entry.field));
+}
+function namedStudents(students: readonly Student[], explicitNames: readonly string[]) {
+  if (!explicitNames.length) return [];
+  return students.filter((student) => nameKey(student.name) === explicitNames[0] && realName(student.name, student.guardianWechat)).map((student) => student.id);
+}
+function anchorConflict(sets: readonly string[][], allowed: readonly string[] | null, hintedIds: readonly string[], students: readonly Student[]) {
+  return sets.length > 1 && allowed?.length === 0 || hintedIds.some((id) => !students.some((student) => student.id === id));
+}
+function selectSourceAnchor(sets: readonly string[][], allowed: readonly string[] | null) {
+  if (allowed?.length !== 1 || !sets.some((ids) => ids.length === 1)) return null;
+  return allowed[0]!;
+}
+function explicitNameConflict(identity: Student | undefined, explicitNames: readonly string[]) {
+  return Boolean(identity && explicitNames.length && nameKey(identity.name) !== explicitNames[0]);
+}
+function sourceIdentity(source: WecomLpDraftRawSource, draft: Draft, students: readonly Student[]) {
+  const explicitNames = sourceNames(source, draft);
+  const hintedIds = sourceHintedIds(source);
+  const guardian = guardianKey(source.wechatName);
   const guardians = guardian ? students.filter((student) => guardianKey(student.guardianWechat) === guardian).map((student) => student.id) : [];
-  const named = explicitNames.length ? students.filter((student) => nameKey(student.name) === explicitNames[0] && realName(student.name, student.guardianWechat)).map((student) => student.id) : [];
-  const anchoredSets = [hintedIds, guardians, named].filter((ids) => ids.length);
-  const allowed = anchoredSets.length ? anchoredSets.reduce((ids, next) => ids.filter((id) => next.includes(id))) : null;
-  if (anchoredSets.length > 1 && allowed?.length === 0 || hintedIds.some((id) => !students.some((student) => student.id === id))) conflict = true;
-  const anchor = allowed?.length === 1 && (hintedIds.length === 1 || guardians.length === 1 || named.length === 1) ? allowed[0]! : null;
-  const identity = anchor && students.find((student) => student.id === anchor);
+  const named = namedStudents(students, explicitNames);
+  const sets = [hintedIds, guardians, named].filter((ids) => ids.length);
+  const allowed = sets.length ? sets.reduce((ids, next) => ids.filter((id) => next.includes(id))) : null;
+  const anchor = selectSourceAnchor(sets, allowed);
+  const identity = students.find((student) => student.id === anchor);
   const strong = identity && realName(identity.name, identity.guardianWechat) ? identity.id : null;
-  if (identity && explicitNames.length && nameKey(identity.name) !== explicitNames[0]) conflict = true;
+  const conflict = originalIdentityConflict(source, draft, hintedIds, explicitNames) || anchorConflict(sets, allowed, hintedIds, students) || explicitNameConflict(identity, explicitNames);
+  return { conflict, allowed, strong, explicitNames, possibleIds: unique(sets.flat()) };
+}
+function draftValues(draft: Draft, field: string) {
+  return [draft.fields[field], ...draft.conflicts.filter((entry) => entry.field === field).flatMap((entry) => entry.values)].map(text).filter(Boolean);
+}
+function sourceScheduling(source: WecomLpDraftRawSource, draft: Draft, teachers: readonly RecordValue[]) {
   const plannerValues = unique([source.coursePlanner, draft.fields.planner].map(key).filter(Boolean));
-  const teacher = teacherChoices(draft.fields.assignedTeacher, teachers);
-  const valuesFor = (field: string) => [draft.fields[field], ...draft.conflicts.filter((entry) => entry.field === field).flatMap((entry) => entry.values)].map(text).filter(Boolean);
-  const contentionTeacherLabels = valuesFor("assignedTeacher");
-  const contentionTeacherIds = unique(contentionTeacherLabels.flatMap((label) => teacherChoices(label, teachers).ids));
-  const contentionSubjects = valuesFor("subject");
-  const contentionPlanners = unique([source.coursePlanner, ...valuesFor("planner")].map(key).filter(Boolean));
+  const contentionTeacherLabels = draftValues(draft, "assignedTeacher");
+  return {
+    contentionTeacherLabels,
+    contentionTeacherIds: unique(contentionTeacherLabels.flatMap((label) => teacherChoices(label, teachers).ids)),
+    contentionSubjects: draftValues(draft, "subject"),
+    contentionPlanners: unique([source.coursePlanner, ...draftValues(draft, "planner")].map(key).filter(Boolean)),
+    planner: plannerValues.length === 1 ? plannerValues[0]! : "",
+    schedulingConflict: plannerValues.length > 1 || draft.conflicts.some((entry) => ["planner", "assignedTeacher", "subject"].includes(entry.field)),
+    teacher: teacherChoices(draft.fields.assignedTeacher, teachers), subject: text(draft.fields.subject),
+  };
+}
+function sourceWindow(source: WecomLpDraftRawSource) {
   const handover = Date.parse(source.handoverAt ?? source.messages.find((message) => message.messageId === source.sourceMessageId)?.sentAt ?? source.createdAt);
   if (!Number.isFinite(handover)) throw new TypeError("handover timestamp is invalid");
-  return { source, draft, conflict, allowed, strong, explicitNames, possibleIds: unique(anchoredSets.flat()), contentionTeacherLabels, contentionTeacherIds, contentionSubjects, contentionPlanners, planner: plannerValues.length === 1 ? plannerValues[0]! : "", schedulingConflict: plannerValues.length > 1 || draft.conflicts.some((entry) => ["planner", "assignedTeacher", "subject"].includes(entry.field)), teacher, subject: text(draft.fields.subject), lower: handover - DAY, upper: handover + 31 * DAY };
+  return { lower: handover - DAY, upper: handover + 31 * DAY };
+}
+function sourceContext(source: WecomLpDraftRawSource, students: readonly Student[], teachers: readonly RecordValue[]) {
+  const draft = buildWecomLpDraft(source.messages);
+  return { source, draft, ...sourceIdentity(source, draft, students), ...sourceScheduling(source, draft, teachers), ...sourceWindow(source) };
 }
 function teacherChoices(value: unknown, teachers: readonly RecordValue[]) {
   const label = text(value);
@@ -114,32 +160,42 @@ function subjectMatches(subject: string, course: string | null) {
   const actual = subjectKeys(course);
   return expected.length ? expected.some((part) => actual.includes(part)) : key(course).includes(key(subject));
 }
+function participantNameConflict(label: string | null, student: Student) {
+  const nativeKeys = [normalizeStudentImportName(student.name), studentImportAutomaticJwbNameKey(student.name)];
+  const labelKeys = text(label) ? [normalizeStudentImportName(label!), studentImportAutomaticJwbNameKey(label!)] : [];
+  return Boolean(labelKeys.length && !labelKeys.some((value) => nativeKeys.includes(value)));
+}
+function participantMemberConflict(participant: Participant, student: Student) {
+  return !realName(student.name, student.guardianWechat)
+    || Boolean(participant.memberId && safeSourceKey(student.jwbSourceRow) && participant.memberId !== safeSourceKey(student.jwbSourceRow));
+}
+function participantProof(participant: Participant, students: readonly Student[], lookup: JiaowubaoSnapshotStudentLookup) {
+  if (trialAccountLetter(participant.label)) return { id: null, unsafe: false };
+  const id = mapJiaowubaoSnapshotParticipant(participant, lookup);
+  if (!id) return { id: null, unsafe: Boolean(participant.memberId || text(participant.label)) };
+  const student = students.find((candidate) => candidate.id === id)!;
+  return { id, unsafe: participantNameConflict(participant.label, student) || participantMemberConflict(participant, student) };
+}
+function sourceTitleConflict(titled: readonly string[], direct: readonly string[]) {
+  return Boolean(titled.length > 1 || titled.length && direct.length && titled.some((id) => !direct.includes(id)));
+}
+function nativeTeacherId(teachers: readonly RecordValue[], label: string | null) {
+  const ids = unique(teachers.filter((teacher) => teacherKey(teacher.name) === teacherKey(label)).map((teacher) => text(teacher.id)).filter(Boolean));
+  return ids.length === 1 ? ids[0]! : null;
+}
+function sharedAccountConflict(raw: WecomHandoverScheduleEvent) {
+  return unique(raw.sourceParticipants.flatMap((participant) => trialAccountLetter(participant.label) ? [trialAccountLetter(participant.label)!] : [])).length > 1;
+}
 function prepareEvent(raw: WecomHandoverScheduleEvent, students: readonly Student[], teachers: readonly RecordValue[], lookup: JiaowubaoSnapshotStudentLookup): PreparedEvent {
-  const realStudents = students.filter((student) => realName(student.name, student.guardianWechat));
-  const mapped: string[] = [];
-  let unsafe = raw.sourceStudentsTruncated;
+  const proofs = raw.sourceParticipants.map((participant) => participantProof(participant, students, lookup));
+  const direct = unique(proofs.flatMap((proof) => proof.id ? [proof.id] : []));
+  const titled = students.filter((student) => realName(student.name, student.guardianWechat))
+    .filter((student) => jiaowubaoTrialCourseTitleMatchesStudentName(raw.courseName, student.name)).map((student) => student.id);
   const accounts = trialAccountFromParticipants(raw.sourceParticipants);
-  const accountLetters = unique(raw.sourceParticipants.flatMap((participant) => trialAccountLetter(participant.label) ? [trialAccountLetter(participant.label)!] : []));
-  if (accountLetters.length > 1) unsafe = true;
-  for (const participant of raw.sourceParticipants) {
-    if (trialAccountLetter(participant.label)) continue;
-    const id = mapJiaowubaoSnapshotParticipant(participant, lookup);
-    if (!id) { if (participant.memberId || text(participant.label)) unsafe = true; continue; }
-    const student = students.find((candidate) => candidate.id === id)!;
-    const nativeKeys = [normalizeStudentImportName(student.name), studentImportAutomaticJwbNameKey(student.name)];
-    const labelKeys = text(participant.label) ? [normalizeStudentImportName(participant.label!), studentImportAutomaticJwbNameKey(participant.label!)] : [];
-    if (labelKeys.length && !labelKeys.some((label) => nativeKeys.includes(label))) unsafe = true;
-    if (!realName(student.name, student.guardianWechat) || participant.memberId && safeSourceKey(student.jwbSourceRow) && participant.memberId !== safeSourceKey(student.jwbSourceRow)) unsafe = true;
-    mapped.push(id);
-  }
-  const direct = unique(mapped);
-  const titled = realStudents.filter((student) => jiaowubaoTrialCourseTitleMatchesStudentName(raw.courseName, student.name)).map((student) => student.id);
-  if (titled.length > 1 || titled.length && direct.length && titled.some((id) => !direct.includes(id))) unsafe = true;
-  const studentIds = direct.length ? direct : accounts.sharedAccountLetter ? titled : [];
-  const teacherIds = unique(teachers.filter((teacher) => teacherKey(teacher.name) === teacherKey(raw.sourceTeacherLabel)).map((teacher) => text(teacher.id)).filter(Boolean));
-  return { raw, unsafe, studentIds, teacher: teacherChoices(raw.sourceTeacherLabel, teachers), event: {
+  const unsafe = raw.sourceStudentsTruncated || sharedAccountConflict(raw) || proofs.some((proof) => proof.unsafe) || sourceTitleConflict(titled, direct);
+  return { raw, unsafe, studentIds: direct.length ? direct : accounts.sharedAccountLetter ? titled : [], teacher: teacherChoices(raw.sourceTeacherLabel, teachers), event: {
     eventId: raw.eventId, startsAt: raw.startsAt, endsAt: raw.endsAt, courseName: raw.courseName,
-    teacherId: teacherIds.length === 1 ? teacherIds[0]! : null, teacherName: raw.sourceTeacherLabel,
+    teacherId: nativeTeacherId(teachers, raw.sourceTeacherLabel), teacherName: raw.sourceTeacherLabel,
     visibleStudentIds: direct, trialPlannerHint: trialPlannerHintFromParticipants(raw.sourceParticipants), ...accounts,
   } };
 }
@@ -148,26 +204,41 @@ function coarseMatch(context: Context, event: PreparedEvent) {
     && context.subject && subjectMatches(context.subject, event.raw.courseName)
     && context.planner && context.planner === key(event.event.trialPlannerHint));
 }
-function eligible(context: Context, event: PreparedEvent) {
+function inSourceWindow(context: Context, event: PreparedEvent) {
   const start = Date.parse(event.raw.startsAt);
-  if (start < context.lower || start >= context.upper || context.schedulingConflict) return false;
-  if (context.planner && event.event.trialPlannerHint && context.planner !== key(event.event.trialPlannerHint)) return false;
-  if (context.teacher.provided && (!event.teacher.ids.some((id) => context.teacher.ids.includes(id)))) return false;
-  if (!subjectMatches(context.subject, event.raw.courseName)) return false;
+  return start >= context.lower && start < context.upper;
+}
+function sourceTeacherCompatible(context: Context, event: PreparedEvent) {
+  return !context.teacher.provided || event.teacher.ids.some((id) => context.teacher.ids.includes(id));
+}
+function sourcePlannerCompatible(context: Context, event: PreparedEvent) {
+  return !context.planner || !event.event.trialPlannerHint || context.planner === key(event.event.trialPlannerHint);
+}
+function sourceConstraintsCompatible(context: Context, event: PreparedEvent) {
+  return !context.schedulingConflict && inSourceWindow(context, event) && sourceTeacherCompatible(context, event)
+    && sourcePlannerCompatible(context, event) && subjectMatches(context.subject, event.raw.courseName);
+}
+function eligible(context: Context, event: PreparedEvent) {
+  if (!sourceConstraintsCompatible(context, event)) return false;
   return context.strong ? event.studentIds.includes(context.strong) : coarseMatch(context, event);
 }
-function conflictedContention(context: Context, event: PreparedEvent) {
-  const start = Date.parse(event.raw.startsAt);
-  if (start < context.lower || start >= context.upper) return false;
-  const teacherProof = event.teacher.ids.some((id) => context.contentionTeacherIds.includes(id))
+function contentionProof(context: Context, event: PreparedEvent) {
+  const teacher = event.teacher.ids.some((id) => context.contentionTeacherIds.includes(id))
     || context.contentionTeacherLabels.some((label) => teacherKey(label) === teacherKey(event.raw.sourceTeacherLabel));
-  const teacherCompatible = !context.contentionTeacherLabels.length || teacherProof;
-  const subjectProof = context.contentionSubjects.some((subject) => subjectMatches(subject, event.raw.courseName));
-  const subjectCompatible = !context.contentionSubjects.length || subjectProof;
-  const plannerProof = Boolean(event.event.trialPlannerHint && context.contentionPlanners.includes(key(event.event.trialPlannerHint)));
-  const plannerCompatible = !context.contentionPlanners.length || !event.event.trialPlannerHint || plannerProof;
-  return Boolean(teacherCompatible && subjectCompatible && plannerCompatible && event.studentIds.some((id) => context.possibleIds.includes(id))
-    || teacherProof && subjectProof && plannerProof);
+  const subject = context.contentionSubjects.some((value) => subjectMatches(value, event.raw.courseName));
+  const planner = Boolean(event.event.trialPlannerHint && context.contentionPlanners.includes(key(event.event.trialPlannerHint)));
+  return { teacher, subject, planner };
+}
+function contendedIdentityCompatible(context: Context, event: PreparedEvent, proof: ReturnType<typeof contentionProof>) {
+  const teacher = !context.contentionTeacherLabels.length || proof.teacher;
+  const subject = !context.contentionSubjects.length || proof.subject;
+  const planner = !context.contentionPlanners.length || !event.event.trialPlannerHint || proof.planner;
+  return teacher && subject && planner && event.studentIds.some((id) => context.possibleIds.includes(id));
+}
+function conflictedContention(context: Context, event: PreparedEvent) {
+  if (!inSourceWindow(context, event)) return false;
+  const proof = contentionProof(context, event);
+  return contendedIdentityCompatible(context, event, proof) || proof.teacher && proof.subject && proof.planner;
 }
 function covered(lower: number, upper: number, coverage: WecomHandoverScheduleInput["coverage"], now: number) {
   let cursor = lower;
@@ -190,83 +261,158 @@ function lpArguments(lp: RecordValue) {
     ...(isTrialIntake(lp.trialIntake) ? { trialIntake: lp.trialIntake } : {}),
   };
 }
-export function prepareWecomHandoverScheduleProjection(input: WecomHandoverScheduleInput): readonly WecomHandoverScheduleEvidence[] {
+function assertTargets(input: WecomHandoverScheduleInput) {
   if (input.targetSourceMessageIds.length > 50 || unique(input.targetSourceMessageIds).length !== input.targetSourceMessageIds.length
     || unique(input.sources.map((source) => source.sourceMessageId)).length !== input.sources.length
     || input.targetSourceMessageIds.some((id) => !input.sources.some((source) => source.sourceMessageId === id))) throw new TypeError("handover targets are invalid");
+}
+function projectionClock(input: WecomHandoverScheduleInput) {
   const checked = new Date(input.checkedAt ?? new Date());
   if (!Number.isFinite(checked.valueOf()) || !text(input.snapshotRevision) || !text(input.inputRevision)) throw new TypeError("handover projection revision or clock is invalid");
-  const checkedAt = checked.toISOString();
-  const now = checked.valueOf();
-  const roster = rowsOf(input.rows, "students");
-  const students: Student[] = roster.filter((student) => text(student.id) && text(student.name) && key(student.importArchived) !== "true" && student.importArchived !== true).map((student) => ({ ...student, id: text(student.id), name: String(student.name) }));
+  return { checkedAt: checked.toISOString(), now: checked.valueOf() };
+}
+function projectionAuthority(rows: readonly OpsStateRow[]) {
+  const students: Student[] = rowsOf(rows, "students").filter((student) => text(student.id) && text(student.name) && key(student.importArchived) !== "true" && student.importArchived !== true)
+    .map((student) => ({ ...student, id: text(student.id), name: String(student.name) }));
   if (unique(students.map((student) => student.id)).length !== students.length) throw new TypeError("student authority has duplicate identities");
-  const teachers = rowsOf(input.rows, "teachers");
-  const lpItems = rowsOf(input.rows, "lpItems");
-  const lookup = buildLookup(students);
-  const contexts = input.sources.map((source) => sourceContext(source, students, teachers));
+  const teachers = rowsOf(rows, "teachers");
+  const lpItems = rowsOf(rows, "lpItems");
+  return {
+    students, teachers, lpItems,
+    studentArguments: students.map((student) => ({ id: student.id, name: student.name, owner: text(student.owner), planner: text(student.planner) })),
+    teacherArguments: teachers.map((teacher) => ({ id: text(teacher.id), name: text(teacher.name) })),
+  };
+}
+function isTrialEvent(event: WecomHandoverScheduleEvent) {
+  return event.sourceParticipants.some((participant) => trialAccountLetter(participant.label)) || /试听|视听|\btrial\b/iu.test(text(event.courseName));
+}
+function projectionEvents(input: WecomHandoverScheduleInput, authority: Authority, now: number) {
   if (input.events.some((event) => !Number.isFinite(Date.parse(event.startsAt)) || !(Date.parse(event.endsAt) > Date.parse(event.startsAt)))) throw new TypeError("schedule source time is invalid");
-  const validEvents = input.events.filter((event) => eventCovered(event, input.coverage, now)
-    && (event.sourceParticipants.some((participant) => trialAccountLetter(participant.label)) || /试听|视听|\btrial\b/iu.test(text(event.courseName))));
-  const eventCounts = new Map<string, number>();
-  for (const event of validEvents) eventCounts.set(event.eventId, (eventCounts.get(event.eventId) ?? 0) + 1);
-  const events = validEvents.map((event) => prepareEvent(event, students, teachers, lookup)).map((event) => eventCounts.get(event.raw.eventId) === 1 ? event : { ...event, unsafe: true });
-  const studentArguments = students.map((student) => ({ id: student.id, name: student.name, owner: text(student.owner), planner: text(student.planner) }));
-  const teacherArguments = teachers.map((teacher) => ({ id: text(teacher.id), name: text(teacher.name) }));
-  const occupied = new Set(lpItems.flatMap((item) => [item.trialSchedule, item.trialScheduleReview].flatMap((schedule) => record(schedule) && text(schedule.eventId) ? [text(schedule.eventId)] : [])));
+  const valid = input.events.filter((event) => eventCovered(event, input.coverage, now) && isTrialEvent(event));
+  const counts = new Map<string, number>();
+  for (const event of valid) counts.set(event.eventId, (counts.get(event.eventId) ?? 0) + 1);
+  const lookup = buildLookup(authority.students);
+  return valid.map((event) => prepareEvent(event, authority.students, authority.teachers, lookup))
+    .map((event) => counts.get(event.raw.eventId) === 1 ? event : { ...event, unsafe: true });
+}
+function lpOccupiedEventIds(item: RecordValue) {
+  return [item.trialSchedule, item.trialScheduleReview].flatMap((schedule) => record(schedule) && text(schedule.eventId) ? [text(schedule.eventId)] : []);
+}
+function lpCanClaimEvent(item: RecordValue, event: PreparedEvent, authority: Authority, checkedAt: string) {
+  return event.studentIds.includes(text(item.studentId)) && matchTrialScheduleEvents({
+    lpItems: [lpArguments(item)], students: authority.studentArguments, teachers: authority.teacherArguments, events: [event.event], matchedAt: checkedAt,
+  }).length > 0;
+}
+function occupiedEvents(events: readonly PreparedEvent[], authority: Authority, checkedAt: string) {
+  const occupied = new Set(authority.lpItems.flatMap(lpOccupiedEventIds));
   for (const event of events) {
     if (event.unsafe || occupied.has(event.raw.eventId)) continue;
-    if (lpItems.some((item) => event.studentIds.includes(text(item.studentId)) && matchTrialScheduleEvents({ lpItems: [lpArguments(item)], students: studentArguments, teachers: teacherArguments, events: [event.event], matchedAt: checkedAt }).length)) occupied.add(event.raw.eventId);
+    if (authority.lpItems.some((item) => lpCanClaimEvent(item, event, authority, checkedAt))) occupied.add(event.raw.eventId);
   }
-  const candidatesBySource = contexts.map((context) => {
-    const candidates: WecomHandoverScheduleCandidate[] = [];
-    let unsafe = false;
-    if (!context.conflict) for (const event of events) {
-      if (occupied.has(event.raw.eventId)) continue;
-      if (event.unsafe) {
-        const start = Date.parse(event.raw.startsAt);
-        const anchoredStudent = context.strong ? students.find((student) => student.id === context.strong) : null;
-        const anchoredTitle = anchoredStudent && jiaowubaoTrialCourseTitleMatchesStudentName(event.raw.courseName, anchoredStudent.name)
-          && subjectMatches(context.subject, event.raw.courseName)
-          && (!context.teacher.provided || event.teacher.ids.some((id) => context.teacher.ids.includes(id)))
-          && (!context.planner || !event.event.trialPlannerHint || context.planner === key(event.event.trialPlannerHint));
-        if (start >= context.lower && start < context.upper && !context.schedulingConflict && (eligible(context, event) || coarseMatch(context, event) || anchoredTitle)) unsafe = true;
-        continue;
-      }
-      if (!eligible(context, event)) continue;
-      const ids = event.studentIds.filter((id) => (!context.allowed || context.allowed.includes(id)) && (!context.explicitNames.length || students.some((student) => student.id === id && nameKey(student.name) === context.explicitNames[0])));
-      for (const studentId of ids) {
-        const student = students.find((candidate) => candidate.id === studentId)!;
-        candidates.push({ studentId, studentName: student.name, sourceRunId: event.raw.sourceRunId, schedule: {
-          source: "jiaowubao-open-api", sourceRevision: event.raw.sourceRevision, eventId: event.raw.eventId,
-          startsAt: new Date(event.raw.startsAt).toISOString(), endsAt: new Date(event.raw.endsAt).toISOString(),
-          courseName: event.raw.courseName, studentName: student.name, teacherId: event.event.teacherId, teacherName: text(event.raw.sourceTeacherLabel),
-          plannerHint: event.event.trialPlannerHint ?? null, ...trialAccountFromParticipants(event.raw.sourceParticipants),
-          durationMinutes: (Date.parse(event.raw.endsAt) - Date.parse(event.raw.startsAt)) / 60_000, matchedAt: checkedAt,
-        } });
-      }
-    }
-    candidates.sort((left, right) => left.schedule.startsAt.localeCompare(right.schedule.startsAt) || left.schedule.eventId.localeCompare(right.schedule.eventId) || left.studentId.localeCompare(right.studentId));
-    const reservations = context.conflict || context.schedulingConflict
-      ? events.filter((event) => !occupied.has(event.raw.eventId) && conflictedContention(context, event)).map((event) => event.raw.eventId) : [];
-    return { context, candidates, unsafe, reservations };
-  });
+  return occupied;
+}
+function anchoredTitleMatch(context: Context, event: PreparedEvent, students: readonly Student[]) {
+  const student = context.strong ? students.find((candidate) => candidate.id === context.strong) : null;
+  if (!student) return false;
+  return jiaowubaoTrialCourseTitleMatchesStudentName(event.raw.courseName, student.name) && subjectMatches(context.subject, event.raw.courseName)
+    && sourceTeacherCompatible(context, event) && sourcePlannerCompatible(context, event);
+}
+function uncertainEventContention(context: Context, event: PreparedEvent, students: readonly Student[]) {
+  if (!inSourceWindow(context, event) || context.schedulingConflict) return false;
+  return eligible(context, event) || coarseMatch(context, event) || anchoredTitleMatch(context, event, students);
+}
+function candidateStudentAllowed(context: Context, id: string, students: readonly Student[]) {
+  return (!context.allowed || context.allowed.includes(id)) && (!context.explicitNames.length || students.some((student) => student.id === id && nameKey(student.name) === context.explicitNames[0]));
+}
+function scheduleCandidate(event: PreparedEvent, student: Student, checkedAt: string): WecomHandoverScheduleCandidate {
+  return { studentId: student.id, studentName: student.name, sourceRunId: event.raw.sourceRunId, schedule: {
+    source: "jiaowubao-open-api", sourceRevision: event.raw.sourceRevision, eventId: event.raw.eventId,
+    startsAt: new Date(event.raw.startsAt).toISOString(), endsAt: new Date(event.raw.endsAt).toISOString(),
+    courseName: event.raw.courseName, studentName: student.name, teacherId: event.event.teacherId, teacherName: text(event.raw.sourceTeacherLabel),
+    plannerHint: event.event.trialPlannerHint ?? null, ...trialAccountFromParticipants(event.raw.sourceParticipants),
+    durationMinutes: (Date.parse(event.raw.endsAt) - Date.parse(event.raw.startsAt)) / 60_000, matchedAt: checkedAt,
+  } };
+}
+function eventCandidates(context: Context, event: PreparedEvent, scope: CandidateScope) {
+  return event.studentIds.filter((id) => candidateStudentAllowed(context, id, scope.students))
+    .map((id) => scheduleCandidate(event, scope.students.find((student) => student.id === id)!, scope.checkedAt));
+}
+function compareCandidates(left: WecomHandoverScheduleCandidate, right: WecomHandoverScheduleCandidate) {
+  return left.schedule.startsAt.localeCompare(right.schedule.startsAt) || left.schedule.eventId.localeCompare(right.schedule.eventId) || left.studentId.localeCompare(right.studentId);
+}
+function sourceCandidates(context: Context, scope: CandidateScope) {
+  const available = scope.events.filter((event) => !scope.occupied.has(event.raw.eventId));
+  const candidateEvents = context.conflict ? [] : available.filter((event) => !event.unsafe && eligible(context, event));
+  const candidates = candidateEvents.flatMap((event) => eventCandidates(context, event, scope)).sort(compareCandidates);
+  const unsafe = !context.conflict && available.some((event) => event.unsafe && uncertainEventContention(context, event, scope.students));
+  const reservations = context.conflict || context.schedulingConflict
+    ? available.filter((event) => conflictedContention(context, event)).map((event) => event.raw.eventId) : [];
+  return { context, candidates, unsafe, reservations };
+}
+function candidateCompetition(entries: readonly SourceCandidates[]) {
   const competition = new Map<string, number>();
-  for (const entry of candidatesBySource) for (const id of unique([...entry.candidates.map((candidate) => candidate.schedule.eventId), ...entry.reservations])) competition.set(id, (competition.get(id) ?? 0) + 1);
-  const strongLpItems = contexts.flatMap((context) => !context.conflict && context.strong ? [{ id: context.source.sourceMessageId, studentId: context.strong, workflowType: "试听 LP", requestedAt: new Date(context.lower + DAY).toISOString(), fields: { assignedTeacher: context.draft.fields.assignedTeacher } }] : []);
-  const proven = matchTrialScheduleEvents({ lpItems: strongLpItems, students: studentArguments, teachers: teacherArguments, events: events.filter((event) => !event.unsafe && !occupied.has(event.raw.eventId)).map((event) => event.event), matchedAt: checkedAt });
-  const evidence = new Map(candidatesBySource.map(({ context, candidates, unsafe }) => {
-    const complete = covered(context.lower, context.upper, input.coverage, now);
-    const candidate = candidates.length === 1 ? candidates[0]! : null;
-    const event = candidate ? events.find((entry) => entry.raw.eventId === candidate.schedule.eventId) : null;
-    const competing = candidate ? (competition.get(candidate.schedule.eventId) ?? 0) > 1 : false;
-    const automatic = Boolean(candidate && context.strong === candidate.studentId && event && !event.raw.historical && Date.parse(candidate.schedule.startsAt) >= now
-      && event.studentIds.length === 1 && !context.teacher.alias && !event.teacher.alias && !unsafe && complete && !competing
-      && proven.some((match) => match.lpItemId === context.source.sourceMessageId && match.link.eventId === candidate.schedule.eventId));
-    const status: WecomHandoverScheduleEvidence["status"] = context.conflict ? "identity_conflict" : context.schedulingConflict || unsafe || candidates.length > 1 || competing ? "ambiguous"
-      : automatic ? "matched" : candidates.length ? "candidate" : !complete ? "outside_window" : !context.strong ? "needs_identity" : "no_match";
-    return [context.source.sourceMessageId, { sourceMessageId: context.source.sourceMessageId, sourceRevision: context.source.sourceRevision, snapshotRevision: input.snapshotRevision, checkedAt,
-      status, matchedStudentId: automatic ? candidate!.studentId : null, candidates: candidates.slice(0, MAX_CANDIDATES) } satisfies WecomHandoverScheduleEvidence] as const;
-  }));
+  for (const entry of entries) {
+    for (const id of unique([...entry.candidates.map((candidate) => candidate.schedule.eventId), ...entry.reservations])) competition.set(id, (competition.get(id) ?? 0) + 1);
+  }
+  return competition;
+}
+function sourceLpItem(context: Context) {
+  if (context.conflict || !context.strong) return [];
+  return [{ id: context.source.sourceMessageId, studentId: context.strong, workflowType: "试听 LP", requestedAt: new Date(context.lower + DAY).toISOString(), fields: { assignedTeacher: context.draft.fields.assignedTeacher } }];
+}
+function provenSourceMatches(contexts: readonly Context[], scope: CandidateScope, authority: Authority) {
+  return matchTrialScheduleEvents({ lpItems: contexts.flatMap(sourceLpItem), students: authority.studentArguments, teachers: authority.teacherArguments,
+    events: scope.events.filter((event) => !event.unsafe && !scope.occupied.has(event.raw.eventId)).map((event) => event.event), matchedAt: scope.checkedAt });
+}
+function sourceSelection(entry: SourceCandidates, scope: EvidenceScope) {
+  const candidate = entry.candidates.length === 1 ? entry.candidates[0]! : null;
+  return {
+    candidate, event: candidate ? scope.events.find((event) => event.raw.eventId === candidate.schedule.eventId) : null,
+    competing: candidate ? (scope.competition.get(candidate.schedule.eventId) ?? 0) > 1 : false,
+    complete: covered(entry.context.lower, entry.context.upper, scope.coverage, scope.now),
+  };
+}
+function futureUniqueEvent(context: Context, event: PreparedEvent, now: number) {
+  return !event.raw.historical && Date.parse(event.raw.startsAt) >= now && event.studentIds.length === 1 && !context.teacher.alias && !event.teacher.alias;
+}
+function selectionProofSafe(entry: SourceCandidates, selection: Selection) {
+  return !entry.unsafe && selection.complete && !selection.competing;
+}
+function automaticMatch(entry: SourceCandidates, selection: Selection, scope: EvidenceScope) {
+  const { candidate, event } = selection;
+  if (!candidate || !event) return false;
+  if (entry.context.strong !== candidate.studentId || !futureUniqueEvent(entry.context, event, scope.now)) return false;
+  if (!selectionProofSafe(entry, selection)) return false;
+  return scope.proven.some((match) => match.lpItemId === entry.context.source.sourceMessageId && match.link.eventId === candidate.schedule.eventId);
+}
+function ambiguousEvidence(entry: SourceCandidates, selection: Selection) {
+  return entry.context.schedulingConflict || entry.unsafe || entry.candidates.length > 1 || selection.competing;
+}
+function evidenceStatus(entry: SourceCandidates, selection: Selection, automatic: boolean): WecomHandoverScheduleEvidence["status"] {
+  if (entry.context.conflict) return "identity_conflict";
+  if (ambiguousEvidence(entry, selection)) return "ambiguous";
+  if (automatic) return "matched";
+  if (entry.candidates.length) return "candidate";
+  if (!selection.complete) return "outside_window";
+  return entry.context.strong ? "no_match" : "needs_identity";
+}
+function sourceEvidence(entry: SourceCandidates, scope: EvidenceScope): WecomHandoverScheduleEvidence {
+  const selection = sourceSelection(entry, scope);
+  const automatic = automaticMatch(entry, selection, scope);
+  return { sourceMessageId: entry.context.source.sourceMessageId, sourceRevision: entry.context.source.sourceRevision, snapshotRevision: scope.snapshotRevision, checkedAt: scope.checkedAt,
+    status: evidenceStatus(entry, selection, automatic), matchedStudentId: automatic ? selection.candidate!.studentId : null, candidates: entry.candidates.slice(0, MAX_CANDIDATES) };
+}
+export function prepareWecomHandoverScheduleProjection(input: WecomHandoverScheduleInput): readonly WecomHandoverScheduleEvidence[] {
+  assertTargets(input);
+  const clock = projectionClock(input);
+  const authority = projectionAuthority(input.rows);
+  const contexts = input.sources.map((source) => sourceContext(source, authority.students, authority.teachers));
+  const events = projectionEvents(input, authority, clock.now);
+  const occupied = occupiedEvents(events, authority, clock.checkedAt);
+  const candidateScope = { students: authority.students, events, occupied, checkedAt: clock.checkedAt };
+  const entries = contexts.map((context) => sourceCandidates(context, candidateScope));
+  const scope = { ...candidateScope, ...clock, snapshotRevision: input.snapshotRevision, coverage: input.coverage,
+    competition: candidateCompetition(entries), proven: provenSourceMatches(contexts, candidateScope, authority) };
+  const evidence = new Map(entries.map((entry) => [entry.context.source.sourceMessageId, sourceEvidence(entry, scope)]));
   return input.targetSourceMessageIds.map((id) => evidence.get(id)!);
 }
