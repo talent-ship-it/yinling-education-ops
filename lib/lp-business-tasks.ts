@@ -44,7 +44,7 @@ function related(task: OpsTask, lp: LpParentProgressRecord) {
 }
 
 function managed(task: OpsTask) {
-  return (LP_FIRST_LESSON_TASK_RULES as readonly string[]).includes(task.ruleKey ?? "")
+  return task.ruleKey === "lp.handover" || (LP_FIRST_LESSON_TASK_RULES as readonly string[]).includes(task.ruleKey ?? "")
     || /^lp\.modification-review(?:\.[1-9]\d*)?$/.test(task.ruleKey ?? "");
 }
 

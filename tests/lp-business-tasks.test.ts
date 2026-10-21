@@ -220,3 +220,39 @@ test("source teacher text cannot invent an identity while an explicit LP binding
   const bound = runOccurrenceBooking({ ...unknownTeacher, lpId: newLp.id });
   assert.equal(bound.find((task) => task.ruleKey === "lp.scheduling")?.result, LP_BUSINESS_SCHEDULED_RESULT);
 });
+
+function modificationHandoverTask(overrides: Partial<OpsTask> = {}): OpsTask {
+  return { ...runModification()[0], id: "MOD-HANDOVER", ruleKey: "lp.handover", title: "修改 LP 并提交截图审核", dueAt: anchor, status: "today", ...overrides };
+}
+
+test("completing or cancelling a modification closes its open immediate and weekly tasks", () => {
+  const immediate = modificationHandoverTask({ completionNote: "FU-SCREENSHOT-1" });
+  const open = [immediate, ...runModification()];
+  for (const terminal of [{ stage: "完成" }, { resultStatus: "已取消" }]) {
+    const tasks = runModification(open, now, { ...modification, ...terminal });
+    assert.ok(tasks.every((task) => task.status === "done"));
+    const closed = tasks.find((task) => task.id === immediate.id);
+    assert.equal(closed?.result, LP_BUSINESS_CLOSED_RESULT);
+    assert.equal(closed?.closedAt, now);
+    assert.equal(closed?.completionNote, "FU-SCREENSHOT-1");
+  }
+});
+
+test("terminal modification closure preserves completed, frozen, and unrelated handover evidence", () => {
+  const protectedTasks = [
+    modificationHandoverTask({ status: "done", closedAt: anchor, result: "Screenshot reviewed", completionOutcome: "done", completionNote: "FU-REVIEWED" }),
+    modificationHandoverTask({ id: "FROZEN", dueAt: undefined, legacyEvidence: { state: "frozen", reason: "missing_canonical_due_at", frozenAt: anchor } }),
+    modificationHandoverTask({ id: "OTHER-LP", anchorBookingId: "LP-OTHER" }),
+    modificationHandoverTask({ id: "OTHER-STUDENT", studentId: "STU-OTHER" }),
+    modificationHandoverTask({ id: "OTHER-RULE", ruleKey: "manual.review" }),
+  ];
+  const tasks = runModification([...protectedTasks, ...runModification()], now, { ...modification, stage: "完成" });
+  assert.deepEqual(tasks.slice(0, protectedTasks.length), protectedTasks);
+  assert.equal(tasks.find((task) => task.ruleKey === "lp.modification-review")?.status, "done");
+});
+
+test("weekly reconciliation leaves an active modification's immediate handover task open", () => {
+  const immediate = modificationHandoverTask();
+  const tasks = runModification([immediate, ...runModification()]);
+  assert.deepEqual(tasks.find((task) => task.id === immediate.id), immediate);
+});
