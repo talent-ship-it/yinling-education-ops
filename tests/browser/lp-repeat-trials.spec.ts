@@ -30,14 +30,7 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
     unexpected.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
     return route.fulfill({ status: 403, json: { error: "Unbound synthetic request" } });
   };
-  function createReply(route: Route) {
-    const body = route.request().postDataJSON() as CreateCommand;
-    posted.push(body);
-    if (body.operation !== "create" || body.studentId !== STUDENT_ID || body.workflowType !== "试听 LP") return block(route);
-    if (options.failThirdOnce && receipts.size === 2 && !unavailableSent) {
-      unavailableSent = true;
-      return route.fulfill({ status: 503, json: { error: "合成服务暂不可用；可安全重试" } });
-    }
+  function commitTrial(body: CreateCommand) {
     const priorId = receipts.get(body.commandKey);
     const lpItemId = priorId ?? `SYNTH-REPEAT-LP-${receipts.size + 1}`;
     if (!priorId) {
@@ -45,11 +38,22 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
       entities.lpItems = [...items(), { id: lpItemId, studentId: STUDENT_ID, title: `Synthetic Trial LP ${receipts.size}`, workflowType: body.workflowType, owner: "Ella", stage: options.completedReplay ? "完成" : "待资料", due: "2026-10-23", fields: body.fields, resultStatus: "试听未进行" }];
       for (const entity of ["students", "lpItems", "tasks", "files"]) versions[entity]++;
     }
+    return { committed: true, applied: !priorId, studentId: STUDENT_ID, lpItemId, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") };
+  }
+  function createReply(route: Route) {
+    const body = route.request().postDataJSON() as CreateCommand;
+    posted.push(body);
+    if (![body.operation === "create", body.studentId === STUDENT_ID, body.workflowType === "试听 LP"].every(Boolean)) return block(route);
+    if (options.failThirdOnce && receipts.size === 2 && !unavailableSent) {
+      unavailableSent = true;
+      return route.fulfill({ status: 503, json: { error: "合成服务暂不可用；可安全重试" } });
+    }
+    const receipt = commitTrial(body);
     if (options.completedReplay && !unavailableSent) {
       unavailableSent = true;
       return route.fulfill({ status: 503, json: { error: "合成服务暂不可用；可安全重试" } });
     }
-    return route.fulfill({ json: { committed: true, applied: !priorId, studentId: STUDENT_ID, lpItemId, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") } });
+    return route.fulfill({ json: receipt });
   }
   function stageReply(route: Route) {
     const body = route.request().postDataJSON() as { entity: string; payload: Lp[]; expectedVersion: number };
@@ -67,26 +71,37 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
     versions.lpItems++;
     return route.fulfill({ json: { committed: true, applied: true, lpItemsRow: row("lpItems") } });
   }
+  function sharedReply(url: URL) {
+    if (url.searchParams.get("mode") === "versions") return { versions: Object.keys(versions).map(row) };
+    return { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(row), ...snapshots() };
+  }
+  function readReply(route: Route, url: URL) {
+    switch (url.pathname) {
+      case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
+      case "/api/nixon-session": return route.fulfill({ json: { ok: true } });
+      case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
+      case "/api/app-state": return route.fulfill({ json: sharedReply(url) });
+      case "/api/audit": return route.fulfill({ json: { entries: [] } });
+      case "/api/operations/wecom-lp-drafts": return route.fulfill({ json: { drafts: [], nextCursor: null, total: 0 } });
+      default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
+    }
+  }
+  const mutations: Record<string, (route: Route) => Promise<void>> = {
+    "POST /api/demo-logout": (route) => route.fulfill({ json: { serverSessionRevoked: true } }),
+    "POST /api/operations/lp": createReply,
+    "PUT /api/app-state": stageReply,
+    "POST /api/operations/trial-ledger": resultReply,
+  };
   page.on("pageerror", (error) => errors.push(error.message));
   await page.context().route("**/*", (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.hostname !== "127.0.0.1") { unexpected.push(url.origin); return route.abort(); }
     if (!url.pathname.startsWith("/api/")) return request.method() === "GET" ? route.continue() : block(route);
-    if (url.pathname === "/api/demo-logout") return route.fulfill({ json: { serverSessionRevoked: true } });
-    if (request.method() === "POST" && url.pathname === "/api/operations/lp") return createReply(route);
-    if (request.method() === "PUT" && url.pathname === "/api/app-state") return stageReply(route);
-    if (request.method() === "POST" && url.pathname === "/api/operations/trial-ledger") return resultReply(route);
+    const mutation = mutations[`${request.method()} ${url.pathname}`];
+    if (mutation) return mutation(route);
     if (request.method() !== "GET") return block(route);
-    switch (url.pathname) {
-      case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
-      case "/api/nixon-session": return route.fulfill({ json: { ok: true } });
-      case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
-      case "/api/app-state": return route.fulfill({ json: url.searchParams.get("mode") === "versions" ? { versions: Object.keys(versions).map(row) } : { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(row), ...snapshots() } });
-      case "/api/audit": return route.fulfill({ json: { entries: [] } });
-      case "/api/operations/wecom-lp-drafts": return route.fulfill({ json: { drafts: [], nextCursor: null, total: 0 } });
-      default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
-    }
+    return readReply(route, url);
   });
   await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: displayPreferencesStorageKey("Nixon"), value: JSON.stringify(defaultDisplayPreferences()) });
   await page.clock.install({ time: new Date(NOW) });
