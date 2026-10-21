@@ -24,7 +24,7 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
     },
   });
   const post = (input: unknown = command) => handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(input) }));
-  return { handlers, saved, reads, post, source };
+  return { handlers, saved, reads, post, source, rows };
 }
 test("confirmation keeps the existing roster planner and the handover planner separate", async () => {
   const f = harness(); const response = await f.post();
@@ -97,4 +97,18 @@ test("confirmed handovers retain their association in range results", async () =
   assert.equal(response.status, 200); assert.equal(body.drafts[0].confirmed.lpItemId, "LP-SYNTHETIC");
   assert.equal(body.drafts[0].handoverAt, "2026-10-19T23:30:00.000Z");
   assert.equal(body.drafts[0].matchedStudentId, "STU-1"); assert.equal(f.saved.length, 0);
+});
+
+test("GET proves family uniqueness before filtering students by operations owner", async () => {
+  const base = harness().source;
+  const f = harness({ source: { ...base, wechatName: "Synthetic Parent@教务AI助手", studentName: null, status: "awaiting_student_name" } });
+  const students = f.rows[0].payload as Record<string, unknown>[];
+  students.push({ id: "STU-HIDDEN-SIBLING", name: "Hidden Sibling", guardianWechat: "Synthetic Parent", owner: "Tiffany" });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.drafts[0].matchedStudentId, null);
+  assert.equal(body.drafts[0].resolvedStudentName, null);
+  assert.doesNotMatch(JSON.stringify(body), /Hidden Sibling|STU-HIDDEN-SIBLING/);
+  assert.equal(f.saved.length, 0);
 });

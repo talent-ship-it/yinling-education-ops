@@ -4,7 +4,8 @@ import { displayTimezoneOptions } from "./display-preferences";
 import { isRetiredOperationsIdentity, normaliseDemoUserName, resolveDemoOperationsName, resolveDemoStaffName } from "./demo-users";
 import type { LpFieldValues } from "./lp-workflows";
 import type { StudentCreationFields } from "./student-creation-service";
-import type { WecomLpDraft, WecomLpDraftSourceRecord } from "./wecom-lp-draft";
+import { buildWecomLpDraft, type WecomLpDraft, type WecomLpDraftSourceRecord } from "./wecom-lp-draft";
+import type { TrialScheduleLink } from "./trial-operations";
 
 export type WecomLpDraftSource = Readonly<{
   id: string; sourceMessageId: string; caseId: string; sourceRevision: string;
@@ -13,8 +14,9 @@ export type WecomLpDraftSource = Readonly<{
   createdAt: string; handoverAt?: string; messages: readonly WecomLpDraftSourceRecord[];
   confirmed: null | Readonly<{ studentId: string; lpItemId: string }>;
   draft: WecomLpDraft; matchedStudentId?: string | null;
+  resolvedStudentName?: string | null; trialSchedule?: TrialScheduleLink;
 }>;
-export type WecomLpDraftRawSource = Omit<WecomLpDraftSource, "draft" | "matchedStudentId">;
+export type WecomLpDraftRawSource = Omit<WecomLpDraftSource, "draft" | "matchedStudentId" | "resolvedStudentName" | "trialSchedule">;
 export type WecomLpDraftPage = Readonly<{ rows: readonly WecomLpDraftRawSource[]; nextCursor: string | null; total: number }>;
 export type WecomLpConfirmation = Readonly<{
   commandKey: string; caseId: string; sourceMessageId: string; sourceRevision: string;
@@ -63,13 +65,25 @@ export function parseWecomLpConfirmation(input: unknown): WecomLpConfirmation {
   const newStudent = hasNewStudent ? deriveNewStudent(input.newStudent, parsed.fields) : undefined;
   return { commandKey: parsed.commandKey, ...source, ...(newStudent ? { newStudent } : { studentId: parsed.studentId }), fields: parsed.fields, expectedVersions: parsed.expectedVersions };
 }
+function guardianKey(value: unknown) {
+  if (typeof value !== "string") return "";
+  const label = value.normalize("NFKC").replace(/(?:\s*@教务\s*AI\s*助手)+\s*$/iu, "").trim();
+  const marker = label.toLocaleLowerCase("en-AU").replace(/[\s\p{P}\p{S}]+/gu, "");
+  if (!marker || marker === "教务ai助手" || !label.includes("@") && /^(?:待补充|待确认|待填写|暂无|未知|无|未提供|na|none|null|unknown|tbd)$/u.test(marker)) return "";
+  return normaliseDemoUserName(label).replace(/\s+/gu, "");
+}
 export function matchWecomDraftStudent(source: WecomLpDraftRawSource, students: readonly Record<string, unknown>[]) {
+  if (["identity_conflict", "identity_ambiguous"].includes(source.status)) return null;
   const hintedIds = new Set(source.messages.map((message) => "studentId" in message ? message.studentId : undefined).filter((id): id is string => typeof id === "string" && Boolean(id)));
   if (hintedIds.size > 1) return null;
   const key = (value: unknown) => typeof value === "string" ? normaliseDemoUserName(value).replace(/\s+/gu, "") : "";
+  const guardian = guardianKey(source.wechatName);
+  const draft = buildWecomLpDraft(source.messages);
+  const messageGuardian = guardianKey(draft.guardianWechat);
+  if (draft.conflicts.some((conflict) => conflict.field === "guardianWechat") || messageGuardian && messageGuardian !== guardian) return null;
   const candidates = students.filter((student) => student.importArchived !== true && (
     hintedIds.size === 1 ? hintedIds.has(String(student.id))
-      : key(source.wechatName) && key(student.guardianWechat) === key(source.wechatName)
+      : guardian && guardianKey(student.guardianWechat) === guardian
         && (!source.studentName || key(student.name) === key(source.studentName))
   ));
   return candidates.length === 1 && typeof candidates[0].id === "string" ? candidates[0].id : null;

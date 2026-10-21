@@ -2,9 +2,9 @@ import type { DemoSessionIdentity } from "./demo-session-token";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "./ops-access";
 import { normaliseDemoUserName } from "./demo-users";
 import { LpAtomicError } from "./lp-atomic-service";
-import { buildWecomLpDraft } from "./wecom-lp-draft";
+import { decorateWecomLpDraft } from "./wecom-lp-draft-enrichment";
 import { parseWecomLpDraftQuery } from "./wecom-lp-draft-query";
-import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation, type WecomLpDraftRawSource } from "./wecom-lp-intake";
+import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation } from "./wecom-lp-intake";
 import type { OpsStateRow, readWecomLpDraft, readWecomLpDrafts, confirmWecomLpDraftAtomic } from "./ops-store";
 
 type Dependencies = {
@@ -51,9 +51,6 @@ function studentsFrom(rows: readonly OpsStateRow[]) {
   const payload = rows.find((row) => row.entity === "students")?.payload;
   return Array.isArray(payload) ? payload as Record<string, unknown>[] : [];
 }
-function decorate(source: WecomLpDraftRawSource, rows: readonly OpsStateRow[]) {
-  return { ...source, draft: buildWecomLpDraft(source.messages), matchedStudentId: matchWecomDraftStudent(source, studentsFrom(rows)) };
-}
 function authorizeExisting(ctx: Context, command: WecomLpConfirmation, student: Record<string, unknown> | undefined) {
   if (!command.studentId) return;
   if (!student || !canOperateStudent(ctx.access, command.studentId)) fail(403, "当前账号不能操作该学生。");
@@ -87,7 +84,7 @@ export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
         const query = parseWecomLpDraftQuery(new URL(request.url).searchParams);
         const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, ...query });
         const visible = filterOpsStateRows(ctx.rows, ctx.access);
-        return json({ drafts: page.rows.map((source) => decorate(source, visible)), nextCursor: page.nextCursor, total: page.total });
+        return json({ drafts: page.rows.map((source) => decorateWecomLpDraft(source, studentsFrom(ctx.rows), visible)), nextCursor: page.nextCursor, total: page.total });
       } catch (error) { return failure(error); }
     },
     POST: async (request: Request) => {
