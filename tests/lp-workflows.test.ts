@@ -91,7 +91,7 @@ test("makes university major and year conditional rather than adding unconfirmed
   assert.equal(year?.requirement, "university-only");
 });
 
-test("aligns every dedicated workflow with the confirmed Tencent templates", () => {
+test("trial and direct-enrollment handovers use their confirmed fields and hour controls", () => {
   const trialKeys = fieldKeys("试听 LP");
   for (const key of ["assignedTeacher", "subject", "oneSentenceDescription", "locationTimezone", "contactPerson", "timeMentioned", "preferredTime", "studentNameKnown", "trialPaymentMethod"]) {
     assert.ok(trialKeys.includes(key as never));
@@ -105,12 +105,15 @@ test("aligns every dedicated workflow with the confirmed Tencent templates", () 
   assert.equal(directSchema.fields.find((field) => field.key === "purchasedHours")?.min, 0);
   assert.equal(directSchema.fields.find((field) => field.key === "bonusHours")?.min, 0);
 
+});
+
+test("dedicated LP handovers retain source time and optional document sections", () => {
   const expected = {
-    "老师新 LP": ["teacher", "subject", "documentUrl", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"],
-    "老师 LP 修改": ["teacher", "subject", "documentUrl", "modificationRequirements"],
-    "换老师试听": ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"],
-    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "comments", "lastHomework", "lastLessonRecordingUrl"],
-    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes"],
+    "老师新 LP": ["requestSentAt", "writingRequired", "writingNote", "paperRequired", "paperNote", "teacher", "subject", "documentUrl", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"],
+    "老师 LP 修改": ["requestSentAt", "teacher", "subject", "documentUrl", "modificationRequirements"],
+    "换老师试听": ["requestSentAt", "originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"],
+    "代课 LP": ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate", "additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "comments", "lastHomework", "lastLessonRecordingUrl", "requestSentAt"],
+    "学生报名交接": ["planner", "coursePackage", "subject", "purchasedHours", "bonusHours", "lessonFrequency", "preferredTime", "coursesAndTeachers", "enrollmentHandoverNotes", "requestSentAt"],
   } as const;
   for (const [type, keys] of Object.entries(expected)) {
     const schema = getLpWorkflowSchema(type as keyof typeof expected);
@@ -170,7 +173,7 @@ test("strictly validates confirmed template fields while accepting legacy stored
   }));
   assert.throws(() => validateLpWorkflowFields("老师新 LP", {
     ...commonFields(), teacher: "A", subject: "Math", additionalNotes: "Encourage", basicInfo: "Year 8", studentFoundation: "Developing", learningGoal: "School results", recommendedResources: "ClassIn folder", teachingLanguage: "English", firstLessonContent: "", lessonSchedule: "Weekly",
-  }), /firstLessonContent is required/);
+  }), /firstLessonContent must be a non-empty string/);
   assert.doesNotThrow(() => validateLpWorkflowFields("代课 LP", {
     ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", handoverNotes: "Legacy record",
   }));
@@ -179,13 +182,29 @@ test("strictly validates confirmed template fields while accepting legacy stored
   }), /basicInfo is required/);
 });
 
-test("new submissions require the complete current handover template", () => {
+test("new submissions follow the concise handover templates and require a valid intake time", () => {
+  const requestSentAt = "2026-10-21T03:00:00.000Z";
+  assert.doesNotThrow(() => validateCompleteLpWorkflowFields("老师新 LP", {
+    ...commonFields(), requestSentAt, teacher: "A", subject: "Math", writingRequired: true, paperRequired: false,
+  }));
   assert.throws(() => validateCompleteLpWorkflowFields("老师新 LP", {
-    ...commonFields(), teacher: "A", subject: "Math", documentUrl: "https://docs.example/lp",
-  }), /additionalNotes is required/);
+    ...commonFields(), requestSentAt, teacher: "A", subject: "Math", paperRequired: false,
+  }), /writingRequired must be a boolean/);
+  assert.doesNotThrow(() => validateCompleteLpWorkflowFields("换老师试听", {
+    ...commonFields(), requestSentAt, newTeacher: "B", subject: "English", changeReason: "Availability",
+  }));
+  assert.doesNotThrow(() => validateCompleteLpWorkflowFields("老师 LP 修改", {
+    responsibleOperations: "Abby", isUniversityStudent: false, requestSentAt, subject: "English", modificationRequirements: "Change exam content",
+  }));
+  assert.throws(() => validateCompleteLpWorkflowFields("老师 LP 修改", {
+    ...commonFields(), requestSentAt, subject: "English",
+  }), /modificationRequirements is required/);
   assert.throws(() => validateCompleteLpWorkflowFields("换老师试听", {
-    ...commonFields(), originalTeacher: "A", newTeacher: "B", subject: "English", changeReason: "Availability", trialInformation: "Saturday trial",
-  }), /handoverFromTeacher is required/);
+    ...commonFields(), requestSentAt: "invalid", newTeacher: "B", subject: "English", changeReason: "Availability",
+  }), /valid timestamp/);
+  assert.throws(() => validateCompleteLpWorkflowFields("换老师试听", {
+    ...commonFields(), newTeacher: "B", subject: "English", changeReason: "Availability",
+  }), /requestSentAt is required/);
   assert.throws(() => validateCompleteLpWorkflowFields("代课 LP", {
     ...commonFields(), originalTeacher: "A", substituteTeacher: "B", subject: "English", coverageStartDate: "2026-09-01", coverageEndDate: "2026-09-30", handoverNotes: "Legacy only",
   }), /additionalNotes is required/);

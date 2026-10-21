@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { WECOM_ARCHIVE_MAX_RECORDS } from "./wecom-archive-bridge";
+import { wecomLpExplicitWorkflowTypes } from "./wecom-lp-draft";
 
 const MAX_TEXT_LENGTH = 12_000;
 const MAX_CONTEXT_ITEMS = 20;
@@ -260,6 +261,8 @@ function classify(text: string, context: readonly string[], media: readonly Norm
   // explicit phrase as handover evidence while keeping generic “交接” text
   // on the conservative structured-field path below.
   if (/信息交接(?:表|单)?/u.test(evidence)) return "handover" as const;
+  if (labelCandidates(text, STUDENT_NAME_LABELS).length > 0
+    && wecomLpExplicitWorkflowTypes(text).length > 0) return "handover" as const;
   // A later identity confirmation may contain only the shared WeChat name
   // and a now-known student name.  It belongs to the same conservative
   // handover pipeline even though it does not repeat the full template.

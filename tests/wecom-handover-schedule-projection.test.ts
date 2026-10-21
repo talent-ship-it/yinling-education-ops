@@ -439,3 +439,56 @@ test("ambiguous teacher first-name expansion is limited to complete ASCII words"
   assert.equal(project({ sources: [accented], rows: rows([child], [], directory), events: [titled] }).status, "candidate");
   assert.equal(project({ sources: [accented], rows: rows([child], [], [...directory, { id: "TEA-2", name: "Élise Other" }]), events: [titled] }).candidates.length, 0);
 });
+
+
+test("new LP and modification handovers cannot compete for a trial event", () => {
+  const business = ["老生新LP 信息交接", "老生LP修改 信息交接"].map((heading, index) => {
+    const original = source(`business-${index}`);
+    return { ...original, messages: original.messages.map((message) => ({ ...message,
+      text: `${heading}\n学生姓名：Child One\n涉及科目：English\n变动内容：增加写作\n${message.text}` })) };
+  });
+  const result = project({ sources: [source(), ...business] });
+  assert.equal(result.status, "matched");
+  assert.equal(result.matchedStudentId, child.id);
+  for (const entry of business) {
+    const unresolved = project({ sources: [source(), entry], targetSourceMessageIds: [entry.sourceMessageId] });
+    assert.equal(unresolved.status, "ambiguous");
+    assert.deepEqual(unresolved.candidates, []);
+    assert.equal(unresolved.matchedStudentId, null);
+  }
+});
+
+test("repeat trial uses the new teacher and ignores the original teacher event", () => {
+  const original = source();
+  const repeat = { ...original, messages: original.messages.map((message) => ({ ...message,
+    text: `二次试听 信息交接\n学生姓名：Child One\n原任课老师：Original Teacher\n二次试听原因：更换老师\n${message.text}` })) };
+  const wrong = event("original-event", { sourceTeacherLabel: "Original Teacher" });
+  const correct = event("repeat-event");
+  const result = project({ sources: [repeat], events: [wrong, correct],
+    rows: rows([child], [], [teacher, { id: "TEA-OLD", name: "Original Teacher" }]) });
+  assert.equal(result.status, "matched");
+  assert.equal(result.matchedStudentId, child.id);
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0]!.schedule.eventId, "repeat-event");
+  assert.equal(project({ sources: [repeat], events: [wrong] }).status, "no_match");
+});
+
+
+test("a conflicting or reclassified followup cannot abort or claim another target's trial", () => {
+  for (const heading of ["试听LP 信息交接\n", ""]) {
+    const original = source("workflow-followup");
+    const invalid = { ...original, messages: [
+      { ...original.messages[0]!, text: heading + original.messages[0]!.text },
+      { messageId: "type-followup", text: "业务类型：老师LP修改", sentAt: "2026-10-20T01:00:00.000Z" },
+    ] };
+    const result = prepareWecomHandoverScheduleProjection(input({
+      sources: [invalid, source()], targetSourceMessageIds: [invalid.sourceMessageId, "handover-1"],
+    }));
+    assert.deepEqual(result.map(({ sourceMessageId, status, matchedStudentId }) => ({ sourceMessageId, status, matchedStudentId })), [
+      { sourceMessageId: "workflow-followup", status: "ambiguous", matchedStudentId: null },
+      { sourceMessageId: "handover-1", status: "matched", matchedStudentId: child.id },
+    ]);
+    assert.deepEqual(result[0]!.candidates, []);
+    assert.equal(result[1]!.candidates[0]!.schedule.eventId, "event-1");
+  }
+});

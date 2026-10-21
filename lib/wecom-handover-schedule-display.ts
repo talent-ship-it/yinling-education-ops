@@ -41,9 +41,10 @@ function matchedDraft(source: WecomLpDraftSource, evidence: WecomHandoverSchedul
   if (evidence.status !== "matched") return source;
   const candidate = matchedCandidate(source, evidence, candidates);
   if (!candidate) return source;
+  const isInitialTrial = source.draft.workflowType === "试听 LP";
   const draft = source.draft.studentName ? source.draft : { ...source.draft, studentName: candidate.studentName,
-    fields: { ...source.draft.fields, studentNameKnown: true, studentName: candidate.studentName },
-    missingFields: source.draft.missingFields.filter((field) => !["studentName", "studentNameKnown"].includes(field.field)) };
+    fields: isInitialTrial ? { ...source.draft.fields, studentNameKnown: true, studentName: candidate.studentName } : source.draft.fields,
+    missingFields: isInitialTrial ? source.draft.missingFields.filter((field) => !["studentName", "studentNameKnown"].includes(field.field)) : source.draft.missingFields };
   return { ...source, draft, matchedStudentId: candidate.studentId, resolvedStudentName: source.resolvedStudentName || candidate.studentName, trialSchedule: candidate.schedule };
 }
 export function applyWecomHandoverScheduleEvidence(source: WecomLpDraftSource, evidence: WecomHandoverScheduleEvidence | undefined, rows: readonly OpsStateRow[]): WecomLpDraftSource {

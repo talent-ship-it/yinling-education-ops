@@ -194,3 +194,27 @@ test("rejects conflicting aliases and repeated media keys, and emits well-formed
     return codePoint < 0xd800 || codePoint > 0xdfff;
   }));
 });
+
+
+test("explicit business labels route concise student handovers without a guardian", () => {
+  for (const text of [
+    "LP类型：老生新LP\n学生：Synthetic Student\n安排科目：English\n安排老师：Synthetic Teacher",
+    "【ＬＰ类型】：二次试听\n【学生】：Synthetic Student\n【新老师】：Synthetic Teacher\n重听原因：Adjust pacing",
+    "业务类型：老师LP修改\n学生：Synthetic Student\n涉及科目：English\n变动内容：Adjust goal",
+  ]) {
+    const [result] = normalizeWecomArchiveBatch([base({ text })]);
+    assert.equal(result.classification, "handover");
+    assert.equal(result.studentNameHint, "Synthetic Student");
+    assert.equal(result.guardianWechatHint, null);
+  }
+});
+
+test("neighboring type labels and prose do not turn unrelated messages into handovers", () => {
+  const template = "业务类型：老师LP修改\n学生：Synthetic Student\n涉及科目：English\n变动内容：Adjust goal";
+  for (const record of [
+    base({ text: "普通内部讨论", contextText: [template] }),
+    base({ text: "备注：业务类型：老师LP修改\n学生：Synthetic Student" }),
+    base({ text: "业务类型：未知业务\n学生：Synthetic Student" }),
+    base({ text: "业务类型：老师LP修改\n涉及科目：English\n变动内容：Adjust goal" }),
+  ]) assert.equal(normalizeWecomArchiveBatch([record])[0].classification, "other");
+});

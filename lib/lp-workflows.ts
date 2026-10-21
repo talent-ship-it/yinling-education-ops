@@ -37,6 +37,7 @@ export type TrialPaymentMethod = (typeof TRIAL_PAYMENT_METHODS)[number];
 
 export type LpCommonFields = {
   responsibleOperations: string;
+  requestSentAt?: string;
   specifiedContentStatus: SpecifiedContentStatus;
   specialNotes?: string;
   preparationFollowUp: PreparationFollowUp;
@@ -100,36 +101,40 @@ export type TeacherLpFields = LpCommonFields & {
   teacher: string;
   subject: string;
   documentUrl?: string;
-  additionalNotes: string;
-  basicInfo: string;
-  studentFoundation: string;
-  learningGoal: string;
-  recommendedResources: string;
-  teachingLanguage: string;
-  firstLessonContent: string;
-  lessonSchedule: string;
+  writingRequired?: boolean;
+  writingNote?: string;
+  paperRequired?: boolean;
+  paperNote?: string;
+  additionalNotes?: string;
+  basicInfo?: string;
+  studentFoundation?: string;
+  learningGoal?: string;
+  recommendedResources?: string;
+  teachingLanguage?: string;
+  firstLessonContent?: string;
+  lessonSchedule?: string;
   comments?: string;
 };
 
 export type TeacherLpModificationFields = LpCommonFields & {
-  teacher: string;
+  teacher?: string;
   subject: string;
   documentUrl?: string;
   modificationRequirements: string;
 };
 
 export type TeacherChangeTrialFields = LpCommonFields & {
-  originalTeacher: string;
+  originalTeacher?: string;
   newTeacher: string;
   subject: string;
   changeReason: string;
-  trialInformation: string;
-  handoverFromTeacher: string;
-  materialsAndContentTaught: string;
-  recommendedNextContent: string;
-  studentStrengthsAndLearningProfile: string;
-  lastHomework: string;
-  lastLessonRecordingUrl: string;
+  trialInformation?: string;
+  handoverFromTeacher?: string;
+  materialsAndContentTaught?: string;
+  recommendedNextContent?: string;
+  studentStrengthsAndLearningProfile?: string;
+  lastHomework?: string;
+  lastLessonRecordingUrl?: string;
 };
 
 export type SubstituteTeacherLpFields = LpCommonFields & {
@@ -295,39 +300,43 @@ const directEnrollmentTrialSchema = Object.freeze(
 );
 
 const teacherLpFieldSchema: readonly LpFieldSchema[] = Object.freeze([
+  Object.freeze({ key: "requestSentAt", label: "LP 交接时间", control: "text", requirement: "required" }),
+  ...trialFieldSchema.filter((field) => ["writingRequired", "writingNote", "paperRequired", "paperNote"].includes(field.key)),
   Object.freeze({ key: "teacher", label: "老师", control: "text", requirement: "required" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "documentUrl", label: "文档 URL", control: "url", requirement: "optional" }),
-  Object.freeze({ key: "additionalNotes", label: "补充注意事项", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "basicInfo", label: "基本信息", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "studentFoundation", label: "学生基础", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "learningGoal", label: "学习目的", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "recommendedResources", label: "建议资料库", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "teachingLanguage", label: "授课语言", control: "text", requirement: "required" }),
-  Object.freeze({ key: "firstLessonContent", label: "试听课 / 首次课内容", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "lessonSchedule", label: "课时计划", control: "text", requirement: "required" }),
+  Object.freeze({ key: "additionalNotes", label: "补充注意事项", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "basicInfo", label: "基本信息", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "studentFoundation", label: "学生基础", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "learningGoal", label: "学习目的", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "recommendedResources", label: "建议资料库", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "teachingLanguage", label: "授课语言", control: "text", requirement: "optional" }),
+  Object.freeze({ key: "firstLessonContent", label: "试听课 / 首次课内容", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "lessonSchedule", label: "课时计划", control: "text", requirement: "optional" }),
   Object.freeze({ key: "comments", label: "备注", control: "textarea", requirement: "optional" }),
 ]);
 
 const teacherLpModificationFieldSchema: readonly LpFieldSchema[] = Object.freeze([
-  Object.freeze({ key: "teacher", label: "老师", control: "text", requirement: "required" }),
+  Object.freeze({ key: "requestSentAt", label: "LP 交接时间", control: "text", requirement: "required" }),
+  Object.freeze({ key: "teacher", label: "老师", control: "text", requirement: "optional" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
   Object.freeze({ key: "documentUrl", label: "文档 URL", control: "url", requirement: "optional" }),
   Object.freeze({ key: "modificationRequirements", label: "修改要求", control: "textarea", requirement: "required" }),
 ]);
 
 const teacherChangeTrialFieldSchema: readonly LpFieldSchema[] = Object.freeze([
-  Object.freeze({ key: "originalTeacher", label: "原老师", control: "text", requirement: "required" }),
+  Object.freeze({ key: "requestSentAt", label: "LP 交接时间", control: "text", requirement: "required" }),
+  Object.freeze({ key: "originalTeacher", label: "原老师", control: "text", requirement: "optional" }),
   Object.freeze({ key: "newTeacher", label: "新老师", control: "text", requirement: "required" }),
   Object.freeze({ key: "subject", label: "科目", control: "text", requirement: "required" }),
-  Object.freeze({ key: "changeReason", label: "更换原因", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "trialInformation", label: "试听信息", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "handoverFromTeacher", label: "交接老师", control: "text", requirement: "required" }),
-  Object.freeze({ key: "materialsAndContentTaught", label: "已使用资料、已教内容", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "recommendedNextContent", label: "建议后续内容与资料", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "studentStrengthsAndLearningProfile", label: "学生强项、进步方向与学习特点", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "lastHomework", label: "上节课作业", control: "textarea", requirement: "required" }),
-  Object.freeze({ key: "lastLessonRecordingUrl", label: "上次课录像 URL", control: "url", requirement: "required" }),
+  Object.freeze({ key: "changeReason", label: "重听原因及注意事项", control: "textarea", requirement: "required" }),
+  Object.freeze({ key: "trialInformation", label: "试听信息", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "handoverFromTeacher", label: "交接老师", control: "text", requirement: "optional" }),
+  Object.freeze({ key: "materialsAndContentTaught", label: "已使用资料、已教内容", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "recommendedNextContent", label: "建议后续内容与资料", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "studentStrengthsAndLearningProfile", label: "学生强项、进步方向与学习特点", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "lastHomework", label: "上节课作业", control: "textarea", requirement: "optional" }),
+  Object.freeze({ key: "lastLessonRecordingUrl", label: "上次课录像 URL", control: "url", requirement: "optional" }),
 ]);
 
 const substituteTeacherFieldSchema: readonly LpFieldSchema[] = Object.freeze([
@@ -366,7 +375,15 @@ function schema(
 ): LpWorkflowSchema {
   return Object.freeze({
     type,
-    fields: Object.freeze([...commonFieldSchema, ...typeSpecificFields]),
+    fields: Object.freeze([
+      ...commonFieldSchema.map((field) => type === "老师 LP 修改" && ["specifiedContentStatus", "preparationFollowUp"].includes(field.key)
+        ? Object.freeze({ ...field, requirement: "optional" as const })
+        : field),
+      ...typeSpecificFields,
+      ...(!typeSpecificFields.some((field) => field.key === "requestSentAt")
+        ? [Object.freeze({ key: "requestSentAt", label: "LP 交接时间", control: "text", requirement: "optional" } as const)]
+        : []),
+    ]),
     typeSpecificFieldsDocumented,
   });
 }
@@ -574,8 +591,8 @@ export function validateLpDate(value: string, field = "date") {
 export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldValues) {
   requireText(fields, "responsibleOperations");
   if (type === "试听 LP") requireOneOf(fields, "responsibleOperations", TRIAL_OPERATIONS);
-  requireOneOf(fields, "specifiedContentStatus", SPECIFIED_CONTENT_STATUSES);
-  requireOneOf(fields, "preparationFollowUp", PREPARATION_FOLLOW_UP_OPTIONS);
+  if (type !== "老师 LP 修改" || fields.specifiedContentStatus !== undefined) requireOneOf(fields, "specifiedContentStatus", SPECIFIED_CONTENT_STATUSES);
+  if (type !== "老师 LP 修改" || fields.preparationFollowUp !== undefined) requireOneOf(fields, "preparationFollowUp", PREPARATION_FOLLOW_UP_OPTIONS);
   requireBoolean(fields, "isUniversityStudent");
   if (fields.isUniversityStudent) {
     requireText(fields, "universityMajor");
@@ -598,24 +615,27 @@ export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldVa
     requireNonNegativeHours(fields);
     for (const key of ["lessonFrequency", "coursesAndTeachers"]) requireText(fields, key);
   }
+  if (["老师新 LP", "老师 LP 修改", "换老师试听"].includes(type) && fields.requestSentAt !== undefined) {
+    requireText(fields, "requestSentAt");
+    if (!Number.isFinite(new Date(String(fields.requestSentAt)).valueOf())) throw new Error("requestSentAt must be a valid timestamp");
+  }
   if (type === "老师新 LP" || type === "老师 LP 修改") {
-    requireText(fields, "teacher");
+    if (type === "老师新 LP") requireText(fields, "teacher");
+    else optionalText(fields, "teacher");
     requireText(fields, "subject");
     validateOptionalHttpUrl(fields, "documentUrl");
-    const templateKeys = ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule"] as const;
-    if (type === "老师新 LP" && hasAnyField(fields, templateKeys)) {
-      for (const key of templateKeys) requireText(fields, key);
-      optionalText(fields, "comments");
+    for (const key of ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule", "comments"]) optionalText(fields, key);
+    if (type === "老师新 LP") {
+      for (const key of ["writingRequired", "paperRequired"]) if (fields[key] !== undefined) requireBoolean(fields, key);
+      optionalText(fields, "writingNote");
+      optionalText(fields, "paperNote");
     }
     if (type === "老师 LP 修改") optionalText(fields, "modificationRequirements");
   }
   if (type === "换老师试听") {
-    for (const key of ["originalTeacher", "newTeacher", "subject", "changeReason", "trialInformation"]) requireText(fields, key);
-    const handoverKeys = ["handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"] as const;
-    if (hasAnyField(fields, handoverKeys)) {
-      for (const key of handoverKeys) requireText(fields, key);
-      validateOptionalHttpUrl(fields, "lastLessonRecordingUrl");
-    }
+    for (const key of ["newTeacher", "subject", "changeReason"]) requireText(fields, key);
+    for (const key of ["originalTeacher", "trialInformation", "handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework"]) optionalText(fields, key);
+    validateOptionalHttpUrl(fields, "lastLessonRecordingUrl");
   }
   if (type === "代课 LP") {
     for (const key of ["originalTeacher", "substituteTeacher", "subject", "coverageStartDate", "coverageEndDate"]) requireText(fields, key);
@@ -652,15 +672,12 @@ export function validateLpWorkflowFields(type: LpWorkflowType, fields: LpFieldVa
  */
 export function validateCompleteLpWorkflowFields(type: LpWorkflowType, fields: LpFieldValues) {
   const validated = validateLpWorkflowFields(type, fields);
+  if (["老师新 LP", "老师 LP 修改", "换老师试听"].includes(type)) requireText(validated, "requestSentAt");
   if (type === "老师新 LP") {
-    for (const key of ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "recommendedResources", "teachingLanguage", "firstLessonContent", "lessonSchedule"]) requireText(validated, key);
-    optionalText(validated, "comments");
+    requireBoolean(validated, "writingRequired");
+    requireBoolean(validated, "paperRequired");
   }
   if (type === "老师 LP 修改") requireText(validated, "modificationRequirements");
-  if (type === "换老师试听") {
-    for (const key of ["handoverFromTeacher", "materialsAndContentTaught", "recommendedNextContent", "studentStrengthsAndLearningProfile", "lastHomework", "lastLessonRecordingUrl"]) requireText(validated, key);
-    validateOptionalHttpUrl(validated, "lastLessonRecordingUrl");
-  }
   if (type === "代课 LP") {
     for (const key of ["additionalNotes", "basicInfo", "studentFoundation", "learningGoal", "allocatedLessonContentAndResources", "teachingLanguage", "lastHomework", "lastLessonRecordingUrl"]) requireText(validated, key);
     optionalText(validated, "comments");

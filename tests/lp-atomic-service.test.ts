@@ -215,3 +215,23 @@ test("limited admins preserve locked historical owners when creating non-trial L
     assert.deepEqual(prepared.authorizedAssignment, { owner, planner: "Tara", mayReassign: false });
   }
 });
+
+test("ordinary LP create accepts concise typed handovers with a source timestamp", () => {
+  const common = {
+    responsibleOperations: "Abby", specifiedContentStatus: "无需指定", preparationFollowUp: "否",
+    isUniversityStudent: false, requestSentAt: "2026-10-21T03:00:00.000Z", subject: "English",
+  };
+  const cases = [
+    ["老师新 LP", { ...common, teacher: "Teacher A", writingRequired: true, writingNote: "Essay", paperRequired: false }],
+    ["换老师试听", { ...common, newTeacher: "Teacher B", changeReason: "Different teaching style" }],
+    ["老师 LP 修改", { ...common, modificationRequirements: "Update the exam revision plan" }],
+  ] as const;
+  for (const [workflowType, handover] of cases) {
+    const command = parseLpAtomicCommand({
+      commandKey: "11111111-1111-4111-8111-111111111111", operation: "create", studentId: "STU-1",
+      workflowType, fields: handover, expectedVersions: versions,
+    });
+    assert.equal(command.workflowType, workflowType);
+    assert.equal(command.fields.requestSentAt, common.requestSentAt);
+  }
+});

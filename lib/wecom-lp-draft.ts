@@ -1,5 +1,38 @@
 import { getLpWorkflowSchema, type LpFieldValues } from "./lp-workflows";
 
+export const WECOM_LP_WORKFLOW_TYPES = ["试听 LP", "老师新 LP", "换老师试听", "老师 LP 修改"] as const;
+export type WecomLpWorkflowType = typeof WECOM_LP_WORKFLOW_TYPES[number];
+
+const workflowAliases: Readonly<Record<string, WecomLpWorkflowType>> = {
+  "试听LP": "试听 LP", "老生新LP": "老师新 LP", "老生加课LP": "老师新 LP", "老师新LP": "老师新 LP",
+  "二次试听": "换老师试听", "换老师试听": "换老师试听", "老生LP修改": "老师 LP 修改", "老师LP修改": "老师 LP 修改",
+};
+
+function workflowName(value: string) {
+  const key = value.normalize("NFKC").replace(/[\s【】\[\]]/gu, "").replace(/lp/giu, "LP");
+  return Object.hasOwn(workflowAliases, key) ? workflowAliases[key] : undefined;
+}
+
+export function wecomLpExplicitWorkflowTypes(text: string): readonly WecomLpWorkflowType[] {
+  return cleanValue(text).split("\n").flatMap((line) => {
+    const heading = line.replace(/\[Rose\]|\[玫瑰\]|🌹/giu, "").replace(/[\s【】\[\]]/gu, "");
+    const title = /^(.*?)信息交接(?:表|单)?$/u.exec(heading)?.[1];
+    const field = /^[\s【\[]*(?:LP类型|业务类型)[】\]]*\s*[:：]\s*(.*?)\s*$/u.exec(line)?.[1];
+    const type = workflowName(title ?? field ?? "");
+    return type ? [type] : [];
+  });
+}
+
+function sourceWorkflowTypes(records: readonly WecomLpDraftSourceRecord[]) {
+  const found = new Map<WecomLpWorkflowType, string[]>();
+  for (const record of records) {
+    for (const type of wecomLpExplicitWorkflowTypes(record.text)) {
+      found.set(type, [...(found.get(type) ?? []), record.messageId]);
+    }
+  }
+  return found;
+}
+
 type DraftValue = string | number | boolean;
 type SourceValue = Readonly<{ value: string; messageId: string }>;
 
@@ -15,6 +48,7 @@ export type WecomLpDraftSourceRecord = Readonly<{
 }>;
 
 export type WecomLpDraft = Readonly<{
+  workflowType: WecomLpWorkflowType | null;
   fields: LpFieldValues;
   studentName: string | null;
   guardianWechat: string | null;
@@ -30,16 +64,22 @@ const aliases: Readonly<Record<string, readonly string[]>> = {
   studentName: ["学生姓名", "学生名", "学生", "姓名(如提到)", "姓名"],
   guardianWechat: ["家长微信名", "家长微信", "微信名", "微信名称"],
   responsibleOperations: ["教务老师", "负责教务", "对接教务", "所属教务", "教务"],
-  planner: ["课程规划老师", "课程规划师", "课程规划"],
+  planner: ["课程规划老师", "课程规划师", "课程规划", "所属销售", "规划老师"],
   assignedTeacher: ["安排教师", "安排老师", "任课教师", "任课老师", "授课老师", "老师", "教师"],
-  subject: ["安排科目", "试听科目", "课程科目", "科目", "学科"],
+  subject: ["安排科目", "试听科目", "课程科目", "科目", "学科", "涉及科目"],
+  teacher: ["LP老师"],
+  originalTeacher: ["原老师", "原教师", "原任课老师"],
+  newTeacher: ["新老师", "新教师", "新任课老师"],
+  changeReason: ["二次试听原因+注意事项", "二次试听原因", "重听原因+注意事项", "重听原因", "换老师原因", "更换原因"],
+  modificationRequirements: ["变动内容", "修改要求", "LP修改要求"],
+  documentUrl: ["LP链接", "LP文档链接", "文档链接"],
   oneSentenceDescription: ["一句话描述", "学生情况", "学生基本情况"],
   locationTimezone: ["所在地(时区)", "所在地/时区", "所在地", "所在地区", "时区"],
   contactPerson: ["家长Or学生本人", "家长或学生本人", "家长/学生本人", "对接对象"],
   contactParents: ["对接家长", "是否对接家长"],
   contactStudent: ["对接学生本人", "是否对接学生本人"],
   contactNote: ["对接备注"],
-  specifiedContentStatus: ["是否要指定内容", "要指定内容", "指定内容状态", "是否指定内容"],
+  specifiedContentStatus: ["是否要指定内容", "要指定内容", "指定内容状态", "是否指定内容", "需要跟进家长指定内容", "是否需要跟进家长指定内容", "家长是否有指定内容"],
   writingRequired: ["是否要写作", "要写作", "是否写作", "写作要求"],
   writingNote: ["写作备注"],
   paperRequired: ["是否发试卷收试卷", "是否发试卷、收试卷", "是否发试卷/收试卷", "是否要试卷", "试卷要求"],
@@ -63,8 +103,7 @@ function normalizedLabel(value: string) {
 }
 
 const fieldByLabel = new Map(Object.entries(aliases).flatMap(([field, labels]) => labels.map((label) => [normalizedLabel(label), field] as const)));
-const trialSchema = getLpWorkflowSchema("试听 LP");
-const labels = new Map<string, string>(trialSchema.fields.map((field) => [field.key, field.label]));
+const labels = new Map<string, string>(WECOM_LP_WORKFLOW_TYPES.flatMap((type) => getLpWorkflowSchema(type).fields.map((field) => [field.key, field.label] as const)));
 labels.set("guardianWechat", "微信名");
 
 function cleanValue(value: string) {
@@ -172,11 +211,12 @@ type DraftState = {
   unresolvedValues: WecomLpDraft["unresolvedValues"][number][];
 };
 
-function collectRecordValues(records: readonly WecomLpDraftSourceRecord[]) {
+function collectRecordValues(records: readonly WecomLpDraftSourceRecord[], workflowType: WecomLpWorkflowType | null) {
   const raw = new Map<string, SourceValue[]>();
   const add = (field: string, value: string, messageId: string) => {
     const cleaned = cleanValue(value);
     if (!cleaned) return;
+    if (field === "assignedTeacher" && workflowType && workflowType !== "试听 LP") field = workflowType === "换老师试听" ? "newTeacher" : "teacher";
     const entries = raw.get(field) ?? [];
     entries.push({ value: cleaned, messageId });
     raw.set(field, entries);
@@ -270,10 +310,10 @@ function setSourceTimestamp(records: readonly WecomLpDraftSourceRecord[], values
   if (earliestSource) values.requestSentAt = new Date(earliestSource.sentAt).toISOString();
 }
 
-function missingDraftFields(values: Record<string, DraftValue>, guardianWechat: string | null) {
+function missingDraftFields(values: Record<string, DraftValue>, guardianWechat: string | null, workflowType: WecomLpWorkflowType | null) {
   const requiredFields = [
-    { key: "studentName", label: "学生姓名" }, { key: "guardianWechat", label: "微信名" },
-    ...trialSchema.fields.filter((field) => field.requirement === "required" || (field.requirement === "university-only" && values.isUniversityStudent === true)),
+    { key: "studentName", label: "学生姓名" }, ...(workflowType === "试听 LP" ? [{ key: "guardianWechat", label: "微信名" }] : []),
+    ...getLpWorkflowSchema(workflowType ?? "试听 LP").fields.filter((field) => field.requirement === "required" || (field.requirement === "university-only" && values.isUniversityStudent === true)),
   ];
   return requiredFields.filter((field) => field.key === "guardianWechat" ? guardianWechat === null : values[field.key] === undefined)
     .map((field) => ({ field: field.key, label: field.label }));
@@ -285,10 +325,13 @@ function stringValue(values: Record<string, DraftValue>, field: string) {
 
 export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]): WecomLpDraft {
   const ordered = [...records].sort((a, b) => a.sentAt.localeCompare(b.sentAt) || a.messageId.localeCompare(b.messageId));
-  const raw = collectRecordValues(ordered);
+  const types = sourceWorkflowTypes(ordered);
+  const workflowType = types.size > 1 ? null : [...types.keys()][0] ?? "试听 LP";
+  const raw = collectRecordValues(ordered, workflowType);
   const state = resolveSourceFields(raw);
   deriveStudentNameKnown(ordered, raw, state);
   deriveContactAndTime(raw, state);
+  if (workflowType === null) state.conflicts.push({ field: "workflowType", label: "LP 类型", values: [...types.keys()], messageIds: [...new Set([...types.values()].flat())] });
   const { values, conflicts, unresolvedValues } = state;
   const studentName = stringValue(values, "studentName");
   const guardianWechat = stringValue(values, "guardianWechat");
@@ -297,9 +340,11 @@ export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]):
   delete values.guardianWechat;
   resolvePlanner(state, planner);
   setSourceTimestamp(ordered, values);
+  const allowedFields = new Set<string>(getLpWorkflowSchema(workflowType ?? "试听 LP").fields.map((field) => field.key));
+  const fields = Object.fromEntries(Object.entries(values).filter(([key]) => allowedFields.has(key)));
   return {
-    fields: values, studentName, guardianWechat, operationsOwner, planner,
-    conflicts, missingFields: missingDraftFields(values, guardianWechat), unresolvedValues,
+    workflowType, fields, studentName, guardianWechat, operationsOwner, planner,
+    conflicts, missingFields: missingDraftFields(values, guardianWechat, workflowType), unresolvedValues,
     sourceMessageIds: [...new Set(ordered.map((record) => record.messageId))],
   };
 }

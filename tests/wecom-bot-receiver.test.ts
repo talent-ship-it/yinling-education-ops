@@ -300,3 +300,16 @@ test("sync rejects malformed receiver status without publishing partial health",
   assert.equal(result.healthFailed, 1);
   assert.equal(requests, 0);
 });
+
+
+test("bot type-label templates enter the handover pipeline without invented guardian hints", () => {
+  const [record] = normalizeWecomBotBatch({ records: [{
+    messageId: "bot:" + "a".repeat(64), chatId: "synthetic-business-room", senderId: "synthetic-sender",
+    sentAt: "2026-10-21T01:00:00.000Z", messageType: "text",
+    text: "业务类型：老师LP修改\n学生：Synthetic Student\n涉及科目：English\n变动内容：Adjust goal",
+  }] });
+  const [enriched] = enrichWecomBotRecords([record]);
+  assert.equal(enriched.classification, "handover");
+  assert.equal(enriched.studentNameHint, "Synthetic Student");
+  assert.equal("guardianWechatHint" in enriched, false);
+});

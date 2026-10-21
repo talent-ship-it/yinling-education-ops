@@ -210,18 +210,22 @@ function DraftSchedule({ source }: { source: WecomLpDraftSource }) {
   return <TrialScheduleDetails pendingLabel={source.scheduleEvidenceUnavailable ? "上课时间：课表暂不可用" : "上课时间：待核对教务宝课表"} />;
 }
 
+function draftDetails(source: WecomLpDraftSource) {
+  const fields = source.draft.fields;
+  return [source.draft.workflowType, fieldText(fields.subject), fieldText(fields.assignedTeacher ?? fields.teacher ?? fields.newTeacher)].filter(Boolean).join(" · ") || "科目、老师待核对";
+}
+
 function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProps, "onSelect" | "timeDisplay"> & { source: WecomLpDraftSource }) {
   const status = draftStatus(source);
   const sentAt = handoverTime(source);
   const name = draftName(source);
-  const details = [fieldText(source.draft.fields.subject), fieldText(source.draft.fields.assignedTeacher)].filter(Boolean);
   const ownership = [source.operationsOwner ? `教务：${source.operationsOwner}` : "", source.coursePlanner ? `课程规划：${source.coursePlanner}` : ""].filter(Boolean);
   return <div className="collection-row" style={{ display: "flex", flexWrap: "wrap", gap: 12, minWidth: 0, cursor: "default", justifyContent: "space-between" }}>
     <div style={{ display: "grid", gap: 6, minWidth: 0, flex: "1 1 240px" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}><strong style={{ overflowWrap: "anywhere" }}>{name}</strong><span className={`status-pill ${status.tone}`}>{status.label}</span></div>
-      <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>{details.join(" · ") || "科目、老师待核对"}</span>
+      <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>{draftDetails(source)}</span>
       {ownership.length > 0 && <small style={{ overflowWrap: "anywhere" }}>{ownership.join(" · ")}</small>}
-      <DraftSchedule source={source} />
+      {(source.draft.workflowType === "试听 LP" || source.draft.workflowType === "换老师试听") && <DraftSchedule source={source} />}
       <small style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>交接时间：{sentAt ? <time dateTime={sentAt}>{timeDisplay.formatTime(sentAt)}</time> : "未记录"}</small>
     </div>
     <button className="primary-button" type="button" disabled={status.blocked} aria-label={`${name} ${source.confirmed ? "已创建 LP" : "核对并创建 LP"}`} onClick={() => onSelect(source)}>{draftActionLabel(source, status.blocked)}</button>

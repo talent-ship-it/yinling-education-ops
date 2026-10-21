@@ -116,6 +116,9 @@ function formData(
     [LP_WORKFLOW_FORM_NAMES.responsibleOperations]: "Abby",
     [LP_WORKFLOW_FORM_NAMES.specifiedContentStatus]: "已指定",
     [LP_WORKFLOW_FORM_NAMES.preparationFollowUp]: "否",
+    [LP_WORKFLOW_FORM_NAMES.requestSentAt]: "2026-10-21T03:00:00.000Z",
+    [LP_WORKFLOW_FORM_NAMES.writingRequired]: "否",
+    [LP_WORKFLOW_FORM_NAMES.paperRequired]: "否",
   };
   Object.entries({ ...common, ...values }).forEach(([name, value]) => result.set(name, value));
   return result;
@@ -488,4 +491,67 @@ test("robot drafts require explicit choices instead of filling missing facts wit
   }
   assert.match(html, /name="workflowType" value="试听 LP"/);
   assert.doesNotMatch(html, /name="contactParents"[^>]*checked/);
+});
+
+test("accepts the three concise handover templates without requiring LP document content", () => {
+  const newLp = parseLpWorkflowFormData(formData("老师新 LP", {
+    teacher: "Teacher A", subject: "English", writingRequired: "是", writingNote: "Essay", paperRequired: "是", paperNote: "School paper",
+  }));
+  assert.equal(newLp.fields.requestSentAt, "2026-10-21T03:00:00.000Z");
+  assert.equal("writingRequired" in newLp.fields && newLp.fields.writingRequired, true);
+  assert.equal("paperNote" in newLp.fields && newLp.fields.paperNote, "School paper");
+  assert.equal("basicInfo" in newLp.fields, false);
+
+  const repeat = parseLpWorkflowFormData(formData("换老师试听", {
+    newTeacher: "Teacher B", subject: "English", changeReason: "Try a different teaching style",
+  }));
+  assert.equal("originalTeacher" in repeat.fields, false);
+  assert.equal("writingRequired" in repeat.fields, false);
+  assert.equal("lastLessonRecordingUrl" in repeat.fields, false);
+
+  const modificationForm = formData("老师 LP 修改", { subject: "English", modificationRequirements: "Use school revision materials" });
+  modificationForm.delete("specifiedContentStatus");
+  modificationForm.delete("preparationFollowUp");
+  const modification = parseLpWorkflowFormData(modificationForm);
+  assert.equal("teacher" in modification.fields, false);
+  assert.equal(modification.fields.specifiedContentStatus, "无需指定");
+  assert.equal(modification.fields.preparationFollowUp, "否");
+});
+
+test("handover controls require the source template fields and keep historical details optional", () => {
+  const teacher = renderToStaticMarkup(<LpWorkflowFields initialType="老师新 LP" requireExplicitSelection />);
+  for (const name of ["requestSentAt", "teacher", "subject", "writingRequired", "paperRequired"]) {
+    assert.match(teacher, new RegExp(`<(?:input|select)(?=[^>]*name="${name}")(?=[^>]*required)[^>]*>`));
+  }
+  assert.doesNotMatch(teacher, /<textarea[^>]*name="basicInfo"[^>]*required/);
+  const repeat = renderToStaticMarkup(<LpWorkflowFields initialType="换老师试听" />);
+  assert.doesNotMatch(repeat, /<(?:input|select)[^>]*name="originalTeacher"[^>]*required/);
+  assert.doesNotMatch(repeat, /<input[^>]*name="lastLessonRecordingUrl"[^>]*required/);
+  const modification = renderToStaticMarkup(<LpWorkflowFields initialType="老师 LP 修改" teacherOptions={[{ value: "Teacher A" }]} />);
+  assert.doesNotMatch(modification, /name="(?:specifiedContentStatus|preparationFollowUp)"/);
+  assert.match(modification, /<option value="" selected="">未指定<\/option>/);
+  assert.doesNotMatch(modification, /<(?:input|select)[^>]*name="teacher"[^>]*required/);
+});
+
+
+test("business drafts keep missing roster choices empty until explicitly selected", () => {
+  for (const initialType of ["老师新 LP", "换老师试听", "老师 LP 修改"] as const) {
+    const html = renderToStaticMarkup(<LpWorkflowFields initialType={initialType} requireExplicitSelection
+      subjectOptions={[{ value: "English" }, { value: "Maths" }]} teacherOptions={[{ value: "Teacher A" }]} />);
+    const subject = html.match(/<select[^>]*name="subject"[^>]*>([\s\S]*?)<\/select>/);
+    assert.ok(subject);
+    assert.match(subject[1], /<option value="" selected="">请选择<\/option>/);
+    assert.doesNotMatch(subject[1], /value="English" selected/);
+    const teacherName = initialType === "换老师试听" ? "newTeacher" : "teacher";
+    const teacher = html.match(new RegExp(`<select[^>]*name="${teacherName}"[^>]*>([\\s\\S]*?)</select>`));
+    assert.ok(teacher);
+    assert.match(teacher[1], /<option value="" selected="">/);
+  }
+  const explicit = renderToStaticMarkup(<LpWorkflowFields initialType="换老师试听" requireExplicitSelection
+    initialValues={{ subject: "Maths", newTeacher: "Teacher B" }} subjectOptions={[{ value: "English" }, { value: "Maths" }]}
+    teacherOptions={[{ value: "Teacher A" }, { value: "Teacher B" }]} />);
+  assert.match(explicit, /value="Maths" selected=""/);
+  assert.match(explicit, /value="Teacher B" selected=""/);
+  const manual = renderToStaticMarkup(<LpWorkflowFields initialType="老师新 LP" subjectOptions={[{ value: "English" }]} />);
+  assert.match(manual, /value="English" selected=""/);
 });

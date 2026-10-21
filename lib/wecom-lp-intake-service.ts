@@ -2,6 +2,7 @@ import type { DemoSessionIdentity } from "./demo-session-token";
 import { buildOpsAccessContext, canOperateStudent, canWriteOpsTransaction, filterOpsStateRows } from "./ops-access";
 import { normaliseDemoUserName } from "./demo-users";
 import { LpAtomicError } from "./lp-atomic-service";
+import { buildWecomLpDraft } from "./wecom-lp-draft";
 import { decorateWecomLpDraft } from "./wecom-lp-draft-enrichment";
 import { applyWecomHandoverScheduleEvidence } from "./wecom-handover-schedule-display";
 import { parseWecomLpDraftQuery } from "./wecom-lp-draft-query";
@@ -55,16 +56,21 @@ function studentsFrom(rows: readonly OpsStateRow[]) {
 }
 function authorizeExisting(ctx: Context, command: WecomLpConfirmation, student: Record<string, unknown> | undefined) {
   if (!command.studentId) return;
-  if (!student || !canOperateStudent(ctx.access, command.studentId)) fail(403, "当前账号不能操作该学生。");
+  if (!student || student.importArchived === true || !canOperateStudent(ctx.access, command.studentId)) fail(403, "当前账号不能操作该学生。");
   if (!ctx.fullAdmin && normaliseDemoUserName(String(student.owner)) !== normaliseDemoUserName(ctx.session.user)) fail(403, "教务只能处理自己负责的学生交接。");
 }
 function authorizeAssignment(ctx: Context, command: WecomLpConfirmation) {
   if (!ctx.fullAdmin && normaliseDemoUserName(String(command.fields.responsibleOperations)) !== normaliseDemoUserName(ctx.session.user)) fail(403, "教务只能处理自己负责的学生交接。");
   if (command.newStudent && !canWriteOpsTransaction(ctx.access, "students", ["students", "lpItems", "tasks", "files"])) fail(403, "当前账号不能创建学生档案。");
 }
+function assertSourceWorkflowType(source: import("./wecom-lp-intake").WecomLpDraftRawSource, command: WecomLpConfirmation) {
+  const draft = buildWecomLpDraft(source.messages);
+  if (!draft.workflowType || draft.workflowType !== command.workflowType) fail(409, "交接类型与原文不一致，请核对交接来源。", "workflow_conflict");
+}
 async function prepareTarget(dependencies: Dependencies, ctx: Context, command: WecomLpConfirmation) {
   const source = await dependencies.readDraft({ sourceMessageId: command.sourceMessageId, actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
   if (!source || source.caseId !== command.caseId) fail(404, "未找到可处理的交接来源。");
+  if (!source.confirmed) assertSourceWorkflowType(source, command);
   const students = studentsFrom(ctx.rows);
   const student = students.find((row) => row.id === command.studentId);
   authorizeExisting(ctx, command, student);
@@ -81,13 +87,15 @@ function committedResponse(result: Awaited<ReturnType<Dependencies["confirm"]>>[
 async function decoratePage(dependencies: Dependencies, ctx: Context, sources: readonly import("./wecom-lp-intake").WecomLpDraftRawSource[]) {
   const visible = filterOpsStateRows(ctx.rows, ctx.access);
   const drafts = sources.map((source) => decorateWecomLpDraft(source, studentsFrom(ctx.rows), visible));
-  if (!drafts.length) return drafts;
+  const isTrialDraft = (source: typeof drafts[number]) => source.draft.workflowType === "试听 LP" || source.draft.workflowType === "换老师试听";
+  const trialDrafts = drafts.filter(isTrialDraft);
+  if (!trialDrafts.length) return drafts;
   try {
-    const evidence = await dependencies.readScheduleEvidence({ sourceMessageIds: sources.map((source) => source.sourceMessageId), actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
+    const evidence = await dependencies.readScheduleEvidence({ sourceMessageIds: trialDrafts.map((source) => source.sourceMessageId), actor: ctx.session.user, fullAdmin: ctx.fullAdmin });
     if (!Array.isArray(evidence)) throw new Error("invalid_handover_schedule_evidence");
-    return drafts.map((source) => applyWecomHandoverScheduleEvidence(source, evidence.find((entry) => entry.sourceMessageId === source.sourceMessageId), visible));
+    return drafts.map((source) => isTrialDraft(source) ? applyWecomHandoverScheduleEvidence(source, evidence.find((entry) => entry.sourceMessageId === source.sourceMessageId), visible) : source);
   } catch {
-    return drafts.map((source) => ({ ...source, scheduleEvidenceUnavailable: true }));
+    return drafts.map((source) => isTrialDraft(source) ? { ...source, scheduleEvidenceUnavailable: true } : source);
   }
 }
 export function createWecomLpIntakeHandlers(dependencies: Dependencies) {

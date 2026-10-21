@@ -4620,7 +4620,7 @@ export function confirmWecomLpDraftAtomic(input: import("./wecom-lp-intake").Wec
   return rpc<LpAtomicCommitResult[]>("confirm_wecom_lp_draft_atomic", {
     p_secret: configuration().secret, p_case_id: input.caseId, p_source_message_id: input.sourceMessageId,
     p_source_revision: input.sourceRevision, p_command_uuid: input.commandKey, p_student_id: input.studentId ?? null,
-    p_new_student: input.newStudent ?? null, p_fields: input.fields, p_authorized_assignment: input.authorizedAssignment,
+    p_new_student: input.newStudent ?? null, p_fields: input.fields, p_workflow_type: input.workflowType, p_authorized_assignment: input.authorizedAssignment,
     p_expected_versions: input.expectedVersions, p_actor: input.actor, p_full_admin: input.fullAdmin,
   });
 }

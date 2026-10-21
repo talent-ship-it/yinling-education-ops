@@ -108,15 +108,16 @@ function draftValues(draft: Draft, field: string) {
 }
 function sourceScheduling(source: WecomLpDraftRawSource, draft: Draft, teachers: readonly RecordValue[]) {
   const plannerValues = unique([source.coursePlanner, draft.fields.planner].map(key).filter(Boolean));
-  const contentionTeacherLabels = draftValues(draft, "assignedTeacher");
+  const teacherField = draft.workflowType === "换老师试听" ? "newTeacher" : "assignedTeacher";
+  const contentionTeacherLabels = draftValues(draft, teacherField);
   return {
     contentionTeacherLabels,
     contentionTeacherIds: unique(contentionTeacherLabels.flatMap((label) => teacherChoices(label, teachers).ids)),
     contentionSubjects: draftValues(draft, "subject"),
     contentionPlanners: unique([source.coursePlanner, ...draftValues(draft, "planner")].map(key).filter(Boolean)),
     planner: plannerValues.length === 1 ? plannerValues[0]! : "",
-    schedulingConflict: plannerValues.length > 1 || draft.conflicts.some((entry) => ["planner", "assignedTeacher", "subject"].includes(entry.field)),
-    teacher: teacherChoices(draft.fields.assignedTeacher, teachers), subject: text(draft.fields.subject),
+    schedulingConflict: plannerValues.length > 1 || draft.conflicts.some((entry) => ["planner", teacherField, "subject"].includes(entry.field)),
+    teacher: teacherChoices(draft.fields[teacherField], teachers), subject: text(draft.fields.subject),
   };
 }
 function sourceWindow(source: WecomLpDraftRawSource) {
@@ -371,7 +372,7 @@ function candidateCompetition(entries: readonly SourceCandidates[]) {
 }
 function sourceLpItem(context: Context) {
   if (context.conflict || !context.strong) return [];
-  return [{ id: context.source.sourceMessageId, studentId: context.strong, workflowType: "试听 LP", requestedAt: new Date(context.lower + DAY).toISOString(), fields: { assignedTeacher: context.draft.fields.assignedTeacher } }];
+  return [{ id: context.source.sourceMessageId, studentId: context.strong, workflowType: context.draft.workflowType ?? undefined, requestedAt: new Date(context.lower + DAY).toISOString(), fields: { assignedTeacher: context.draft.fields.assignedTeacher, newTeacher: context.draft.fields.newTeacher } }];
 }
 function provenSourceMatches(contexts: readonly Context[], scope: CandidateScope, authority: Authority) {
   return matchTrialScheduleEvents({ lpItems: contexts.flatMap(sourceLpItem), students: authority.studentArguments, teachers: authority.teacherArguments,
@@ -419,7 +420,8 @@ export function prepareWecomHandoverScheduleProjection(input: WecomHandoverSched
   assertTargets(input);
   const clock = projectionClock(input);
   const authority = projectionAuthority(input.rows);
-  const contexts = input.sources.map((source) => sourceContext(source, authority.students, authority.teachers));
+  const contexts = input.sources.map((source) => sourceContext(source, authority.students, authority.teachers))
+    .filter((context) => context.draft.workflowType === "试听 LP" || context.draft.workflowType === "换老师试听");
   const events = projectionEvents(input, authority, clock.now);
   const occupied = occupiedEvents(events, authority, clock.checkedAt);
   const candidateScope = { students: authority.students, events, occupied, checkedAt: clock.checkedAt };
@@ -427,5 +429,12 @@ export function prepareWecomHandoverScheduleProjection(input: WecomHandoverSched
   const scope = { ...candidateScope, ...clock, snapshotRevision: input.snapshotRevision, coverage: input.coverage,
     competition: candidateCompetition(entries), proven: provenSourceMatches(contexts, candidateScope, authority) };
   const evidence = new Map(entries.map((entry) => [entry.context.source.sourceMessageId, sourceEvidence(entry, scope)]));
-  return input.targetSourceMessageIds.map((id) => evidence.get(id)!);
+  return input.targetSourceMessageIds.map((id): WecomHandoverScheduleEvidence => {
+    const entry = evidence.get(id);
+    if (entry) return entry;
+    const source = input.sources.find((source) => source.sourceMessageId === id)!;
+    return { algorithmVersion: WECOM_HANDOVER_SCHEDULE_ALGORITHM_VERSION, sourceMessageId: id, sourceRevision: source.sourceRevision,
+      snapshotRevision: input.snapshotRevision, checkedAt: clock.checkedAt,
+      status: ["identity_conflict", "identity_ambiguous"].includes(source.status) ? "identity_conflict" : "ambiguous", matchedStudentId: null, candidates: [] };
+  });
 }
