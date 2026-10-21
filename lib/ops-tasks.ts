@@ -83,6 +83,30 @@ export function isExecutableOpenTask(task: Pick<OpsTask, "status" | "dueAt" | "l
   return task.status !== "done" && !isFrozenLegacyTask(task) && isCanonicalTaskDueAt(task.dueAt);
 }
 
+const LEGACY_AUTOMATIC_TRIAL_TASKS = new Map([
+  ["跟进家长指定内容", "：需要跟进家长指定内容"],
+  ["确认家长在 48 小时内完成指定资料/试卷", "：家长指定内容时限"],
+  ["确认老师备课内容与资料", "：需要跟进老师备课"],
+  ["最迟 24 小时内完成试听排课", " 排课时限"],
+  ["将 LP 发审核群并发给老师", " 课前资料交接"],
+  ["试听收费确认", " 收费提醒"],
+  ["试听当天课后跟进", " 课后跟进"],
+]);
+
+export function hasAutomaticTaskDeadline(task: {
+  title?: unknown;
+  trigger?: unknown;
+  ruleKey?: unknown;
+  anchorBookingId?: unknown;
+}) {
+  if (Object.hasOwn(task, "ruleKey") || Object.hasOwn(task, "anchorBookingId")) return true;
+  if (typeof task.title !== "string" || typeof task.trigger !== "string") return false;
+  const suffix = LEGACY_AUTOMATIC_TRIAL_TASKS.get(task.title);
+  return ["试听 LP", "二次试听"].some((workflow) => suffix !== undefined
+    ? task.trigger === `${workflow}${suffix}`
+    : task.title === `${workflow}：核对交接信息` && task.trigger === `${workflow} 创建后自动生成`);
+}
+
 export interface RuleBoundTask extends OpsTask {
   ruleKey: string;
   dueAt: string;

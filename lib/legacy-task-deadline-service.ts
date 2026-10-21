@@ -1,4 +1,5 @@
 import { DEMO_ADMIN_USER, DEMO_LIMITED_ADMIN_USER } from "@/lib/demo-users";
+import { hasAutomaticTaskDeadline } from "@/lib/ops-tasks";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import type { OpsStateRow } from "@/lib/ops-store";
 
@@ -279,7 +280,7 @@ function legacyTask(rows: readonly OpsStateRow[], taskId: string) {
   const tasks = payloadRow(rows, "tasks");
   const task = tasks.payload.find((item) => item.id === taskId);
   if (!task) fail("task_not_found", "没有找到该任务，请刷新后重试。");
-  if (Object.hasOwn(task, "ruleKey") || Object.hasOwn(task, "anchorBookingId")) {
+  if (hasAutomaticTaskDeadline(task)) {
     fail("task_not_legacy", "系统规则任务的截止时间不能在这里手动修改。");
   }
   if (task.status === "done") {
@@ -338,8 +339,7 @@ export function prepareLegacyTaskDeadline(input: {
 }
 
 /** UI/server convenience: only the deliberately unbound legacy cohort may edit. */
-export function isLegacyTaskDeadlineEditable(task: Pick<RecordValue, "ruleKey" | "anchorBookingId" | "status">) {
-  return !Object.hasOwn(task, "ruleKey")
-    && !Object.hasOwn(task, "anchorBookingId")
+export function isLegacyTaskDeadlineEditable(task: RecordValue) {
+  return !hasAutomaticTaskDeadline(task)
     && task.status !== "done";
 }

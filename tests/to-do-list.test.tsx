@@ -265,6 +265,27 @@ test("does not present a descriptive legacy due string as an exact deadline", ()
   assert.doesNotMatch(html, /发布后立即/);
 });
 
+test("legacy automatically generated trial tasks wait for their source instead of requesting a manual deadline", () => {
+  const pending = [
+    { title: "试听收费确认", trigger: "试听 LP 收费提醒" },
+    { title: "试听当天课后跟进", trigger: "试听 LP 课后跟进" },
+  ].map((source, index) => ({
+    ...task(`automatic-legacy-${index}`, "试听", "waiting", "规则文案"),
+    ...source,
+    legacyEvidence: {
+      state: "frozen" as const,
+      reason: "missing_canonical_due_at" as const,
+      frozenAt: "2026-08-20T00:00:00.000Z",
+    },
+  }));
+  const before = JSON.stringify(pending);
+  const html = render(pending, "all", "Australia/Melbourne", "24h", true);
+  assert.match(html, /等待自动生成/);
+  assert.equal((html.match(/>待自动生成<\/span>/g) ?? []).length, pending.length);
+  assert.doesNotMatch(html, /补截止时间|class="deadline-edit-button"|class="complete-button"|class="cannot-do-button"|<time/);
+  assert.equal(JSON.stringify(pending), before);
+});
+
 test("keeps legacy tasks visible but non-actionable without deadline-repair authority", () => {
   const legacy = task("legacy-repair", "LP", "waiting", "发布后立即");
   const managed = {
@@ -277,7 +298,8 @@ test("keeps legacy tasks visible but non-actionable without deadline-repair auth
   };
   const html = render([legacy, managed, anchored]);
   assert.match(html, /待补截止时间/);
-  assert.equal((html.match(/<span class="due-label pending"[^>]*>待补截止时间<\/span>/g) ?? []).length, 3);
+  assert.equal((html.match(/<span class="due-label pending"[^>]*>待补截止时间<\/span>/g) ?? []).length, 1);
+  assert.equal((html.match(/<span class="due-label pending"[^>]*>待自动生成<\/span>/g) ?? []).length, 2);
   assert.doesNotMatch(html, /class="deadline-edit-button"/);
   assert.doesNotMatch(html, /class="complete-button"/);
   assert.doesNotMatch(html, /class="cannot-do-button"/);
