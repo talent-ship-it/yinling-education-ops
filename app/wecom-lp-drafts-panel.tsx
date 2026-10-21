@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type Dispatch, type SetStateAction, type RefObject } from "react";
 import { RefreshCw } from "lucide-react";
 
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
+import { createSharedStatePoller } from "@/lib/shared-state-poller";
 import { TrialScheduleDetails } from "./trial-schedule-details";
 
 type DraftPage = Readonly<{
@@ -87,14 +88,67 @@ function visibleDraftPage(state: DraftPanelState, key: string) {
   return { loading: false, busy: state.loadingMore, drafts: state.drafts, error: state.error, count: state.error ? null : state.total ?? state.drafts.length, nextCursor: state.nextCursor, loadingMore: state.loadingMore };
 }
 
+async function readLoadedDrafts(signal: AbortSignal, range: DraftRange, timezone: string, count: number) {
+  let page = await readDrafts(signal, range, timezone);
+  const drafts = new Map(page.drafts.map((source) => [source.id, source]));
+  const cursors = new Set<string>();
+  while (page.nextCursor && drafts.size < count && !cursors.has(page.nextCursor)) {
+    cursors.add(page.nextCursor);
+    page = await readDrafts(signal, range, timezone, page.nextCursor);
+    for (const source of page.drafts) drafts.set(source.id, source);
+  }
+  return { ...page, drafts: [...drafts.values()] };
+}
+
+function useDraftBackgroundRefresh(count: number | null, range: DraftRange, timezone: string, key: string,
+  setState: Dispatch<SetStateAction<DraftPanelState>>, loadingMore: RefObject<boolean>, controllerRef: RefObject<AbortController | null>) {
+  const { from, to } = range;
+  useEffect(() => {
+    if (count === null) return;
+    const poller = createSharedStatePoller({
+      canRun: () => document.visibilityState !== "hidden",
+      successDelayMs: 60_000,
+      errorDelayMs: 60_000,
+      onError: (error) => setState((value) => withPageError(value, key, error)),
+      run: async (signal) => {
+        if (loadingMore.current || controllerRef.current) return;
+        const controller = new AbortController();
+        controllerRef.current = controller;
+        try {
+          const page = await readLoadedDrafts(AbortSignal.any([signal, controller.signal]), { from, to }, timezone, count);
+          if (!controller.signal.aborted && !signal.aborted) setState((value) => value.key === key && !value.loadingMore ? { ...page, key, error: "", loadingMore: false } : value);
+        } catch (error: unknown) {
+          if (!controller.signal.aborted) throw error;
+        } finally {
+          if (controllerRef.current === controller) controllerRef.current = null;
+        }
+      },
+    });
+    const run = () => { void poller.wake(); };
+    const timer = window.setTimeout(run, 60_000);
+    window.addEventListener("focus", run);
+    document.addEventListener("visibilitychange", run);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", run);
+      document.removeEventListener("visibilitychange", run);
+      poller.stop();
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+    };
+  }, [count, from, to, timezone, key, setState, loadingMore, controllerRef]);
+}
+
 function useDraftPages(refreshKey: number, range: DraftRange, timezone: string) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [state, setState] = useState<DraftPanelState>({ key: "", drafts: [], nextCursor: null, error: "", loadingMore: false });
   const controllerRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
+  const backgroundControllerRef = useRef<AbortController | null>(null);
   const { from, to } = range;
   const loadKey = `${refreshKey}:${refreshVersion}:${timezone}:${from}:${to}`;
   const current = state.key === loadKey;
+  useDraftBackgroundRefresh(current ? state.drafts.length : null, range, timezone, loadKey, setState, loadingMoreRef, backgroundControllerRef);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -111,6 +165,8 @@ function useDraftPages(refreshKey: number, range: DraftRange, timezone: string) 
   async function loadMore() {
     const request = nextPageRequest(state, current, controllerRef.current, loadingMoreRef.current);
     if (!request) return;
+    backgroundControllerRef.current?.abort();
+    backgroundControllerRef.current = null;
     const { controller, cursor } = request;
     loadingMoreRef.current = true;
     setState((value) => ({ ...value, error: "", loadingMore: true }));
@@ -141,6 +197,19 @@ function draftName(source: WecomLpDraftSource) {
   return source.studentName || source.resolvedStudentName || source.wechatName || "待确认学生";
 }
 
+function DraftSchedule({ source }: { source: WecomLpDraftSource }) {
+  if (source.trialSchedule) return <TrialScheduleDetails schedule={source.trialSchedule} />;
+  const evidence = source.scheduleEvidence;
+  if (evidence?.candidates.length) return <div style={{ display: "grid", gap: 8 }}>
+    <small className="inline-meta">{evidence.status === "ambiguous" ? "课表匹配不唯一，待核对学生" : "候选课表，待核对学生"}</small>
+    {evidence.candidates.map((candidate) => <div key={`${candidate.studentId}:${candidate.schedule.eventId}`}>
+      <strong>{candidate.studentName}</strong>
+      <TrialScheduleDetails schedule={candidate.schedule} />
+    </div>)}
+  </div>;
+  return <TrialScheduleDetails pendingLabel={source.scheduleEvidenceUnavailable ? "上课时间：课表暂不可用" : "上课时间：待核对教务宝课表"} />;
+}
+
 function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProps, "onSelect" | "timeDisplay"> & { source: WecomLpDraftSource }) {
   const status = draftStatus(source);
   const sentAt = handoverTime(source);
@@ -152,7 +221,7 @@ function DraftRow({ source, onSelect, timeDisplay }: Pick<WecomLpDraftsPanelProp
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}><strong style={{ overflowWrap: "anywhere" }}>{name}</strong><span className={`status-pill ${status.tone}`}>{status.label}</span></div>
       <span style={{ color: "var(--muted)", overflowWrap: "anywhere" }}>{details.join(" · ") || "科目、老师待核对"}</span>
       {ownership.length > 0 && <small style={{ overflowWrap: "anywhere" }}>{ownership.join(" · ")}</small>}
-      <TrialScheduleDetails schedule={source.trialSchedule} pendingLabel="上课时间：待核对教务宝课表" />
+      <DraftSchedule source={source} />
       <small style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>交接时间：{sentAt ? <time dateTime={sentAt}>{timeDisplay.formatTime(sentAt)}</time> : "未记录"}</small>
     </div>
     <button className="primary-button" type="button" disabled={status.blocked} aria-label={`${name} ${source.confirmed ? "已创建 LP" : "核对并创建 LP"}`} onClick={() => onSelect(source)}>{draftActionLabel(source, status.blocked)}</button>

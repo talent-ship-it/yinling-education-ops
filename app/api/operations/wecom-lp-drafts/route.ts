@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { createWecomLpIntakeHandlers } from "@/lib/wecom-lp-intake-service";
-import { confirmWecomLpDraftAtomic, getOpsState, readWecomLpDraft, readWecomLpDrafts } from "@/lib/ops-store";
+import { confirmWecomLpDraftAtomic, getOpsState, readWecomLpDraft, readWecomLpDrafts, readWecomHandoverScheduleEvidence } from "@/lib/ops-store";
 
 export const dynamic = "force-dynamic";
 const handlers = createWecomLpIntakeHandlers({
@@ -16,6 +16,7 @@ const handlers = createWecomLpIntakeHandlers({
   readDraft: readWecomLpDraft,
   readDrafts: readWecomLpDrafts,
   confirm: confirmWecomLpDraftAtomic,
+  readScheduleEvidence: readWecomHandoverScheduleEvidence,
 });
 export const GET = handlers.GET;
 export const POST = handlers.POST;

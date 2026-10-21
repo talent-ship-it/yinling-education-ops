@@ -339,3 +339,23 @@ test("scheduler eligibility excludes every non-trial LP workflow even with an ex
   });
   assert.deepEqual(tasks, []);
 });
+
+test("parent-cancelled trial results close legacy progress reminders while NIL keeps existing scheduling", () => {
+  const cancelled = reconcileLpParentProgressTasks({
+    tasks: [task()], lp: { ...lp, resultStatus: "被家长取消" },
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0].status, "done");
+  assert.equal(cancelled[0].result, LP_PARENT_PROGRESS_CLOSED_RESULT);
+  assert.deepEqual(reconcileLpParentProgressTasks({
+    tasks: [], lp: { ...lp, resultStatus: "被家长取消" },
+    now: "2026-08-12T12:00:00.000Z",
+  }), []);
+  const nil = reconcileLpParentProgressTasks({
+    tasks: [], lp: { ...lp, resultStatus: "NIL" },
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(nil.length, 1);
+  assert.notEqual(nil[0].status, "done");
+});

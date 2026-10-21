@@ -145,6 +145,7 @@ function routeHarness(fetchImpl) {
     },
     "@/lib/jiaowubao-schedule-projection-runner": { runOrQueueJiaowubaoScheduleProjectionTarget: async () => ({ projectionState: "complete" }) },
     "@/lib/jiaowubao-trial-auto-sync": {},
+    "@/lib/wecom-handover-schedule-reconciliation": {},
     "@/lib/jiaowubao-schedule-provider": { createJiaowubaoScheduleReader: () => createJiaowubaoScheduleReader({ env: { JIAOWUBAO_SCHEDULE_SOURCE: "mcp", INSIDERLEADS_JWB_MCP_TOKEN: TOKEN }, fetchImpl }) },
     "@/lib/ops-store": ops,
   };
