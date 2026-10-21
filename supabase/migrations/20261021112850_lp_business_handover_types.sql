@@ -1,11 +1,33 @@
+create function internal.wecom_lp_explicit_types(p_body text)
+returns text[] language sql immutable strict set search_path = '' as $$
+  with lines as (
+    select line, regexp_replace(regexp_replace(line,'\[Rose\]|\[玫瑰\]|🌹','','gi'),'[[:space:]【】\[\]]','','g') as heading
+    from regexp_split_to_table(pg_catalog.normalize(p_body,'NFKC'), E'\n') line
+  ), labels as (
+    select upper(regexp_replace(coalesce(
+      (regexp_match(heading,'^(.*?)信息交接(表|单)?$'))[1],
+      (regexp_match(line,'^[[:space:]【\[]*(LP类型|业务类型)[】\]]*[[:space:]]*[:：][[:space:]]*(.*?)[[:space:]]*$'))[2]
+    ),'[[:space:]【】\[\]]','','g')) as label from lines
+  ), types as (
+    select case label
+      when '试听LP' then '试听 LP'
+      when '老生新LP' then '老师新 LP'
+      when '老生加课LP' then '老师新 LP'
+      when '老师新LP' then '老师新 LP'
+      when '二次试听' then '换老师试听'
+      when '换老师试听' then '换老师试听'
+      when '老生LP修改' then '老师 LP 修改'
+      when '老师LP修改' then '老师 LP 修改'
+    end as kind from labels
+  )
+  select coalesce(array_agg(distinct kind order by kind) filter (where kind is not null),array[]::text[]) from types;
+$$;
+revoke all on function internal.wecom_lp_explicit_types(text) from public, anon, authenticated, service_role;
+
 create or replace function internal.wecom_lp_template_type(p_body text)
 returns text language sql immutable strict set search_path = '' as $$
-  select case
-    when p_body ~* '(老生|老师)[[:space:]]*LP[[:space:]]*修改[[:space:]]*信息交接' then '老师 LP 修改'
-    when p_body ~* '(老生|老师)[[:space:]]*新[[:space:]]*LP[[:space:]]*信息交接' then '老师新 LP'
-    when p_body ~* '(二次试听|换老师试听)[[:space:]]*信息交接' then '换老师试听'
-    else '试听 LP'
-  end;
+  select case cardinality(types) when 0 then '试听 LP' when 1 then types[1] else null end
+  from (select internal.wecom_lp_explicit_types(p_body) as types) source;
 $$;
 revoke all on function internal.wecom_lp_template_type(text) from public, anon, authenticated, service_role;
 
@@ -15,16 +37,17 @@ returns boolean language sql immutable strict set search_path = '' as $template$
     p_body ~ E'(?m)^[[:space:]]*[【\\[]?(安排教师|安排老师|任课教师|任课老师|授课老师|老师|教师)[】\\]]?[[:space:]]*[:：]'
     and p_body ~ E'(?m)^[[:space:]]*[【\\[]?(安排科目|试听科目|课程科目|科目|学科)[】\\]]?[[:space:]]*[:：]'
   ) or (
-    internal.wecom_lp_template_type(p_body) <> '试听 LP'
+    cardinality(internal.wecom_lp_explicit_types(p_body)) > 0
     and p_body ~ E'(?m)^[[:space:]]*[【\\[]?(学生姓名|学生|姓名)[】\\]]?[[:space:]]*[:：][[:space:]]*[^[:space:]]'
-    and case internal.wecom_lp_template_type(p_body)
-      when '老师 LP 修改' then
+    and (
+      ('老师 LP 修改' = any(internal.wecom_lp_explicit_types(p_body)) and
         p_body ~ E'(?m)^[[:space:]]*[【\\[]?(涉及科目|科目|学科)[】\\]]?[[:space:]]*[:：]'
         and p_body ~ E'(?m)^[[:space:]]*[【\\[]?(变动内容|修改要求|修改内容)[】\\]]?[[:space:]]*[:：]'
-      when '换老师试听' then
+      ) or ('换老师试听' = any(internal.wecom_lp_explicit_types(p_body)) and
         p_body ~ E'(?m)^[[:space:]]*[【\\[]?(安排教师|安排老师|新老师|老师|教师)[】\\]]?[[:space:]]*[:：]'
-      else p_body ~ E'(?m)^[[:space:]]*[【\\[]?(安排科目|科目|学科)[】\\]]?[[:space:]]*[:：]'
-    end
+      ) or ('老师新 LP' = any(internal.wecom_lp_explicit_types(p_body)) and p_body ~ E'(?m)^[[:space:]]*[【\\[]?(安排科目|科目|学科)[】\\]]?[[:space:]]*[:：]'
+      )
+    )
   );
 $template$;
 revoke all on function internal.wecom_is_lp_template(text) from public, anon, authenticated, service_role;
@@ -78,7 +101,7 @@ create function public.confirm_wecom_lp_draft_atomic(
   files_row public.ops_state, audit_entry_id uuid)
 language plpgsql security definer set search_path = '' as $$
 declare source jsonb; prior internal.wecom_lp_confirmations%rowtype; command_prior internal.wecom_lp_confirmations%rowtype;
-  confirmation jsonb; inner_intent jsonb; next_versions jsonb; student_fields jsonb;
+  confirmation jsonb; inner_intent jsonb; next_versions jsonb; student_fields jsonb; source_types text[];
   s public.ops_state%rowtype; l public.ops_state%rowtype; t public.ops_state%rowtype; f public.ops_state%rowtype;
   selected_student jsonb; selected_id text; created record; receipt record; audit_id_value uuid;
   command_value text := lower(btrim(p_command_uuid));
@@ -144,6 +167,14 @@ begin
     return query select prior.command_uuid, 'create'::text, false, prior.student_id, prior.lp_item_id,
       s, l, t, f, prior.audit_id;
     return;
+  end if;
+  select coalesce(array_agg(distinct detected.kind),array[]::text[]) into source_types
+  from jsonb_array_elements(source -> 'messages') message
+  cross join lateral unnest(internal.wecom_lp_explicit_types(message ->> 'text')) detected(kind);
+  if cardinality(source_types) > 1
+     or (cardinality(source_types) = 1 and source_types[1] <> p_workflow_type)
+     or (cardinality(source_types) = 0 and p_workflow_type <> '试听 LP') then
+    raise exception using errcode = '22023', message = 'wecom_lp_source_workflow_mismatch';
   end if;
   if s.entity is null or l.entity is null or t.entity is null or f.entity is null then
     raise exception using errcode = '55000', message = 'lp_atomic_state_missing';

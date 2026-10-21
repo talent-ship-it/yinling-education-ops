@@ -34,6 +34,14 @@ begin
      or internal.wecom_is_lp_template(E'二次试听要不要换老师？\n学生：Draft Student') then
     raise exception 'document_template_shape_classification_failed';
   end if;
+  if internal.wecom_lp_template_type(E'老生新 LP 信息交接\n备注：老生LP修改 信息交接') <> '老师新 LP'
+     or internal.wecom_lp_template_type(E'备注：老生新LP 信息交接\n安排教师：Grace\n安排科目：English') <> '试听 LP'
+     or internal.wecom_lp_template_type(E'[Rose]老生加课ｌｐ 信息交接表[Rose]') <> '老师新 LP'
+     or internal.wecom_lp_template_type(E'【LP类型】：二次试听') <> '换老师试听'
+     or internal.wecom_lp_template_type(E'业务类型：老师LP修改') <> '老师 LP 修改'
+     or internal.wecom_lp_template_type(E'老生新LP 信息交接\n老师LP修改 信息交接') is not null then
+    raise exception 'explicit_business_type_anchor_alias_or_conflict_failed';
+  end if;
   insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
     message_type, body, classification, match_status, ingested_by)
   values
@@ -53,6 +61,57 @@ begin
   if (public.read_wecom_lp_drafts_in_range('wecom-fixture-secret','Abby',false,null,30,'2099-01-03','2099-01-04'))->>'total' <> '3' then
     raise exception 'business_sources_missing_from_range_reader';
   end if;
+
+  source := internal.wecom_lp_draft_source('bot:business:new');
+  before_versions := internal.fixture_wecom_lp_versions();
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      'bot:business:new',source->>'sourceRevision','20000000-0000-4000-8000-000000000020',
+      'STU-DRAFT-1',null,common||'{"subject":"English","modificationRequirements":"valid different-type fields"}'::jsonb,
+      assignment,before_versions,'Abby',false,'老师 LP 修改');
+    raise exception 'forged_business_source_type_allowed';
+  exception when invalid_parameter_value then
+    get stacked diagnostics caught = message_text;
+    if caught <> 'wecom_lp_source_workflow_mismatch' then raise; end if;
+  end;
+  insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+    message_type, body, classification, student_name_hint, guardian_wechat_hint,
+    operations_owner_hint, course_planner_hint, match_status, ingested_by)
+  values('bot:business:mixed',repeat('b',64),'business-mixed','sales','2099-01-05','text',
+    E'老生新LP 信息交接\n老师LP修改 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
+    'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver');
+  source := internal.wecom_lp_draft_source('bot:business:mixed');
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      'bot:business:mixed',source->>'sourceRevision','20000000-0000-4000-8000-000000000021',
+      'STU-DRAFT-1',null,common||'{"teacher":"Grace","subject":"English","writingRequired":false,"paperRequired":false}'::jsonb,
+      assignment,before_versions,'Abby',false,'老师新 LP');
+    raise exception 'conflicting_business_source_headings_allowed';
+  exception when invalid_parameter_value then
+    get stacked diagnostics caught = message_text;
+    if caught <> 'wecom_lp_source_workflow_mismatch' then raise; end if;
+  end;
+  insert into internal.wecom_archive_messages(message_id, content_sha256, chat_id, sender_id, sent_at,
+    message_type, body, classification, student_name_hint, guardian_wechat_hint,
+    operations_owner_hint, course_planner_hint, match_status, ingested_by)
+  values('bot:business:followup','bb'||repeat('b',62),'business-followup','sales','2099-01-05','text',
+    E'老生新LP 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
+    'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
+    ('bot:business:followup-type','bb'||repeat('c',62),'business-followup','sales','2099-01-05T01:00:00Z','text',
+    E'业务类型：二次试听\n学生姓名：Draft Student',
+    'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver');
+  source := internal.wecom_lp_draft_source('bot:business:followup');
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',(source->>'caseId')::uuid,
+      'bot:business:followup',source->>'sourceRevision','20000000-0000-4000-8000-000000000022',
+      'STU-DRAFT-1',null,common||'{"teacher":"Grace","subject":"English","writingRequired":false,"paperRequired":false}'::jsonb,
+      assignment,before_versions,'Abby',false,'老师新 LP');
+    raise exception 'conflicting_business_followup_type_allowed';
+  exception when invalid_parameter_value then
+    get stacked diagnostics caught = message_text;
+    if caught <> 'wecom_lp_source_workflow_mismatch' then raise; end if;
+  end;
+  if internal.fixture_wecom_lp_versions() <> before_versions then raise exception 'rejected_business_source_type_changed_state'; end if;
 
   for kind,message_id_value,command_value,fields in select * from (values
     ('老师新 LP','bot:business:new','20000000-0000-4000-8000-000000000001',common||'{"teacher":"Grace","subject":"English","writingRequired":true,"paperRequired":true}'::jsonb),
