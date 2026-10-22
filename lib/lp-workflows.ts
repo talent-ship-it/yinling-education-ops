@@ -428,6 +428,10 @@ export const LP_RESULT_STATUSES = [
 ] as const;
 export type LpResultStatus = (typeof LP_RESULT_STATUSES)[number];
 
+export function lpResultStatusLabel(status: LpResultStatus) {
+  return status === "被家长取消" ? "取消不安排" : status;
+}
+
 /** Non-trial LPs report whether the workflow itself was completed or cancelled. */
 const NON_TRIAL_RESULT_STATUSES = new Set<LpResultStatus>(["已完成", "已取消"]);
 const NON_TRIAL_WORKFLOW_TYPES = new Set<LpWorkflowType>([
