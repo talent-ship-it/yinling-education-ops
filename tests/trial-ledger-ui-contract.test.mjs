@@ -20,7 +20,7 @@ test("preserves the handbook review columns and adds readonly Jiaowubao schedule
     "课程规划老师",
     "科目",
     "老师",
-    "试听状态",
+    "业务结果",
     "是否付费",
     "备注",
     "教务宝小课表",
