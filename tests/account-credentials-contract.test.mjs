@@ -384,7 +384,6 @@ test("account UI wires real password, MFA, session and authorization actions wit
   assert.match(workspace, /fetch\("\/api\/accounts\/status"/);
   assert.match(workspace, /fetch\("\/api\/accounts\/mfa-reset"/);
   assert.match(workspace, /fetch\("\/api\/accounts\/issued-password"/);
-  assert.match(workspace, /邀请投递尚未配置/);
   assert.doesNotMatch(workspace, /onResendInvite=/);
   assert.match(adminLifecycle, /重置登录密码/);
   assert.match(adminLifecycle, /查看密码/);

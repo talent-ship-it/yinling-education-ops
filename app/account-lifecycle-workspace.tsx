@@ -364,7 +364,6 @@ export function AccountLifecycleWorkspace({
       busyAction={directoryBusy ?? (directoryLoading ? "all" : null)}
       error={directoryError}
       notice={directoryNotice}
-      subtitle="管理账号、密码、权限与数据范围。合作结束时归档账号，立即关闭访问并保留历史记录；恢复合作时可从“已归档”中恢复。邀请投递尚未配置。"
       onSelectAccount={setSelectedAccountId}
       onUpdateAccess={(change) => void updateAccess(change)}
       onSetStatus={(change) => void updateStatus(change)}

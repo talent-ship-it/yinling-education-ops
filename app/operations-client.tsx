@@ -2422,9 +2422,7 @@ function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy, logou
   return <main className="login-shell password-change-shell">
     <section className="login-panel password-change-panel">
       <div className="brand-mark">吟</div>
-      <p className="eyebrow">账号安全</p>
       <h1>请先设置新密码</h1>
-      <p className="login-copy">完成后会自动加载你的工作视图。</p>
       <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} accountLogin={user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} logoutError={logoutError} />
     </section>
   </main>;
@@ -8970,7 +8968,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         }}
       /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
-        <header className="panel-header trial-ledger-header"><div><p className="eyebrow">【吟领教育】学员信息管理（LP）</p><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条试听` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条试听`}</span></div></header>
+        <header className="panel-header trial-ledger-header"><div><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条试听` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条试听`}</span></div></header>
         {trialLedgerItems.length ? <>
           <section className="trial-ledger-tools" aria-label="试听台账筛选与排序">
             <div className="trial-ledger-filter-grid">
@@ -9273,7 +9271,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </button>
               <div className="preview-header">
                 <div>
-                  <p className="eyebrow">异常记录</p>
                   <h2>
                     {selectedOperation.type} · {operationStudent.name}
                   </h2>
@@ -10903,7 +10900,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </button>
               <div className="preview-header">
                 <div>
-                  <p className="eyebrow">发送前预览</p>
                   <h2>{selectedMessage.kind}</h2>
                 </div>
                 <StatusPill
@@ -11114,7 +11110,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         {canUseAdminScope ? <JiaowubaoAuthorityStatusPanel status={jiaowubaoAuthorityStatus} /> : null}
         {canUseAdminScope ? <section className="panel import-preview-panel">
           <div className="panel-header">
-            <div><h2>学生正式导入</h2><small>学生总表建档；不活跃且无课时不导入；教务宝补充课时与课包。</small></div>
+            <div><h2>学生正式导入</h2></div>
             <div className="toolbar-actions">
               <button className="secondary-button" type="button" disabled={studentImportBusy} onClick={() => void previewStudentImport()}>{studentImportBusy ? "正在预检…" : "读取最新总表与教务宝"}</button>
               <button className="primary-button" type="button" disabled={studentImportBusy || !studentImportPreview?.canCommit} onClick={commitStudentImport}>确认正式导入</button>
@@ -11166,7 +11162,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {studentIdentityReviewCandidates?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-review-title">
             <div>
               <h3 id="student-identity-review-title">学生身份逐条人工确认</h3>
-              <small>候选只用于补充教务宝资料；腾讯总表学生无需关联即可导入。当前确认仍由服务器和数据库按严格规则重新核对来源版本、来源行及学生版本。</small>
             </div>
             {studentIdentityReviewCandidates.map((candidate) => <article key={candidate.candidateKey}>
               <div>
@@ -11198,7 +11193,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {studentIdentityManualReview ? <section className="teacher-identity-resolution-list" aria-labelledby="student-identity-manual-title">
             <div>
               <h3 id="student-identity-manual-title">剩余教务宝资料手工配对（可选）</h3>
-              <small>这里只用于为总表学生补充教务宝资料，不影响学生建档。提交时仍会按服务器当前审核规则核对；只提交当前版本绑定的 opaque token 和合并/新建决定，不会提交来源行或学生 ID。</small>
             </div>
             <article>
               <div>
@@ -11353,7 +11347,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             {teacherImportPreview.subjectResolutions?.length ? <section className="teacher-identity-resolution-list" aria-labelledby="teacher-subject-resolution-title">
               <div>
                 <h3 id="teacher-subject-resolution-title">科目行归属待确认</h3>
-                <p>只能分配到当前工作簿 roster 的明确行，或明确忽略；不允许输入姓名或自由文本。</p>
               </div>
               {teacherImportPreview.subjectResolutions.map((resolution) => <article key={`${resolution.workbook}:${resolution.subjectRef.sourceRow}:${resolution.sheetName}`}>
                 <div>
@@ -11477,7 +11470,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <aside className="panel source-panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">外部来源</p>
                 <h2>当前管线与历史记录</h2>
               </div>
               <StatusPill
@@ -14428,12 +14420,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <button className="sidebar-toggle" data-sidebar-toggle type="button" aria-label={sidebarToggleLabel} aria-pressed={sidebarCollapsed} title={sidebarToggleLabel} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>{sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
         </div>
         <nav id="primary-navigation" aria-label="主要导航">
-          <p>{displayTerm("学生与教务", displayPreferences.language)}</p>
           {visibleNavigation.filter((item) => item.group === "work").map((item) => {
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
-          <p>{displayTerm("运营与系统", displayPreferences.language)}</p>
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span></button>;
@@ -14494,12 +14484,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" id="mobile-function-menu" role="dialog" aria-modal="true" aria-label={displayPreferences.language === "en-AU" ? "All functions" : "全部功能"} onMouseDown={(event) => event.stopPropagation()}>
-          <header><div><p className="eyebrow">{displayPreferences.language === "en-AU" ? "ALL FUNCTIONS" : "全部功能"}</p><h2>{displayPreferences.language === "en-AU" ? "Where to work" : "去哪里处理工作"}</h2></div><IconButton label={displayPreferences.language === "en-AU" ? "Close menu" : "关闭功能菜单"} onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
+          <header><div><h2>{displayPreferences.language === "en-AU" ? "Where to work" : "去哪里处理工作"}</h2></div><IconButton label={displayPreferences.language === "en-AU" ? "Close menu" : "关闭功能菜单"} onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
           <label className="mobile-operator-picker"><span>{interfaceText.currentView}</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label={displayPreferences.language === "en-AU" ? "Switch current operator" : "切换当前操作人"}>{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)} · {operatorProfile(operator, teacherOperatorNames).role}</option>)}</select></label>
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;
-              return <button className={active === item.id ? "active" : ""} type="button" aria-label={item.id === "ava-calendar" ? item.label : undefined} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong><small>{displayTerm(item.group === "work" ? "学生与教务" : "运营与系统", displayPreferences.language)}</small></span><ChevronRight size={16} /></button>;
+              return <button className={active === item.id ? "active" : ""} type="button" aria-label={item.id === "ava-calendar" ? item.label : undefined} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => navigateMobile(item.id)}><Icon size={20} /><span><strong>{item.label}</strong></span><ChevronRight size={16} /></button>;
             })}
           </div>
           <button className="mobile-password-button" type="button" onClick={() => { setModal("accountPasswordChange"); setMobileMenuOpen(false); }}><KeyRound size={18} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
@@ -14510,7 +14500,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
 
       {displayPreferencesOpen && <div className="dialog-backdrop display-preferences-backdrop" role="presentation" onMouseDown={() => setDisplayPreferencesOpen(false)}>
         <section className="dialog display-preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="display-preferences-title" onMouseDown={(event) => event.stopPropagation()}>
-          <header className="dialog-header"><div><p className="eyebrow">{displayPreferences.language === "en-AU" ? "PERSONAL DISPLAY" : "个人显示设置"}</p><h2 id="display-preferences-title">{interfaceText.profilePreferences}</h2></div><IconButton label={interfaceText.close} onClick={() => setDisplayPreferencesOpen(false)}><X size={18} /></IconButton></header>
+          <header className="dialog-header"><div><h2 id="display-preferences-title">{interfaceText.profilePreferences}</h2></div><IconButton label={interfaceText.close} onClick={() => setDisplayPreferencesOpen(false)}><X size={18} /></IconButton></header>
           <div className="display-preferences-grid">
             <label>{interfaceText.language}<select value={displayPreferences.language} onChange={(event) => updateDisplayPreferences({ language: event.target.value as DisplayPreferences["language"] })}><option value="zh-CN">{interfaceText.chinese}</option><option value="en-AU">{interfaceText.english}</option></select></label>
             <label>{interfaceText.timezone}<select value={displayPreferences.timezone} onChange={(event) => updateDisplayPreferences({ timezone: cleanTimezone(event.target.value) })}>{timezoneOptions.map((option) => <option value={option.id} key={option.id}>{displayPreferences.language === "en-AU" ? option.en : option.zh}</option>)}</select></label>
@@ -14596,7 +14586,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <label>关联学生<input value={studentModalTargetStudent.name} disabled /></label>
           <label>FU 分类<select name="fuCategory" defaultValue="parent_communication">{FU_ATTACHMENT_CATEGORIES.map((category) => <option value={category} key={category}>{FU_ATTACHMENT_CATEGORY_LABELS[category]}</option>)}</select></label>
           <label className="span-2">记录名称<input name="title" defaultValue="家长沟通记录" required /></label>
-          <label className="span-2 upload-field">图片文件<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" required /><small>支持 PNG、JPG、WebP，最多 4MB。文件使用现有私有存储和学生权限范围。</small></label>
+          <label className="span-2 upload-field">图片文件<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp" required /><small>支持 PNG、JPG、WebP，最多 4MB。</small></label>
           <footer><button className="secondary-button" type="button" disabled={evidenceUploadBusy} onClick={() => setModal(null)}>取消</button><button className="primary-button" type="submit" disabled={evidenceUploadBusy}><FilePlus2 size={16} /> {evidenceUploadBusy ? "正在上传…" : "上传并归档"}</button></footer>
         </form>
       </Dialog>}
@@ -14645,7 +14635,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <form className="form-grid" onSubmit={submitLegacyTaskDeadline}>
           <div className="form-notice span-2"><CircleAlert size={16} /> 请输入准确截止时间。</div>
           <label className="span-2">任务<input value={legacyTaskDeadlineDraft.title} disabled /></label>
-          <label className="span-2">待办截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : ""} required /><small>按墨尔本时间保存。</small></label>
+          <label className="span-2">待办截止时间（墨尔本）<input name="melbourneDateTime" type="datetime-local" data-dialog-autofocus="true" defaultValue={legacyTaskDeadlineDraft.dueAt && Number.isFinite(Date.parse(legacyTaskDeadlineDraft.dueAt)) ? dateTimeValueInTimezone(new Date(legacyTaskDeadlineDraft.dueAt), "Australia/Melbourne") : ""} required /></label>
           <footer><button className="secondary-button" type="button" disabled={legacyTaskDeadlineBusy} onClick={() => { setLegacyTaskDeadlineDraft(null); setModal(null); }}>取消</button><button className="primary-button" type="submit" disabled={legacyTaskDeadlineBusy}><Clock3 size={16} /> {legacyTaskDeadlineBusy ? "正在保存…" : "保存截止时间"}</button></footer>
         </form>
       </Dialog>}
