@@ -38,9 +38,7 @@ export function JiaowubaoAuthorityStatusPanel({
       <div className="jwb-authority-header">
         <span className="jwb-authority-mark"><Database size={19} /></span>
         <div>
-          <p className="eyebrow">权威来源</p>
           <h2 id="jwb-authority-title">教务宝 Open API</h2>
-          <p>数据库投影尚未产生状态。部署迁移并完成下一次计划同步后，这里会显示真实匹配率和异常数量。</p>
         </div>
         <span className="jwb-authority-pill waiting">等待首次投影</span>
       </div>
@@ -63,11 +61,7 @@ export function JiaowubaoAuthorityStatusPanel({
     <div className="jwb-authority-header">
       <span className="jwb-authority-mark"><ShieldCheck size={19} /></span>
       <div>
-        <p className="eyebrow">权威来源 · 非唯一来源</p>
         <h2 id="jwb-authority-title">教务宝 Open API 已进入资料库</h2>
-        <p>{status.coverage.nativeRecordsSynchronized
-          ? "完整来源快照与规范化映射均长期保存在数据库；仅在证据唯一时同步现有资料，并保留其他权威来源的数据。"
-          : "完整来源快照与规范化映射已保存在数据库；现有系统资料同步尚未完成，当前仅展示来源投影结果。"}</p>
       </div>
       <span className={`jwb-authority-pill ${cadenceHealthy ? "healthy" : "warning"}`}>
         {cadenceHealthy ? "30 分钟同步正常" : "同步已超过 75 分钟"}
@@ -91,16 +85,16 @@ export function JiaowubaoAuthorityStatusPanel({
     <div className="jwb-authority-detail-grid">
       <article>
         <Coins size={18} />
-        <span><strong>价格字段：{status.prices.present ? "已发现并私有保存" : "当前快照未发现"}</strong><small>{priceRows} 条价格记录；价格值不会发送到浏览器。</small></span>
+        <span><strong>价格字段：{status.prices.present ? "已发现并私有保存" : "当前快照未发现"}</strong><small>{priceRows} 条价格记录</small></span>
       </article>
       <article>
         <BookOpen size={18} />
-        <span><strong>字段覆盖：课表 {status.fields.topLevelFields.length} 个 · 学员 {status.fields.studentFields.length} 个</strong><small>当前已接入 Open API 工具 query_schedule_list；其他数据域需供应商提供正式 Open API 合同后接入。</small></span>
+        <span><strong>字段覆盖：课表 {status.fields.topLevelFields.length} 个 · 学员 {status.fields.studentFields.length} 个</strong></span>
       </article>
     </div>
 
     <p className="jwb-authority-footnote">
-      异常明细：课表重复 {status.anomalies.duplicateScheduleIds} · 课表缺失 ID {status.anomalies.missingScheduleIds} · 学生缺失 ID {status.anomalies.missingStudentIds} · 老师缺失 ID {status.anomalies.missingTeacherIds} · 课程缺失 ID {status.anomalies.missingCourseIds} · 身份冲突 {status.anomalies.identityConflicts}。来源快照、学生、老师、课程、班级、教室和课表映射均已入库；{status.coverage.nativeRecordsSynchronized ? "安全匹配的数据已同步，未安全匹配的数据保留在教务宝来源实体中。" : "现有系统资料尚未同步，所有来源数据仍保留在教务宝来源实体中。"}
+      异常明细：课表重复 {status.anomalies.duplicateScheduleIds} · 课表缺失 ID {status.anomalies.missingScheduleIds} · 学生缺失 ID {status.anomalies.missingStudentIds} · 老师缺失 ID {status.anomalies.missingTeacherIds} · 课程缺失 ID {status.anomalies.missingCourseIds} · 身份冲突 {status.anomalies.identityConflicts}。
     </p>
   </section>;
 }

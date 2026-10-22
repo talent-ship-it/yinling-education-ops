@@ -120,20 +120,17 @@ test("renders sync health, match rates, anomaly counts and private price retenti
     status={status}
     now={Date.parse("2026-08-31T05:00:00.000Z")}
   />);
-  assert.match(html, /非唯一来源/);
   assert.match(html, /30 分钟同步正常/);
   assert.match(html, /学生/);
   assert.match(html, /80\.00%/);
   assert.match(html, /价格字段：已发现并私有保存/);
   assert.match(html, /5 条价格记录/);
-  assert.match(html, /query_schedule_list/);
   assert.doesNotMatch(html, /8d3184a3|sha256:|price_mem|studentPriceRecords/);
 });
 
 test("renders a truthful waiting state before the projection migration is active", () => {
   const html = renderToStaticMarkup(<JiaowubaoAuthorityStatusPanel status={null} />);
   assert.match(html, /等待首次投影/);
-  assert.match(html, /数据库投影尚未产生状态/);
 });
 
 test("keeps a legacy projection receipt visible while native synchronization is pending", () => {
@@ -151,6 +148,5 @@ test("keeps a legacy projection receipt visible while native synchronization is 
   const status = parseJiaowubaoAuthorityStatus(legacySource);
   assert.ok(status);
   const html = renderToStaticMarkup(<JiaowubaoAuthorityStatusPanel status={status} />);
-  assert.match(html, /现有系统资料同步尚未完成/);
   assert.match(html, /现有系统资料同步待完成/);
 });

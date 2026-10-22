@@ -68,9 +68,7 @@ function AuthLoginScreen({
     <main className="login-shell">
       <section className="login-panel">
         <div className="brand-mark">吟</div>
-        <p className="eyebrow">内部教务系统</p>
         <h1>吟领教务</h1>
-        <p className="login-copy">使用账号或姓名与密码进入对应工作视图。</p>
         <form className="login-form" onSubmit={submit}>
           <label htmlFor="username">账号 / 姓名</label>
           <input ref={usernameInputRef} id="username" name="username" value={username} type="text" autoComplete="username" placeholder="例如 Nixon、Abby 教务或老师姓名" maxLength={160} onChange={(event) => setUsername(event.target.value)} />
@@ -80,7 +78,6 @@ function AuthLoginScreen({
             <label htmlFor="mfa-code">验证器验证码</label>
             <input id="mfa-code" name="mfaCode" value={mfaCode} type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="6 位验证码" onChange={(event) => setMfaCode(event.target.value.replace(/\D/gu, "").slice(0, 6))} required />
           </> : null}
-          <small className="login-hint">老师账号须先由管理员设置独立密码；无法登录时请联系管理员。</small>
           {error ? <span className="login-error" id="login-error" role="alert">{error}</span> : null}
           <button type="submit" disabled={loading}>{loading ? "正在进入…" : "进入系统"}</button>
         </form>

@@ -37,10 +37,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   return `/handover-review?${query}`;
  };
  return <main className={styles.page}>
-  <header className={styles.header}><div><p className={styles.eyebrow}>试听与 LP · 来源核对</p><h1>群交接核对</h1><p>{data.batch?.groupName || "等待导入群交接记录"}</p></div><Link href="/">返回工作台</Link></header>
+  <header className={styles.header}><div><h1>群交接核对</h1><p>{data.batch?.groupName || "等待导入群交接记录"}</p></div><Link href="/">返回工作台</Link></header>
   <div className={styles.notice}><strong>保留原文，先核对再进入正式流程</strong><p>这里保存镜像采集的交接资料和核对结果。导入不会自动标记 LP、收费或排课已完成；时间冲突和身份不明确的记录需继续核实。OCR 可能存在错字，以原始截图为准。</p>{data.batch && <small>采集截至 {new Date(data.batch.capturedAt).toLocaleString("zh-CN", { timeZone: "Australia/Melbourne" })}（墨尔本） · 对照为该次核对快照，不代表当前完成状态</small>}</div>
   <section className={styles.botTrialIntake} aria-labelledby="wecom-trial-intake-heading">
-   <div className={styles.botTrialHeading}><div><p className={styles.eyebrow}>企业微信机器人 · 试听身份确认</p><h2 id="wecom-trial-intake-heading">试听身份交接</h2></div>{casePage && <span>当前筛选 {casePage.total} 条 · 待处理 {casePage.pendingCount} 条</span>}</div>
+   <div className={styles.botTrialHeading}><div><h2 id="wecom-trial-intake-heading">试听身份交接</h2></div>{casePage && <span>当前筛选 {casePage.total} 条 · 待处理 {casePage.pendingCount} 条</span>}</div>
    <p>首条交接按群内微信名收录；后续补学生姓名时，微信名可有空格、标点或简短角色后缀等轻微差异，但必须在同群中只有一个明显候选。系统只会确认身份并保留原始资料，不会自动创建正式学生、LP、排课或付款。</p>
    <nav className={styles.tabs} aria-label="试听身份状态">{(["pending", "identified", "all"] as const).map((status) => <Link key={status} href={caseHref(status)} aria-current={caseFilter === status ? "page" : undefined}>{status === "pending" ? "待处理" : status === "identified" ? "已确认" : "全部"}</Link>)}</nav>
    {!casePage ? <p role="alert">试听身份记录暂时无法读取。<a href={caseHref(caseFilter, caseCursor)}>重新加载</a></p> : casePage.rows.length ? <div className={styles.botTrialRecords}>{casePage.rows.map((row) => <article className={styles.botTrialRecord} key={row.id}>

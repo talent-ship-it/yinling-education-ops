@@ -99,9 +99,8 @@ export function AccountSecurityPanel({
   return <section className="panel account-security-panel" aria-labelledby="account-security-heading">
     <div className="panel-header">
       <div>
-        <span className="eyebrow">当前账号</span>
         <h2 id="account-security-heading">账号安全</h2>
-        <p className="form-footnote">{accountLabel} · 密码、双重验证与登录会话</p>
+        <p className="form-footnote">{accountLabel}</p>
       </div>
       <span className={`status-pill ${mfaEnabled ? "green" : "neutral"}`}>
         {mfaEnabled ? <ShieldCheck size={14} aria-hidden="true" /> : <ShieldOff size={14} aria-hidden="true" />}
@@ -135,7 +134,6 @@ export function AccountSecurityPanel({
         <KeyRound size={16} aria-hidden="true" />修改密码
       </button>
     </div>}
-    {!mfaEnabled ? <p className="form-footnote">开始和确认 MFA 都会重新校验当前密码，防止他人利用已登录会话绑定验证器。</p> : null}
 
     {mfaSetup ? <div className="detail-section">
       <span>连接验证器</span>

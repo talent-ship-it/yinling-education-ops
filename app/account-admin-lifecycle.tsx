@@ -111,7 +111,6 @@ export type AccountAdminLifecycleProps = Readonly<{
   error?: string;
   notice?: string;
   title?: string;
-  subtitle?: string;
   onSelectAccount?: (accountId: string) => void;
   onInvite?: (draft: AccountInviteDraft) => void;
   onUpdateAccess?: (change: AccountAccessChange) => void;
@@ -461,7 +460,6 @@ function AccountEditor({
       </div> : <div className="empty-inline">权限投影尚未提供</div>}
       {!authorizationLoaded && <div className="empty-inline" role="status"><RefreshCw size={14} aria-hidden="true" />正在读取服务端权限与范围…</div>}
       {independentPasswordMissing && !account.super_admin && <div className="form-notice" role="status"><KeyRound size={14} aria-hidden="true" />请先在下方设置登录密码，再编辑权限与数据范围。</div>}
-      {account.super_admin && <p style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.5, margin: "10px 0 0" }}>超级管理员权限由服务端判定，组件不在本地展开或覆盖。</p>}
       {onUpdateAccess && !account.super_admin && <button className="primary-button full" type="button" disabled={!authorizationLoaded || independentPasswordMissing || isBusy("access")} onClick={submitAccess} style={{ marginTop: 12 }}>
         <CheckCircle2 size={15} aria-hidden="true" />{!authorizationLoaded ? "正在读取权限…" : independentPasswordMissing ? "请先建立独立密码" : isBusy("access") ? "正在保存…" : "保存权限和范围"}
       </button>}
@@ -514,7 +512,6 @@ function AccountEditor({
       {onViewAccount && account.status === "active" && <button className="primary-button full" type="button" onClick={() => onViewAccount(account)}>
         <Users size={15} aria-hidden="true" />查看此账号视图
       </button>}
-      <p className="form-footnote" style={{ margin: 0 }}>合作结束时可归档账号，保留历史记录。归档和恢复操作都会记录在审计日志中。</p>
     </section>
 
     <div className="detail-section" style={{ marginTop: 0 }}>
@@ -535,7 +532,6 @@ export function AccountAdminLifecycle({
   error,
   notice,
   title = "账号管理",
-  subtitle = "管理在用账号；合作结束后归档，保留账号和历史记录。",
   onSelectAccount,
   onInvite,
   onUpdateAccess,
@@ -599,9 +595,7 @@ export function AccountAdminLifecycle({
   return <section className="panel account-admin-shell" aria-labelledby={headingId}>
     <div className="panel-header" style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 14 }}>
       <div>
-        <span className="eyebrow">账号与权限</span>
         <h2 id={headingId}>{title}</h2>
-        <p style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.5, margin: "5px 0 0" }}>{subtitle}</p>
       </div>
       {onInvite && <details style={{ marginLeft: "auto", minWidth: 260 }}>
         <summary className="secondary-button" style={{ listStyle: "none" }}><UserPlus size={15} aria-hidden="true" />邀请账号</summary>
@@ -637,7 +631,7 @@ export function AccountAdminLifecycle({
         <div role="list" aria-label="账号列表">
           {pagedAccounts.length ? pagedAccounts.map((account) => <div key={account.account_id} role="listitem">
             <button className={`collection-row account-grid-row ${selected?.account_id === account.account_id ? "selected" : ""}`} type="button" style={GRID_STYLE} aria-pressed={selected?.account_id === account.account_id} onClick={() => { setInternalSelectedId(account.account_id); onSelectAccount?.(account.account_id); }}>
-              <span className="table-person"><span className="avatar green" aria-hidden="true">{initials(account.account_name)}</span><span><strong>{account.account_name}</strong><small>{account.super_admin ? "超级管理员" : "账号目录"}</small></span></span>
+              <span className="table-person"><span className="avatar green" aria-hidden="true">{initials(account.account_name)}</span><span><strong>{account.account_name}</strong></span></span>
               <span style={{ alignItems: "flex-start", display: "grid", gap: 4 }}><span className={`status-pill ${statusTone(account.status)}`}>{statusLabel(account.status)}</span><small>{account.mfa_enabled ? "MFA 已启用" : "MFA 未启用"}</small></span>
               <span style={{ display: "grid", gap: 3 }}><strong style={{ fontSize: 12 }}>{roleLabel(account.account_role)}</strong>{typeof account.active_session_count === "number" ? <small>{account.active_session_count} 个会话</small> : null}</span>
             </button>
