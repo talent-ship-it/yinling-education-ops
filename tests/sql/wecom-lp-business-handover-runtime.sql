@@ -43,7 +43,7 @@ begin
     raise exception 'legacy_confirmation_changed_fields_allowed';
   exception when unique_violation then null; end;
 
-  if not internal.wecom_is_lp_template(E'[Rose]二次试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Tynan\n二次试听原因 + 注意事项：换教学方式')
+  if not internal.wecom_is_lp_template(E'[Rose]换老师试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Tynan\n二次试听原因 + 注意事项：换教学方式')
      or not internal.wecom_is_lp_template(E'[Rose]老生LP修改 信息交接[Rose]\n学生姓名：Draft Student\n涉及科目：English\n变动内容：增加写作')
      or internal.wecom_is_lp_template(E'二次试听要不要换老师？\n学生：Draft Student') then
     raise exception 'document_template_shape_classification_failed';
@@ -51,7 +51,7 @@ begin
   if internal.wecom_lp_template_type(E'老生新 LP 信息交接\n备注：老生LP修改 信息交接') <> '老师新 LP'
      or internal.wecom_lp_template_type(E'备注：老生新LP 信息交接\n安排教师：Grace\n安排科目：English') <> '试听 LP'
      or internal.wecom_lp_template_type(E'[Rose]老生加课ｌｐ 信息交接表[Rose]') <> '老师新 LP'
-     or internal.wecom_lp_template_type(E'【LP类型】：二次试听') <> '换老师试听'
+     or internal.wecom_lp_template_type(E'【LP类型】：二次试听') <> '试听 LP'
      or internal.wecom_lp_template_type(E'业务类型：老师LP修改') <> '老师 LP 修改'
      or internal.wecom_lp_template_type(E'老生新LP 信息交接\n老师LP修改 信息交接') is not null then
     raise exception 'explicit_business_type_anchor_alias_or_conflict_failed';
@@ -63,7 +63,7 @@ begin
       E'[Rose]老生新LP 信息交接[Rose]\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
       'handover','pending','WeCom Bot Receiver'),
     ('bot:business:repeat',repeat('d',64),'business-repeat','sales','2099-01-03T00:00:00Z','text',
-      E'[Rose]二次试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Tynan\n二次试听原因 + 注意事项：换教学方式',
+      E'[Rose]换老师试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Tynan\n二次试听原因 + 注意事项：换教学方式',
       'handover','pending','WeCom Bot Receiver'),
     ('bot:business:modify',repeat('e',64),'business-modify','sales','2099-01-03T00:00:00Z','text',
       E'[Rose]老生LP修改 信息交接[Rose]\n学生姓名：Draft Student\n涉及科目：English\n变动内容：增加写作',
@@ -113,7 +113,7 @@ begin
     E'老生新LP 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English',
     'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
     ('bot:business:followup-type','bb'||repeat('c',62),'business-followup','sales','2099-01-05T01:00:00Z','text',
-    E'业务类型：二次试听\n学生姓名：Draft Student',
+    E'业务类型：换老师试听\n学生姓名：Draft Student',
     'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver');
   source := internal.wecom_lp_draft_source('bot:business:followup');
   begin
@@ -288,7 +288,7 @@ begin
     E'老生新LP 信息交接\n学生姓名：Business No Guardian\n安排教师：Grace\n安排科目：English',
     'handover','Business No Guardian','Abby','Tara','pending','WeCom Bot Receiver'),
     ('bot:independent:repeat',repeat('3',64),'independent-repeat','sales','2099-01-07','text',
-    E'二次试听 信息交接\n学生：Business No Guardian\n安排教师：Tynan\n重听原因：更换教学方式',
+    E'换老师试听 信息交接\n学生：Business No Guardian\n安排教师：Tynan\n重听原因：更换教学方式',
     'handover','Business No Guardian','Abby','Tara','pending','WeCom Bot Receiver');
   for kind,message_id_value,command_value,fields in select * from (values
     ('老师新 LP','bot:independent:new','20000000-0000-4000-8000-000000000032',common||'{"teacher":"Grace","subject":"English","writingRequired":false,"paperRequired":false}'::jsonb),
@@ -333,10 +333,10 @@ begin
       E'老生LP修改 信息交接\n学生姓名：Draft Student\n安排教师：Grace\n安排科目：English\n变动内容：更改重点',
       'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
     ('bot:scope:repeat',repeat('4',64),'scope-repeat','sales','2099-01-09','text',
-      E'二次试听 信息交接\n学生姓名：Draft Student\n安排教师：Tynan\n安排科目：English\n重听原因：更换教师',
+      E'换老师试听 信息交接\n学生姓名：Draft Student\n安排教师：Tynan\n安排科目：English\n重听原因：更换教师',
       'handover','Draft Student','Draft Parent','Abby','Tara','pending','WeCom Bot Receiver'),
     ('bot:scope:repeat-independent',repeat('5',64),'scope-repeat-independent','sales','2099-01-09','text',
-      E'二次试听 信息交接\n学生姓名：Scope No Guardian\n安排教师：Tynan\n重听原因：更换教师',
+      E'换老师试听 信息交接\n学生姓名：Scope No Guardian\n安排教师：Tynan\n重听原因：更换教师',
       'handover','Scope No Guardian',null,'Abby','Tara','pending','WeCom Bot Receiver'),
     ('bot:scope:modify-independent',repeat('6',64),'scope-modify-independent','sales','2099-01-09','text',
       E'老生LP修改 信息交接\n学生姓名：Scope No Guardian\n涉及科目：English\n变动内容：更改重点',
@@ -436,3 +436,65 @@ end;
 $name_only_siblings$;
 rollback;
 select 'wecom_lp_name_only_siblings_runtime_ok' as result;
+
+
+begin;
+do $ordinary_repeat_trials$
+declare source jsonb; before_state jsonb; receipt record; replay record; case_value text;
+  fields jsonb := internal.fixture_wecom_lp_fields();
+  assignment jsonb := '{"owner":"Abby","planner":"Tara","mayReassign":false}';
+begin
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:repeat:historical','Abby',false);
+  if source is null or source->>'caseId' is distinct from (select id::text from internal.fixture_repeat_before)
+     or source->'messages'->0->>'text' is distinct from (select body from internal.fixture_repeat_before)
+     or internal.wecom_lp_template_type(source->'messages'->0->>'text') is distinct from '试听 LP'
+     or exists(select 1 from internal.wecom_lp_confirmations where source_message_id='bot:repeat:historical') then
+    raise exception 'historical_repeat_reclassification_lost_source_or_created_lp';
+  end if;
+  select jsonb_object_agg(entity,to_jsonb(s)) into before_state from public.ops_state s;
+  insert into internal.wecom_archive_messages(message_id,content_sha256,chat_id,sender_id,sent_at,
+    message_type,body,classification,student_name_hint,operations_owner_hint,course_planner_hint,match_status,ingested_by)
+  values ('bot:ordinary:repeat',repeat('9',64),'ordinary-repeat','sales','2099-01-03','text',
+    E'[Rose]二次试听 信息交接[Rose]\n学生：Draft Student\n安排教师：Grace\n二次试听原因+注意事项：很久以前上过写作，现在想重新试听',
+    'handover','Draft Student','Abby','Tara','pending','WeCom Bot Receiver');
+  source := public.read_wecom_lp_draft('wecom-fixture-secret','bot:ordinary:repeat','Abby',false);
+  case_value := source->>'caseId';
+  if source is null or source->>'sourceKind' <> 'business' or source->>'wechatName' <> ''
+     or internal.wecom_lp_template_type(source->'messages'->0->>'text') <> '试听 LP'
+     or not internal.wecom_is_trial_lp_template(source->'messages'->0->>'text')
+     or exists(select 1 from internal.wecom_archive_messages where message_id='bot:ordinary:repeat'
+       and (guardian_wechat_hint is not null or trial_handover_id is not null))
+     or not exists(select 1 from jsonb_array_elements(public.read_wecom_lp_drafts('wecom-fixture-secret','Abby',false)->'rows') d
+       where d->>'sourceMessageId'='bot:ordinary:repeat') then
+    raise exception 'ordinary_repeat_not_readable_without_guardian';
+  end if;
+  if (select jsonb_object_agg(entity,to_jsonb(s)) from public.ops_state s) is distinct from before_state then
+    raise exception 'ordinary_repeat_ingest_mutated_business_state';
+  end if;
+  begin
+    perform public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',case_value::uuid,
+      'bot:ordinary:repeat',source->>'sourceRevision','30000000-0000-4000-8000-000000000001','STU-DRAFT-1',null,
+      '{"newTeacher":"Grace","subject":"English","changeReason":"repeat"}',assignment,
+      internal.fixture_wecom_lp_versions(),'Abby',false,'换老师试听');
+    raise exception 'ordinary_repeat_teacher_change_confirmation_allowed';
+  exception when invalid_parameter_value then
+    if sqlerrm <> 'wecom_lp_source_workflow_mismatch' then raise; end if;
+  end;
+  fields := fields || '{"specialNotes":"很久以前上过写作，现在想重新试听"}'::jsonb;
+  select * into receipt from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',case_value::uuid,
+    'bot:ordinary:repeat',source->>'sourceRevision','30000000-0000-4000-8000-000000000002','STU-DRAFT-1',null,
+    fields,assignment,internal.fixture_wecom_lp_versions(),'Abby',false,'试听 LP');
+  if not receipt.applied or not exists(select 1 from jsonb_array_elements((receipt.lp_items_row).payload) lp
+    where lp->>'id'=receipt.lp_item_id and lp->>'workflowType'='试听 LP'
+      and lp->'fields'->>'assignedTeacher'=fields->>'assignedTeacher'
+      and lp->'fields'->>'specialNotes'=fields->>'specialNotes') then
+    raise exception 'ordinary_repeat_confirmation_failed';
+  end if;
+  select * into replay from public.confirm_wecom_lp_draft_atomic('wecom-fixture-secret',case_value::uuid,
+    'bot:ordinary:repeat',source->>'sourceRevision','30000000-0000-4000-8000-000000000002','STU-DRAFT-1',null,
+    fields,assignment,internal.fixture_wecom_lp_versions(),'Abby',false,'试听 LP');
+  if replay.applied or replay.lp_item_id <> receipt.lp_item_id then raise exception 'ordinary_repeat_replay_failed'; end if;
+end;
+$ordinary_repeat_trials$;
+rollback;
+select 'wecom_ordinary_repeat_trials_runtime_ok' as result;

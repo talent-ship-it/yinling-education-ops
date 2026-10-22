@@ -5,7 +5,7 @@ export type WecomLpWorkflowType = typeof WECOM_LP_WORKFLOW_TYPES[number];
 
 const workflowAliases: Readonly<Record<string, WecomLpWorkflowType>> = {
   "试听LP": "试听 LP", "老生新LP": "老师新 LP", "老生加课LP": "老师新 LP", "老师新LP": "老师新 LP",
-  "二次试听": "换老师试听", "换老师试听": "换老师试听", "老生LP修改": "老师 LP 修改", "老师LP修改": "老师 LP 修改",
+  "二次试听": "试听 LP", "换老师试听": "换老师试听", "老生LP修改": "老师 LP 修改", "老师LP修改": "老师 LP 修改",
 };
 
 function workflowName(value: string) {
@@ -216,6 +216,7 @@ function collectRecordValues(records: readonly WecomLpDraftSourceRecord[], workf
   const add = (field: string, value: string, messageId: string) => {
     const cleaned = cleanValue(value);
     if (!cleaned) return;
+    if (field === "newTeacher" && workflowType === "试听 LP") field = "assignedTeacher";
     if (field === "assignedTeacher" && workflowType && workflowType !== "试听 LP") field = workflowType === "换老师试听" ? "newTeacher" : "teacher";
     const entries = raw.get(field) ?? [];
     entries.push({ value: cleaned, messageId });
@@ -331,6 +332,9 @@ export function buildWecomLpDraft(records: readonly WecomLpDraftSourceRecord[]):
   const state = resolveSourceFields(raw);
   deriveStudentNameKnown(ordered, raw, state);
   deriveContactAndTime(raw, state);
+  if (workflowType === "试听 LP" && typeof state.values.changeReason === "string" && !hasFieldConflict(state, "specialNotes")) {
+    state.values.specialNotes = [...new Set([state.values.changeReason, state.values.specialNotes].filter((value): value is string => typeof value === "string"))].join("\n");
+  }
   if (workflowType === null) state.conflicts.push({ field: "workflowType", label: "LP 类型", values: [...types.keys()], messageIds: [...new Set([...types.values()].flat())] });
   const { values, conflicts, unresolvedValues } = state;
   const studentName = stringValue(values, "studentName");

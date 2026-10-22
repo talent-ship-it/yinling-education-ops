@@ -461,7 +461,7 @@ test("new LP and modification handovers cannot compete for a trial event", () =>
 test("repeat trial uses the new teacher and ignores the original teacher event", () => {
   const original = source();
   const repeat = { ...original, messages: original.messages.map((message) => ({ ...message,
-    text: `二次试听 信息交接\n学生姓名：Child One\n原任课老师：Original Teacher\n二次试听原因：更换老师\n${message.text}` })) };
+    text: `换老师试听 信息交接\n学生姓名：Child One\n原任课老师：Original Teacher\n二次试听原因：更换老师\n${message.text}` })) };
   const wrong = event("original-event", { sourceTeacherLabel: "Original Teacher" });
   const correct = event("repeat-event");
   const result = project({ sources: [repeat], events: [wrong, correct],
