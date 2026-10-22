@@ -198,6 +198,7 @@ export function filterAndSortTrialLedgerRows(
     const haystack = normalizeSearch([
       row.studentName,
       row.guardianWechat,
+      row.workflowType,
       row.subject,
       row.teacher,
       row.note,

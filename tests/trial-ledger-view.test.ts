@@ -96,6 +96,44 @@ test("combines text, ownership, planner, month, status, paid and date-range filt
   assert.equal(trialLedgerViewHasFilters({ ...defaultTrialLedgerViewState(), sortDirection: "asc" }), false);
 });
 
+test("searches handover workflow types by full name, partial text and normalized LP", () => {
+  const state = defaultTrialLedgerViewState();
+  for (const [query, expected] of [
+    ["试听 LP", ["LP-1", "LP-3"]],
+    ["换老师试听", ["LP-2"]],
+    ["换老师", ["LP-2"]],
+    ["试听", ["LP-1", "LP-2", "LP-3"]],
+    ["ｌｐ", ["LP-1", "LP-3"]],
+    ["不存在的类型", []],
+  ] as const) {
+    const filtered = filterAndSortTrialLedgerRows(rows, { ...state, query });
+    assert.deepEqual(filtered.map((row) => row.id), expected, query);
+  }
+});
+
+test("combines workflow-type search with other search fields and existing filters", () => {
+  const state = defaultTrialLedgerViewState();
+  assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
+    ...state,
+    query: "换老师 Bella Mathematics Zara follow",
+    workflowType: "换老师试听",
+    operationsOwner: "Tiffany",
+    paid: "unpaid",
+  }).map((row) => row.id), ["LP-2"]);
+  assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
+    ...state, query: "换老师", workflowType: "试听 LP",
+  }), []);
+  assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
+    ...state, query: "换老师", operationsOwner: "Ella",
+  }), []);
+  assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
+    ...state, query: "换老师 Alice",
+  }), []);
+  assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
+    ...state, query: "试听 lp", paid: "paid", scheduledFrom: "2026-08-01",
+  }).map((row) => row.id), ["LP-1"]);
+});
+
 test("sorts dates and names deterministically while leaving unscheduled rows last", () => {
   assert.deepEqual(filterAndSortTrialLedgerRows(rows, {
     ...defaultTrialLedgerViewState(),
