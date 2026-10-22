@@ -34,7 +34,26 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
   `"$HOME/Documents/Codex/bin/codex-project-credential" check maton`. If a
   Keychain-backed check reports missing or denied inside the sandbox, request
   system-level execution and retry. Only a failed system-level check is a hard
-  stop. External writes always require explicit approval.
+  stop. External writes require explicit approval unless covered by the
+  standing application-release authorization below.
+
+## Standing application-release authorization
+
+- Nixon authorized this workflow on 2026-10-22 for
+  `talent-ship-it/yinling-education-ops`: after user-requested application
+  changes pass relevant tests, review, and all required release checks,
+  commit, push the task branch, open a PR, merge into the configured production
+  branch, and verify the resulting production deployment. Do not wait for a
+  separate go-live confirmation or ask for the same release approval again.
+- Honor an explicit review-only, local-only, or do-not-publish request. Keep
+  changes within the requested scope and retain account/target verification,
+  required checks, and the reviewed GitHub-to-Vercel release flow. Production
+  application code must be deployed by the GitHub merge, never a direct local
+  Vercel deployment.
+- Failed or unavailable required checks block release until resolved; report
+  the exact blocker without bypassing the check. This standing authorization
+  covers application-code releases, not unrelated external writes, production
+  data/database mutations, credential changes, billing, or destructive actions.
 
 ## Git, worktree, and deletion safety
 

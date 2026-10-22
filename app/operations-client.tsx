@@ -164,6 +164,7 @@ import {
   allowedLpResultStatuses,
   changeLpResultStatus,
   changeLpStage,
+  lpResultStatusLabel,
   type LpFieldValues,
   type LpRevision,
   type LpResultAuditEntry,
@@ -6228,8 +6229,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return { ...entry, resultStatus: changed.resultStatus, resultAudit: [...(changed.resultAudit ?? [])] };
     }))
       .then(() => {
-        addAudit("更新 LP 业务结果", `${item.title}：${previous ?? "未设置"} → ${resultStatus ?? "未设置"}`, "blue");
-        notify(`LP 业务结果已保存${resultStatus ? `：${resultStatus}` : ""}`);
+        addAudit("更新 LP 业务结果", `${item.title}：${previous ? lpResultStatusLabel(previous) : "未设置"} → ${resultStatus ? lpResultStatusLabel(resultStatus) : "未设置"}`, "blue");
+        notify(`LP 业务结果已保存${resultStatus ? `：${lpResultStatusLabel(resultStatus)}` : ""}`);
       })
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "LP 业务结果保存失败"));
   };
@@ -8660,7 +8661,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const resultControl = (item: LpItem) => {
       const options = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
       const value = effectiveTrialResultStatus(item) ?? item.resultStatus ?? "";
-      return options.length ? <select className="lp-result-select" value={value} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}>{value ? null : <option value="">业务结果</option>}{options.map((status) => <option value={status} key={status}>{status}</option>)}</select> : null;
+      return options.length ? <select className="lp-result-select" value={value} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}>{value ? null : <option value="">业务结果</option>}{options.map((status) => <option value={status} key={status}>{lpResultStatusLabel(status)}</option>)}</select> : null;
     };
     const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType === "试听 LP" || item.workflowType === "换老师试听");
     const trialLedgerViewInteractive = trialLedgerViewReady && trialLedgerViewOwner === sessionOperator;
@@ -8981,7 +8982,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <label><span>课程规划老师</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.planner} onChange={(event) => updateTrialLedgerView({ planner: event.target.value })}><option value="all">全部规划老师</option>{trialLedgerFilterOptions("planner").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>科目</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.subject} onChange={(event) => updateTrialLedgerView({ subject: event.target.value })}><option value="all">全部科目</option>{trialLedgerFilterOptions("subject").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>老师</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.teacher} onChange={(event) => updateTrialLedgerView({ teacher: event.target.value })}><option value="all">全部老师</option>{trialLedgerFilterOptions("teacher").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-              <label><span>试听状态</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.resultStatus} onChange={(event) => updateTrialLedgerView({ resultStatus: event.target.value })}><option value="all">全部状态</option>{TRIAL_LEDGER_RESULT_STATUSES.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+              <label><span>试听状态</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.resultStatus} onChange={(event) => updateTrialLedgerView({ resultStatus: event.target.value })}><option value="all">全部状态</option>{TRIAL_LEDGER_RESULT_STATUSES.map((value) => <option value={value} key={value}>{lpResultStatusLabel(value)}</option>)}</select></label>
               <label><span>是否付费</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.paid} onChange={(event) => updateTrialLedgerView({ paid: event.target.value as TrialLedgerViewState["paid"] })}><option value="all">全部</option><option value="paid">是</option><option value="unpaid">否</option></select></label>
               <label><span>排序字段</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortKey} onChange={(event) => updateTrialLedgerView({ sortKey: event.target.value as TrialLedgerViewState["sortKey"] })}><option value="scheduledAt">上课日期/时间</option><option value="requestedAt">请求日期/时间</option><option value="lessonMonth">上课月份</option><option value="studentName">学生姓名</option></select></label>
               <label><span>排序方向</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortDirection} onChange={(event) => updateTrialLedgerView({ sortDirection: event.target.value as TrialLedgerViewState["sortDirection"] })}><option value="desc">降序（最新优先）</option><option value="asc">升序（最早优先）</option></select></label>
@@ -8993,7 +8994,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </section>
           <div className="trial-ledger-stats" role="status" aria-live="polite">
             <span className="trial-ledger-stat-total"><small>筛选结果</small><strong>{trialLedgerStats.total}</strong></span>
-            {TRIAL_LEDGER_RESULT_STATUSES.map((status) => <span key={status}><small>{status}</small><strong>{trialLedgerStats.byStatus[status] ?? 0}</strong></span>)}
+            {TRIAL_LEDGER_RESULT_STATUSES.map((status) => <span key={status}><small>{lpResultStatusLabel(status)}</small><strong>{trialLedgerStats.byStatus[status] ?? 0}</strong></span>)}
             <span className="trial-ledger-success-rate" title="成功率只计算已明确为成功或失败的试听"><small>成功率</small><strong>{trialLedgerStats.successRate === null ? "—" : `${trialLedgerStats.successRate}%`}</strong><em>成功 {trialLedgerStats.successful} / 已出结果 {trialLedgerStats.resolved}</em></span>
           </div>
           {visibleTrialLedgerEntries.length ? <div className="trial-ledger-scroll">
@@ -9016,7 +9017,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{ledgerSelectCell({ item, field: "planner", automaticValue: automaticPlanner, label: `${automaticStudentName || item.id} 课程规划老师`, options: TRIAL_LEDGER_PLANNERS })}</td>
                 <td>{ledgerTextCell({ item, field: "subject", automaticValue: automaticSubject, label: `${automaticStudentName || item.id} 科目`, list: "trial-ledger-subject-options", placeholder: "待填写" })}</td>
                 <td>{ledgerTextCell({ item, field: "teacher", automaticValue: automaticTeacher, label: `${automaticStudentName || item.id} 老师`, list: "trial-ledger-teacher-options", placeholder: "待匹配", sourceLabel: schedule?.teacherName ? "教务宝真实数据" : "自动填充" })}</td>
-                <td><div className={`ledger-edit-cell ${item.resultStatus ? "manual" : "automatic"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={effectiveTrialResultStatus(item) ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value as LpResultStatus)}>{resultOptions.map((status) => <option value={status} key={status}>{status}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : item.resultStatus ? "人工结果" : "新建默认值"}</small></span></div></td>
+                <td><div className={`ledger-edit-cell ${item.resultStatus ? "manual" : "automatic"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[resultKey] === true} value={effectiveTrialResultStatus(item) ?? ""} aria-label={`${automaticStudentName || item.id} 试听状态`} onChange={(event) => setLpResult(item, event.target.value as LpResultStatus)}>{resultOptions.map((status) => <option value={status} key={status}>{lpResultStatusLabel(status)}</option>)}</select><span className="ledger-cell-meta"><small>{trialLedgerSaving[resultKey] ? "保存中…" : item.resultStatus ? "人工结果" : "新建默认值"}</small></span></div></td>
                 <td><div className={`ledger-edit-cell ${storedPaid === undefined ? "automatic" : "manual"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[paidKey] === true} value={storedPaid === undefined ? "" : storedPaid ? "true" : "false"} aria-label={`${automaticStudentName || item.id} 是否付费`} onChange={(event) => { const value = event.target.value === "" ? undefined : event.target.value === "true"; void saveTrialLedgerFieldAtomic(item, "trialPaid", value).catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败")); }}><option value="">自动 · {automaticPaid ? "是" : "否"}</option><option value="true">是</option><option value="false">否</option></select><span className="ledger-cell-meta"><small>{trialLedgerSaving[paidKey] ? "保存中…" : storedPaid === undefined ? "按付费方式自动判断" : "手动值"}</small></span></div></td>
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
                 <td><TrialScheduleDetails schedule={schedule} pendingLabel={pendingScheduleLabel(item)} onComplete={trialScreenshotAllowed(item) ? () => setTrialScreenshotItem(item) : undefined} /></td>
@@ -9047,7 +9048,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                     <p>{student?.name}</p>
                     <h3>{item.title}</h3>
                     <span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span>
-                    <div className="card-tags"><StatusPill tone={stageTone(item.stage)}>{item.stage}</StatusPill>{item.resultStatus && <StatusPill tone={item.resultStatus.includes("成功") ? "green" : item.resultStatus.includes("失败") ? "red" : "amber"}>{item.resultStatus}</StatusPill>}{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>
+                    <div className="card-tags"><StatusPill tone={stageTone(item.stage)}>{item.stage}</StatusPill>{item.resultStatus && <StatusPill tone={item.resultStatus.includes("成功") ? "green" : item.resultStatus.includes("失败") ? "red" : "amber"}>{lpResultStatusLabel(item.resultStatus)}</StatusPill>}{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>
                     {trialIntakeDetails(item)}
                     {resultControl(item)}
                     {stageControls(item)}
