@@ -17,6 +17,8 @@ export const sqlRuntimeFixtures = Object.freeze([
       end: "create temporary table fixture_metadata_before as" },
     { kind: "sql", file: "tests/sql/wecom-lp-business-metadata-setup.sql" },
     { kind: "sql", file: "supabase/migrations/20261021130241_lp_business_handover_types.sql" },
+    { kind: "sql", file: "tests/sql/wecom-repeat-trial-upgrade-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20261022064824_classify_repeat_trials.sql" },
     { kind: "sql", file: "tests/sql/wecom-lp-business-handover-runtime.sql" },
   ] },
   { id: "wecom-handover-schedule-workflow-batch", source: "tests/sql/wecom-handover-schedule-workflow-batch-runtime.ts", steps: [
@@ -30,6 +32,7 @@ export const sqlRuntimeFixtures = Object.freeze([
       end: "create temporary table fixture_metadata_before as" },
     { kind: "sql", file: "tests/sql/wecom-lp-business-metadata-setup.sql" },
     { kind: "sql", file: "supabase/migrations/20261021130241_lp_business_handover_types.sql" },
+    { kind: "sql", file: "supabase/migrations/20261022064824_classify_repeat_trials.sql" },
     { kind: "typescript", file: "tests/sql/wecom-handover-schedule-workflow-batch-runtime.ts", databaseArgument: true },
   ] },
   { id: "wecom-handover-schedule-run-metadata", source: "tests/sql/wecom-handover-schedule-run-metadata-runtime.sql", steps: [

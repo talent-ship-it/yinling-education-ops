@@ -4,7 +4,7 @@ import { displayTimezoneOptions } from "./display-preferences";
 import { isRetiredOperationsIdentity, normaliseDemoUserName, resolveDemoOperationsName, resolveDemoStaffName } from "./demo-users";
 import type { LpFieldValues } from "./lp-workflows";
 import type { StudentCreationFields } from "./student-creation-service";
-import { buildWecomLpDraft, WECOM_LP_WORKFLOW_TYPES, type WecomLpWorkflowType, type WecomLpDraft, type WecomLpDraftSourceRecord } from "./wecom-lp-draft";
+import { buildWecomLpDraft, wecomLpExplicitWorkflowTypes, WECOM_LP_WORKFLOW_TYPES, type WecomLpWorkflowType, type WecomLpDraft, type WecomLpDraftSourceRecord } from "./wecom-lp-draft";
 import type { TrialScheduleLink } from "./trial-operations";
 
 export type WecomLpDraftSource = Readonly<{
@@ -88,7 +88,7 @@ export function matchWecomDraftStudent(source: WecomLpDraftRawSource, students: 
   const messageGuardian = guardianKey(draft.guardianWechat);
   if (draft.conflicts.some((conflict) => conflict.field === "guardianWechat") || messageGuardian && messageGuardian !== guardian) return null;
   const sourceName = source.studentName ?? draft.studentName;
-  const nameOnly = draft.workflowType !== "试听 LP" && draft.workflowType !== null && !guardian && Boolean(sourceName);
+  const nameOnly = !guardian && Boolean(sourceName) && !draft.conflicts.some((conflict) => conflict.field === "studentName") && source.messages.some((message) => wecomLpExplicitWorkflowTypes(message.text).length > 0);
   const candidates = students.filter((student) => student.importArchived !== true && (
     hintedIds.size === 1 ? hintedIds.has(String(student.id))
       : nameOnly ? key(student.name) === key(sourceName)

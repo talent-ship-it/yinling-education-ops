@@ -97,7 +97,7 @@ test("unregistered title-only candidates expose class details while leaving ever
 
 
 test("repeat-trial evidence resolves visible names without adding initial-trial-only fields", () => {
-  const repeatRaw = { ...raw, messages: [{ ...raw.messages[0], text: `二次试听 信息交接\n${raw.messages[0].text}` }] };
+  const repeatRaw = { ...raw, messages: [{ ...raw.messages[0], text: `换老师试听 信息交接\n${raw.messages[0].text}` }] };
   const repeat = decorateWecomLpDraft(repeatRaw, [student], rows);
   const result = applyWecomHandoverScheduleEvidence(repeat, evidence, rows);
   assert.equal(result.draft.workflowType, "换老师试听");

@@ -710,3 +710,21 @@ test("focus refresh withdraws invalidated schedule evidence without waiting for 
   expect(f.posted).toEqual([]);
   assertClean(f);
 });
+
+
+test("repeat trial handover stays a pending ordinary trial and preserves historical context", async ({ page }) => {
+  const reason = "以前试听过写作,现在想重新安排,本次还没有试听。";
+  const f = await syntheticWorkspace(page, { text: `二次试听 信息交接\n${template.replace("安排教师", "新老师")}\n【二次试听原因+注意事项】：${reason}\n【特殊备注】：提前确认材料` });
+  const dialog = await openDraft(page);
+  await expect(dialog.locator('select[name="workflowType"]')).toHaveValue("试听 LP");
+  await expect(dialog.locator('[name="assignedTeacher"]')).toHaveValue("Teacher Example");
+  await expect(dialog.locator('[name="newTeacher"]')).toHaveCount(0);
+  await expect(dialog.locator('[name="specialNotes"]')).toHaveValue(`${reason}\n提前确认材料`);
+  expect(f.posted).toHaveLength(0);
+  await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(f.posted).toHaveLength(1);
+  expect(f.posted[0]).toMatchObject({ workflowType: "试听 LP", fields: { assignedTeacher: "Teacher Example", specialNotes: `${reason}\n提前确认材料` } });
+  expect(f.posted[0].fields.trialSchedule).toBeUndefined();
+  assertClean(f);
+});
