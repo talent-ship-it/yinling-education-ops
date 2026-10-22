@@ -1,6 +1,6 @@
 import { matchesOperationsOwnerFilter, operationsOwnerFilterOptions, resolveAssignableOperationsOwner } from "./demo-users";
-import { TRIAL_LEDGER_RESULT_STATUSES } from "./lp-workflows";
-import { TRIAL_LEDGER_PLANNERS } from "./trial-ledger";
+import { LP_RESULT_STATUSES } from "./lp-workflows";
+import { TRIAL_LEDGER_PLANNERS, TRIAL_LEDGER_WORKFLOW_TYPES } from "./trial-ledger";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -63,7 +63,8 @@ export type TrialLedgerViewStats = Readonly<{
 const sortKeys = new Set<string>(TRIAL_LEDGER_SORT_KEYS);
 const directions = new Set<string>(["asc", "desc"]);
 const paidFilters = new Set<string>([ALL, "paid", "unpaid"]);
-const statuses = new Set<string>(TRIAL_LEDGER_RESULT_STATUSES);
+const statuses = new Set<string>(LP_RESULT_STATUSES);
+const trialTypes = new Set<string>(TRIAL_LEDGER_WORKFLOW_TYPES);
 
 export function defaultTrialLedgerViewState(): TrialLedgerViewState {
   return {
@@ -210,7 +211,7 @@ export function filterAndSortTrialLedgerRows(
     if (!matchesExact(state.subject, row.subject)) return false;
     if (!matchesExact(state.teacher, row.teacher)) return false;
     if (!matchesExact(state.resultStatus, row.resultStatus)) return false;
-    if (state.paid !== ALL && row.paid !== (state.paid === "paid")) return false;
+    if (state.paid !== ALL && (!trialTypes.has(row.workflowType) || row.paid !== (state.paid === "paid"))) return false;
     if (state.scheduledFrom && (!row.scheduledDate || row.scheduledDate < state.scheduledFrom)) return false;
     if (state.scheduledTo && (!row.scheduledDate || row.scheduledDate > state.scheduledTo)) return false;
     return true;
@@ -226,11 +227,16 @@ export function filterAndSortTrialLedgerRows(
 
 export function trialLedgerViewStats(rows: readonly TrialLedgerViewRow[]): TrialLedgerViewStats {
   const byStatus: Record<string, number> = Object.fromEntries(
-    TRIAL_LEDGER_RESULT_STATUSES.map((status) => [status, 0]),
+    LP_RESULT_STATUSES.map((status) => [status, 0]),
   );
-  for (const row of rows) byStatus[row.resultStatus] = (byStatus[row.resultStatus] ?? 0) + 1;
-  const successful = (byStatus["试听成功"] ?? 0) + (byStatus["在读试听成功"] ?? 0);
-  const failed = (byStatus["试听失败"] ?? 0) + (byStatus["在读试听失败"] ?? 0);
+  let successful = 0;
+  let failed = 0;
+  for (const row of rows) {
+    if (row.resultStatus) byStatus[row.resultStatus] = (byStatus[row.resultStatus] ?? 0) + 1;
+    if (!trialTypes.has(row.workflowType)) continue;
+    if (["试听成功", "在读试听成功"].includes(row.resultStatus)) successful++;
+    if (["试听失败", "在读试听失败"].includes(row.resultStatus)) failed++;
+  }
   const resolved = successful + failed;
   return {
     total: rows.length,

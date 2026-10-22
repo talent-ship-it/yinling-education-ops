@@ -158,8 +158,8 @@ import {
 } from "@/lib/ops-tasks";
 import {
   LP_STAGES,
+  LP_RESULT_STATUSES,
   LP_WORKFLOW_TYPES,
-  TRIAL_LEDGER_RESULT_STATUSES,
   TRIAL_OPERATIONS,
   allowedLpResultStatuses,
   changeLpResultStatus,
@@ -8663,7 +8663,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const value = effectiveTrialResultStatus(item) ?? item.resultStatus ?? "";
       return options.length ? <select className="lp-result-select" value={value} aria-label={`${item.title} 业务结果`} onChange={(event) => setLpResult(item, event.target.value ? event.target.value as LpResultStatus : undefined)}>{value ? null : <option value="">业务结果</option>}{options.map((status) => <option value={status} key={status}>{lpResultStatusLabel(status)}</option>)}</select> : null;
     };
-    const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType === "试听 LP" || item.workflowType === "换老师试听");
+    const trialLedgerItems = scopedLpItems.filter((item) => item.workflowType && LP_WORKFLOW_TYPES.includes(item.workflowType));
     const trialLedgerViewInteractive = trialLedgerViewReady && trialLedgerViewOwner === sessionOperator;
     const activeTrialLedgerView = trialLedgerViewInteractive
       ? trialLedgerView
@@ -8682,9 +8682,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const automaticLessonMonth = effectiveScheduledAt
         ? isoDateInTimezone(new Date(effectiveScheduledAt), "Australia/Melbourne").slice(0, 7)
         : "";
-      const automaticPlanner = item.trialIntake?.planner || student?.planner || "";
+      const automaticPlanner = item.trialIntake?.planner || String(item.fields?.planner ?? student?.planner ?? "");
       const automaticSubject = String(item.fields?.subject ?? student?.course ?? "");
-      const automaticTeacher = schedule?.teacherName || String(item.fields?.assignedTeacher ?? student?.teacher ?? "");
+      const automaticTeacher = schedule?.teacherName || String(item.fields?.assignedTeacher ?? item.fields?.newTeacher ?? item.fields?.substituteTeacher ?? item.fields?.teacher ?? student?.teacher ?? "");
       const automaticPaid = ["付费试听（已付费）", "在读学生付费试听"]
         .includes(String(item.fields?.trialPaymentMethod ?? ""));
       const storedPaid = trialLedgerStoredValue(item, "trialPaid");
@@ -8717,9 +8717,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           planner: String(trialLedgerStoredValue(item, "planner") ?? automaticPlanner),
           subject: String(trialLedgerStoredValue(item, "subject") ?? automaticSubject),
           teacher: String(trialLedgerStoredValue(item, "teacher") ?? automaticTeacher),
-          resultStatus: effectiveTrialResultStatus(item) ?? "试听未进行",
+          resultStatus: isTrialLedgerWorkflow(item) ? effectiveTrialResultStatus(item) ?? "试听未进行" : item.resultStatus ?? "",
           paid: typeof storedPaid === "boolean" ? storedPaid : automaticPaid,
-          note: String(trialLedgerStoredValue(item, "trialLedgerNote") ?? ""),
+          note: String(trialLedgerStoredValue(item, "trialLedgerNote") ?? (isTrialLedgerWorkflow(item) ? "" : item.fields?.specialNotes ?? item.fields?.modificationRequirements ?? item.fields?.handoverNotes ?? item.fields?.enrollmentHandoverNotes ?? "")),
         },
       };
     });
@@ -8969,12 +8969,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         }}
       /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
-        <header className="panel-header trial-ledger-header"><div><h2 id="trial-ledger-title">试听复盘台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条试听` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条试听`}</span></div></header>
+        <header className="panel-header trial-ledger-header"><div><h2 id="trial-ledger-title">LP 交接台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条记录` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条记录`}</span></div></header>
         {trialLedgerItems.length ? <>
-          <section className="trial-ledger-tools" aria-label="试听台账筛选与排序">
+          <section className="trial-ledger-tools" aria-label="LP 台账筛选与排序">
             <div className="trial-ledger-filter-grid">
               <label className="trial-ledger-query"><span>搜索</span><input disabled={!trialLedgerViewInteractive} type="search" value={activeTrialLedgerView.query} placeholder="学生、家长微信、科目、老师或备注" onChange={(event) => updateTrialLedgerView({ query: event.target.value })} /></label>
-              <label><span>LP 类型</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.workflowType} onChange={(event) => updateTrialLedgerView({ workflowType: event.target.value })}><option value="all">全部类型</option>{TRIAL_LEDGER_WORKFLOW_TYPES.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+              <label><span>LP 类型</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.workflowType} onChange={(event) => updateTrialLedgerView({ workflowType: event.target.value })}><option value="all">全部类型</option>{LP_WORKFLOW_TYPES.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>上课月份</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.lessonMonth} onChange={(event) => updateTrialLedgerView({ lessonMonth: event.target.value })}><option value="all">全部月份</option>{trialLedgerFilterOptions("lessonMonth").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>上课日期从</span><input disabled={!trialLedgerViewInteractive} type="date" value={activeTrialLedgerView.scheduledFrom} onChange={(event) => updateTrialLedgerView({ scheduledFrom: event.target.value })} /></label>
               <label><span>上课日期至</span><input disabled={!trialLedgerViewInteractive} type="date" value={activeTrialLedgerView.scheduledTo} onChange={(event) => updateTrialLedgerView({ scheduledTo: event.target.value })} /></label>
@@ -8982,7 +8982,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <label><span>课程规划老师</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.planner} onChange={(event) => updateTrialLedgerView({ planner: event.target.value })}><option value="all">全部规划老师</option>{trialLedgerFilterOptions("planner").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>科目</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.subject} onChange={(event) => updateTrialLedgerView({ subject: event.target.value })}><option value="all">全部科目</option>{trialLedgerFilterOptions("subject").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>老师</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.teacher} onChange={(event) => updateTrialLedgerView({ teacher: event.target.value })}><option value="all">全部老师</option>{trialLedgerFilterOptions("teacher").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
-              <label><span>试听状态</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.resultStatus} onChange={(event) => updateTrialLedgerView({ resultStatus: event.target.value })}><option value="all">全部状态</option>{TRIAL_LEDGER_RESULT_STATUSES.map((value) => <option value={value} key={value}>{lpResultStatusLabel(value)}</option>)}</select></label>
+              <label><span>业务结果</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.resultStatus} onChange={(event) => updateTrialLedgerView({ resultStatus: event.target.value })}><option value="all">全部状态</option>{LP_RESULT_STATUSES.map((value) => <option value={value} key={value}>{lpResultStatusLabel(value)}</option>)}</select></label>
               <label><span>是否付费</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.paid} onChange={(event) => updateTrialLedgerView({ paid: event.target.value as TrialLedgerViewState["paid"] })}><option value="all">全部</option><option value="paid">是</option><option value="unpaid">否</option></select></label>
               <label><span>排序字段</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortKey} onChange={(event) => updateTrialLedgerView({ sortKey: event.target.value as TrialLedgerViewState["sortKey"] })}><option value="scheduledAt">上课日期/时间</option><option value="requestedAt">请求日期/时间</option><option value="lessonMonth">上课月份</option><option value="studentName">学生姓名</option></select></label>
               <label><span>排序方向</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortDirection} onChange={(event) => updateTrialLedgerView({ sortDirection: event.target.value as TrialLedgerViewState["sortDirection"] })}><option value="desc">降序（最新优先）</option><option value="asc">升序（最早优先）</option></select></label>
@@ -8994,17 +8994,34 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           </section>
           <div className="trial-ledger-stats" role="status" aria-live="polite">
             <span className="trial-ledger-stat-total"><small>筛选结果</small><strong>{trialLedgerStats.total}</strong></span>
-            {TRIAL_LEDGER_RESULT_STATUSES.map((status) => <span key={status}><small>{lpResultStatusLabel(status)}</small><strong>{trialLedgerStats.byStatus[status] ?? 0}</strong></span>)}
+            {LP_RESULT_STATUSES.map((status) => <span key={status}><small>{lpResultStatusLabel(status)}</small><strong>{trialLedgerStats.byStatus[status] ?? 0}</strong></span>)}
             <span className="trial-ledger-success-rate" title="成功率只计算已明确为成功或失败的试听"><small>成功率</small><strong>{trialLedgerStats.successRate === null ? "—" : `${trialLedgerStats.successRate}%`}</strong><em>成功 {trialLedgerStats.successful} / 已出结果 {trialLedgerStats.resolved}</em></span>
           </div>
           {visibleTrialLedgerEntries.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
-            <caption className="visually-hidden">试听 LP 销售复盘台账；自动值可逐列人工修正并恢复</caption>
-            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">试听状态</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th></tr></thead>
+            <caption className="visually-hidden">LP 交接台账</caption>
+            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">业务结果</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th></tr></thead>
             <tbody>{visibleTrialLedgerEntries.map((entry) => {
               const { item, schedule, requestAt, resultOptions, automaticStudentName, automaticGuardianWechat, automaticScheduledAt, automaticLessonMonth, automaticPlanner, automaticSubject, automaticTeacher, automaticPaid, storedPaid } = entry;
               const paidKey = `${item.id}:trialPaid`;
               const resultKey = `${item.id}:resultStatus`;
+              if (!isTrialLedgerWorkflow(item)) return <tr key={item.id}>
+                <td>{entry.row.studentName || "—"}</td>
+                <td>{entry.row.guardianWechat || "—"}</td>
+                <td>{entry.row.workflowType}</td>
+                <td>{entry.row.lessonMonth || "—"}</td>
+                <td>{requestAt ? formatInstant(new Date(requestAt), displayPreferences.timezone, displayPreferences) : "—"}</td>
+                <td>—</td>
+                <td>—</td>
+                <td>{entry.row.operationsOwner || "—"}</td>
+                <td>{automaticPlanner || "—"}</td>
+                <td>{automaticSubject || "—"}</td>
+                <td>{automaticTeacher || "—"}</td>
+                <td>{item.resultStatus ? lpResultStatusLabel(item.resultStatus) : item.stage}</td>
+                <td>—</td>
+                <td>{entry.row.note || "—"}</td>
+                <td>—</td>
+              </tr>;
               return <tr key={item.id}>
                 <td>{ledgerTextCell({ item, field: "studentName", automaticValue: automaticStudentName, label: `${automaticStudentName || item.id} 学生姓名`, list: "trial-ledger-student-options", placeholder: "未提到", openStudent: true })}</td>
                 <td>{ledgerTextCell({ item, field: "guardianWechat", automaticValue: automaticGuardianWechat, label: `${automaticStudentName || item.id} 家长微信名`, list: "trial-ledger-guardian-options", placeholder: "待填写" })}</td>
@@ -9028,8 +9045,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <datalist id="trial-ledger-guardian-options">{Array.from(new Set(scopedStudents.map((student) => student.guardianWechat || student.guardian).filter(Boolean))).map((guardian) => <option value={guardian} key={guardian} />)}</datalist>
           <datalist id="trial-ledger-subject-options">{Array.from(new Set([...courses.map((course) => course.name), ...scopedStudents.map((student) => student.course)].filter(Boolean))).map((subject) => <option value={subject} key={subject} />)}</datalist>
           <datalist id="trial-ledger-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.name} key={teacher.id} />)}</datalist>
-        </div> : <div className="empty-inline trial-ledger-filter-empty">当前筛选没有符合条件的试听；清除筛选即可查看全部 {trialLedgerItems.length} 条。</div>}
-        </> : <div className="empty-inline">还没有试听 LP；创建后会自动进入台账。</div>}
+        </div> : <div className="empty-inline trial-ledger-filter-empty">当前筛选没有符合条件的交接记录；清除筛选即可查看全部 {trialLedgerItems.length} 条。</div>}
+        </> : <div className="empty-inline">还没有 LP 交接记录；创建后会自动进入台账。</div>}
       </section>
       <section className="panel collection-shell">
         <div className="view-bar">

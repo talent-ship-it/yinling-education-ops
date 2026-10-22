@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { LP_WORKFLOW_TYPES } from "../lib/lp-workflows";
+
 import {
   defaultTrialLedgerViewState,
   filterAndSortTrialLedgerRows,
@@ -180,4 +182,37 @@ test("restores and filters cancelled and NIL statuses without changing resolved 
   assert.equal(stats.byStatus.NIL, 1);
   assert.equal(stats.resolved, 2);
   assert.equal(stats.successRate, 50);
+});
+
+test("filters every handover workflow type and restores non-trial business outcomes", () => {
+  const source = LP_WORKFLOW_TYPES.map((workflowType, index) => ({
+    ...rows[0]!, id: `LP-TYPE-${index}`, workflowType,
+    resultStatus: workflowType === "试听 LP" || workflowType === "换老师试听" ? "试听成功" : "已完成",
+  }));
+  for (const row of source) {
+    const state = parseTrialLedgerViewState(JSON.stringify({ ...defaultTrialLedgerViewState(), workflowType: row.workflowType }));
+    assert.deepEqual(filterAndSortTrialLedgerRows(source, state), [row]);
+  }
+  for (const resultStatus of ["已完成", "已取消"]) {
+    assert.equal(parseTrialLedgerViewState({ resultStatus }).resultStatus, resultStatus);
+  }
+  const completed = filterAndSortTrialLedgerRows(source, { ...defaultTrialLedgerViewState(), resultStatus: "已完成" });
+  assert.equal(completed.length, 5);
+  assert.ok(completed.every((row) => row.resultStatus === "已完成"));
+});
+
+test("non-trial handovers never count as unpaid trials or affect trial success rates", () => {
+  const handovers = [
+    { ...rows[0]!, id: "LP-NEW", workflowType: "老师新 LP", resultStatus: "已完成", paid: false },
+    { ...rows[0]!, id: "LP-LEGACY", workflowType: "代课 LP", resultStatus: "试听成功", paid: false },
+  ];
+  const source = [...rows, ...handovers];
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...defaultTrialLedgerViewState(), paid: "unpaid" }).map((row) => row.id), ["LP-2", "LP-3"]);
+  const stats = trialLedgerViewStats(source);
+  assert.equal(stats.total, 5);
+  assert.equal(stats.byStatus["已完成"], 1);
+  assert.equal(stats.successful, 1);
+  assert.equal(stats.failed, 1);
+  assert.equal(stats.successRate, 50);
+  assert.equal(trialLedgerViewStats(handovers).successRate, null);
 });
