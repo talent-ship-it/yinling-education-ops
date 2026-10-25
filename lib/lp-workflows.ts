@@ -419,6 +419,7 @@ export const TRIAL_LEDGER_RESULT_STATUSES = [
   "在读试听失败",
   "被家长取消",
   "NIL",
+  "延迟待安排",
 ] as const;
 
 export const LP_RESULT_STATUSES = [

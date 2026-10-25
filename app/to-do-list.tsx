@@ -7,7 +7,7 @@ import { formatCompactTaskDeadline, formatTaskDeadline, hasAutomaticTaskDeadline
 import type { TaskTrialSchedule } from "../lib/task-trial-schedule";
 import { groupTasksByOwner, type TaskOwnerGroup } from "../lib/task-owner-groups";
 
-export const TO_DO_FILTERS = ["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
+export const TO_DO_FILTERS = ["all", "today", "overdue", "parent-follow-up", "preparation", "试听", "排课", "LP", "考试", "续课", "请假代课"] as const;
 export type ToDoFilter = (typeof TO_DO_FILTERS)[number];
 export type TaskListView = "todo" | "done" | "cannot";
 export type TaskDeadlineTimeZone = string;
@@ -39,6 +39,9 @@ export interface ToDoListProps {
 const FILTER_LABELS: Record<ToDoFilter, string> = {
   all: "全部",
   today: "今日",
+  overdue: "已逾期",
+  "parent-follow-up": "二要一发",
+  preparation: "备课",
   试听: "试听",
   排课: "排课",
   LP: "LP",
@@ -62,6 +65,25 @@ function happenedToday(value: string | undefined, timeZone: TaskDeadlineTimeZone
   }
 }
 
+function matchesTodayTask(task: OpsTask, view: TaskListView, timeZone: TaskDeadlineTimeZone) {
+  return view === "todo" ? isExecutableOpenTask(task) && task.status === "today" : happenedToday(task.closedAt, timeZone);
+}
+
+function matchesTaskFilter(task: OpsTask, filter: ToDoFilter, view: TaskListView, timeZone: TaskDeadlineTimeZone) {
+  switch (filter) {
+    case "all": return true;
+    case "today": return matchesTodayTask(task, view, timeZone);
+    case "overdue": return view === "todo" && isExecutableOpenTask(task) && task.status === "overdue";
+    case "preparation": return task.ruleKey === "trial.jiaowubao.prep-n1";
+    case "parent-follow-up": return [
+      "trial.manual-request.specified-content", "trial.manual-request.writing",
+      "trial.manual-request.paper-send", "trial.manual-request.paper-receive",
+      "trial.jiaowubao.request-follow-up-n3",
+    ].includes(task.ruleKey ?? "");
+    default: return task.category === filter;
+  }
+}
+
 function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskListView, timeZone: TaskDeadlineTimeZone) {
   return tasks.filter((task) => {
     const inView = view === "todo"
@@ -70,10 +92,7 @@ function filterTasks(tasks: readonly OpsTask[], filter: ToDoFilter, view: TaskLi
         ? task.status === "done" && task.completionOutcome === "cannot_do"
         : task.status === "done" && task.completionOutcome !== "cannot_do";
     if (!inView) return false;
-    return filter === "all"
-      || (filter === "today"
-        ? view === "todo" ? isExecutableOpenTask(task) && task.status === "today" : happenedToday(task.closedAt, timeZone)
-        : task.category === filter);
+    return matchesTaskFilter(task, filter, view, timeZone);
   });
 }
 
@@ -124,6 +143,7 @@ function TaskRows({
       {tasks.map((task) => {
         const editing = editor?.taskId === task.id ? editor : null;
         const executable = isExecutableOpenTask(task);
+        const sourceManaged = task.ruleKey === "jiaowubao.unclosed";
         const displayTitle = taskTitle?.(task) ?? task.title;
         const title = taskTitlePresentation(displayTitle, task.ruleKey);
         const supportingCopy = title.details.length === 0 || task.completionNote
@@ -136,6 +156,7 @@ function TaskRows({
           <strong>{title.primary}</strong>
           {title.details.length > 0 ? <small className="task-title-details">{title.details.join(" · ")}</small> : null}
           {supportingCopy ? <span>{supportingCopy}</span> : null}
+          {sourceManaged && task.trigger ? <details><summary>课节明细（日期 · 编号）</summary><ul>{task.trigger.split("\n").map((lesson) => <li key={lesson}>{lesson}</li>)}</ul></details> : null}
           <TrialLessonTime schedule={taskSchedule(task)} deadlineTimeZone={deadlineTimeZone} deadlineTimeZoneLabel={deadlineTimeZoneLabel} deadlineTimeFormat={deadlineTimeFormat} />
           {noteDate ? <time className="task-note-date" dateTime={task.completionNoteUpdatedAt}
             title={`备注于 ${noteDate} · ${deadlineTimeZoneLabel}`}
@@ -144,9 +165,9 @@ function TaskRows({
         return <div className={`task-row to-do-row ${task.status} ${task.completionOutcome ?? ""}`} role="listitem" key={task.id}>
           <span className={`task-dot ${task.tone}`} aria-hidden="true" />
           {canOpen?.(task) === false
-            ? <span className="task-copy task-copy-static">
+            ? <div className="task-copy task-copy-static">
                 {copy}
-              </span>
+              </div>
             : <button className="task-copy" type="button" onClick={() => onOpen(task)}>
                 {copy}
               </button>}
@@ -168,14 +189,14 @@ function TaskRows({
                 onClick={() => onTeacherReplied(task)}
               >老师已回</button> : null}
             <div className="task-action-icons">
-            <button
+            {!sourceManaged && <button
               className="task-note-button"
               type="button"
               title="编辑任务备注"
               aria-label={`编辑备注：${title.primary}`}
               onClick={() => setEditor({ taskId: task.id, mode: "note", value: task.completionNote ?? "" })}
-            ><Pencil size={14} /></button>
-            {view === "todo" && executable ? <>
+            ><Pencil size={14} /></button>}
+            {view === "todo" && executable && !sourceManaged ? <>
               <button
                 className="cannot-do-button"
                 type="button"
@@ -190,11 +211,11 @@ function TaskRows({
                 aria-label={`完成：${title.primary}`}
                 onClick={() => onComplete(task.id)}
               ><span aria-hidden="true">✓</span></button> : null}
-            </> : view === "todo" ? !hasAutomaticTaskDeadline(task) && onRepairDeadline && canRepairDeadline?.(task) !== false ? <button
+            </> : view === "todo" ? !sourceManaged && !hasAutomaticTaskDeadline(task) && onRepairDeadline && canRepairDeadline?.(task) !== false ? <button
               className="deadline-edit-button"
               type="button"
               onClick={() => onRepairDeadline(task)}
-            >补截止时间</button> : null : canReopen?.(task) !== false ? <button
+            >补截止时间</button> : null : !sourceManaged && canReopen?.(task) !== false ? <button
               className="reopen-task-button"
               type="button"
               title="恢复到 To Do"

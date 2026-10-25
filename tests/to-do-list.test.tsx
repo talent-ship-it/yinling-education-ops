@@ -111,7 +111,7 @@ test("renders today, overdue, then remaining sections and sorts each section by 
     "今日到期",
     "任务 today-earlier",
     "任务 today-later",
-    "已逾期",
+    ">已逾期</h4>",
     "任务 overdue-earlier",
     "任务 overdue-later",
     "其余任务",
@@ -354,7 +354,7 @@ test("renders a cross-owner managed exam task identity as non-navigable text", (
     task("managed-exam", "考试", "today", "今天 18:00"),
   ], () => false);
   assert.match(html, /task-copy task-copy-static/);
-  assert.match(html, /<span class="task-copy task-copy-static"><strong>任务 managed-exam<\/strong>/);
+  assert.match(html, /<div class="task-copy task-copy-static"><strong>任务 managed-exam<\/strong>/);
   assert.doesNotMatch(html, /<button class="task-copy"/);
   assert.match(html, /aria-label="完成：任务 managed-exam"/);
 });
@@ -445,4 +445,34 @@ test("does not show a trial lesson timestamp without a trusted schedule", () => 
   assert.doesNotMatch(render([trial]), /试听上课：/);
   assert.doesNotMatch(render([trial], "all", "Australia/Melbourne", "24h", false, () => null), /试听上课：/);
   assert.doesNotMatch(render([trial], "all", "Australia/Melbourne", "24h", false, () => ({ startsAt: "2026-10-21" })), /试听上课：/);
+});
+
+
+test("filters overdue, two-request-one-send and preparation actions separately", () => {
+  const source = [
+    { ...task("writing", "LP", "today", "今天"), ruleKey: "trial.manual-request.writing" },
+    { ...task("check", "LP", "overdue", "昨天"), ruleKey: "trial.jiaowubao.request-follow-up-n3" },
+    { ...task("prep", "LP", "today", "今天"), ruleKey: "trial.jiaowubao.prep-n1" },
+    task("other", "LP", "overdue", "昨天"),
+  ];
+  const followUp = render(source, "parent-follow-up");
+  assert.match(followUp, /任务 writing/);
+  assert.match(followUp, /任务 check/);
+  assert.doesNotMatch(followUp, /任务 prep|任务 other/);
+  const preparation = render(source, "preparation");
+  assert.match(preparation, /任务 prep/);
+  assert.doesNotMatch(preparation, /任务 writing|任务 check|任务 other/);
+  const overdue = render(source, "overdue");
+  assert.match(overdue, /任务 check/);
+  assert.match(overdue, /任务 other/);
+  assert.doesNotMatch(overdue, /任务 writing|任务 prep/);
+});
+
+
+test("source-managed unclosed tasks expose lesson locators without manual lifecycle controls", () => {
+  const item = { ...task("unclosed", "课后", "today", "", "2026-08-12T08:00:00.000Z"), ruleKey: "jiaowubao.unclosed", trigger: "2026-08-10 · 12345" };
+  const html = render([item], "all");
+  assert.match(html, /课节明细（日期 · 编号）/);
+  assert.match(html, /2026-08-10 · 12345/);
+  assert.doesNotMatch(html, /编辑备注：|无法完成：|aria-label="完成：|恢复到待办：|补截止时间/);
 });

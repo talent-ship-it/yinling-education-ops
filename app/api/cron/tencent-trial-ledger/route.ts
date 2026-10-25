@@ -2,6 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { runTencentLpSourceSync } from "@/lib/tencent-lp-source-sync";
+
 import {
   runTencentTrialLedgerSystemSync,
   TencentTrialLedgerSystemSyncError,
@@ -24,6 +26,12 @@ function hasCronSecret(request: Request) {
   return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
+async function sourceSyncFields(token: string) {
+  if (process.env.TENCENT_LP_SOURCE_SYNC_ENABLED !== "true") return {};
+  const sourceSync = await runTencentLpSourceSync(token);
+  return sourceSync ? { sourceSync } : {};
+}
+
 /** Supabase pg_cron invokes this production worker; Codex is never in the run path. */
 export async function GET(request: Request) {
   if (!hasCronSecret(request)) return noStore({ error: "Not found" }, 404);
@@ -34,12 +42,13 @@ export async function GET(request: Request) {
   }
 
   try {
+    const sourceSync = await sourceSyncFields(tencentToken);
     const result = await runTencentTrialLedgerSystemSync({
       bridgeUrl: new URL("/api/integrations/tencent-trial-ledger", request.url),
       bridgeToken,
       tencentToken,
     });
-    return noStore(result);
+    return noStore({ ...result, ...sourceSync });
   } catch (error) {
     console.error("tencent_trial_ledger_system_sync_failed", {
       phase: error instanceof TencentTrialLedgerSystemSyncError ? error.phase : "unknown",

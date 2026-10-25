@@ -14,6 +14,7 @@ export type NormalizedWecomBotRecord = Readonly<{
   sentAt: string;
   messageType: "text" | "image" | "file" | "mixed" | "other";
   text?: string;
+  quote?: Readonly<{ messageId?: string; text?: string }>;
 }>;
 
 export class WecomBotRecordError extends Error {
@@ -60,9 +61,25 @@ export function botMessageId(aibotId: string, msgid: string) {
   return `bot:${createHash("sha256").update(`${aibotId}\0${msgid}`).digest("hex")}`;
 }
 
+function validQuoteIdentity(quotedId: string, messageId: string) {
+  return !quotedId || /^bot:[a-f0-9]{64}$/u.test(quotedId) && quotedId !== messageId;
+}
+function quoteFields(quotedId: string, quotedText: string) {
+  return Object.freeze({ ...(quotedId ? { messageId: quotedId } : {}), ...(quotedText ? { text: quotedText } : {}) });
+}
+function normaliseQuote(value: unknown, messageType: string, messageId: string, index: number) {
+  if (value === undefined) return undefined;
+  if (!isWecomRecord(value) || messageType !== "text") fail("invalid_quote", "quoted messages must be text records.");
+  exactKeys(value, new Set(["messageId", "text"]), `record ${index}.quote`);
+  const quotedId = cleanText(value.messageId, `record ${index}.quote.messageId`);
+  const quotedText = cleanText(value.text, `record ${index}.quote.text`);
+  if (!validQuoteIdentity(quotedId, messageId)) fail("invalid_quote", "quoted message identity is invalid.");
+  return quoteFields(quotedId, quotedText);
+}
+
 function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecord {
   if (!isWecomRecord(value)) fail("invalid_record", `record ${index} must be an object.`);
-  exactKeys(value, new Set(["messageId", "chatId", "senderId", "sentAt", "messageType", "text"]), `record ${index}`);
+  exactKeys(value, new Set(["messageId", "chatId", "senderId", "sentAt", "messageType", "text", "quote"]), `record ${index}`);
 
   const messageId = cleanText(value.messageId, `record ${index}.messageId`);
   const chatId = cleanText(value.chatId, `record ${index}.chatId`);
@@ -74,6 +91,8 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecor
   if (!SAFE_ID.test(chatId) || !SAFE_ID.test(senderId)) fail("invalid_record", `record ${index} identifiers are invalid.`);
   if (!MESSAGE_TYPES.has(messageType)) fail("invalid_record", `record ${index}.messageType is invalid.`);
 
+  const quote = normaliseQuote(value.quote, messageType, messageId, index);
+
   return Object.freeze({
     messageId,
     chatId,
@@ -83,6 +102,7 @@ function normaliseRecord(value: unknown, index: number): NormalizedWecomBotRecor
     // The database contract treats JSON null as invalid. Keep the optional
     // field absent when a callback has no textual content.
     ...(text ? { text } : {}),
+    ...(quote ? { quote } : {}),
   });
 }
 

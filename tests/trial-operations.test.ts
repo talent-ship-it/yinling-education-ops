@@ -735,7 +735,7 @@ test("materializes N-3, N-2, N-1, pending-payment and same-day tasks from one re
     matchedAt: "2026-08-28T03:00:00.000Z",
   })[0]!;
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
-  assert.equal(tasks.length, 5);
+  assert.equal(tasks.length, 6);
   assert.ok(tasks.every((task) => task.ruleKey?.startsWith(TRIAL_JWB_RULE_PREFIX)));
   assert.equal(tasks.find((task) => task.ruleKey?.endsWith("lp-finalize-tomorrow-n3"))?.title,
     "《教务+教统》【明日LP定稿】<Heather孙晓琳> <Grace Lin>");
@@ -856,7 +856,7 @@ test("omits the N-1 teacher-preparation task when the handover explicitly says n
 
   const tasks = generateJiaowubaoTrialTasks({ ...match, now: "2026-08-28T03:00:00.000Z" });
   assert.equal(match.preparationFollowUp, false);
-  assert.equal(tasks.length, 4);
+  assert.equal(tasks.length, 5);
   assert.ok(!tasks.some((task) => task.ruleKey?.endsWith("prep-n1")));
 });
 

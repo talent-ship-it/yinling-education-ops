@@ -30,6 +30,35 @@ function textContent(message) {
     : null;
 }
 
+function isQuoteObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+function quotedMessageId(value, aibotid) {
+  if (typeof value !== "string") return null;
+  if (!value.trim() || value.length > 240) return null;
+  return messageId({ aibotid, msgid: value });
+}
+function quotedText(quote) {
+  const value = quote.text?.content;
+  if (typeof value !== "string") return null;
+  if (value.length > 12_000) return null;
+  return value.trim();
+}
+function quoteFields(quotedId, text) {
+  return { ...(quotedId ? { messageId: quotedId } : {}), ...(text ? { text } : {}) };
+}
+function quoteContent(message) {
+  if (message?.quote === undefined) return undefined;
+  const quote = message.quote;
+  if (!isQuoteObject(quote)) return {};
+  return quoteFields(quotedMessageId(quote.msgid, message.aibotid), quotedText(quote));
+}
+function quotedRecordFields(message, messageType) {
+  if (messageType !== "text") return {};
+  const quote = quoteContent(message);
+  return quote ? { quote } : {};
+}
+
 function canonicalRecord(record) {
   const message = record?.message;
   // Some WeCom image callbacks omit chatid even though they include the
@@ -57,6 +86,7 @@ function canonicalRecord(record) {
     // The database contract treats JSON null as an invalid text value. Omit
     // the optional field when a callback has no textual content.
     ...(text ? { text } : {}),
+    ...quotedRecordFields(message, messageType),
   };
 }
 

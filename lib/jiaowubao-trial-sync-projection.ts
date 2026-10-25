@@ -11,6 +11,7 @@ import {
   TRIAL_JWB_RULE_PREFIX,
   TRIAL_JWB_SCHEDULE_RULE_KEYS,
   TRIAL_TEACHER_REPLY_RULE_KEYS,
+  TRIAL_TERMINAL_RESULT_STATUSES,
   type TrialScheduleLink,
 } from "./trial-operations";
 import { sortTasksByDueAt, type OpsTask } from "./ops-tasks";
@@ -175,7 +176,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
   const eligibleStudentIds = new Set(students.filter((student) => student.importArchived !== true
     && normalise(student.importArchived) !== "true").map((student) => text(student.id)).filter(Boolean));
   const activeLpItems = lpItems.filter((item) => ["试听 LP", "换老师试听"].includes(text(item.workflowType))
-      && text(item.stage) !== "完成" && text(item.resultStatus) !== "已取消"
+      && text(item.stage) !== "完成" && !TRIAL_TERMINAL_RESULT_STATUSES.includes(text(item.resultStatus))
       && eligibleStudentIds.has(text(item.studentId)));
   const allowedStudentIds = new Set(activeLpItems.map((item) => text(item.studentId)).filter(Boolean));
   const studentLookup = buildStudentLookup(students, allowedStudentIds);
@@ -210,7 +211,9 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       stage: text(item.stage),
       ...(text(item.requestedAt) ? { requestedAt: text(item.requestedAt) } : {}),
       ...(typeof item.trialPaid === "boolean" ? { trialPaid: item.trialPaid } : {}),
+      ...(typeof item.trialLpFinalized === "boolean" ? { trialLpFinalized: item.trialLpFinalized } : {}),
       ...(record(item.fields) ? { fields: item.fields } : {}),
+      ...(record(item.trialLedgerOverrides) ? { trialLedgerOverrides: item.trialLedgerOverrides } : {}),
       ...(isTrialIntake(item.trialIntake) ? { trialIntake: item.trialIntake } : {}),
       ...reviewedScheduleMetadata(item),
     })),
@@ -298,7 +301,7 @@ export function prepareJiaowubaoTrialSyncProjection(input: Readonly<{
       lpItemId: match.lpItemId,
       studentId: match.studentId,
     });
-    const generated = generateJiaowubaoTrialTasks({ ...match, now: matchedAt, paymentManagedByBooking });
+    const generated = generateJiaowubaoTrialTasks({ ...match, now: matchedAt, paymentManagedByBooking, currentTasks: nextTasks });
     nextTasks = replaceRuleTasks(nextTasks, generated, {
       anchor: currentAnchor,
       ruleKeys: TRIAL_JWB_SCHEDULE_RULE_KEYS,

@@ -216,8 +216,13 @@ test("derives linked LP evidence and the complete handbook task chain from raw J
     "trial.jiaowubao.lp-materials-n2",
     "trial.jiaowubao.payment-n2",
     "trial.jiaowubao.prep-n1",
+    "trial.jiaowubao.request-follow-up-n3",
     "trial.jiaowubao.today",
   ]);
+  const review = jwbTasks.find((task) => task.ruleKey === "trial.jiaowubao.request-follow-up-n3")!;
+  assert.equal(review.dueAt, "2026-08-31T08:00:00.000Z");
+  assert.deepEqual(review.trialRequestFollowUpRules, ["trial.manual-request.writing", "trial.manual-request.paper-send"]);
+  assert.notEqual(review.status, "done");
   assert.ok(jwbTasks.every((task) => task.requestAnchorBookingId === "LP-TRIAL-1"));
   assert.equal(jwbTasks.find((task) => task.ruleKey === "trial.jiaowubao.payment-n2")?.owner, "Tara");
   assert.equal(projection.nextTasks.find((task) => task.id === "TASK-MANUAL-24H")?.status, "done");

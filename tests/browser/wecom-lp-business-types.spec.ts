@@ -213,7 +213,16 @@ for (const type of TYPES) test(`${type}: minimal existing-student handover prese
   expect(f.posted[0].newStudent).toBeUndefined();
   assertSubmittedFields(f.posted[0], type);
   await expect(views.getByRole("button", { name: /^进行中/u })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("combobox", { name: `Synthetic ${type} 当前阶段`, exact: true })).toHaveValue("待资料");
+  if (type === "换老师试听") {
+    const row = page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr")
+      .filter({ has: page.getByRole("combobox", { name: `Synthetic ${type} 当前阶段`, exact: true, includeHidden: true }) });
+    await expect(row).toBeVisible();
+    await expect(row.getByLabel(`${STUDENT} LP 类型`, { exact: true }).locator("option:checked")).toHaveText(`自动 · ${type}`);
+    await row.getByText("查看试听交接详情", { exact: true }).click();
+    await expect(row.getByRole("combobox", { name: `Synthetic ${type} 当前阶段`, exact: true })).toHaveValue("待资料");
+  } else {
+    await expect(page.getByRole("combobox", { name: `Synthetic ${type} 当前阶段`, exact: true })).toHaveValue("待资料");
+  }
   await expect(page.getByRole("button", { name: `${STUDENT} 已创建 LP`, exact: true })).toBeDisabled();
   await views.getByRole("button", { name: /^已完成/u }).click();
   await expect(page.getByRole("combobox", { name: "Synthetic Historical LP 当前阶段", exact: true })).toHaveValue("完成");

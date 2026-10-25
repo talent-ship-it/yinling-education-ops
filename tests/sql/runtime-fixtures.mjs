@@ -1,4 +1,24 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "unclosed-lesson-scheduler-activation", source: "tests/sql/unclosed-lesson-scheduler-activation-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/unclosed-lesson-scheduler-activation-runtime.py" },
+  ] },
+  { id: "jiaowubao-unclosed-lessons", source: "tests/sql/jiaowubao-unclosed-lessons-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-unclosed-lessons-runtime.sql" },
+  ] },
+  { id: "tencent-lp-source-bidirectional", source: "tests/sql/tencent-lp-source-bidirectional-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/tencent-lp-source-bidirectional-runtime.sql" },
+  ] },
+  { id: "wecom-quoted-identity", source: "tests/sql/wecom-quoted-identity-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/wecom-quoted-identity-setup.sql" },
+    { kind: "sql-fragment", file: "supabase/migrations/20261020091722_wecom_lp_draft_confirmation.sql",
+      start: "create table internal.wecom_lp_confirmations (", end: "create function public.read_wecom_lp_draft(" },
+    { kind: "sql", file: "tests/sql/wecom-quoted-identity-draft-setup.sql" },
+    { kind: "sql", file: "supabase/migrations/20261025212941_wecom_quoted_handover_identity.sql" },
+    { kind: "sql", file: "tests/sql/wecom-quoted-identity-runtime.sql" },
+  ] },
+  { id: "trial-follow-up-and-lp-finalized", source: "tests/sql/trial-follow-up-and-lp-finalized-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/trial-follow-up-and-lp-finalized-runtime.sql" },
+  ] },
   { id: "lp-business-scheduler", source: "tests/sql/lp-business-scheduler-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/lp-business-scheduler-setup.sql" },
     { kind: "sql-fragment", file: "supabase/migrations/20260819101800_enforce_task_canonical_deadlines.sql",
@@ -19,6 +39,7 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "supabase/migrations/20261021130241_lp_business_handover_types.sql" },
     { kind: "sql", file: "tests/sql/wecom-repeat-trial-upgrade-setup.sql" },
     { kind: "sql", file: "supabase/migrations/20261022064824_classify_repeat_trials.sql" },
+    { kind: "sql", file: "supabase/migrations/20261025212941_wecom_quoted_handover_identity.sql" },
     { kind: "sql", file: "tests/sql/wecom-lp-business-handover-runtime.sql" },
   ] },
   { id: "wecom-handover-schedule-workflow-batch", source: "tests/sql/wecom-handover-schedule-workflow-batch-runtime.ts", steps: [

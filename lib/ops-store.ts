@@ -4658,3 +4658,35 @@ export function readWecomHandoverScheduleEvidence(input: { sourceMessageIds: rea
     p_secret: configuration().secret, p_source_message_ids: input.sourceMessageIds, p_actor: input.actor, p_full_admin: input.fullAdmin,
   });
 }
+
+export function tencentLpSourceSyncAction(input: {
+  token: string;
+  action: "claim" | "release" | "read" | "observe" | "import" | "stage" | "attempt" | "complete" | "cancel";
+  args?: Readonly<Record<string, unknown>>;
+}) {
+  return rpc<Record<string, unknown>>("tencent_lp_source_sync_action", {
+    p_secret: configuration().secret, p_token: input.token, p_action: input.action, p_args: input.args ?? {},
+  });
+}
+
+export function readJiaowubaoUnclosedSnapshot() {
+  return rpc<import("./jiaowubao-unclosed-lessons").UnclosedSnapshot>("read_jiaowubao_unclosed_snapshot", { p_secret: configuration().secret });
+}
+
+export function beginJiaowubaoUnclosedSnapshot(input: { runId: string; expectedRevision: string | null; checkedAt: string; rowCount: number }) {
+  return rpc<void>("begin_jiaowubao_unclosed_snapshot", {
+    p_secret: configuration().secret, p_run_id: input.runId, p_expected_revision: input.expectedRevision, p_checked_at: input.checkedAt, p_row_count: input.rowCount,
+  });
+}
+
+export function stageJiaowubaoUnclosedSnapshot(input: { runId: string; pageIndex: number; rows: readonly import("./jiaowubao-unclosed-lessons").UnclosedLesson[] }) {
+  return rpc<void>("stage_jiaowubao_unclosed_snapshot", { p_secret: configuration().secret, p_run_id: input.runId, p_page_index: input.pageIndex, p_rows: input.rows });
+}
+
+export function completeJiaowubaoUnclosedSnapshot(runId: string) {
+  return rpc<{ revision: string; rowCount: number }>("complete_jiaowubao_unclosed_snapshot", { p_secret: configuration().secret, p_run_id: runId });
+}
+
+export function abortJiaowubaoUnclosedSnapshot(runId: string) {
+  return rpc<void>("abort_jiaowubao_unclosed_snapshot", { p_secret: configuration().secret, p_run_id: runId });
+}

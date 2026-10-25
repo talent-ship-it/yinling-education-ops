@@ -183,7 +183,7 @@ function isConfiguredRecipient(value: string | undefined) {
   return Boolean(recipient && !/^(?:待分配|待确认|未知|角色待配置[:：])/.test(recipient));
 }
 
-function canonicalTrialPlanner(value: string | undefined) {
+function canonicalTrialPlanner(value: unknown) {
   return ["Tara", "Eileen", "Abby"].find((planner) => samePerson(value, planner));
 }
 
@@ -424,11 +424,12 @@ export function buildOpsAccessContext(
     const lpItem = candidates[0]!;
     const studentId = rowStudentId(lpItem);
     const intake = isRecord(lpItem.trialIntake) ? lpItem.trialIntake : null;
+    const overrides = isRecord(lpItem.trialLedgerOverrides) ? lpItem.trialLedgerOverrides : null;
     const schedule = isRecord(lpItem.trialSchedule) ? lpItem.trialSchedule : null;
     const plannerCandidate = typeof intake?.planner === "string" && intake.planner.trim()
       ? intake.planner.trim()
       : studentPlannerById.get(studentId) ?? "";
-    const planner = canonicalTrialPlanner(plannerCandidate);
+    const planner = canonicalTrialPlanner(overrides?.planner) || canonicalTrialPlanner(plannerCandidate);
     const eventId = typeof schedule?.eventId === "string" ? schedule.eventId.trim() : "";
     const sourceRevision = typeof schedule?.sourceRevision === "string" ? schedule.sourceRevision.trim() : "";
     if (!studentId

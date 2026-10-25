@@ -242,4 +242,244 @@ begin
   if not receipt.applied or (receipt.lp_items_row).payload<>jsonb_build_array(next_lp-'trialSchedule') or (receipt.tasks_row).payload<>seed->'tasks' then raise exception 'Source revocation lost enrichment or completed history'; end if;
 end;
 $$;
+create function pg_temp.restore_reminder(p_rule text,p_link jsonb,p_request text)
+returns jsonb language plpgsql as $$
+declare due_at timestamptz; due_local timestamp; heading text; lead_days integer;
+begin
+  lead_days := ((p_link->>'startsAt')::timestamptz at time zone 'Australia/Melbourne')::date
+    - (p_request::timestamptz at time zone 'Australia/Melbourne')::date;
+  if p_rule='trial.jiaowubao.lp-finalize-tomorrow-n3' then
+    due_at := ((((p_link->>'startsAt')::timestamptz at time zone 'Australia/Melbourne')::date-3)+time '18:00') at time zone 'Australia/Melbourne';
+    heading := '《教务+教统》【明日LP定稿】';
+  else
+    due_at := case when lead_days between 0 and 2 then least((p_link->>'startsAt')::timestamptz,
+      ((p_request::timestamptz at time zone 'Australia/Melbourne')::date+time '18:00') at time zone 'Australia/Melbourne')
+      else ((((p_link->>'startsAt')::timestamptz at time zone 'Australia/Melbourne')::date-2)+time '18:00') at time zone 'Australia/Melbourne' end;
+    heading := '《教务+教统》【今日LP定稿】';
+  end if;
+  due_local := due_at at time zone 'Asia/Shanghai';
+  return jsonb_build_object('id',case when p_rule='trial.jiaowubao.lp-finalize-tomorrow-n3' then 'RESTORE-N3' else 'RESTORE-N2' end,
+    'studentId','S-1','title',heading||'<'||(p_link->>'studentName')||'> <'||(p_link->>'teacherName')||'>',
+    'owner','Ella','assignees','["Ella","Ops Admin"]'::jsonb,'watchers','["Ops Admin"]'::jsonb,'category','LP',
+    'ruleKey',p_rule,'anchorBookingId','JWB:jwb-open-api:schedule:1','requestAnchorBookingId','LP-1','status','upcoming','tone','blue',
+    'dueAt',to_char(due_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'due',extract(year from due_local)::integer||'年'||extract(month from due_local)::integer||'月'||extract(day from due_local)::integer||'日 '||to_char(due_local,'HH24:MI'),
+    'completionNote','保留手写跟进备注','completionNoteUpdatedAt','2026-10-20T00:00:00.000Z');
+end $$;
+
+do $$
+declare
+  seed jsonb; lp jsonb; linked jsonb; link jsonb; old_source jsonb; request_at text;
+  initial_tasks jsonb; closed_tasks jsonb; restored_tasks jsonb; attempted jsonb; reference jsonb; intent jsonb; versions jsonb;
+  n3 jsonb; n2 jsonb; variant jsonb; before_state jsonb; before_counts jsonb; first_audit uuid;
+  record_value jsonb; receipt record; statement text; key text;
+  target_day date; source_revision text := 'sha256:'||repeat('e',64);
+begin
+  delete from public.ops_state;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_current;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_ingest_runs;
+  seed := internal.fixture_trial_handover_seed();
+  select item->'record' into old_source from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
+  request_at := to_char(((seed#>>'{link,startsAt}')::timestamptz-interval '4 days') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  lp := jsonb_set(seed->'lp','{trialIntake,requestSentAt}',to_jsonb(request_at));
+  lp := jsonb_set(lp,'{fields,writingRequired}','true');
+  initial_tasks := (seed->'tasks') || jsonb_build_array(
+    pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',seed->'link',request_at) || '{"id":"HUMAN-CURRENT","status":"done","tone":"green","completionOutcome":"done","result":"人工确认完成","closedAt":"2026-10-20T00:00:00.000Z"}'::jsonb,
+    pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',seed->'link',request_at) || '{"id":"REVIEW-CURRENT","ruleKey":"trial.jiaowubao.request-follow-up-n3","status":"done","tone":"green","completionOutcome":"done","result":"二要一发所需动作均已完成","closedAt":"2026-10-20T00:00:00.000Z","trialRequestFollowUpRules":["trial.manual-request.writing"]}'::jsonb);
+  update public.ops_state set payload=jsonb_build_array(lp) where entity='lpItems';
+  update public.ops_state set payload=initial_tasks where entity='tasks';
+  linked := internal.trial_handover_enriched_lp(lp,old_source,jsonb_build_array(seed->'student'),60) || jsonb_build_object('trialSchedule',seed->'link');
+  n3 := pg_temp.restore_reminder('trial.jiaowubao.lp-finalize-tomorrow-n3',seed->'link',request_at);
+  n2 := pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',seed->'link',request_at);
+  execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),initial_tasks||jsonb_build_array(n3,n2)) into receipt;
+  if not receipt.applied or (receipt.lp_items_row).version<>2 or (receipt.tasks_row).version<>2 then raise exception 'Initial real v3 matching did not apply'; end if;
+  select * into receipt from public.mutate_trial_ledger_field_atomic('local-jwb-fixture',extensions.gen_random_uuid()::text,
+    '{"lpItemId":"LP-1","field":"lpFinalized","expectedValue":null,"value":true}','LP-1','lpFinalized','null','true','Ella');
+  linked := (receipt.lp_items_row).payload->0;
+  select payload into closed_tasks from public.ops_state where entity='tasks';
+  if (select count(*) from jsonb_array_elements(closed_tasks) where value->>'result'='试听台账已确认LP定稿')<>2 then raise exception 'LP finalization did not close exactly automatic tasks'; end if;
+  update internal.jiaowubao_open_api_schedule_snapshot_current set revision=source_revision;
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_runs set revision=source_revision;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
+  reference := jsonb_build_array(jsonb_build_object('lpItemId','LP-1','eventId',seed#>>'{link,eventId}','startsAt',seed#>>'{link,startsAt}'));
+  intent := jsonb_build_object('snapshotRevision',source_revision,'window',jsonb_build_object('startsAt',seed#>>'{link,startsAt}','endsAt',seed#>>'{link,endsAt}'),
+    'matches','[]'::jsonb,'revocations',reference,'expectedVersions','{"lpItems":3,"tasks":3}'::jsonb);
+  select * into receipt from public.sync_jiaowubao_trial_matches_atomic_v3('local-jwb-fixture',extensions.gen_random_uuid()::text,intent,source_revision,
+    '[]',reference,intent->'expectedVersions',jsonb_build_array(linked-'trialSchedule'),closed_tasks,'Ella');
+  if not receipt.applied or (receipt.lp_items_row).payload->0 ? 'trialSchedule'
+    or (receipt.tasks_row).payload<>closed_tasks then raise exception 'Future source revocation changed closed history'; end if;
+  select * into receipt from public.mutate_trial_ledger_field_atomic('local-jwb-fixture',extensions.gen_random_uuid()::text,
+    '{"lpItemId":"LP-1","field":"lpFinalized","expectedValue":true,"value":false}','LP-1','lpFinalized','true','false','Ella');
+  lp := (receipt.lp_items_row).payload->0;
+  if (select payload from public.ops_state where entity='tasks')<>closed_tasks then raise exception 'Missing-link uncheck unexpectedly reopened history'; end if;
+  versions := jsonb_build_object('lpItems',(receipt.lp_items_row).version,'tasks',(select version from public.ops_state where entity='tasks'));
+  target_day := (seed->>'sourceDay')::date+1;
+  source_revision := 'sha256:'||repeat('f',64);
+  update internal.jiaowubao_open_api_schedule_snapshot_current set revision=source_revision;
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_runs set revision=source_revision,
+    query=jsonb_build_object('start',seed->>'sourceDay','end',target_day::text);
+  record_value := old_source || jsonb_build_object('dated',target_day::text,'teacher_title','Synthetic Restored Teacher');
+  insert into internal.jiaowubao_open_api_schedule_snapshot_ingest_items values((seed->>'runId')::uuid,seed#>>'{link,eventId}',jsonb_build_object('record',record_value));
+  link := seed->'link' || jsonb_build_object('sourceRevision',source_revision,'teacherName','Synthetic Restored Teacher',
+    'startsAt',to_char(((target_day+time '09:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'endsAt',to_char(((target_day+time '10:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  linked := lp || jsonb_build_object('trialSchedule',link);
+  n3 := pg_temp.restore_reminder('trial.jiaowubao.lp-finalize-tomorrow-n3',link,request_at);
+  n2 := pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',link,request_at);
+  restored_tasks := initial_tasks || jsonb_build_array(n3,n2);
+  key := extensions.gen_random_uuid()::text;
+  statement := internal.fixture_trial_handover_call(key,jsonb_build_array(linked),restored_tasks,versions);
+  select jsonb_agg(to_jsonb(s) order by entity) into before_state from public.ops_state s;
+  before_counts := jsonb_build_object('audits',(select count(*) from internal.operational_contract_audit),'logs',(select count(*) from public.ops_mutation_log),'commands',(select count(*) from internal.jiaowubao_trial_sync_commands));
+  for variant in select value from jsonb_array_elements(jsonb_build_array(
+    n3 || '{"title":"Forged title"}'::jsonb,
+    n3 || '{"dueAt":"2026-10-20T00:00:00.000Z"}'::jsonb,
+    n3 || '{"due":"Forged date"}'::jsonb,
+    n3 || '{"owner":"Tiffany","assignees":["Tiffany","Ops Admin"]}'::jsonb,
+    n3 || '{"completionNote":"Forged note"}'::jsonb,
+    n3 || '{"completionNoteUpdatedAt":"2026-10-21T00:00:00.000Z"}'::jsonb,
+    n3 || '{"anchorBookingId":"JWB:other-event"}'::jsonb,
+    n3 || '{"requestAnchorBookingId":"OTHER-LP"}'::jsonb,
+    n3 || '{"studentId":"OTHER-STUDENT"}'::jsonb
+  )) loop
+    attempted := initial_tasks || jsonb_build_array(variant,n2);
+    perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),attempted,versions),'jiaowubao_trial_');
+  end loop;
+  for variant in select value from jsonb_array_elements(jsonb_build_array(
+    '{"result":"人工确认完成"}'::jsonb,'{"completionOutcome":"cannot_do"}'::jsonb,
+    '{"legacyEvidence":null}'::jsonb,'{"closedAt":"invalid"}'::jsonb
+  )) loop
+    begin
+      update public.ops_state set payload=jsonb_set(payload,'{4}',(payload->4)||variant) where entity='tasks';
+      perform internal.fixture_expect_failure(statement,'jiaowubao_trial_completed_history_changed');
+      raise exception using errcode='P0042',message='fixture_rollback';
+    exception when sqlstate 'P0042' then null; end;
+  end loop;
+  begin
+    insert into internal.legacy_task_deadline_freezes values('RESTORE-N3');
+    perform internal.fixture_expect_failure(statement,'jiaowubao_trial_completed_history_changed');
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  attempted := jsonb_set(restored_tasks,'{2}',(restored_tasks->2)-'closedAt'-'result'-'completionOutcome'||'{"status":"upcoming","tone":"blue"}'::jsonb);
+  perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),attempted,versions),'jiaowubao_trial_completed_history_changed');
+  attempted := jsonb_set(restored_tasks,'{3}',(restored_tasks->3)-'closedAt'-'result'-'completionOutcome'||'{"status":"upcoming","tone":"blue"}'::jsonb);
+  perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),attempted,versions),'jiaowubao_trial_completed_history_changed');
+  attempted := (restored_tasks-0);
+  perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),attempted,versions),'jiaowubao_trial_completed_history_changed');
+  begin
+    update public.ops_state set payload=jsonb_build_array(lp||'{"trialLpFinalized":true}'::jsonb) where entity='lpItems';
+    perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked||'{"trialLpFinalized":true}'::jsonb),restored_tasks,versions),'jiaowubao_trial_completed_history_changed');
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  if (select jsonb_agg(to_jsonb(s) order by entity) from public.ops_state s)<>before_state
+    or (select count(*) from internal.operational_contract_audit)<>(before_counts->>'audits')::integer
+    or (select count(*) from public.ops_mutation_log)<>(before_counts->>'logs')::integer
+    or (select count(*) from internal.jiaowubao_trial_sync_commands)<>(before_counts->>'commands')::integer then raise exception 'Rejected restoration changed state'; end if;
+  reference := jsonb_build_array(jsonb_build_object('lpItemId','LP-1','eventId',link->>'eventId','startsAt',link->>'startsAt'));
+  for variant in select value from jsonb_array_elements('[{"stage":"完成"},{"resultStatus":"已取消"},{"resultStatus":"被家长取消"},{"trialLpFinalized":true}]') loop
+    if internal.trial_lp_auto_reminder_reopen_valid(closed_tasks->4,n3,reference,jsonb_build_array(lp||variant),jsonb_build_array(linked||variant)) then
+      raise exception 'Terminal or finalized LP allowed automatic restoration';
+    end if;
+  end loop;
+  execute statement into receipt;
+  if not receipt.applied or (receipt.tasks_row).payload<>restored_tasks or (receipt.lp_items_row).payload<>jsonb_build_array(linked)
+    or (receipt.tasks_row).version<>(versions->>'tasks')::integer+1 then raise exception 'Restored changed source did not reopen exactly automatic reminders'; end if;
+  first_audit := receipt.audit_entry_id;
+  execute statement into receipt;
+  if receipt.applied or receipt.audit_entry_id<>first_audit then raise exception 'Restoration replay duplicated writes'; end if;
+  begin
+    request_at := to_char(now() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+    target_day := (now() at time zone 'Australia/Melbourne')::date+1;
+    source_revision := 'sha256:'||repeat('b',64);
+    lp := jsonb_set(lp,'{trialIntake,requestSentAt}',to_jsonb(request_at));
+    link := link || jsonb_build_object('sourceRevision',source_revision,
+      'startsAt',to_char(((target_day+time '09:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'endsAt',to_char(((target_day+time '10:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+    linked := lp || jsonb_build_object('trialSchedule',link);
+    update public.ops_state set payload=jsonb_build_array(lp) where entity='lpItems';
+    update public.ops_state set payload=closed_tasks where entity='tasks';
+    update internal.jiaowubao_open_api_schedule_snapshot_current set revision=source_revision;
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_runs set revision=source_revision,
+      query=jsonb_build_object('start',(now() at time zone 'Australia/Melbourne')::date::text,'end',target_day::text);
+    update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',record_value||jsonb_build_object('dated',target_day::text));
+    select jsonb_object_agg(entity,version) into versions from public.ops_state where entity in ('lpItems','tasks');
+    n3 := pg_temp.restore_reminder('trial.jiaowubao.lp-finalize-tomorrow-n3',link,request_at);
+    n2 := pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',link,request_at);
+    perform internal.fixture_expect_failure(internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),initial_tasks||jsonb_build_array(n3,n2),versions),'jiaowubao_trial_completed_history_changed');
+    attempted := initial_tasks||jsonb_build_array(closed_tasks->4,n2);
+    execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),attempted,versions) into receipt;
+    if not receipt.applied or (receipt.tasks_row).payload<>attempted then raise exception 'Short-notice N2 restoration or N3 history preservation failed'; end if;
+    raise exception using errcode='P0042',message='fixture_rollback';
+  exception when sqlstate 'P0042' then null; end;
+  if has_function_privilege('anon','internal.trial_lp_auto_reminder_reopen_valid(jsonb,jsonb,jsonb,jsonb,jsonb)','execute')
+    or has_function_privilege('authenticated','internal.trial_lp_auto_reminder_reopen_valid(jsonb,jsonb,jsonb,jsonb,jsonb)','execute') then raise exception 'Restoration helper was exposed'; end if;
+end $$;
+
+do $$
+declare
+  seed jsonb; lp jsonb; linked jsonb; link jsonb; source_record jsonb; request_at text;
+  initial_tasks jsonb; closed_tasks jsonb; n3 jsonb; n2 jsonb; expected jsonb; actual jsonb; history jsonb;
+  versions jsonb; receipt record; statement text; command_id text := extensions.gen_random_uuid()::text;
+  source_day date; source_revision text := 'sha256:'||repeat('c',64);
+begin
+  delete from public.ops_state;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_current;
+  delete from internal.jiaowubao_open_api_schedule_snapshot_ingest_runs;
+  seed := internal.fixture_trial_handover_seed();
+  select item->'record' into source_record from internal.jiaowubao_open_api_schedule_snapshot_ingest_items;
+  request_at := to_char(((seed#>>'{link,startsAt}')::timestamptz-interval '4 days') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  lp := jsonb_set(seed->'lp','{trialIntake,requestSentAt}',to_jsonb(request_at));
+  n3 := pg_temp.restore_reminder('trial.jiaowubao.lp-finalize-tomorrow-n3',seed->'link',request_at);
+  n2 := pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',seed->'link',request_at);
+  initial_tasks := (seed->'tasks') || jsonb_build_array(
+    n2 || '{"id":"CURRENT-MANUAL","status":"done","tone":"green","completionOutcome":"done","result":"人工确认完成","closedAt":"2026-10-20T00:00:00.000Z"}'::jsonb,
+    n2 || '{"id":"CURRENT-CANNOT","status":"done","tone":"green","completionOutcome":"cannot_do","result":"无法完成","closedAt":"2026-10-20T00:00:00.000Z"}'::jsonb,
+    n3 || '{"id":"CURRENT-FROZEN","status":"done","tone":"green","completionOutcome":"done","result":"试听台账已确认LP定稿","closedAt":"2026-10-20T00:00:00.000Z","legacyEvidence":{"state":"frozen"}}'::jsonb);
+  insert into internal.legacy_task_deadline_freezes values('CURRENT-FROZEN');
+  update public.ops_state set payload=jsonb_build_array(lp) where entity='lpItems';
+  update public.ops_state set payload=initial_tasks where entity='tasks';
+  linked := internal.trial_handover_enriched_lp(lp,source_record,jsonb_build_array(seed->'student'),60) || jsonb_build_object('trialSchedule',seed->'link');
+  execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),initial_tasks||jsonb_build_array(n3,n2)) into receipt;
+  select * into receipt from public.mutate_trial_ledger_field_atomic('local-jwb-fixture',extensions.gen_random_uuid()::text,
+    '{"lpItemId":"LP-1","field":"lpFinalized","expectedValue":null,"value":true}','LP-1','lpFinalized','null','true','Ella');
+  lp := (receipt.lp_items_row).payload->0;
+  select payload into closed_tasks from public.ops_state where entity='tasks';
+  source_day := (seed->>'sourceDay')::date+1;
+  update internal.jiaowubao_open_api_schedule_snapshot_current set revision=source_revision;
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_runs set revision=source_revision,
+    query=jsonb_build_object('start',seed->>'sourceDay','end',source_day::text);
+  update internal.jiaowubao_open_api_schedule_snapshot_ingest_items set item=jsonb_build_object('record',source_record||jsonb_build_object('dated',source_day::text,'teacher_title','Synthetic Current Teacher'));
+  update public.ops_state set payload=jsonb_set(payload,'{0,owner}','"Erin"'),version=version+1 where entity='students';
+  link := seed->'link'||jsonb_build_object('sourceRevision',source_revision,'teacherName','Synthetic Current Teacher',
+    'startsAt',to_char(((source_day+time '09:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'endsAt',to_char(((source_day+time '10:00') at time zone 'Australia/Melbourne') at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  linked := lp||jsonb_build_object('trialSchedule',link);
+  versions := '{"lpItems":3,"tasks":3}';
+  execute internal.fixture_trial_handover_call(extensions.gen_random_uuid()::text,jsonb_build_array(linked),closed_tasks,versions) into receipt;
+  if not receipt.applied or (receipt.tasks_row).payload<>closed_tasks or (receipt.tasks_row).version<>3
+    or (receipt.lp_items_row).version<>4 then raise exception 'Finalized sync changed task completion history'; end if;
+  select * into receipt from public.mutate_trial_ledger_field_atomic('local-jwb-fixture',command_id,
+    '{"lpItemId":"LP-1","field":"lpFinalized","expectedValue":true,"value":false}','LP-1','lpFinalized','true','false','Erin');
+  for expected in select value from jsonb_array_elements(jsonb_build_array(
+    pg_temp.restore_reminder('trial.jiaowubao.lp-finalize-tomorrow-n3',link,request_at),
+    pg_temp.restore_reminder('trial.jiaowubao.lp-materials-n2',link,request_at))) loop
+    select value into actual from jsonb_array_elements((select payload from public.ops_state where entity='tasks')) where value->>'id'=expected->>'id';
+    if actual->>'status'='done' or actual->>'dueAt'<>expected->>'dueAt' or actual->>'due'<>expected->>'due'
+      or actual->>'title'<>expected->>'title' or actual->>'owner'<>'Erin' or actual->'assignees'<>'["Erin","Ops Admin"]'::jsonb
+      or actual->>'completionNote'<>expected->>'completionNote' or actual->>'completionNoteUpdatedAt'<>expected->>'completionNoteUpdatedAt'
+      or actual ?| array['result','closedAt','completionOutcome'] then raise exception 'LP uncheck reopened stale source metadata'; end if;
+  end loop;
+  for history in select value from jsonb_array_elements(initial_tasks) loop
+    if not exists(select 1 from jsonb_array_elements((select payload from public.ops_state where entity='tasks')) where value=history) then raise exception 'LP uncheck rewrote protected completion history'; end if;
+  end loop;
+  if (receipt.lp_items_row).payload->0#>>'{trialIntake,requestSentAt}'<>request_at or (select version from public.ops_state where entity='tasks')<>4 then raise exception 'LP uncheck reset request clock or missed atomic task update'; end if;
+  select * into receipt from public.mutate_trial_ledger_field_atomic('local-jwb-fixture',command_id,
+    '{"lpItemId":"LP-1","field":"lpFinalized","expectedValue":true,"value":false}','LP-1','lpFinalized','true','false','Erin');
+  if receipt.applied or (select version from public.ops_state where entity='tasks')<>4 then raise exception 'LP uncheck replay changed tasks twice'; end if;
+  if has_function_privilege('anon','internal.trial_lp_reminder_source_fields(jsonb,text)','execute')
+    or has_function_privilege('authenticated','internal.trial_lp_reminder_source_fields(jsonb,text)','execute') then raise exception 'Current-source reminder helper was exposed'; end if;
+end $$;
+
 rollback;

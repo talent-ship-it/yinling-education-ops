@@ -94,8 +94,8 @@ test("legacy deadline route reauthorizes before replay and gates clear before on
   assert.match(deadlineModal, /待办截止时间（墨尔本）/);
   assert.match(deadlineModal, /name="melbourneDateTime" type="datetime-local"[^>]*defaultValue=\{[^}]+: ""\} required/);
   assert.doesNotMatch(deadlineModal, /currentDateTimeValueInTimezone/);
-  const openDeadlineRepair = toDoList.indexOf('view === "todo" ? !hasAutomaticTaskDeadline(task) && onRepairDeadline');
-  const closedTaskReopen = toDoList.indexOf(': canReopen?.(task)', openDeadlineRepair);
+  const openDeadlineRepair = toDoList.indexOf('view === "todo" ? !sourceManaged && !hasAutomaticTaskDeadline(task) && onRepairDeadline');
+  const closedTaskReopen = toDoList.indexOf(': !sourceManaged && canReopen?.(task)', openDeadlineRepair);
   assert.ok(openDeadlineRepair >= 0, "manual frozen tasks must expose the deadline repair action");
   assert.ok(closedTaskReopen > openDeadlineRepair, "closed tasks must branch to reopen instead of deadline repair");
   assert.match(toDoList, /className="deadline-edit-button"/);

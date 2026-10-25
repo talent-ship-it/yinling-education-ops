@@ -1,4 +1,17 @@
 \ir trial-screenshot-confirmation-setup.sql
+create table internal.legacy_task_deadline_freezes(task_id text primary key);
+\ir ../../supabase/migrations/20260828000600_trial_ledger_atomic.sql
+\ir ../../supabase/migrations/20261021074408_add_trial_cancelled_and_nil_statuses.sql
+\ir trial-payment-lifecycle-definitions.sql
+create temporary table fixture_auto_reopen_v2_security as select proacl,prosecdef,proconfig from pg_proc
+where oid='public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure;
+\ir ../../supabase/migrations/20261025213044_hr_trial_task_follow_up_and_lp_finalized.sql
+\ir ../../supabase/migrations/20261025213044_hr_trial_task_follow_up_and_lp_finalized.sql
+do $$ begin
+  if (select row(proacl,prosecdef,proconfig) from pg_proc where oid='public.sync_jiaowubao_trial_matches_atomic_v2(text,text,jsonb,text,jsonb,jsonb,jsonb,jsonb,jsonb,text)'::regprocedure)
+    is distinct from (select row(proacl,prosecdef,proconfig) from fixture_auto_reopen_v2_security) then raise exception 'Automatic reminder exception changed v2 execution security'; end if;
+end $$;
+drop table fixture_auto_reopen_v2_security;
 
 create function internal.fixture_trial_handover_seed()
 returns jsonb language plpgsql as $$

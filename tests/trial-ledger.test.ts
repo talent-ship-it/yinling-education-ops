@@ -13,7 +13,7 @@ import {
 
 const commandKey = "123e4567-e89b-42d3-a456-426614174000";
 
-test("the trial ledger exposes the exact 13 handbook columns as atomic fields", () => {
+test("the trial ledger exposes the handbook columns and LP finalized status as atomic fields", () => {
   assert.deepEqual(TRIAL_LEDGER_FIELDS, [
     "studentName",
     "guardianWechat",
@@ -27,6 +27,7 @@ test("the trial ledger exposes the exact 13 handbook columns as atomic fields", 
     "teacher",
     "resultStatus",
     "trialPaid",
+    "lpFinalized",
     "trialLedgerNote",
   ]);
 });
@@ -128,4 +129,22 @@ test("accepts cancelled and NIL trial results through field-level commands", () 
       assert.equal(effectiveTrialResultStatus({ workflowType, resultStatus }), resultStatus);
     }
   }
+});
+
+test("LP finalized uses a nullable boolean command and its dedicated stored property", () => {
+  for (const value of [true, false, null]) {
+    const command = parseTrialLedgerCommand({ commandKey, lpItemId: "LP-TRIAL-1", field: "lpFinalized", expectedValue: null, value });
+    assert.equal(command.value, value ?? undefined);
+  }
+  assert.equal(trialLedgerStoredValue({ id: "LP-1", trialLpFinalized: true }, "lpFinalized"), true);
+  assert.equal(trialLedgerStoredValue({ id: "LP-1", trialLpFinalized: false }, "lpFinalized"), false);
+  assert.equal(trialLedgerStoredValue({ id: "LP-1" }, "lpFinalized"), undefined);
+  assert.throws(() => normalizeTrialLedgerFieldValue("lpFinalized", "true"), TrialLedgerError);
+});
+
+
+test("the original Tencent delayed-arrangement result remains a distinct editable trial status", () => {
+  const command = parseTrialLedgerCommand({ commandKey, lpItemId: "LP-TRIAL-1", field: "resultStatus", expectedValue: null, value: "延迟待安排" });
+  assert.equal(command.value, "延迟待安排");
+  assert.equal(effectiveTrialResultStatus({ workflowType: "试听 LP", resultStatus: "延迟待安排" }), "延迟待安排");
 });

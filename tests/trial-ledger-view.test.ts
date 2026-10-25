@@ -11,6 +11,7 @@ import {
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
+  trialFollowUpStatus,
   type TrialLedgerViewRow,
 } from "../lib/trial-ledger-view";
 
@@ -207,7 +208,7 @@ test("non-trial handovers never count as unpaid trials or affect trial success r
     { ...rows[0]!, id: "LP-LEGACY", workflowType: "代课 LP", resultStatus: "试听成功", paid: false },
   ];
   const source = [...rows, ...handovers];
-  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...defaultTrialLedgerViewState(), paid: "unpaid" }).map((row) => row.id), ["LP-2", "LP-3"]);
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...defaultTrialLedgerViewState(), paid: "unpaid" }).map((row) => row.id), ["LP-3", "LP-2"]);
   const stats = trialLedgerViewStats(source);
   assert.equal(stats.total, 5);
   assert.equal(stats.byStatus["已完成"], 1);
@@ -215,4 +216,58 @@ test("non-trial handovers never count as unpaid trials or affect trial success r
   assert.equal(stats.failed, 1);
   assert.equal(stats.successRate, 50);
   assert.equal(trialLedgerViewStats(handovers).successRate, null);
+});
+
+
+test("filters authoritative schedule matches independently of manually entered times", () => {
+  const source = [
+    { ...rows[0]!, scheduleMatched: false },
+    { ...rows[1]!, scheduleMatched: true },
+    { ...rows[2]!, scheduleMatched: false },
+  ];
+  const state = defaultTrialLedgerViewState();
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...state, scheduleMatch: "matched" }).map((row) => row.id), ["LP-2"]);
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...state, scheduleMatch: "unmatched" }).map((row) => row.id), ["LP-3", "LP-1"]);
+});
+
+test("filters exact Beijing request minutes, including the selected ending minute", () => {
+  const source = [
+    { ...rows[0]!, id: "before", requestedAt: "2026-10-24T01:59:59.999Z" },
+    { ...rows[0]!, id: "inside", requestedAt: "2026-10-24T02:00:00.000Z" },
+    { ...rows[0]!, id: "last", requestedAt: "2026-10-24T02:30:59.999Z" },
+    { ...rows[0]!, id: "after", requestedAt: "2026-10-24T02:31:00.000Z" },
+    { ...rows[0]!, id: "missing", requestedAt: "" },
+  ];
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, {
+    ...defaultTrialLedgerViewState(), requestedFrom: "2026-10-24T10:00", requestedTo: "2026-10-24T10:30",
+  }).map((row) => row.id), ["last", "inside"]);
+  assert.equal(parseTrialLedgerViewState({ requestedFrom: "2026-02-30T10:00" }).requestedFrom, "");
+});
+
+test("combines handover text and follow-up states without misclassifying missing intake", () => {
+  const source = [
+    { ...rows[0]!, parentFollowUp: "required" as const, preparationFollowUp: "completed" as const, handoverText: "Synthetic algebra confidence" },
+    { ...rows[1]!, parentFollowUp: "not_required" as const, preparationFollowUp: "not_required" as const },
+    { ...rows[2]!, parentFollowUp: "unknown" as const, preparationFollowUp: "unknown" as const },
+  ];
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, {
+    ...defaultTrialLedgerViewState(), query: "algebra", parentFollowUp: "required", preparationFollowUp: "completed",
+  }).map((row) => row.id), ["LP-1"]);
+  assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...defaultTrialLedgerViewState(), parentFollowUp: "not_required" }).map((row) => row.id), ["LP-2"]);
+});
+
+test("derives follow-up completion from every required action on the same request", () => {
+  const task = (id: string, ruleKey: string, status = "done", anchorBookingId = "LP-1") => ({
+    id, title: id, ruleKey, status, anchorBookingId, owner: "Ella", studentId: "STU-1", due: "", tone: "blue", category: "LP", trigger: "",
+  } as import("../lib/ops-tasks").OpsTask);
+  const input = { lpItemId: "LP-1", required: true, ruleKeys: ["send", "receive"] };
+  assert.equal(trialFollowUpStatus({ ...input, tasks: [task("send", "send")] }), "required");
+  assert.equal(trialFollowUpStatus({ ...input, tasks: [task("send", "send"), task("other", "receive", "done", "LP-2")] }), "required");
+  const tasks = [task("send", "send"), task("receive", "receive")];
+  assert.equal(trialFollowUpStatus({ ...input, tasks }), "completed");
+  assert.equal(trialFollowUpStatus({ ...input, tasks: [tasks[0]!, { ...tasks[1]!, completionOutcome: "cannot_do" }] }), "required");
+  assert.equal(trialFollowUpStatus({ ...input, tasks: [tasks[0]!, { ...tasks[1]!, status: "today" }] }), "required");
+  assert.equal(trialFollowUpStatus({ ...input, required: false, tasks: [] }), "not_required");
+  assert.equal(trialFollowUpStatus({ ...input, required: undefined, tasks: [] }), "unknown");
+  assert.equal(trialFollowUpStatus({ ...input, tasks: tasks.map((task) => ({ ...task, anchorBookingId: "JWB:event", requestAnchorBookingId: "LP-1" })) }), "completed");
 });
