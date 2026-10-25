@@ -1,44 +1,3 @@
-create or replace function internal.trial_lp_finalize_tasks(
-  p_tasks jsonb, p_lp jsonb, p_finalized boolean, p_now timestamptz
-)
-returns jsonb
-language sql
-stable
-security invoker
-set search_path = ''
-as $$
-  select coalesce(jsonb_agg(case
-    when task ->> 'requestAnchorBookingId' = p_lp ->> 'id'
-      and task ->> 'studentId' = p_lp ->> 'studentId'
-      and task ->> 'anchorBookingId' = 'JWB:' || (p_lp #>> '{trialSchedule,eventId}')
-      and task ->> 'ruleKey' in ('trial.jiaowubao.lp-finalize-tomorrow-n3','trial.jiaowubao.lp-materials-n2')
-      and not (task ? 'legacyEvidence')
-      and not exists (select 1 from internal.legacy_task_deadline_freezes frozen where frozen.task_id = task ->> 'id')
-      and coalesce(task ->> 'dueAt','') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
-    then case
-      when p_finalized and task ->> 'status' <> 'done' then task || jsonb_build_object(
-        'status','done','tone','green','completionOutcome','done','result','试听台账已确认LP定稿',
-        'closedAt',to_char(p_now at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-      when not p_finalized and task ->> 'status' = 'done'
-        and task ->> 'result' = '试听台账已确认LP定稿'
-        and coalesce(p_lp ->> 'stage','') <> '完成'
-        and coalesce(p_lp ->> 'resultStatus','') not in ('已取消','被家长取消')
-        and (task ->> 'ruleKey' <> 'trial.jiaowubao.lp-finalize-tomorrow-n3'
-          or p_lp #>> '{trialIntake,requestSentAt}' is null
-          or ((p_lp #>> '{trialSchedule,startsAt}')::timestamptz at time zone 'Australia/Melbourne')::date
-            - ((p_lp #>> '{trialIntake,requestSentAt}')::timestamptz at time zone 'Australia/Melbourne')::date >= 3)
-      then (task - 'closedAt' - 'completionOutcome' - 'result') || jsonb_build_object(
-        'status',case when (task ->> 'dueAt')::timestamptz < p_now then 'overdue'
-          when ((task ->> 'dueAt')::timestamptz at time zone 'Asia/Shanghai')::date = (p_now at time zone 'Asia/Shanghai')::date then 'today' else 'upcoming' end,
-        'tone',case when (task ->> 'dueAt')::timestamptz < p_now then 'red'
-          when ((task ->> 'dueAt')::timestamptz at time zone 'Asia/Shanghai')::date = (p_now at time zone 'Asia/Shanghai')::date then 'amber' else 'blue' end)
-      else task end
-    else task end order by ordinality),'[]'::jsonb)
-  from jsonb_array_elements(p_tasks) with ordinality source(task,ordinality)
-$$;
-revoke all on function internal.trial_lp_finalize_tasks(jsonb,jsonb,boolean,timestamptz)
-  from public,anon,authenticated,service_role;
-
 create or replace function internal.trial_terminal_tasks(p_tasks jsonb,p_lp jsonb,p_now timestamptz)
 returns jsonb language sql stable security invoker set search_path = '' as $$
   select coalesce(jsonb_agg(case when task ->> 'studentId' = p_lp ->> 'studentId'
@@ -54,15 +13,64 @@ $$;
 revoke all on function internal.trial_terminal_tasks(jsonb,jsonb,timestamptz)
   from public,anon,authenticated,service_role;
 
+create or replace function internal.trial_lp_reminder_source_fields(p_lp jsonb,p_rule text)
+returns jsonb language plpgsql stable security invoker set search_path = '' as $$
+declare
+  lp jsonb := p_lp; schedule jsonb := p_lp -> 'trialSchedule'; student jsonb;
+  candidates integer; source_students jsonb; request_text text; request_at timestamptz;
+  starts_at timestamptz; deadline timestamptz; local_deadline timestamp; lead_days integer;
+  expected_title text; expected_due text; owner_value text; name_value text;
+begin
+  if coalesce(p_rule,'') not in ('trial.jiaowubao.lp-finalize-tomorrow-n3','trial.jiaowubao.lp-materials-n2')
+    or not coalesce(schedule ->> 'source' = 'jiaowubao-open-api'
+      and schedule ->> 'sourceRevision' ~ '^sha256:[a-f0-9]{64}$'
+      and schedule ->> 'startsAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+      and pg_catalog.pg_input_is_valid(schedule ->> 'startsAt','timestamp with time zone')
+      and nullif(btrim(schedule ->> 'teacherName'),'') is not null,false) then return null; end if;
+  starts_at := (schedule ->> 'startsAt')::timestamptz;
+  request_text := coalesce(lp #>> '{trialIntake,requestSentAt}',lp ->> 'requestedAt');
+  if request_text is not null then
+    if not pg_catalog.pg_input_is_valid(request_text,'timestamp with time zone') then return null; end if;
+    request_at := request_text::timestamptz;
+    lead_days := (starts_at at time zone 'Australia/Melbourne')::date - (request_at at time zone 'Australia/Melbourne')::date;
+  end if;
+  if p_rule = 'trial.jiaowubao.lp-finalize-tomorrow-n3' then
+    if lead_days < 3 then return null; end if;
+    deadline := (((starts_at at time zone 'Australia/Melbourne')::date - 3) + time '18:00') at time zone 'Australia/Melbourne';
+    expected_title := '《教务+教统》【明日LP定稿】';
+  else
+    deadline := case when lead_days between 0 and 2 then least(starts_at,
+      ((request_at at time zone 'Australia/Melbourne')::date + time '18:00') at time zone 'Australia/Melbourne')
+      else (((starts_at at time zone 'Australia/Melbourne')::date - 2) + time '18:00') at time zone 'Australia/Melbourne' end;
+    expected_title := '《教务+教统》【今日LP定稿】';
+  end if;
+  select payload into source_students from public.ops_state where entity = 'students';
+  if jsonb_typeof(source_students) is distinct from 'array' then return null; end if;
+  select count(*),jsonb_agg(value)->0 into candidates,student from jsonb_array_elements(source_students)
+  where value ->> 'id' = lp ->> 'studentId' and coalesce(value ->> 'importArchived','false') <> 'true';
+  if candidates <> 1 then return null; end if;
+  owner_value := nullif(btrim(student ->> 'owner'),'');
+  name_value := schedule ->> 'studentName';
+  if nullif(btrim(name_value),'') is null then return null; end if;
+  expected_title := expected_title || '<' || name_value || '> <' || (schedule ->> 'teacherName') || '>';
+  local_deadline := deadline at time zone 'Asia/Shanghai';
+  expected_due := extract(year from local_deadline)::integer || '年' || extract(month from local_deadline)::integer
+    || '月' || extract(day from local_deadline)::integer || '日 ' || to_char(local_deadline,'HH24:MI');
+  if owner_value is null then return null; end if;
+  return jsonb_build_object('dueAt',to_char(deadline at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'due',expected_due,'title',expected_title,'owner',owner_value,
+    'assignees',case when owner_value = 'Ops Admin' then jsonb_build_array(owner_value) else jsonb_build_array(owner_value,'Ops Admin') end);
+end;
+$$;
+revoke all on function internal.trial_lp_reminder_source_fields(jsonb,text) from public,anon,authenticated,service_role;
+
 create or replace function internal.trial_lp_auto_reminder_reopen_valid(
   p_before jsonb,p_after jsonb,p_matches jsonb,p_lp_items jsonb,p_next_lp_items jsonb
 )
 returns boolean language plpgsql stable security invoker set search_path = '' as $$
 declare
-  lp jsonb; next_lp jsonb; reference jsonb; student jsonb; schedule jsonb;
-  candidates integer; source_students jsonb; request_text text; request_at timestamptz;
-  starts_at timestamptz; deadline timestamptz; local_deadline timestamp; lead_days integer;
-  expected_title text; expected_due text; owner_value text; name_value text;
+  lp jsonb; next_lp jsonb; reference jsonb; schedule jsonb; expected_fields jsonb;
+  candidates integer;
   lifecycle text[] := array['status','tone','result','closedAt','completionOutcome','dueAt','due','title','owner','assignees'];
 begin
   if not coalesce(jsonb_typeof(p_before) = 'object' and jsonb_typeof(p_after) = 'object'
@@ -94,43 +102,54 @@ begin
   if not coalesce(schedule ->> 'eventId' = reference ->> 'eventId'
     and schedule ->> 'startsAt' = reference ->> 'startsAt'
     and pg_catalog.pg_input_is_valid(reference ->> 'startsAt','timestamp with time zone'),false) then return false; end if;
-  starts_at := (reference ->> 'startsAt')::timestamptz;
-  request_text := coalesce(lp #>> '{trialIntake,requestSentAt}',lp ->> 'requestedAt');
-  if request_text is not null then
-    if not pg_catalog.pg_input_is_valid(request_text,'timestamp with time zone') then return false; end if;
-    request_at := request_text::timestamptz;
-    lead_days := (starts_at at time zone 'Australia/Melbourne')::date - (request_at at time zone 'Australia/Melbourne')::date;
-  end if;
-  if p_before ->> 'ruleKey' = 'trial.jiaowubao.lp-finalize-tomorrow-n3' then
-    if lead_days < 3 then return false; end if;
-    deadline := (((starts_at at time zone 'Australia/Melbourne')::date - 3) + time '18:00') at time zone 'Australia/Melbourne';
-    expected_title := '《教务+教统》【明日LP定稿】';
-  else
-    deadline := case when lead_days between 0 and 2 then least(starts_at,
-      ((request_at at time zone 'Australia/Melbourne')::date + time '18:00') at time zone 'Australia/Melbourne')
-      else (((starts_at at time zone 'Australia/Melbourne')::date - 2) + time '18:00') at time zone 'Australia/Melbourne' end;
-    expected_title := '《教务+教统》【今日LP定稿】';
-  end if;
-  select payload into source_students from public.ops_state where entity = 'students';
-  if jsonb_typeof(source_students) is distinct from 'array' then return false; end if;
-  select count(*),jsonb_agg(value)->0 into candidates,student from jsonb_array_elements(source_students)
-  where value ->> 'id' = lp ->> 'studentId' and coalesce(value ->> 'importArchived','false') <> 'true';
-  if candidates <> 1 then return false; end if;
-  owner_value := nullif(btrim(student ->> 'owner'),'');
-  name_value := schedule ->> 'studentName';
-  if nullif(btrim(name_value),'') is null then return false; end if;
-  expected_title := expected_title || '<' || name_value || '> <' || (schedule ->> 'teacherName') || '>';
-  local_deadline := deadline at time zone 'Asia/Shanghai';
-  expected_due := extract(year from local_deadline)::integer || '年' || extract(month from local_deadline)::integer
-    || '月' || extract(day from local_deadline)::integer || '日 ' || to_char(local_deadline,'HH24:MI');
-  return coalesce(p_after ->> 'dueAt' = to_char(deadline at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-    and p_after ->> 'due' = expected_due and p_after ->> 'title' = expected_title
-    and p_after ->> 'owner' = owner_value
-    and p_after -> 'assignees' = case when owner_value = 'Ops Admin' then jsonb_build_array(owner_value)
-      else jsonb_build_array(owner_value,'Ops Admin') end,false);
+  expected_fields := internal.trial_lp_reminder_source_fields(next_lp,p_before ->> 'ruleKey');
+  return coalesce(expected_fields is not null and p_after ->> 'dueAt' = expected_fields ->> 'dueAt'
+    and p_after ->> 'due' = expected_fields ->> 'due' and p_after ->> 'title' = expected_fields ->> 'title'
+    and p_after ->> 'owner' = expected_fields ->> 'owner' and p_after -> 'assignees' = expected_fields -> 'assignees',false);
 end;
 $$;
 revoke all on function internal.trial_lp_auto_reminder_reopen_valid(jsonb,jsonb,jsonb,jsonb,jsonb)
+  from public,anon,authenticated,service_role;
+
+create or replace function internal.trial_lp_finalize_tasks(
+  p_tasks jsonb, p_lp jsonb, p_finalized boolean, p_now timestamptz
+)
+returns jsonb
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select coalesce(jsonb_agg(case
+    when task ->> 'requestAnchorBookingId' = p_lp ->> 'id'
+      and task ->> 'studentId' = p_lp ->> 'studentId'
+      and task ->> 'anchorBookingId' = 'JWB:' || (p_lp #>> '{trialSchedule,eventId}')
+      and task ->> 'ruleKey' in ('trial.jiaowubao.lp-finalize-tomorrow-n3','trial.jiaowubao.lp-materials-n2')
+      and not (task ? 'legacyEvidence')
+      and not exists (select 1 from internal.legacy_task_deadline_freezes frozen where frozen.task_id = task ->> 'id')
+      and coalesce(task ->> 'dueAt','') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+    then case
+      when p_finalized and task ->> 'status' <> 'done' then task || jsonb_build_object(
+        'status','done','tone','green','completionOutcome','done','result','试听台账已确认LP定稿',
+        'closedAt',to_char(p_now at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      when not p_finalized and task ->> 'status' = 'done'
+        and task ->> 'result' = '试听台账已确认LP定稿'
+        and internal.trial_lp_auto_reminder_reopen_valid(task,rebuilt.next_task,
+          jsonb_build_array(jsonb_build_object('lpItemId',p_lp ->> 'id','eventId',p_lp #>> '{trialSchedule,eventId}','startsAt',p_lp #>> '{trialSchedule,startsAt}')),
+          jsonb_build_array(p_lp),jsonb_build_array(p_lp))
+      then rebuilt.next_task || jsonb_build_object(
+        'status',case when (rebuilt.next_task ->> 'dueAt')::timestamptz < p_now then 'overdue'
+          when ((rebuilt.next_task ->> 'dueAt')::timestamptz at time zone 'Asia/Shanghai')::date = (p_now at time zone 'Asia/Shanghai')::date then 'today' else 'upcoming' end,
+        'tone',case when (rebuilt.next_task ->> 'dueAt')::timestamptz < p_now then 'red'
+          when ((rebuilt.next_task ->> 'dueAt')::timestamptz at time zone 'Asia/Shanghai')::date = (p_now at time zone 'Asia/Shanghai')::date then 'amber' else 'blue' end)
+      else task end
+    else task end order by ordinality),'[]'::jsonb)
+  from jsonb_array_elements(p_tasks) with ordinality source(task,ordinality)
+  cross join lateral (select (task - 'closedAt' - 'completionOutcome' - 'result')
+    || coalesce(internal.trial_lp_reminder_source_fields(p_lp,task ->> 'ruleKey'),'{}'::jsonb)
+    || '{"status":"upcoming","tone":"blue"}'::jsonb as next_task) rebuilt
+$$;
+revoke all on function internal.trial_lp_finalize_tasks(jsonb,jsonb,boolean,timestamptz)
   from public,anon,authenticated,service_role;
 
 do $patch$

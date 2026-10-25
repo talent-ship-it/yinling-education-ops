@@ -48,13 +48,15 @@ begin
     or internal.trial_ledger_value_valid('resultStatus','"NIL"') is distinct from true then raise exception 'LP finalized field contract failed'; end if;
   lp:=jsonb_build_object('id','LP-FOLLOW','studentId','S-FOLLOW','workflowType','试听 LP','stage','待跟进','trialIntake',jsonb_build_object('planner','Tara','requestSentAt',request_at),
     'fields','{"writingRequired":true}'::jsonb, 'trialLedgerOverrides','{"planner":"Eileen"}'::jsonb,
-    'trialSchedule','{"eventId":"evt-follow","startsAt":"2026-10-28T04:00:00.000Z"}'::jsonb);
+    'trialSchedule',jsonb_build_object('source','jiaowubao-open-api','sourceRevision','sha256:'||repeat('a',64),'eventId','evt-follow','startsAt','2026-10-28T04:00:00.000Z','endsAt','2026-10-28T05:00:00.000Z','teacherName','Synthetic Teacher','studentName','Synthetic Child'));
   tasks:='[{"id":"n3","studentId":"S-FOLLOW","owner":"Ella","title":"N-3","requestAnchorBookingId":"LP-FOLLOW","anchorBookingId":"JWB:evt-follow","ruleKey":"trial.jiaowubao.lp-finalize-tomorrow-n3","dueAt":"2026-10-25T07:00:00.000Z","status":"overdue","completionNote":"保留备注"},
     {"id":"n2","studentId":"S-FOLLOW","owner":"Ella","title":"N-2","requestAnchorBookingId":"LP-FOLLOW","anchorBookingId":"JWB:evt-follow","ruleKey":"trial.jiaowubao.lp-materials-n2","dueAt":"2026-10-26T07:00:00.000Z","status":"today"},
     {"id":"manual","studentId":"S-FOLLOW","owner":"Ella","title":"Manual","requestAnchorBookingId":"LP-FOLLOW","anchorBookingId":"JWB:evt-follow","ruleKey":"trial.jiaowubao.lp-materials-n2","dueAt":"2026-10-26T07:00:00.000Z","status":"done","result":"人工完成"},
     {"id":"old-event","studentId":"S-FOLLOW","owner":"Ella","title":"Old","requestAnchorBookingId":"LP-FOLLOW","anchorBookingId":"JWB:old","ruleKey":"trial.jiaowubao.lp-materials-n2","dueAt":"2026-10-26T07:00:00.000Z","status":"today"}]';
+  select jsonb_agg(value||'{"watchers":["Ops Admin"],"assignees":["Ella","Ops Admin"]}'::jsonb order by ordinality) into tasks from jsonb_array_elements(tasks) with ordinality;
   if internal.trial_lp_finalize_tasks(tasks,lp,true,now())->0->>'status' <> 'done' then raise exception 'Direct helper failed'; end if;
-  insert into public.ops_state values('lpItems',jsonb_build_array(lp),1,now(),'fixture'),('tasks',tasks,1,now(),'fixture');
+  insert into public.ops_state values('lpItems',jsonb_build_array(lp),1,now(),'fixture'),('tasks',tasks,1,now(),'fixture'),
+    ('students','[{"id":"S-FOLLOW","name":"Synthetic Child","owner":"Ella","planner":"Tara"}]',1,now(),'fixture');
   select * into receipt from public.mutate_trial_ledger_field_atomic('synthetic-task-secret',command,
     '{"lpItemId":"LP-FOLLOW","field":"lpFinalized","expectedValue":null,"value":true}','LP-FOLLOW','lpFinalized','null','true','Ella');
   if not receipt.applied or internal.trial_ledger_stored_value((receipt.lp_items_row).payload->0,'lpFinalized')<>'true'::jsonb then raise exception 'Finalize field did not commit'; end if;
@@ -140,7 +142,8 @@ begin
   update public.ops_state set payload=jsonb_build_array(initial_task),version=1 where entity='tasks';
   insert into public.ops_state(entity,payload,version,updated_by) values
     ('students','[{"id":"S-PLANNER-FOLLOW","owner":"Ella","planner":"Tara"}]',1,'fixture'),
-    ('bookings','[]',1,'fixture'),('teachers','[]',1,'fixture');
+    ('bookings','[]',1,'fixture'),('teachers','[]',1,'fixture')
+    on conflict(entity) do update set payload=excluded.payload,version=excluded.version,updated_by=excluded.updated_by;
   insert into internal.jiaowubao_open_api_schedule_snapshot_current values('jwb-open-api-schedule',source_run,revision,now());
   insert into internal.jiaowubao_open_api_schedule_snapshot_ingest_items values(source_run,'event-planner-follow');
   select count(*) into before_count from internal.operational_contract_audit;
