@@ -64,6 +64,20 @@ export async function readTencentLpSourceRow(token: string, row: number, deadlin
   } });
   return [...sourcePageCells(header, 0, 1), ...sourcePageCells(result, row, row + 1)];
 }
+function isCsvMode(result: JsonRecord) {
+  return result.cells === undefined || Array.isArray(result.cells) && result.cells.length === 0;
+}
+export async function confirmTencentLpSourceEmptyNote(token: string, row: number, deadlineAt: number) {
+  assertWriteTarget(row, 16);
+  assertSyncBudget(deadlineAt, "read");
+  const result = await callTencentDocsTool({ token, name: "sheet.get_cell_data", arguments: {
+    file_id: TENCENT_LP_SOURCE_FILE_ID, sheet_id: TENCENT_LP_SOURCE_SHEET_ID,
+    start_row: row, end_row: row, start_col: 16, end_col: 16, return_csv: true,
+  } });
+  if (!isCsvMode(result) || typeof result.csv_data !== "string" || !/^(?:[ \t]*|"[ \t]*")(?:\r?\n)?$/u.test(result.csv_data)) {
+    throw new Error("tencent_lp_source_empty_note_unconfirmed");
+  }
+}
 function assertWriteTarget(row: number, column: number) {
   if (!validCoordinate(row, 1, MAX_ROWS + 1)) throw new Error("tencent_lp_source_write_target_invalid");
   if (![9, 10, 14, 15, 16].includes(column)) throw new Error("tencent_lp_source_write_target_invalid");

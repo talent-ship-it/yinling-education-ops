@@ -42,3 +42,29 @@ test("row reorder preserves strong identity material and distinct request clocks
   assert.equal(first.fields.find((field) => field.field === "planner")?.source, "Tara");
   assert.equal(matchTencentLpSourceRecords({ ...input, cells: [...header, ...cells, ...cells.map((cell) => ({ ...cell, row: 4 }))] }).records.length, 0);
 });
+
+const noteBaseline: TencentLpBaseline = { field: "trialLedgerNote", revision: 2, initialized: true, commonValue: "Common note", pending: null };
+for (const [description, source, system, action] of [
+  ["system note clear", "Common note", null, "export"],
+  ["Tencent note clear", null, "Common note", "import"],
+  ["Tencent clear beats conflicting local edit", null, "Local edit", "import"],
+  ["Tencent edit beats conflicting local clear", "Tencent edit", null, "import"],
+  ["both cleared notes converge", null, null, "observe"],
+] as const) test(description, () => assert.equal(planTencentLpFieldMerge(source, system, noteBaseline), action));
+for (const [description, source, system, action] of [
+  ["first empty Tencent note preserves local text", null, "Local note", "export"],
+  ["first empty system note preserves Tencent text", "Tencent note", null, "import"],
+  ["first empty notes only establish a baseline", null, null, "observe"],
+] as const) test(description, () => assert.equal(planTencentLpFieldMerge(source, system, { ...noteBaseline, initialized: false }), action));
+for (const [description, source, system, target, action] of [
+  ["confirmed pending clear preserves new system D", null, "New system D", null, "recover"],
+  ["unknown unobserved clear is never replayed", "Common note", null, null, "uncertain"],
+  ["new Tencent text after unknown clear wins", "New Tencent F", null, null, "import"],
+  ["Tencent clear after unknown text export wins", null, "Local text", "Local text", "import"],
+] as const) test(description, () => assert.equal(planTencentLpFieldMerge(source, system, { ...noteBaseline,
+  pending: { before: "Common note", target, phase: "attempted" } }), action));
+for (const field of ["planner", "resultStatus", "lpFinalized", "trialPaid"]) test(`${field} never gains blank-clearing semantics`, () => {
+  const baseline = { ...noteBaseline, field, commonValue: "Existing" };
+  assert.equal(planTencentLpFieldMerge(null, "Existing", baseline), "skip");
+  assert.equal(planTencentLpFieldMerge("Existing", null, baseline), "skip");
+});

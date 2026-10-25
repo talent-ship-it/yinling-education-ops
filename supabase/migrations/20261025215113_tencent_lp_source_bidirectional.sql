@@ -22,7 +22,7 @@ create table internal.tencent_lp_source_baselines (
   updated_at timestamptz not null default now(),
   primary key (lp_item_id,field),
   check ((pending_phase is null and pending_before is null and pending_target is null)
-    or (pending_phase is not null and pending_before is not null and pending_target is not null and pending_target <> 'null'::jsonb)),
+    or (pending_phase is not null and pending_before is not null and pending_target is not null and (pending_target <> 'null'::jsonb or (field='trialLedgerNote' and initialized)))),
   check (internal.trial_ledger_value_valid(field,common_value)),
   check (pending_before is null or internal.trial_ledger_value_valid(field,pending_before)),
   check (pending_target is null or internal.trial_ledger_value_valid(field,pending_target))
@@ -53,6 +53,7 @@ declare
   intent_hash text;
   fields jsonb;
   receipt record;
+  allow_note_clear boolean;
 begin
   if internal.verify_ops_secret(p_secret) is distinct from true then raise exception using errcode='42501',message='invalid_ops_secret'; end if;
   if p_token is null or p_action is null or jsonb_typeof(p_args) is distinct from 'object'
@@ -102,6 +103,7 @@ begin
     return internal.tencent_lp_baseline_json(baseline);
   end if;
   if baseline.revision <> (p_args->>'revision')::bigint then raise exception using errcode='40001',message='tencent_lp_sync_baseline_conflict'; end if;
+  allow_note_clear := baseline.field='trialLedgerNote' and baseline.initialized and next_value='null'::jsonb;
   if p_action in ('observe','import','stage','attempt') then
     select * into l from public.ops_state where entity='lpItems' for update;
     select value into item from jsonb_array_elements(l.payload) where value->>'id'=p_args->>'lpItemId';
@@ -118,7 +120,7 @@ begin
     if baseline.initialized and baseline.common_value=next_value then return internal.tencent_lp_baseline_json(baseline) || jsonb_build_object('lpVersion',l.version); end if;
     baseline.common_value:=next_value; baseline.initialized:=true;
   elsif p_action='import' then
-    if next_value='null'::jsonb or next_value='""'::jsonb then raise exception using errcode='22023',message='tencent_lp_sync_empty_import'; end if;
+    if (next_value='null'::jsonb and not allow_note_clear) or next_value='""'::jsonb then raise exception using errcode='22023',message='tencent_lp_sync_empty_import'; end if;
     select * into receipt from public.mutate_trial_ledger_field_atomic(p_secret,command_uuid::text,
       jsonb_build_object('lpItemId',p_args->>'lpItemId','field',p_args->>'field','expectedValue',expected_value,'value',next_value),
       p_args->>'lpItemId',p_args->>'field',expected_value,next_value,'Tencent LP Source Worker');
@@ -128,7 +130,7 @@ begin
     baseline.common_value:=next_value; baseline.initialized:=true;
     baseline.pending_before:=null; baseline.pending_target:=null; baseline.pending_phase:=null;
   elsif p_action='stage' then
-    if baseline.pending_phase is not null or next_value='null'::jsonb or next_value='""'::jsonb or current_value is distinct from next_value then
+    if baseline.pending_phase is not null or (next_value='null'::jsonb and not allow_note_clear) or next_value='""'::jsonb or current_value is distinct from next_value then
       raise exception using errcode='40001',message='tencent_lp_sync_stage_conflict'; end if;
     baseline.pending_before:=before_value; baseline.pending_target:=next_value; baseline.pending_phase:='planned';
   elsif p_action='attempt' then

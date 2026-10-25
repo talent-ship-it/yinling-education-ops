@@ -2,8 +2,8 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { getOpsState, tencentLpSourceSyncAction } from "./ops-store";
 import { matchTencentLpSourceRecords, type TencentLpSourceRecord } from "./tencent-lp-source";
-import { planTencentLpFieldMerge, type TencentLpBaseline } from "./tencent-lp-source-merge";
-import { readTencentLpSource, readTencentLpSourceRow, writeTencentLpSourceCell } from "./tencent-lp-source-io";
+import { allowsTencentLpNoteClearing, planTencentLpFieldMerge, type TencentLpBaseline } from "./tencent-lp-source-merge";
+import { confirmTencentLpSourceEmptyNote, readTencentLpSource, readTencentLpSourceRow, writeTencentLpSourceCell } from "./tencent-lp-source-io";
 import { normalizeTrialLedgerFieldValue, type TrialLedgerField, type TrialLedgerFieldValue } from "./trial-ledger";
 
 type JsonRecord = Record<string, unknown>;
@@ -22,12 +22,16 @@ function scalar(field: string, value: unknown) {
   if (normalized === undefined) throw new Error("tencent_lp_source_baseline_invalid");
   return normalized;
 }
-function pendingValue(value: unknown, field: string): TencentLpBaseline["pending"] {
+function pendingTarget(value: unknown, field: string, allowNull: boolean) {
+  const target = scalar(field, value);
+  if (target === null && !allowNull) throw new Error("tencent_lp_source_baseline_invalid");
+  return target;
+}
+function pendingValue(value: unknown, field: string, allowNull: boolean): TencentLpBaseline["pending"] {
   if (value === null) return null;
   const pending = requiredRecord(value);
   if (!["planned", "attempted"].includes(String(pending.phase))) throw new Error("tencent_lp_source_baseline_invalid");
-  const target = scalar(field, pending.target);
-  if (target === null) throw new Error("tencent_lp_source_baseline_invalid");
+  const target = pendingTarget(pending.target, field, allowNull);
   return { before: scalar(field, pending.before), target, phase: pending.phase as "planned" | "attempted" };
 }
 function validField(value: unknown): value is string {
@@ -39,7 +43,7 @@ function baselineValue(value: unknown): TencentLpBaseline {
   if (!validField(row.field) || !validRevision(row.revision)) throw new Error("tencent_lp_source_baseline_invalid");
   if (typeof row.initialized !== "boolean") throw new Error("tencent_lp_source_baseline_invalid");
   return { field: row.field, revision: row.revision as number, initialized: row.initialized,
-    commonValue: scalar(row.field, row.commonValue), pending: pendingValue(row.pending, row.field) };
+    commonValue: scalar(row.field, row.commonValue), pending: pendingValue(row.pending, row.field, allowsTencentLpNoteClearing(row.field, row.initialized)) };
 }
 function entityPayload(rows: SyncRows, name: string) {
   const row = rows.find((candidate) => candidate.entity === name);
@@ -54,11 +58,26 @@ function requiredVersion(version: unknown) {
   return version as number;
 }
 function sourceVersion(rows: SyncRows) { return requiredVersion(rows.find((row) => row.entity === "lpItems")?.version); }
+function recordField(row: TencentLpSourceRecord, name: string) {
+  const field = row.fields.find((candidate) => candidate.field === name);
+  if (!field?.valid) throw new Error("tencent_lp_source_field_invalid");
+  return field;
+}
+function noteValueNeedsProof(baseline: TencentLpBaseline) {
+  return baseline.commonValue !== null || baseline.pending?.target === null;
+}
+async function confirmEmptyNote(context: Context, row: TencentLpSourceRecord) {
+  if (!allowsTencentLpNoteClearing(context.field.field, context.baseline.initialized)) return;
+  if (!noteValueNeedsProof(context.baseline)) return;
+  if (recordField(row, "trialLedgerNote").source !== null) return;
+  await confirmTencentLpSourceEmptyNote(context.run.token, row.sourceRow, context.run.deadline);
+}
 async function currentRecord(context: Context) {
   const cells = await readTencentLpSourceRow(context.run.token, context.record.sourceRow, context.run.deadline);
   const found = matchTencentLpSourceRecords(matchingInput(context.run, cells)).records;
   const row = found.find((candidate) => candidate.lpItemId === context.record.lpItemId);
   if (!row || row.identityKey !== context.record.identityKey) throw new Error("tencent_lp_source_identity_drift");
+  await confirmEmptyNote(context, row);
   return row;
 }
 async function assertCurrent(context: Context) {
@@ -84,9 +103,15 @@ async function command(context: Context, action: "observe" | "import" | "stage" 
   context.baseline = baseline;
   if (["observe", "import", "stage", "attempt"].includes(action)) context.run.version = requiredVersion(result.lpVersion);
 }
-function exportValue(field: string, value: TrialLedgerFieldValue) {
+function emptyExport(field: string) {
+  if (field !== "trialLedgerNote") throw new Error("tencent_lp_source_empty_export_invalid");
+  return "";
+}
+function sourceResult(value: TrialLedgerFieldValue) { return value === "被家长取消" ? "取消不安排" : value; }
+function exportValue(field: string, value: TrialLedgerFieldValue | null) {
+  if (value === null) return emptyExport(field);
   if (field === "planner") return ({ Tara: "Tara龙", Eileen: "Eileen校长号", Abby: "Abby校长号" } as Record<string, string>)[String(value)]!;
-  return field === "resultStatus" && value === "被家长取消" ? "取消不安排" : value;
+  return field === "resultStatus" ? sourceResult(value) : value;
 }
 async function importField(context: Context) {
   await assertCurrent(context);
@@ -111,7 +136,7 @@ function expectedWriteProof(context: Context) {
 }
 async function confirmWrite(context: Context) {
   const row = await currentRecord(context);
-  const field = row.fields.find((candidate) => candidate.field === context.field.field)!;
+  const field = recordField(row, context.field.field);
   if (field.source !== context.baseline.pending!.target) { context.run.counts.uncertainCount += 1; return; }
   const expectedProof = expectedWriteProof(context);
   await command(context, "complete", context.baseline.pending!.target);
@@ -122,7 +147,7 @@ async function confirmWrite(context: Context) {
 async function attemptWrite(context: Context) {
   await assertCurrent(context);
   await command(context, "attempt", context.field.system);
-  const value = exportValue(context.field.field, context.field.system!);
+  const value = exportValue(context.field.field, context.field.system);
   await writeTencentLpSourceCell(context.run.token, context.record.sourceRow, context.field.column, value, context.run.deadline).catch(() => undefined);
   await confirmWrite(context);
 }

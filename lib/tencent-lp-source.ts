@@ -169,10 +169,11 @@ function sourceMatches(rows: ReadonlyMap<number, Map<number, unknown>>, candidat
   }
   return matches;
 }
+function canonicalSourceNote(value: unknown) { return value === "" || value === undefined ? null : value; }
 function sourceFields(row: ReadonlyMap<number, unknown>): [TrialLedgerField, unknown][] {
   return [
     ["planner", planner(row.get(9))], ["lpFinalized" as TrialLedgerField, row.get(10)],
-    ["resultStatus", row.get(14) === "取消不安排" ? "被家长取消" : row.get(14)], ["trialPaid", row.get(15)], ["trialLedgerNote", row.get(16)],
+    ["resultStatus", row.get(14) === "取消不安排" ? "被家长取消" : row.get(14)], ["trialPaid", row.get(15)], ["trialLedgerNote", canonicalSourceNote(row.get(16))],
   ];
 }
 function appendFieldChange(match: SourceMatch, field: TrialLedgerField, sourceValue: unknown, plan: SourcePlan) {

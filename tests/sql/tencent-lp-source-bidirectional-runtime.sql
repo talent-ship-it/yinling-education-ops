@@ -94,4 +94,72 @@ begin
   if exists(select 1 from pg_class p,lateral aclexplode(p.relacl) acl where p.oid in ('internal.tencent_lp_source_baselines'::regclass,'internal.tencent_lp_source_lease'::regclass) and acl.grantee<>p.relowner) then raise exception 'Private storage exposed'; end if;
   if exists(select 1 from information_schema.columns where table_schema='internal' and table_name='tencent_lp_source_baselines' and column_name in ('student_name','guardian','source_row','payload','credential')) then raise exception 'Unnecessary PII persisted'; end if;
 end $$;
+do $$
+declare r jsonb; args jsonb; rev bigint; v bigint; tasks_before jsonb;
+begin
+ perform public.tencent_lp_source_sync_action('synthetic-task-secret','59000000-0000-4000-8000-000000000002','release');
+ perform pg_temp.sync_call('claim');
+ select payload into tasks_before from public.ops_state where entity='tasks';
+ update public.ops_state set payload=payload||'[{"id":"LP-NOTE-FIRST","studentId":"S-NOTE-FIRST","workflowType":"试听 LP","stage":"待跟进","trialLedgerNote":"First preserved synthetic note"}]'::jsonb,version=version+1 where entity='lpItems';
+ select version into v from public.ops_state where entity='lpItems';
+ args:=pg_temp.sync_args('trialLedgerNote',0,'"First preserved synthetic note"','null','null',v)
+  ||jsonb_build_object('lpItemId','LP-NOTE-FIRST','identityHash',repeat('b',64));
+ begin perform pg_temp.sync_call('import',args); raise exception 'Uninitialized note import cleared text'; exception when invalid_parameter_value then null; end;
+ begin perform pg_temp.sync_call('stage',args); raise exception 'Uninitialized note export allowed null'; exception when serialization_failure then null; end;
+ if (select payload->1->>'trialLedgerNote' from public.ops_state where entity='lpItems')<>'First preserved synthetic note'
+  or exists(select 1 from internal.tencent_lp_source_baselines where lp_item_id='LP-NOTE-FIRST') then raise exception 'First empty note changed state'; end if;
+ begin
+  insert into internal.tencent_lp_source_baselines(lp_item_id,identity_sha256,field,pending_before,pending_target,pending_phase)
+  values('LP-NOTE-FIRST',repeat('b',64),'trialLedgerNote','"First preserved synthetic note"','null','planned');
+  raise exception 'Null pending target allowed before note initialization';
+ exception when check_violation then null; end;
+ select revision into rev from internal.tencent_lp_source_baselines where lp_item_id='LP-TENCENT' and field='trialLedgerNote';
+ begin perform pg_temp.sync_call('import',pg_temp.sync_args('trialLedgerNote',rev,'"Stale synthetic note"','null','null',v));
+  raise exception 'Note clear bypassed field OCC'; exception when serialization_failure then null; end;
+ begin perform pg_temp.sync_call('import',pg_temp.sync_args('trialLedgerNote',rev,'"Synthetic note"','null','null',v-1));
+  raise exception 'Note clear bypassed LP version OCC'; exception when serialization_failure then null; end;
+ args:=pg_temp.sync_args('trialLedgerNote',rev,'"Synthetic note"','null','null',v);
+ r:=pg_temp.sync_call('import',args); rev:=(r->>'revision')::bigint;
+ if r->'commonValue' is distinct from 'null'::jsonb or (select payload->0 ? 'trialLedgerNote' from public.ops_state where entity='lpItems') then raise exception 'Tencent note clear failed'; end if;
+ select version into v from public.ops_state where entity='lpItems';
+ if pg_temp.sync_call('import',args)->>'revision' is distinct from rev::text or (select version from public.ops_state where entity='lpItems')<>v then raise exception 'Note clear replay mutated state'; end if;
+ r:=pg_temp.sync_call('import',pg_temp.sync_args('trialLedgerNote',rev,'null','"Common restored note"','null',v)); rev:=(r->>'revision')::bigint;
+ perform public.mutate_trial_ledger_field_atomic('synthetic-task-secret',extensions.gen_random_uuid()::text,
+  '{"lpItemId":"LP-TENCENT","field":"trialLedgerNote","expectedValue":"Common restored note","value":null}',
+  'LP-TENCENT','trialLedgerNote','"Common restored note"','null','Synthetic Ops');
+ select version into v from public.ops_state where entity='lpItems';
+ r:=pg_temp.sync_call('stage',pg_temp.sync_args('trialLedgerNote',rev,'null','null','"Common restored note"',v)); rev:=(r->>'revision')::bigint;
+ if r#>'{pending,target}' is distinct from 'null'::jsonb or r#>>'{pending,phase}'<>'planned'
+  or not exists(select 1 from internal.tencent_lp_source_baselines where lp_item_id='LP-TENCENT' and field='trialLedgerNote' and pending_target is not null and pending_target='null'::jsonb)
+  then raise exception 'Initialized null pending target was not persisted'; end if;
+ r:=pg_temp.sync_call('attempt',pg_temp.sync_args('trialLedgerNote',rev,'null','null','"Common restored note"',v)); rev:=(r->>'revision')::bigint;
+ perform pg_temp.sync_call('release'); perform pg_temp.sync_call('claim');
+ if not exists(select 1 from internal.tencent_lp_source_baselines where lp_item_id='LP-TENCENT' and field='trialLedgerNote' and pending_phase='attempted' and pending_target='null'::jsonb)
+  then raise exception 'Unknown null target was lost across lease'; end if;
+ perform public.mutate_trial_ledger_field_atomic('synthetic-task-secret',extensions.gen_random_uuid()::text,
+  '{"lpItemId":"LP-TENCENT","field":"trialLedgerNote","expectedValue":null,"value":"New synthetic D"}',
+  'LP-TENCENT','trialLedgerNote','null','"New synthetic D"','Synthetic Ops');
+ args:=pg_temp.sync_args('trialLedgerNote',rev,'null','null','"Common restored note"',v);
+ r:=pg_temp.sync_call('complete',args); rev:=(r->>'revision')::bigint;
+ if r->'commonValue' is distinct from 'null'::jsonb or r->'pending' is distinct from 'null'::jsonb
+  or (select payload#>>'{0,trialLedgerNote}' from public.ops_state where entity='lpItems')<>'New synthetic D' then raise exception 'Successful clear overwrote newer D'; end if;
+ select version into v from public.ops_state where entity='lpItems';
+ if pg_temp.sync_call('complete',args)->>'revision' is distinct from rev::text or (select version from public.ops_state where entity='lpItems')<>v then raise exception 'Null completion replay changed state'; end if;
+ r:=pg_temp.sync_call('stage',pg_temp.sync_args('trialLedgerNote',rev,'"New synthetic D"','"New synthetic D"','null',v)); rev:=(r->>'revision')::bigint;
+ r:=pg_temp.sync_call('attempt',pg_temp.sync_args('trialLedgerNote',rev,'"New synthetic D"','"New synthetic D"','null',v)); rev:=(r->>'revision')::bigint;
+ r:=pg_temp.sync_call('complete',pg_temp.sync_args('trialLedgerNote',rev,'"New synthetic D"','"New synthetic D"','null',v)); rev:=(r->>'revision')::bigint;
+ perform public.mutate_trial_ledger_field_atomic('synthetic-task-secret',extensions.gen_random_uuid()::text,
+  '{"lpItemId":"LP-TENCENT","field":"trialLedgerNote","expectedValue":"New synthetic D","value":"Conflicting synthetic E"}',
+  'LP-TENCENT','trialLedgerNote','"New synthetic D"','"Conflicting synthetic E"','Synthetic Ops');
+ select version into v from public.ops_state where entity='lpItems';
+ r:=pg_temp.sync_call('import',pg_temp.sync_args('trialLedgerNote',rev,'"Conflicting synthetic E"','null','null',v));
+ if r->'commonValue' is distinct from 'null'::jsonb or (select payload->0 ? 'trialLedgerNote' from public.ops_state where entity='lpItems') then raise exception 'Tencent clear did not win conflicting local E'; end if;
+ begin
+  update internal.tencent_lp_source_baselines set pending_before='"Eileen"',pending_target='null',pending_phase='planned'
+  where lp_item_id='LP-TENCENT' and field='planner';
+  raise exception 'Planner gained null pending targets';
+ exception when check_violation then null; end;
+ if (select payload#>>'{0,trialIntake,requestSentAt}' from public.ops_state where entity='lpItems')<>'2026-10-22T09:47:00.000Z'
+  or (select payload from public.ops_state where entity='tasks') is distinct from tasks_before then raise exception 'Note clearing changed request time or tasks'; end if;
+end $$;
 rollback;

@@ -91,6 +91,7 @@ function readPage(state, input) {
   changeRead(state, input);
   const result = state.cells.filter((cell) => cell.row >= input.arguments.start_row && cell.row <= input.arguments.end_row).map((cell) => ({ ...cell }));
   if (state.options.badPage && input.arguments.start_row === 100) result.push({ row: 0, col: 0, value_type: "STRING", string_value: "bad" });
+  if (state.options.omitNote) return { cells: result.filter((cell) => cell.col !== 16 || cell.row === 0) };
   return { cells: result };
 }
 function outboundValue(args) { return args.value_type === "BOOL" ? args.bool_value : args.string_value; }
@@ -103,11 +104,20 @@ async function writeCell(state, input) {
   if (state.options.unknownAfter) throw new Error("request_timeout");
   return {};
 }
+function sourceSheet(state) {
+  return { sheets: [{ sheet_id: source.TENCENT_LP_SOURCE_SHEET_ID,
+    sheet_type: state.options.badSheet ? "smartsheet" : "worksheet", row_count: state.options.rowCount ?? 101 }] };
+}
+function sourceCsv(state, input) {
+  if (Object.hasOwn(state.options, "csvResponse")) return state.options.csvResponse;
+  const cell = state.cells.find((candidate) => candidate.row === input.arguments.start_row && candidate.col === 16);
+  return { csv_data: `"${(cell?.string_value ?? "").replaceAll('"', '""')}"\n` };
+}
 async function sourceTool(state, input) {
   state.calls.push(input);
-  if (input.name === "sheet.get_sheet_info") return { sheets: [{ sheet_id: source.TENCENT_LP_SOURCE_SHEET_ID,
-    sheet_type: state.options.badSheet ? "smartsheet" : "worksheet", row_count: 101 }] };
+  if (input.name === "sheet.get_sheet_info") return sourceSheet(state);
   if (input.name === "sheet.set_cell_value") return writeCell(state, input);
+  if (input.arguments.return_csv === true) return sourceCsv(state, input);
   return readPage(state, input);
 }
 function fixture(options = {}) {
@@ -212,4 +222,76 @@ test("cancellation writes the original source option and delayed/NIL results are
 test("busy and malformed lease receipts cannot begin source reads", async () => {
   const busy = fixture({ claimReceipt: { claimed: false } }); assert.equal((await busy.run()).matchedCount, 0); assert.equal(busy.calls.length, 0);
   const bad = fixture({ claimReceipt: { claimed: "true" } }); await assert.rejects(bad.run(), /lease_receipt_invalid/u); assert.equal(bad.calls.length, 0);
+});
+
+async function initializedNote() {
+  const f = fixture(); setSource(f.state, 16, "Common note"); await f.run(); return f;
+}
+function noteWrites(f) { return f.externalWrites.filter((call) => call.arguments.col === 16); }
+function csvCalls(f) { return f.calls.filter((call) => call.arguments.return_csv === true); }
+test("initialized system note clear writes one empty STRING and verifies a bounded single-cell readback", async () => {
+  const f = await initializedNote(); setLocal(f.state, "trialLedgerNote", null); f.options.csvResponse = { csv_data: "\n" };
+  await f.run(); await f.run();
+  assert.equal(noteWrites(f).length, 1); assert.equal(noteWrites(f)[0].arguments.value_type, "STRING");
+  assert.equal(noteWrites(f)[0].arguments.string_value, ""); assert.equal(f.baselines.get("trialLedgerNote").commonValue, null);
+  assert.equal(csvCalls(f).length, 1);
+  assert.ok(csvCalls(f).every((call) => call.arguments.start_row === 1 && call.arguments.end_row === 1 && call.arguments.start_col === 16 && call.arguments.end_col === 16));
+});
+test("initialized Tencent note clear wins a conflicting system edit only after explicit empty-cell proof", async () => {
+  const f = await initializedNote(); setSource(f.state, 16, ""); setLocal(f.state, "trialLedgerNote", "New local text");
+  Object.assign(f.state.cells.find((cell) => cell.row === 1 && cell.col === 16), { value_type: "", number_value: 0, bool_value: false });
+  await f.run(); assert.equal(stored(f.state, "trialLedgerNote"), null); assert.equal(noteWrites(f).length, 0);
+  assert.equal(f.baselines.get("trialLedgerNote").commonValue, null); assert.equal(csvCalls(f).length, 1);
+});
+test("unknown clear receipts reconcile by readback or remain pending without replay", async () => {
+  const accepted = await initializedNote(); setLocal(accepted.state, "trialLedgerNote", null); accepted.options.unknownAfter = true;
+  await accepted.run(); await accepted.run(); assert.equal(noteWrites(accepted).length, 1); assert.equal(accepted.baselines.get("trialLedgerNote").pending, null);
+  const unknown = await initializedNote(); setLocal(unknown.state, "trialLedgerNote", null); unknown.options.unknownBefore = true;
+  assert.equal((await unknown.run()).uncertainCount, 1); assert.equal((await unknown.run()).uncertainCount, 1);
+  assert.equal(noteWrites(unknown).length, 1); assert.equal(unknown.baselines.get("trialLedgerNote").pending.target, null);
+});
+test("a confirmed clear preserves newer local D and exports it on the next round", async () => {
+  const f = await initializedNote(); setLocal(f.state, "trialLedgerNote", null);
+  f.state.afterWrite = () => setLocal(f.state, "trialLedgerNote", "New system D"); await f.run();
+  assert.equal(stored(f.state, "trialLedgerNote"), "New system D"); assert.equal(f.baselines.get("trialLedgerNote").commonValue, null);
+  f.state.afterWrite = undefined; await f.run(); assert.equal(noteWrites(f).at(-1).arguments.string_value, "New system D");
+});
+test("Tencent F after an uncertain clear wins without repeating the clear", async () => {
+  const f = await initializedNote(); setLocal(f.state, "trialLedgerNote", null);
+  f.state.afterWrite = () => setSource(f.state, 16, "New Tencent F"); await f.run(); f.state.afterWrite = undefined;
+  await f.run(); assert.equal(stored(f.state, "trialLedgerNote"), "New Tencent F"); assert.equal(noteWrites(f).length, 1);
+});
+test("first empty note does not clear local text or spend per-row CSV calls", async () => {
+  const f = fixture({ rowCount: 1001 }); setLocal(f.state, "trialLedgerNote", "First local note");
+  for (let row = 2; row < 882; row++) f.state.cells.push({ row, col: 0, value_type: "STRING", string_value: `Unmatched Synthetic ${row}` });
+  await f.run(); assert.equal(stored(f.state, "trialLedgerNote"), "First local note");
+  assert.equal(noteWrites(f)[0].arguments.string_value, "First local note"); assert.equal(csvCalls(f).length, 0);
+  const empty = fixture(); await empty.run(); await empty.run(); assert.equal(csvCalls(empty).length, 0); assert.equal(noteWrites(empty).length, 0);
+});
+test("missing, nonempty, multi-cell or multi-row CSV never authorizes a note clear", async () => {
+  for (const csvResponse of [{}, { csv_data: "Still present\n" }, { csv_data: ",\n" }, { csv_data: "\n\n" }, { csv_data: "", cells: [{ row: 1, col: 16, value_type: "", string_value: "", number_value: 0, bool_value: false }] }]) {
+    const f = await initializedNote(); setSource(f.state, 16, ""); f.options.csvResponse = csvResponse;
+    await assert.rejects(f.run(), /empty_note_unconfirmed/u); assert.equal(stored(f.state, "trialLedgerNote"), "Common note");
+    assert.equal(f.baselines.get("trialLedgerNote").commonValue, "Common note"); assert.equal(noteWrites(f).length, 0);
+  }
+});
+test("a truncated structured note cannot erase a real nonempty CSV value", async () => {
+  const f = await initializedNote(); f.options.omitNote = true;
+  await assert.rejects(f.run(), /empty_note_unconfirmed/u); assert.equal(stored(f.state, "trialLedgerNote"), "Common note"); assert.equal(noteWrites(f).length, 0);
+});
+
+test("an unconfirmed clear readback keeps its null target pending until a verified recovery", async () => {
+  const f = await initializedNote(); setLocal(f.state, "trialLedgerNote", null); f.options.csvResponse = {};
+  await assert.rejects(f.run(), /empty_note_unconfirmed/u);
+  assert.equal(f.baselines.get("trialLedgerNote").commonValue, "Common note");
+  assert.equal(f.baselines.get("trialLedgerNote").pending.target, null); assert.equal(noteWrites(f).length, 1);
+  f.options.csvResponse = { csv_data: "\n" }; await f.run();
+  assert.equal(f.baselines.get("trialLedgerNote").commonValue, null); assert.equal(f.baselines.get("trialLedgerNote").pending, null);
+  assert.equal(noteWrites(f).length, 1);
+});
+
+test("adding text after an initialized empty note does not introduce CSV reads", async () => {
+  const f = fixture(); await f.run(); setLocal(f.state, "trialLedgerNote", "New synthetic note"); await f.run();
+  assert.equal(noteWrites(f).length, 1); assert.equal(csvCalls(f).length, 0);
+  assert.equal(f.baselines.get("trialLedgerNote").commonValue, "New synthetic note");
 });
