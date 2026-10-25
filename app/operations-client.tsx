@@ -195,8 +195,10 @@ import {
 } from "@/lib/student-records";
 import type { LpRevisionHistoryProps, LpWorkflowDetailsProps, LpWorkflowFieldsProps, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
 import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "@/app/to-do-list";
+import { useJiaowubaoUnclosedTasks } from "@/app/use-jiaowubao-unclosed-tasks";
 import { buildStudentRecordsPanelData, StudentRecordsPanel, type StudentHistoricalJwbSnapshot, type StudentRecordPanelSection } from "@/app/student-records-panel";
 import { CoursePackageSummary } from "@/app/course-package-summary";
+import { JiaowubaoHourDiscrepanciesPanel } from "@/app/jiaowubao-hour-discrepancies";
 import { ScheduleMonthView, type ScheduleMonthAvailability, type ScheduleMonthLesson } from "@/app/schedule-month-view";
 import {
   JiaowubaoImportedSchedulePanel,
@@ -417,6 +419,7 @@ import {
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
+  trialFollowUpStatus,
   type TrialLedgerViewState,
 } from "@/lib/trial-ledger-view";
 import { TENCENT_TRIAL_LEDGER_URL } from "@/lib/tencent-trial-ledger-mirror";
@@ -732,6 +735,7 @@ type LpItem = {
   trialLedgerOverrides?: TrialLedgerOverrides;
   trialPaid?: boolean;
   trialLedgerNote?: string;
+  trialLpFinalized?: boolean;
   trialLedgerAudit?: TrialLedgerAuditEntry[];
 };
 
@@ -2876,7 +2880,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [selectedStudentId, setSelectedStudentId] = useWorkspaceLocation("student", defaults.defaultSelectedStudentId);
   const [selectedTeacherId, setSelectedTeacherId] = useWorkspaceLocation("teacher", defaults.defaultSelectedTeacherId);
   const [selectedMessageId, setSelectedMessageId] = useState("MSG-001");
-  const [taskFilter, setTaskFilter] = useState<ToDoFilter>("all");
+  const [taskFilter, setTaskFilter] = useState<ToDoFilter>("today");
   const [skipLinkFocused, setSkipLinkFocused] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [legacyTaskDeadlineDraft, setLegacyTaskDeadlineDraft] = useState<Task | null>(null);
@@ -3045,7 +3049,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [courseQuery, setCourseQuery] = useState("");
   const [coursePage, setCoursePage] = useState(1);
   const [selectedCourseId, setSelectedCourseId] = useState(defaults.defaultCourses[0]?.id ?? "");
-  const [lpMode, setLpMode] = useState<"board" | "table">("board");
   const [lpFilter, setLpFilter] = useState("active");
   const [trialLedgerDrafts, setTrialLedgerDrafts] = useState<Record<string, string>>({});
   const [trialLedgerSaving, setTrialLedgerSaving] = useState<Record<string, boolean>>({});
@@ -3805,7 +3808,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   }, [active, activePayrollMonth, canViewPayroll, jiaowubaoCompletedLessonExporting, jiaowubaoCompletedLessonFeed, jiaowubaoCompletedLessonLoading, jiaowubaoCompletedLessonSyncing, melbourneExamMonth]);
 
   useEffect(() => {
-    if (!canUseAdminScope || !isAdminView || active !== "dashboard") return;
+    if (!canUseAdminScope || !isAdminView || active !== "schedule") return;
     const controller = new AbortController();
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- A current administrator-only reader must replace stale completion evidence before it is rendered in the risk summary.
@@ -5376,12 +5379,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       .catch((error: unknown) => notify(error instanceof Error ? error.message : "老师回复保存失败"));
   };
 
+  const unclosedTaskFeed = useJiaowubaoUnclosedTasks(active === "dashboard" && !isTeacherView, currentOperator, isAdminView);
   const visibleTasks = useMemo(() => {
     const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
-    return sortTasksByDueAt(scopedTasks
+    return sortTasksByDueAt([...scopedTasks, ...unclosedTaskFeed.tasks]
       .filter((task) => !isTrialAcceptanceFixtureTask(task, taskStudentNames.get(task.studentId)))
       .map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
-  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames]);
+  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames, unclosedTaskFeed.tasks]);
 
   const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
     const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
@@ -5392,7 +5396,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
     const allowedStudents = adminScope ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
     setCurrentOperator(operator);
-    setTaskFilter("all");
+    setTaskFilter("today");
     setStudentView(adminScope || teacherView ? "all" : "mine");
     setStudentOwner("all");
     setStudentPage(1);
@@ -6189,10 +6193,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const body = (receivedBody ?? {}) as {
         error?: string;
         lpItemsRow?: RemoteStateRow<LpItem[]>;
+        tasksRow?: RemoteStateRow<Task[]>;
       };
       if (!response.ok) throw new Error(body.error || "试听台账保存失败");
       if (!body.lpItemsRow) throw new Error("试听台账已确认，但没有返回权威 LP 状态");
       lpShared.applyRemote(body.lpItemsRow);
+      if (body.tasksRow) tasksShared.applyRemote(body.tasksRow);
       addAudit("更新试听复盘台账", `${item.title} · ${field}`, "blue");
       notify("试听台账已保存");
     } finally {
@@ -8035,8 +8041,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     </>;
   };
 
-  const renderDashboard = () => {
-    if (isTeacherView) return renderTeacherDashboard();
+  const renderScheduleOverview = () => {
+    if (isTeacherView) return null;
     const operatorStudents = scopedStudents;
     const operatorStudentIds = new Set(operatorStudents.map((student) => student.id));
     const operatorBookings = currentOperator === "Nixon" ? bookings : bookings.filter((booking) => operatorStudentIds.has(booking.studentId));
@@ -8050,9 +8056,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const operatorExamStudents = examReminderStudents;
     const operatorDstBookings = dstRiskBookings.filter((booking) => operatorStudentIds.has(booking.studentId));
     const nearestExam = operatorExamStudents[0];
-    const nearestExamRecord = nearestExam
-      ? examRecordsForStudent(nearestExam).find((exam) => exam.examDate) ?? examRecordsForStudent(nearestExam)[0]
-      : undefined;
+    const firstExamRecord = (student: Student | undefined) => {
+      if (!student) return undefined;
+      const records = examRecordsForStudent(student);
+      return records.find((exam) => exam.examDate) ?? records[0];
+    };
+    const nearestExamRecord = firstExamRecord(nearestExam);
     // Only the server-validated completion reader can contribute an AVA risk
     // count. It distinguishes missing from invalid structured AVA and never
     // treats legacy text or an arbitrary month-overlap as current coverage.
@@ -8067,35 +8076,48 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       + operatorExamStudents.length
       + operatorDstBookings.length
       + authoritativeAvaIssueCount;
-    const todayLabel = dateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
-    return <>
-      <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
-      <section className="dashboard-grid">
-        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} taskSchedule={trialTaskSchedule} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
-        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={openDashboardLesson} /></article>
-        <article className="panel risk-panel">
-          <div className="panel-header">
-            <div><h2>风险与缺口</h2></div>
-            <StatusPill tone="amber">{operatorRiskCount} 项</StatusPill>
-          </div>
-          {operatorRiskCount > 0 ? <>
-            {operatorTodayBookings.filter((booking) => booking.occurrenceStatus === "abnormal").map((booking) => <RiskRow key={booking.occurrenceKey} tone="red" title={`${studentById(booking.studentId)?.name ?? booking.studentId} 课堂出勤异常`} detail={`${booking.date} ${booking.start} · 待人工复核`} action={() => { selectBookingRecord(booking); setActive("schedule"); }} />)}
-            {nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 ${rules.examDays} 天窗口`} detail={`${nearestExamRecord?.subject ?? "考试"} · ${nearestExamRecord?.examDate ?? "待确认"}`} action={managedExamStudentIds.has(nearestExam.id) ? undefined : () => goToStudent(nearestExam.id)} /> : null}
-            {operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}
+    const renderAvaRisk = () => <>
             {authoritativeAvaInbox && authoritativeAvaSummary && authoritativeAvaIssueCount > 0 ? <RiskRow
               tone={authoritativeAvaSummary.invalid > 0 ? "red" : "blue"}
               title={`${authoritativeAvaIssueCount} 位老师本月 AVA 待补齐`}
               detail={`${authoritativeAvaInbox.month} · 缺少 ${authoritativeAvaSummary.missing}，需修正 ${authoritativeAvaSummary.invalid}${authoritativeAvaSummary.pendingReview ? ` · ${authoritativeAvaSummary.pendingReview} 份待审核` : ""}`}
               action={() => setActive("teachers")}
             /> : null}
-          </> : teacherAvailabilityCompletionLoading ? (
+    </>;
+    const renderEmptyRisk = () => teacherAvailabilityCompletionLoading ? (
             <div className="empty-inline" role="status" aria-live="polite"><RefreshCw size={20} /> 正在读取风险资料…</div>
           ) : teacherAvailabilityCompletionError ? (
             <div className="empty-inline" role="alert"><CircleAlert size={20} /> 老师 AVA 风险暂时无法读取。<button className="text-button" type="button" onClick={() => setActive("teachers")}>打开老师管理</button></div>
           ) : (
             <div className="empty-inline" role="status" aria-live="polite"><CheckCircle2 size={20} /> 当前没有待处理风险</div>
-          )}
+          );
+    const renderRiskItems = () => <>
+
+            {operatorTodayBookings.filter((booking) => booking.occurrenceStatus === "abnormal").map((booking) => <RiskRow key={booking.occurrenceKey} tone="red" title={`${studentById(booking.studentId)?.name ?? booking.studentId} 课堂出勤异常`} detail={`${booking.date} ${booking.start} · 待人工复核`} action={() => { selectBookingRecord(booking); setActive("schedule"); }} />)}
+            {nearestExam ? <RiskRow tone="amber" title={`${nearestExam.name} 的考试进入 ${rules.examDays} 天窗口`} detail={`${nearestExamRecord?.subject ?? "考试"} · ${nearestExamRecord?.examDate ?? "待确认"}`} action={managedExamStudentIds.has(nearestExam.id) ? undefined : () => goToStudent(nearestExam.id)} /> : null}
+            {operatorDstBookings.length ? <RiskRow tone="purple" title={`${operatorDstBookings.length} 节长期课受夏令时影响`} detail="学生与老师时差会变化" action={() => setActive("schedule")} /> : null}
+            {renderAvaRisk()}
+    </>;
+    return <section className="schedule-overview">
+        <article className="panel today-panel"><div className="panel-header"><div><h2>今日课程</h2></div><IconButton label="打开排课" onClick={() => setActive("schedule")}><CalendarDays size={18} /></IconButton></div><ScheduleList bookings={operatorTodayBookings} studentById={studentById} teacherById={teacherById} preferences={displayPreferences} onViewAll={() => setActive("schedule")} onOpen={openDashboardLesson} /></article>
+        <article className="panel risk-panel">
+          <div className="panel-header">
+            <div><h2>风险与缺口</h2></div>
+            <StatusPill tone="amber">{operatorRiskCount} 项</StatusPill>
+          </div>
+          {operatorRiskCount > 0 ? renderRiskItems() : renderEmptyRisk()}
         </article>
+    </section>;
+  };
+
+  const renderDashboard = () => {
+    if (isTeacherView) return renderTeacherDashboard();
+    const todayLabel = dateTimeFormat(localeFor(displayPreferences.language), { year: "numeric", month: "long", day: "numeric", weekday: "long", timeZone: displayPreferences.timezone }).format(new Date());
+    return <>
+      <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
+      <section className="task-workspace">
+        {unclosedTaskFeed.error && <div className="form-error" role="alert">未结课任务暂时无法读取。</div>}
+        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} taskSchedule={trialTaskSchedule} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => task.ruleKey !== "jiaowubao.unclosed" && !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
       </section>
     </>;
   };
@@ -8490,12 +8512,14 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!scopedBookings.length) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        {renderScheduleOverview()}
         <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}{!jiaowubaoImportedScheduleLoading ? <EmptyState title="暂无排课" detail="新建约课后会显示在这里。" /> : null}</section>
       </>;
     }
     if (!displayedBooking || !displayedBookingSeries) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<><button className="secondary-button" type="button" onClick={() => { setScheduleFilter("all"); setScheduleDay("all"); setSchedulePage(1); }}>清除排课筛选</button><button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button></>} />
+        {renderScheduleOverview()}
         <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}{!jiaowubaoImportedScheduleLoading ? <EmptyState title="当前筛选下没有排课" detail="清除筛选后再试。" /> : null}</section>
       </>;
     }
@@ -8504,6 +8528,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     if (!bookingStudent || !bookingTeacher) {
       return <>
         <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        {renderScheduleOverview()}
         <section className="panel schedule-shell">{scheduleToolbar}{scheduleAttendancePanel}{importedSchedulePanel}<EmptyState title="课程关联资料不完整" detail="课程缺少有效的学生或老师关联，请先修复后再排课。" /></section>
       </>;
     }
@@ -8517,6 +8542,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     return <>
       <ViewHeading eyebrow={isTeacherView ? "我的排课" : "排课"} title={isTeacherView ? "我的排课" : "排课"} actions={<button className="primary-button" type="button" onClick={() => openNewBooking()}><CalendarPlus size={17} /> 新建约课</button>} />
+        {renderScheduleOverview()}
       <section className="panel schedule-shell">
         {scheduleToolbar}
         {scheduleAttendancePanel}
@@ -8638,8 +8664,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const renderLp = () => {
-    const visibleLp = scopedLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "revision" ? item.stage === "需修改" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
-    const viewItems = [{ id: "active", label: "进行中", count: scopedLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: scopedLpItems.filter((item) => item.stage === "待审核").length }, { id: "revision", label: "需修改", count: scopedLpItems.filter((item) => item.stage === "需修改").length }, { id: "waiting", label: "等待资料/确认", count: scopedLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: scopedLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: scopedLpItems.length }];
+    const legacyLpItems = scopedLpItems.filter((item) => !isTrialLedgerWorkflow(item));
+    const visibleLp = legacyLpItems.filter((item) => lpFilter === "review" ? item.stage === "待审核" : lpFilter === "revision" ? item.stage === "需修改" : lpFilter === "waiting" ? item.stage === "待资料" || item.stage === "待备课确认" : lpFilter === "complete" ? item.stage === "完成" : lpFilter === "active" ? item.stage !== "完成" : true);
+    const viewItems = [{ id: "active", label: "进行中", count: legacyLpItems.filter((item) => item.stage !== "完成").length }, { id: "review", label: "待审核", count: legacyLpItems.filter((item) => item.stage === "待审核").length }, { id: "revision", label: "需修改", count: legacyLpItems.filter((item) => item.stage === "需修改").length }, { id: "waiting", label: "等待资料/确认", count: legacyLpItems.filter((item) => item.stage === "待资料" || item.stage === "待备课确认").length }, { id: "complete", label: "已完成", count: legacyLpItems.filter((item) => item.stage === "完成").length }, { id: "all", label: "全部", count: legacyLpItems.length }];
     const stageTone = (stage: LpItem["stage"]): Tone => (stage === "完成" || stage === "备课完成") ? "green" : stage === "需修改" ? "red" : stage === "待审核" ? "amber" : stage === "已发老师" ? "blue" : "purple";
     const openLpCreate = () => {
       setLpDraftStudentId(selectedStudent.id);
@@ -8688,6 +8715,13 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const automaticPaid = ["付费试听（已付费）", "在读学生付费试听"]
         .includes(String(item.fields?.trialPaymentMethod ?? ""));
       const storedPaid = trialLedgerStoredValue(item, "trialPaid");
+      const requiredParentRules = [
+        ...(["需教务跟进", "需要跟进"].includes(String(item.fields?.specifiedContentStatus)) ? ["trial.manual-request.specified-content"] : []),
+        ...(item.trialIntake?.writingRequired ? ["trial.manual-request.writing"] : []),
+        ...(item.trialIntake?.paperRequired ? ["trial.manual-request.paper-send", "trial.manual-request.paper-receive"] : []),
+      ];
+      const parentRequired = requiredParentRules.length > 0 ? true : item.trialIntake && item.fields?.specifiedContentStatus ? false : undefined;
+      const prepRequired = item.fields?.preparationFollowUp === "是" ? true : item.fields?.preparationFollowUp === "否" ? false : undefined;
       return {
         item,
         schedule,
@@ -8704,6 +8738,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         storedPaid,
         row: {
           id: item.id,
+          scheduleMatched: Boolean(schedule?.source === "jiaowubao-open-api"),
+          parentFollowUp: trialFollowUpStatus({ lpItemId: item.id, required: parentRequired, ruleKeys: requiredParentRules, tasks: scopedTasks }),
+          preparationFollowUp: trialFollowUpStatus({ lpItemId: item.id, required: prepRequired, ruleKeys: ["trial.jiaowubao.prep-n1"], tasks: scopedTasks }),
+          handoverText: [item.title, ...Object.values(item.fields ?? {}).filter((value) => typeof value === "string")].join(" "),
           studentName: String(trialLedgerStoredValue(item, "studentName") ?? automaticStudentName),
           guardianWechat: String(trialLedgerStoredValue(item, "guardianWechat") ?? automaticGuardianWechat),
           workflowType: String(trialLedgerStoredValue(item, "workflowType") ?? item.workflowType ?? "试听 LP"),
@@ -8912,6 +8950,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return <details className="trial-intake-details">
         <summary>查看试听交接详情</summary>
         {trialScreenshotAllowed(item) && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
+        {stageControls(item, true)}
         <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} />
         <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} pendingLabel={pendingScheduleLabel(item)} />
         {item.trialIntake ? <dl>
@@ -8932,29 +8971,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <button className="secondary-button" type="button" disabled={jiaowubaoImportedScheduleLoading || trialScheduleSyncing} onClick={() => void syncTrialSchedulesFromJiaowubao()}><RefreshCw size={16} /> {trialScheduleSyncing ? "正在核对任务…" : jiaowubaoImportedScheduleLoading ? "正在读取教务宝…" : `后台自动同步 · 立即核对${trialScheduleMatches.length ? ` (${trialScheduleMatches.length})` : ""}`}</button>
         <button className="primary-button" type="button" onClick={openLpCreate}><Plus size={17} /> 创建 LP</button>
       </>} />
-      {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
-        key={sessionOperator}
-        timeDisplay={{ timezone: scheduleTimezone, label: timezoneLabel(scheduleTimezone, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), scheduleTimezone, displayPreferences) }}
-        students={readableScopedStudents}
-        expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}
-        fieldOptions={{
-          responsibleOperationsOptions: operationsOwnerFormOptions(currentOperator).map((value) => ({ value })),
-          teacherOptions: recordTeachers.map((teacher) => ({ value: teacher.name, label: teacher.name })),
-          subjectOptions: courses.map((course) => ({ value: course.name })),
-          timezoneOptions: timezoneOptions.map((option) => ({ value: option.id, label: option.label })),
-          plannerOptions: [{ value: "Tara", label: "龙老师" }, { value: "Eileen" }, { value: "Abby" }],
-        }}
-        Dialog={Dialog}
-        notify={notify}
-        onCommitted={(body) => {
-          studentsShared.applyRemote(body.studentsRow as RemoteStateRow<Student[]>);
-          lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
-          tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
-          filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
-          showCommittedLpView(body.lpItemId);
-          setSelectedStudentId(body.studentId);
-        }}
-      /></Suspense>}
       {trialScreenshotItem && !isTeacherView && scopedLpItems.some((item) => item.id === trialScreenshotItem.id && trialScreenshotAllowed(item)) && <Suspense fallback={null}><TrialScreenshotConfirmWorkspace
         key={`${sessionOperator}:${trialScreenshotItem.id}`}
         item={trialScreenshotItem}
@@ -8973,7 +8989,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         {trialLedgerItems.length ? <>
           <section className="trial-ledger-tools" aria-label="LP 台账筛选与排序">
             <div className="trial-ledger-filter-grid">
-              <label className="trial-ledger-query"><span>搜索</span><input disabled={!trialLedgerViewInteractive} type="search" value={activeTrialLedgerView.query} placeholder="学生、家长微信、科目、老师或备注" onChange={(event) => updateTrialLedgerView({ query: event.target.value })} /></label>
+              <label className="trial-ledger-query"><span>搜索</span><input disabled={!trialLedgerViewInteractive} type="search" value={activeTrialLedgerView.query} placeholder="学生、家长微信、交接内容或备注" onChange={(event) => updateTrialLedgerView({ query: event.target.value })} /></label>
+              <label><span>课表匹配</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.scheduleMatch} onChange={(event) => updateTrialLedgerView({ scheduleMatch: event.target.value as TrialLedgerViewState["scheduleMatch"] })}><option value="all">全部匹配情况</option><option value="matched">已匹配课表</option><option value="unmatched">未匹配课表</option></select></label>
+              <label><span>需求时间从（北京时间）</span><input disabled={!trialLedgerViewInteractive} type="datetime-local" value={activeTrialLedgerView.requestedFrom} onChange={(event) => updateTrialLedgerView({ requestedFrom: event.target.value })} /></label>
+              <label><span>需求时间至（北京时间）</span><input disabled={!trialLedgerViewInteractive} type="datetime-local" value={activeTrialLedgerView.requestedTo} onChange={(event) => updateTrialLedgerView({ requestedTo: event.target.value })} /></label>
+              {(["parentFollowUp", "preparationFollowUp"] as const).map((key) => <label key={key}><span>{key === "parentFollowUp" ? "二要一发" : "备课跟进"}</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView[key]} onChange={(event) => updateTrialLedgerView({ [key]: event.target.value })}><option value="all">全部跟进状态</option><option value="required">需要跟进</option><option value="completed">已跟进</option><option value="not_required">不需要跟进</option></select></label>)}
               <label><span>LP 类型</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.workflowType} onChange={(event) => updateTrialLedgerView({ workflowType: event.target.value })}><option value="all">全部类型</option>{LP_WORKFLOW_TYPES.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>上课月份</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.lessonMonth} onChange={(event) => updateTrialLedgerView({ lessonMonth: event.target.value })}><option value="all">全部月份</option>{trialLedgerFilterOptions("lessonMonth").map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label><span>上课日期从</span><input disabled={!trialLedgerViewInteractive} type="date" value={activeTrialLedgerView.scheduledFrom} onChange={(event) => updateTrialLedgerView({ scheduledFrom: event.target.value })} /></label>
@@ -9000,7 +9020,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {visibleTrialLedgerEntries.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
             <caption className="visually-hidden">LP 交接台账</caption>
-            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">业务结果</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th></tr></thead>
+            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">业务结果</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th><th scope="col">LP 已定稿</th></tr></thead>
             <tbody>{visibleTrialLedgerEntries.map((entry) => {
               const { item, schedule, requestAt, resultOptions, automaticStudentName, automaticGuardianWechat, automaticScheduledAt, automaticLessonMonth, automaticPlanner, automaticSubject, automaticTeacher, automaticPaid, storedPaid } = entry;
               const paidKey = `${item.id}:trialPaid`;
@@ -9021,9 +9041,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>—</td>
                 <td>{entry.row.note || "—"}</td>
                 <td>—</td>
+                <td>—</td>
               </tr>;
               return <tr key={item.id}>
-                <td>{ledgerTextCell({ item, field: "studentName", automaticValue: automaticStudentName, label: `${automaticStudentName || item.id} 学生姓名`, list: "trial-ledger-student-options", placeholder: "未提到", openStudent: true })}</td>
+                <td>{ledgerTextCell({ item, field: "studentName", automaticValue: automaticStudentName, label: `${automaticStudentName || item.id} 学生姓名`, list: "trial-ledger-student-options", placeholder: "未提到", openStudent: true })}{trialIntakeDetails(item)}</td>
                 <td>{ledgerTextCell({ item, field: "guardianWechat", automaticValue: automaticGuardianWechat, label: `${automaticStudentName || item.id} 家长微信名`, list: "trial-ledger-guardian-options", placeholder: "待填写" })}</td>
                 <td>{ledgerSelectCell({ item, field: "workflowType", automaticValue: item.workflowType ?? "试听 LP", label: `${automaticStudentName || item.id} LP 类型`, options: TRIAL_LEDGER_WORKFLOW_TYPES })}</td>
                 <td>{ledgerTextCell({ item, field: "lessonMonth", automaticValue: automaticLessonMonth, label: `${automaticStudentName || item.id} 上课月份`, type: "month", placeholder: "待排课", sourceLabel: "按墨尔本排课自动生成" })}</td>
@@ -9038,6 +9059,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td><div className={`ledger-edit-cell ${storedPaid === undefined ? "automatic" : "manual"}`}><select className="ledger-cell-input" disabled={trialLedgerSaving[paidKey] === true} value={storedPaid === undefined ? "" : storedPaid ? "true" : "false"} aria-label={`${automaticStudentName || item.id} 是否付费`} onChange={(event) => { const value = event.target.value === "" ? undefined : event.target.value === "true"; void saveTrialLedgerFieldAtomic(item, "trialPaid", value).catch((error: unknown) => notify(error instanceof Error ? error.message : "试听台账保存失败")); }}><option value="">自动 · {automaticPaid ? "是" : "否"}</option><option value="true">是</option><option value="false">否</option></select><span className="ledger-cell-meta"><small>{trialLedgerSaving[paidKey] ? "保存中…" : storedPaid === undefined ? "按付费方式自动判断" : "手动值"}</small></span></div></td>
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
                 <td><TrialScheduleDetails schedule={schedule} pendingLabel={pendingScheduleLabel(item)} onComplete={trialScreenshotAllowed(item) ? () => setTrialScreenshotItem(item) : undefined} /></td>
+                <td><input type="checkbox" aria-label={`${automaticStudentName || item.id} LP 已定稿`} checked={item.trialLpFinalized === true} disabled={trialLedgerSaving[`${item.id}:lpFinalized`] === true} onChange={(event) => { void saveTrialLedgerFieldAtomic(item, "lpFinalized", event.target.checked).catch((error: unknown) => notify(error instanceof Error ? error.message : "LP 定稿状态保存失败")); }} /></td>
               </tr>;
             })}</tbody>
           </table>
@@ -9048,33 +9070,32 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         </div> : <div className="empty-inline trial-ledger-filter-empty">当前筛选没有符合条件的交接记录；清除筛选即可查看全部 {trialLedgerItems.length} 条。</div>}
         </> : <div className="empty-inline">还没有 LP 交接记录；创建后会自动进入台账。</div>}
       </section>
-      <section className="panel collection-shell">
-        <div className="view-bar">
-          <ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" />
-          <div className="segmented"><button className={lpMode === "board" ? "active" : ""} type="button" onClick={() => setLpMode("board")}>看板</button><button className={lpMode === "table" ? "active" : ""} type="button" onClick={() => setLpMode("table")}>表格</button></div>
-        </div>
-        {visibleLp.length === 0 ? <EmptyState title="当前视图没有 LP" detail={emptyLpDetail} action={<button className="primary-button" type="button" onClick={openLpCreate}><Plus size={16} /> 创建 LP</button>} /> : lpMode === "board" ? (
-          <section className="kanban-board">
-            {lpStages.filter((stage) => lpFilter !== "complete" || stage === "完成").map((stage) => (
-              <article key={stage}>
-                <header><span className={`kanban-dot ${stageTone(stage)}`} aria-hidden="true" /><h2>{stage}</h2><strong>{visibleLp.filter((item) => item.stage === stage).length}</strong></header>
-                {visibleLp.filter((item) => item.stage === stage).map((item) => {
-                  const student = studentById(item.studentId);
-                  const publishedDay = lpPublishedDay(item);
-                  return <div className="kanban-card" key={item.id}>
-                    <p>{student?.name}</p>
-                    <h3>{item.title}</h3>
-                    <span>{item.workflowType ?? "历史 LP"} · 截止：{item.due}</span>
-                    <div className="card-tags"><StatusPill tone={stageTone(item.stage)}>{item.stage}</StatusPill>{item.resultStatus && <StatusPill tone={item.resultStatus.includes("成功") ? "green" : item.resultStatus.includes("失败") ? "red" : "amber"}>{lpResultStatusLabel(item.resultStatus)}</StatusPill>}{publishedDay && <StatusPill tone="purple">{publishedDay}</StatusPill>}{item.needsParentFollowUp && <StatusPill tone="red">家长跟进</StatusPill>}{item.needsTeacherPrep && <StatusPill tone="blue">老师备课</StatusPill>}</div>
-                    {trialIntakeDetails(item)}
-                    {resultControl(item)}
-                    {stageControls(item)}
-                  </div>;
-                })}
-              </article>
-            ))}
-          </section>
-        ) : (
+      {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
+        key={sessionOperator}
+        timeDisplay={{ timezone: scheduleTimezone, label: timezoneLabel(scheduleTimezone, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), scheduleTimezone, displayPreferences) }}
+        students={readableScopedStudents}
+        expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}
+        fieldOptions={{
+          responsibleOperationsOptions: operationsOwnerFormOptions(currentOperator).map((value) => ({ value })),
+          teacherOptions: recordTeachers.map((teacher) => ({ value: teacher.name, label: teacher.name })),
+          subjectOptions: courses.map((course) => ({ value: course.name })),
+          timezoneOptions: timezoneOptions.map((option) => ({ value: option.id, label: option.label })),
+          plannerOptions: [{ value: "Tara", label: "龙老师" }, { value: "Eileen" }, { value: "Abby" }],
+        }}
+        Dialog={Dialog}
+        notify={notify}
+        onCommitted={(body) => {
+          studentsShared.applyRemote(body.studentsRow as RemoteStateRow<Student[]>);
+          lpShared.applyRemote(body.lpItemsRow as RemoteStateRow<LpItem[]>);
+          tasksShared.applyRemote(body.tasksRow as RemoteStateRow<Task[]>);
+          filesShared.applyRemote(body.filesRow as RemoteStateRow<FileRecord[]>);
+          showCommittedLpView(body.lpItemId);
+          setSelectedStudentId(body.studentId);
+        }}
+      /></Suspense>}
+      {legacyLpItems.length > 0 && <section className="panel collection-shell">
+        <div className="view-bar"><ViewTabs value={lpFilter} items={viewItems} onChange={setLpFilter} label="LP 保存视图" /></div>
+        {visibleLp.length === 0 ? <EmptyState title="当前视图没有 LP" detail={emptyLpDetail} action={<button className="primary-button" type="button" onClick={openLpCreate}><Plus size={16} /> 创建 LP</button>} /> : (
           <div className="collection-main">
             <div className="collection-head lp-grid-row"><span>学生 / 计划</span><span>类型</span><span>阶段</span><span>截止时间</span><span>操作</span></div>
             <div className="collection-viewport">
@@ -9092,7 +9113,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </div>
           </div>
         )}
-      </section>
+      </section>}
     </>;
   };
 
@@ -11601,6 +11622,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
             </>
           }
         />
+        <JiaowubaoHourDiscrepanciesPanel />
         <section className="report-grid">
           <ReportCard
             value={`${completed}/${reportTasks.length}`}
@@ -14440,7 +14462,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
         <nav id="primary-navigation" aria-label="主要导航">
           {visibleNavigation.filter((item) => item.group === "work").map((item) => {
             const Icon = item.icon;
-            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
+            return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{visibleTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;

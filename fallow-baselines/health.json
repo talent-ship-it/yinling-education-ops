@@ -853,7 +853,7 @@
     },
     "app/operations-client.tsx": {
       "complexity_critical": {
-        "count": 51
+        "count": 50
       },
       "complexity_high": {
         "count": 9
@@ -862,7 +862,7 @@
         "count": 4
       },
       "crap_critical": {
-        "count": 52
+        "count": 51
       },
       "crap_high": {
         "count": 30
@@ -910,9 +910,6 @@
         "count": 1
       },
       "crap_critical": {
-        "count": 1
-      },
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -1670,13 +1667,7 @@
       }
     },
     "lib/trial-ledger-view.ts": {
-      "complexity_high": {
-        "count": 1
-      },
       "complexity_moderate": {
-        "count": 1
-      },
-      "crap_high": {
         "count": 1
       }
     },
@@ -3717,14 +3708,6 @@
         "count": 1
       }
     },
-    "app/operations-client.tsx\u0000renderDashboard": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
     "app/operations-client.tsx\u0000renderLp": {
       "complexity_critical": {
         "count": 1
@@ -4154,9 +4137,6 @@
         "count": 1
       },
       "crap_critical": {
-        "count": 1
-      },
-      "crap_moderate": {
         "count": 1
       }
     },
@@ -5638,14 +5618,6 @@
     },
     "lib/tencent-trial-ledger-system-sync.ts\u0000runTencentTrialLedgerSystemSync": {
       "crap_critical": {
-        "count": 1
-      }
-    },
-    "lib/trial-ledger-view.ts\u0000<arrow>": {
-      "complexity_high": {
-        "count": 1
-      },
-      "crap_high": {
         "count": 1
       }
     },

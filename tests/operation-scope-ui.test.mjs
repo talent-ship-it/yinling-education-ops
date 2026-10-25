@@ -92,7 +92,7 @@ test("course view keeps scheduling actions without provenance controls", async (
   assert.match(courses, /新建排课/);
 });
 
-test("LP board and table use one actionable empty state when the saved view is empty", async () => {
+test("remaining legacy LP table keeps an actionable empty saved view", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const lp = source.slice(source.indexOf("const renderLp = () => {"), source.indexOf("const renderOperations = () => {"));
 

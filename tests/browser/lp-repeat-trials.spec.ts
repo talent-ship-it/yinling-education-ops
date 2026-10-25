@@ -6,7 +6,7 @@ const STUDENT_ID = "SYNTH-REPEAT-TRIAL-STUDENT";
 type Lp = { id: string; studentId: string; title: string; workflowType: string; owner: string; stage: string; due: string; fields: Record<string, unknown>; resultStatus?: string };
 type CreateCommand = { commandKey: string; operation: string; studentId: string; workflowType: string; fields: Record<string, unknown>; expectedVersions: Record<string, number> };
 
-async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean; completedReplay?: boolean } = {}) {
+async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean; completedReplay?: boolean; legacyView?: boolean } = {}) {
   const posted: CreateCommand[] = [];
   const stageWrites: Lp[][] = [];
   const unexpected: string[] = [];
@@ -15,6 +15,7 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
   let unavailableSent = false;
   const student = { id: STUDENT_ID, name: "Synthetic Repeat Student", initials: "SR", guardianWechat: "Synthetic Parent", status: "试听待排", owner: "Ella", planner: "Eileen", course: "Y8 English", timezone: "Australia/Melbourne", teacher: "Teacher Example", next: "待安排", nextTone: "blue", files: 0 };
   const lpItems: Lp[] = options.completedReplay ? [{ id: "SYNTH-UNRELATED-LP", studentId: STUDENT_ID, title: "Synthetic Unrelated LP", workflowType: "试听 LP", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: {} }] : [];
+  if (options.legacyView) lpItems.push({ id: "SYNTH-LEGACY-LP", studentId: STUDENT_ID, title: "Synthetic Legacy LP", workflowType: "老师 LP 修改", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: {} });
   const entities: Record<string, unknown[]> = {
     students: [student], teachers: [{ id: "SYNTH-TEACHER", name: "Teacher Example", initials: "TE", subjects: ["Y8 English"], timezone: "Australia/Melbourne", availability: "", load: 0, capacity: 10, acceptsStudents: true, note: "", availabilityWindows: [] }],
     tasks: [], bookings: [], courses: [], lpItems, operations: [], renewals: [], payroll: [], messages: [], files: [], audit: [],
@@ -106,15 +107,22 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
   await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: displayPreferencesStorageKey("Nixon"), value: JSON.stringify(defaultDisplayPreferences()) });
   await page.clock.install({ time: new Date(NOW) });
   await page.goto("/#section=lp");
-  await expect(page.getByRole("group", { name: "LP 保存视图", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "LP 交接台账", exact: true })).toBeVisible();
   return { posted, stageWrites, unexpected, errors, items };
 }
 
 function lpView(page: Page, label: string) {
   return page.getByRole("group", { name: "LP 保存视图", exact: true }).getByRole("button", { name: new RegExp(`^${label}`, "u") });
 }
-function card(page: Page, title: string) {
-  return page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+function ledgerRow(page: Page, title: string) {
+  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr")
+    .filter({ has: page.getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true }) });
+}
+function trialStage(page: Page, title: string) {
+  return ledgerRow(page, title).getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true });
+}
+function trialResult(page: Page, title: string) {
+  return ledgerRow(page, title).getByRole("combobox", { name: "Synthetic Repeat Student 试听状态", exact: true });
 }
 async function openCreate(page: Page, description: string) {
   await page.getByRole("button", { name: "创建 LP", exact: true }).first().click();
@@ -130,12 +138,13 @@ async function createLp(page: Page, description: string) {
   await expect(dialog).not.toBeVisible();
 }
 async function completeLp(page: Page, title: string) {
-  await card(page, title).getByRole("combobox", { name: `${title} 当前阶段`, exact: true }).selectOption("完成");
+  await ledgerRow(page, title).getByText("查看试听交接详情", { exact: true }).click();
+  await trialStage(page, title).selectOption("完成");
   const dialog = page.getByRole("alertdialog", { name: "确认完成 LP", exact: true });
   await dialog.getByRole("button", { name: "调整为 完成", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(lpView(page, "已完成")).toHaveAttribute("aria-pressed", "true");
-  await expect(card(page, title)).toBeVisible();
+  await expect(trialStage(page, title)).toHaveValue("完成");
+  await expect(ledgerRow(page, title)).toBeVisible();
 }
 function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
   expect(fixture.errors).toEqual([]);
@@ -145,14 +154,14 @@ function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
 test("completed trials do not hide later trials for the same student, including a safe retry", async ({ page }) => {
   const f = await syntheticWorkspace(page, { failThirdOnce: true });
   await createLp(page, "Synthetic first trial");
-  await card(page, "Synthetic Trial LP 1").getByRole("combobox", { name: "Synthetic Trial LP 1 业务结果", exact: true }).selectOption("试听失败");
-  await expect(card(page, "Synthetic Trial LP 1").getByRole("combobox", { name: "Synthetic Trial LP 1 业务结果", exact: true })).toHaveValue("试听失败");
+  await trialResult(page, "Synthetic Trial LP 1").selectOption("试听失败");
+  await expect(trialResult(page, "Synthetic Trial LP 1")).toHaveValue("试听失败");
   await completeLp(page, "Synthetic Trial LP 1");
   const firstCompleted = structuredClone(f.items()[0]);
 
   await createLp(page, "Synthetic second trial");
-  await expect(lpView(page, "进行中")).toHaveAttribute("aria-pressed", "true");
-  await expect(card(page, "Synthetic Trial LP 2")).toBeVisible();
+  await expect(trialStage(page, "Synthetic Trial LP 2")).toHaveValue("待资料");
+  await expect(ledgerRow(page, "Synthetic Trial LP 2")).toBeVisible();
   expect(f.items()[0]).toEqual(firstCompleted);
   await completeLp(page, "Synthetic Trial LP 2");
   const secondCompleted = structuredClone(f.items()[1]);
@@ -164,8 +173,8 @@ test("completed trials do not hide later trials for the same student, including 
   expect(f.items()).toHaveLength(2);
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(lpView(page, "进行中")).toHaveAttribute("aria-pressed", "true");
-  await expect(card(page, "Synthetic Trial LP 3")).toBeVisible();
+  await expect(trialStage(page, "Synthetic Trial LP 3")).toHaveValue("待资料");
+  await expect(ledgerRow(page, "Synthetic Trial LP 3")).toBeVisible();
   expect(f.posted).toHaveLength(4);
   expect(f.posted[3]).toEqual(f.posted[2]);
   expect(new Set(f.posted.map((command) => command.commandKey)).size).toBe(3);
@@ -174,23 +183,29 @@ test("completed trials do not hide later trials for the same student, including 
   expect(f.items()[0]).toEqual(firstCompleted);
   expect(f.items()[1]).toEqual(secondCompleted);
   expect(f.stageWrites).toHaveLength(2);
-  await lpView(page, "全部").click();
-  await expect(page.locator(".kanban-card")).toHaveCount(3);
-  await expect(card(page, "Synthetic Trial LP 1").getByRole("combobox", { name: "Synthetic Trial LP 1 业务结果", exact: true })).toHaveValue("试听失败");
+  const ledger = page.getByRole("region", { name: "LP 交接台账", exact: true });
+  await ledger.getByRole("combobox", { name: "业务结果", exact: true }).selectOption("试听失败");
+  await expect(ledger.locator("tbody tr")).toHaveCount(1);
+  await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+  await ledger.getByRole("button", { name: "清除筛选", exact: true }).click();
+  await expect(ledger.locator("tbody tr")).toHaveCount(3);
+  await expect(trialResult(page, "Synthetic Trial LP 1")).toHaveValue("试听失败");
   assertClean(f);
 });
 
-test("a replay selects the returned LP's completed stage from authoritative state", async ({ page }) => {
+test("a replay preserves the returned LP's completed stage and the unrelated waiting trial", async ({ page }) => {
   const f = await syntheticWorkspace(page, { completedReplay: true });
-  await lpView(page, "等待资料/确认").click();
+  const unrelated = structuredClone(f.items()[0]);
   const dialog = await openCreate(page, "Synthetic completed replay");
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(page.getByText("合成服务暂不可用；可安全重试", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(lpView(page, "已完成")).toHaveAttribute("aria-pressed", "true");
-  await expect(card(page, "Synthetic Trial LP 1")).toBeVisible();
-  await expect(card(page, "Synthetic Unrelated LP")).toHaveCount(0);
+  await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+  await expect(trialStage(page, "Synthetic Trial LP 1")).toHaveValue("完成");
+  await expect(ledgerRow(page, "Synthetic Unrelated LP")).toBeVisible();
+  await expect(trialStage(page, "Synthetic Unrelated LP")).toHaveValue("待资料");
+  expect(f.items()[0]).toEqual(unrelated);
   await expect(page.getByText("LP 已确认，系统没有重复保存", { exact: true })).toBeVisible();
   expect(f.posted).toHaveLength(2);
   expect(f.posted[1]).toEqual(f.posted[0]);
@@ -201,11 +216,14 @@ test("a replay selects the returned LP's completed stage from authoritative stat
 
 for (const view of ["全部", "等待资料/确认"]) {
   test(`a new waiting trial preserves the compatible ${view} view`, async ({ page }) => {
-    const f = await syntheticWorkspace(page);
+    const f = await syntheticWorkspace(page, { legacyView: true });
+    const legacy = structuredClone(f.items()[0]);
     await lpView(page, view).click();
     await createLp(page, `Synthetic compatible ${view} trial`);
     await expect(lpView(page, view)).toHaveAttribute("aria-pressed", "true");
-    await expect(card(page, "Synthetic Trial LP 1")).toBeVisible();
+    await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+    await expect(trialStage(page, "Synthetic Trial LP 1")).toHaveValue("待资料");
+    expect(f.items()[0]).toEqual(legacy);
     expect(f.posted).toHaveLength(1);
     assertClean(f);
   });

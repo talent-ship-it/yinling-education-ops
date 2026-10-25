@@ -29,7 +29,7 @@ function chunks<T>(values: readonly T[], size = PAGE_SIZE) {
 
 async function callTool(input: Readonly<{
   token: string;
-  name: "smartsheet.list_records" | "smartsheet.add_records" | "smartsheet.update_records";
+  name: "smartsheet.list_records" | "smartsheet.add_records" | "smartsheet.update_records" | "sheet.get_sheet_info" | "sheet.get_cell_data" | "sheet.set_cell_value";
   arguments: JsonRecord;
 }>) {
   const token = input.token.trim();
@@ -81,6 +81,8 @@ async function callTool(input: Readonly<{
   }
   return result.structuredContent;
 }
+
+export { callTool as callTencentDocsTool };
 
 function validatedRecords(value: unknown) {
   if (!Array.isArray(value)) throw new TencentDocsMcpError("tencent_mcp_protocol_invalid");

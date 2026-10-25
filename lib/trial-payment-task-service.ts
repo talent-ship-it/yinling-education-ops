@@ -162,8 +162,9 @@ export function authorizeTrialPaymentTaskLifecycle(input: {
   const lpItem = lpMatches[0]!;
   const schedule = isRecord(lpItem.trialSchedule) ? lpItem.trialSchedule : null;
   const intake = isRecord(lpItem.trialIntake) ? lpItem.trialIntake : null;
+  const overrides = isRecord(lpItem.trialLedgerOverrides) ? lpItem.trialLedgerOverrides : null;
   const fields = isRecord(lpItem.fields) ? lpItem.fields : null;
-  const planner = canonicalTrialPlanner(
+  const planner = canonicalTrialPlanner(overrides?.planner) || canonicalTrialPlanner(
     typeof intake?.planner === "string" && intake.planner.trim()
       ? intake.planner
       : student.planner,

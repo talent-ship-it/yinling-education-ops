@@ -5290,3 +5290,7 @@ body { background:var(--canvas); font-size:14px; line-height:1.45; }
 .availability-free { background: #b5e6ce; }
 .availability-busy { background: #7b858b; }
 .availability-legend { display: flex; gap: 8px 20px; flex-wrap: wrap; list-style: none; padding: 0; margin: 8px 0 0; font-size: 14px; }
+
+.schedule-overview { display:grid; gap:16px; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.schedule-overview > * { min-width:0; }
+@media(max-width:1023px) { .schedule-overview { grid-template-columns:minmax(0,1fr); } }

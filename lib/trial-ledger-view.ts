@@ -1,3 +1,5 @@
+import { dateTimeFormat } from "./date-time-format";
+import type { OpsTask } from "./ops-tasks";
 import { matchesOperationsOwnerFilter, operationsOwnerFilterOptions, resolveAssignableOperationsOwner } from "./demo-users";
 import { LP_RESULT_STATUSES } from "./lp-workflows";
 import { TRIAL_LEDGER_PLANNERS, TRIAL_LEDGER_WORKFLOW_TYPES } from "./trial-ledger";
@@ -16,6 +18,9 @@ export const TRIAL_LEDGER_SORT_KEYS = [
 export type TrialLedgerSortKey = (typeof TRIAL_LEDGER_SORT_KEYS)[number];
 export type TrialLedgerSortDirection = "asc" | "desc";
 export type TrialLedgerPaidFilter = typeof ALL | "paid" | "unpaid";
+export type TrialLedgerScheduleFilter = typeof ALL | "matched" | "unmatched";
+export type TrialFollowUpStatus = "required" | "completed" | "not_required" | "unknown";
+export type TrialFollowUpFilter = typeof ALL | Exclude<TrialFollowUpStatus, "unknown">;
 
 export type TrialLedgerViewState = Readonly<{
   query: string;
@@ -23,6 +28,11 @@ export type TrialLedgerViewState = Readonly<{
   lessonMonth: string;
   scheduledFrom: string;
   scheduledTo: string;
+  requestedFrom: string;
+  requestedTo: string;
+  scheduleMatch: TrialLedgerScheduleFilter;
+  parentFollowUp: TrialFollowUpFilter;
+  preparationFollowUp: TrialFollowUpFilter;
   operationsOwner: string;
   planner: string;
   subject: string;
@@ -49,6 +59,10 @@ export type TrialLedgerViewRow = Readonly<{
   resultStatus: string;
   paid: boolean;
   note: string;
+  scheduleMatched?: boolean;
+  parentFollowUp?: TrialFollowUpStatus;
+  preparationFollowUp?: TrialFollowUpStatus;
+  handoverText?: string;
 }>;
 
 export type TrialLedgerViewStats = Readonly<{
@@ -73,13 +87,18 @@ export function defaultTrialLedgerViewState(): TrialLedgerViewState {
     lessonMonth: ALL,
     scheduledFrom: "",
     scheduledTo: "",
+    requestedFrom: "",
+    requestedTo: "",
+    scheduleMatch: ALL,
+    parentFollowUp: ALL,
+    preparationFollowUp: ALL,
     operationsOwner: ALL,
     planner: ALL,
     subject: ALL,
     teacher: ALL,
     resultStatus: ALL,
     paid: ALL,
-    sortKey: "scheduledAt",
+    sortKey: "requestedAt",
     sortDirection: "desc",
   };
 }
@@ -103,6 +122,41 @@ function exactDate(value: unknown, fallback = "") {
   if (!DATE.test(candidate)) return fallback;
   const parsed = new Date(`${candidate}T00:00:00.000Z`);
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString().startsWith(candidate) ? candidate : fallback;
+}
+
+function requestedMillis(value: string) {
+  const instant = Date.parse(`${value}:00+08:00`);
+  if (!Number.isFinite(instant)) return Number.NaN;
+  const parts = Object.fromEntries(dateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(instant).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}` === value ? instant : Number.NaN;
+}
+
+function requestedDateTime(value: unknown) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return "";
+  return Number.isFinite(requestedMillis(value)) ? value : "";
+}
+
+function followUpFilter(value: unknown): TrialFollowUpFilter {
+  return value === "required" || value === "completed" || value === "not_required" ? value : ALL;
+}
+
+export function trialFollowUpStatus(input: Readonly<{
+  lpItemId: string;
+  required: boolean | undefined;
+  ruleKeys: readonly string[];
+  tasks: readonly OpsTask[];
+}>): TrialFollowUpStatus {
+  if (input.required === false) return "not_required";
+  const relevant = input.tasks.filter((task) => (task.anchorBookingId === input.lpItemId
+    || task.requestAnchorBookingId === input.lpItemId) && input.ruleKeys.includes(task.ruleKey ?? ""));
+  if (input.required === undefined && relevant.length === 0) return "unknown";
+  return input.ruleKeys.length > 0 && input.ruleKeys.every((ruleKey) => relevant.some((task) => task.ruleKey === ruleKey
+    && task.status === "done" && task.completionOutcome !== "cannot_do"))
+    && relevant.every((task) => task.status === "done" && task.completionOutcome !== "cannot_do")
+    ? "completed" : "required";
 }
 
 function plannerName(value: string) {
@@ -134,6 +188,11 @@ export function parseTrialLedgerViewState(value: unknown): TrialLedgerViewState 
     lessonMonth: lessonMonth === ALL || MONTH.test(lessonMonth) ? lessonMonth : ALL,
     scheduledFrom: candidate.scheduledFrom === "" ? "" : exactDate(candidate.scheduledFrom),
     scheduledTo: candidate.scheduledTo === "" ? "" : exactDate(candidate.scheduledTo),
+    requestedFrom: requestedDateTime(candidate.requestedFrom),
+    requestedTo: requestedDateTime(candidate.requestedTo),
+    scheduleMatch: candidate.scheduleMatch === "matched" || candidate.scheduleMatch === "unmatched" ? candidate.scheduleMatch : ALL,
+    parentFollowUp: followUpFilter(candidate.parentFollowUp),
+    preparationFollowUp: followUpFilter(candidate.preparationFollowUp),
     operationsOwner: resolveAssignableOperationsOwner(operationsOwner) ?? operationsOwner,
     planner: plannerName(boundedText(candidate.planner, ALL, 120)) || ALL,
     subject: boundedText(candidate.subject, ALL, 160) || ALL,
@@ -189,11 +248,45 @@ function compareOptional(left: string, right: string, direction: TrialLedgerSort
   return direction === "asc" ? compared : -compared;
 }
 
+function matchesRequestRange(value: string, from: number | null, to: number | null) {
+  const at = Date.parse(value);
+  if (from !== null && (!Number.isFinite(at) || at < from)) return false;
+  if (to !== null && (!Number.isFinite(at) || at > to)) return false;
+  return true;
+}
+
+function matchesReviewFilters(row: TrialLedgerViewRow, state: TrialLedgerViewState) {
+  if (state.scheduleMatch !== ALL && row.scheduleMatched !== (state.scheduleMatch === "matched")) return false;
+  if (state.parentFollowUp !== ALL && row.parentFollowUp !== state.parentFollowUp) return false;
+  if (state.preparationFollowUp !== ALL && row.preparationFollowUp !== state.preparationFollowUp) return false;
+  return true;
+}
+
+function matchesLedgerDimensions(row: TrialLedgerViewRow, state: TrialLedgerViewState) {
+  return [
+    [state.workflowType, row.workflowType], [state.lessonMonth, row.lessonMonth],
+    [state.planner, plannerName(row.planner)], [state.subject, row.subject],
+    [state.teacher, row.teacher], [state.resultStatus, row.resultStatus],
+  ].every(([filter, value]) => matchesExact(filter!, value!));
+}
+
+function matchesLedgerDates(row: TrialLedgerViewRow, state: TrialLedgerViewState) {
+  if (state.scheduledFrom && (!row.scheduledDate || row.scheduledDate < state.scheduledFrom)) return false;
+  if (state.scheduledTo && (!row.scheduledDate || row.scheduledDate > state.scheduledTo)) return false;
+  return true;
+}
+
+function matchesPaidFilter(row: TrialLedgerViewRow, state: TrialLedgerViewState) {
+  return state.paid === ALL || trialTypes.has(row.workflowType) && row.paid === (state.paid === "paid");
+}
+
 export function filterAndSortTrialLedgerRows(
   rows: readonly TrialLedgerViewRow[],
   unsafeState: TrialLedgerViewState,
 ) {
   const state = parseTrialLedgerViewState(unsafeState);
+  const requestedFrom = state.requestedFrom ? requestedMillis(state.requestedFrom) : null;
+  const requestedTo = state.requestedTo ? requestedMillis(state.requestedTo) + 59_999 : null;
   const queryTokens = state.query.split(/\s+/u).map(normalizeSearch).filter(Boolean);
   return rows.filter((row) => {
     const haystack = normalizeSearch([
@@ -202,18 +295,15 @@ export function filterAndSortTrialLedgerRows(
       row.subject,
       row.teacher,
       row.note,
+      row.handoverText ?? "",
     ].join(" "));
     if (!queryTokens.every((token) => haystack.includes(token))) return false;
-    if (!matchesExact(state.workflowType, row.workflowType)) return false;
-    if (!matchesExact(state.lessonMonth, row.lessonMonth)) return false;
+    if (!matchesReviewFilters(row, state)) return false;
+    if (!matchesRequestRange(row.requestedAt, requestedFrom, requestedTo)) return false;
+    if (!matchesLedgerDimensions(row, state)) return false;
+    if (!matchesLedgerDates(row, state)) return false;
     if (!matchesOperationsOwnerFilter(state.operationsOwner, row.operationsOwner)) return false;
-    if (!matchesExact(state.planner, plannerName(row.planner))) return false;
-    if (!matchesExact(state.subject, row.subject)) return false;
-    if (!matchesExact(state.teacher, row.teacher)) return false;
-    if (!matchesExact(state.resultStatus, row.resultStatus)) return false;
-    if (state.paid !== ALL && (!trialTypes.has(row.workflowType) || row.paid !== (state.paid === "paid"))) return false;
-    if (state.scheduledFrom && (!row.scheduledDate || row.scheduledDate < state.scheduledFrom)) return false;
-    if (state.scheduledTo && (!row.scheduledDate || row.scheduledDate > state.scheduledTo)) return false;
+    if (!matchesPaidFilter(row, state)) return false;
     return true;
   }).sort((left, right) => {
     const compared = compareOptional(

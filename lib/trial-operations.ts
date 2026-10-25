@@ -16,6 +16,20 @@ import {
   type TrialPaymentMethod,
 } from "./lp-workflows";
 
+import {
+  completeTrialRequestFollowUps,
+  finalizedTrialLpTasks,
+  pendingTrialRequestFollowUp,
+  reopensTrialLpFinalize,
+  reopensTrialRequestFollowUp,
+  trialRequestFollowUpRules,
+  TRIAL_JWB_REQUEST_FOLLOW_UP_RULE,
+} from "./trial-handover-tasks";
+
+export { TRIAL_JWB_REQUEST_FOLLOW_UP_RULE } from "./trial-handover-tasks";
+
+export const TRIAL_TERMINAL_RESULT_STATUSES: readonly string[] = ["已取消", "被家长取消"];
+
 export const TRIAL_PLANNERS = ["Tara", "Eileen", "Abby"] as const;
 export type TrialPlanner = (typeof TRIAL_PLANNERS)[number];
 
@@ -96,6 +110,8 @@ export type TrialScheduleMatch = Readonly<{
   owner: string;
   planner: string;
   preparationFollowUp: boolean;
+  requestFollowUpRules?: readonly string[];
+  trialLpFinalized?: boolean;
   trialPaymentMethod?: TrialPaymentMethod;
   trialPaid?: boolean;
   requestSentAt?: string;
@@ -406,6 +422,36 @@ function trialEventSourceDetails(event: TrialScheduleEventLike) {
   };
 }
 
+function trialPlannerForItem(item: Readonly<{ trialLedgerOverrides?: Readonly<{ planner?: unknown }>; trialIntake?: TrialIntake }>, studentPlanner: string | undefined) {
+  return planner(item.trialLedgerOverrides?.planner) || planner(item.trialIntake?.planner) || planner(studentPlanner) || "";
+}
+
+function matchedTrialScheduleLink(input: Readonly<{
+  item: ReviewedTrialSchedule;
+  event: TrialScheduleEventLike;
+  teachers: ReadonlyMap<string, string>;
+  sourceRevision?: string;
+  matchedAt: string;
+  studentName: string;
+}>): TrialScheduleLink {
+  const { item, event, teachers, sourceRevision, matchedAt, studentName } = input;
+  return Object.freeze({
+    source: "jiaowubao-open-api",
+    ...reviewedTrialLinkMetadata(item),
+    ...(typeof sourceRevision === "string" && /^sha256:[a-f0-9]{64}$/.test(sourceRevision) ? { sourceRevision } : {}),
+    eventId: event.eventId,
+    startsAt: canonicalInstant(event.startsAt, "startsAt"),
+    endsAt: canonicalInstant(event.endsAt, "endsAt"),
+    courseName: event.courseName,
+    studentName,
+    teacherId: event.teacherId,
+    teacherName: optionalText(event.teacherName) ?? (event.teacherId ? teachers.get(event.teacherId) : undefined) ?? "待核对老师映射",
+    plannerHint: event.trialPlannerHint ?? null,
+    ...trialEventSourceDetails(event),
+    matchedAt,
+  });
+}
+
 /**
  * Matches only unambiguous LP/student evidence. The course-title fallback
  * also respects the A/B/C planner hint when available.
@@ -419,7 +465,9 @@ export function matchTrialScheduleEvents(input: Readonly<{
     resultStatus?: string;
     requestedAt?: string;
     trialPaid?: unknown;
-    fields?: Readonly<{ preparationFollowUp?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; assignedTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
+    trialLpFinalized?: unknown;
+    trialLedgerOverrides?: Readonly<{ planner?: unknown }>;
+    fields?: Readonly<{ preparationFollowUp?: unknown; specifiedContentStatus?: unknown; writingRequired?: unknown; paperRequired?: unknown; trialPaymentMethod?: unknown; newTeacher?: unknown; assignedTeacher?: unknown; studentNameKnown?: unknown; studentName?: unknown }>;
     trialIntake?: TrialIntake;
     trialSchedule?: TrialScheduleLink;
     trialScheduleReview?: Readonly<{ source: "screenshot-review"; eventId: string }>;
@@ -439,7 +487,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
   const candidatesByLp = input.lpItems
     .filter((candidate) => (
       candidate.workflowType === "试听 LP" || candidate.workflowType === "换老师试听"
-    ) && candidate.stage !== "完成" && candidate.resultStatus !== "已取消")
+    ) && candidate.stage !== "完成" && !TRIAL_TERMINAL_RESULT_STATUSES.includes(candidate.resultStatus ?? ""))
     .flatMap((item) => {
       const student = students.get(item.studentId);
       if (!student) return [];
@@ -450,7 +498,7 @@ export function matchTrialScheduleEvents(input: Readonly<{
       const existingStudentName = trialScheduleStudentName(item, student.name);
       const nameKey = normalize(existingStudentName);
       if (!nameKey) return [];
-      const plannerName = planner(item.trialIntake?.planner) || planner(student.planner) || "";
+      const plannerName = trialPlannerForItem(item, student.planner);
       const paymentMethod = teacherChangeTrial ? undefined : trialPaymentMethod(item.fields?.trialPaymentMethod);
       const requestTime = requestedAt(item);
       const confirmedEventId = reviewedTrialEventId(item);
@@ -498,29 +546,12 @@ export function matchTrialScheduleEvents(input: Readonly<{
       owner: student.owner,
       planner: plannerName,
       preparationFollowUp: item.fields?.preparationFollowUp !== "否",
+      requestFollowUpRules: trialRequestFollowUpRules(item.fields, item.trialIntake),
       ...(paymentMethod ? { trialPaymentMethod: paymentMethod } : {}),
       ...(typeof item.trialPaid === "boolean" ? { trialPaid: item.trialPaid } : {}),
+      ...(typeof item.trialLpFinalized === "boolean" ? { trialLpFinalized: item.trialLpFinalized } : {}),
       ...(Number.isFinite(requestTime) ? { requestSentAt: new Date(requestTime).toISOString() } : {}),
-      link: Object.freeze({
-        source: "jiaowubao-open-api",
-        ...reviewedTrialLinkMetadata(item),
-        ...(typeof input.sourceRevision === "string"
-          && /^sha256:[a-f0-9]{64}$/.test(input.sourceRevision)
-          ? { sourceRevision: input.sourceRevision }
-          : {}),
-        eventId: event.eventId,
-        startsAt: canonicalInstant(event.startsAt, "startsAt"),
-        endsAt: canonicalInstant(event.endsAt, "endsAt"),
-        courseName: event.courseName,
-        studentName,
-        teacherId: event.teacherId,
-        teacherName: optionalText(event.teacherName)
-          ?? (event.teacherId ? teachers.get(event.teacherId) : undefined)
-          ?? "待核对老师映射",
-        plannerHint: event.trialPlannerHint ?? null,
-        ...trialEventSourceDetails(event),
-        matchedAt,
-      }),
+      link: matchedTrialScheduleLink({ item, event, teachers, sourceRevision: input.sourceRevision, matchedAt, studentName }),
     }));
   }
   return matches;
@@ -727,6 +758,7 @@ export function completeTrialSchedulingReminderTasks(
 export const TRIAL_JWB_RULE_PREFIX = "trial.jiaowubao.";
 
 export const TRIAL_JWB_SCHEDULE_RULE_KEYS = Object.freeze([
+  TRIAL_JWB_REQUEST_FOLLOW_UP_RULE,
   `${TRIAL_JWB_RULE_PREFIX}lp-finalize-tomorrow-n3`,
   `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`,
   `${TRIAL_JWB_RULE_PREFIX}prep-n1`,
@@ -799,7 +831,7 @@ export function completeTrialTaskWithHandbookFollowUps(
   const source = current.find((candidate) => candidate.id === input.taskId);
   if (!source || source.status === "done" || isFrozenLegacyTask(source)) return [...current];
   const closedAt = completedAt.toISOString();
-  const completed = current.map((candidate) => candidate.id === source.id
+  let completed = current.map((candidate) => candidate.id === source.id
     ? {
         ...candidate,
         status: "done" as const,
@@ -809,6 +841,7 @@ export function completeTrialTaskWithHandbookFollowUps(
         completionOutcome: "done" as const,
       }
     : candidate);
+  completed = completeTrialRequestFollowUps(completed, source, closedAt);
   const generated = dependentTrialTasks(source, completedAt);
   if (!generated.length) return completed;
   const generatedIds = new Set(generated.map((candidate) => candidate.id));
@@ -830,7 +863,8 @@ export function reopenTrialTaskWithHandbookFollowUps(
   const reopenedAt = new Date(input.reopenedAt);
   if (!Number.isFinite(reopenedAt.valueOf())) throw new TypeError("reopenedAt must be a valid timestamp");
   const source = current.find((candidate) => candidate.id === input.taskId);
-  if (!source || source.status !== "done" || !source.dueAt || isFrozenLegacyTask(source)) return [...current];
+  if (!source || source.status !== "done" || !source.dueAt || isFrozenLegacyTask(source)
+    || source.result === "关联试听已取消") return [...current];
   const parentReplyClosure = source.anchorBookingId && source.closedAt
     && (source.result === "家长已回复" || source.result === TRIAL_PARENT_REPLIED_ESCALATION_CLOSED_RESULT)
     ? current.filter((candidate) => candidate.status === "done"
@@ -843,14 +877,15 @@ export function reopenTrialTaskWithHandbookFollowUps(
   if (parentReplyClosure.some((candidate) => !candidate.dueAt || isFrozenLegacyTask(candidate))) {
     return [...current];
   }
-  const parentReplyClosureIds = new Set(parentReplyClosure.map((candidate) => candidate.id));
+  const reopenedTaskIds = new Set([source.id, ...parentReplyClosure.map((candidate) => candidate.id)]);
   const dependentRules = source.ruleKey === `${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-send`
     ? new Set([`${TRIAL_MANUAL_REQUEST_RULE_PREFIX}paper-receive`])
     : source.ruleKey === `${TRIAL_JWB_RULE_PREFIX}lp-materials-n2`
       ? new Set<string>(TRIAL_TEACHER_REPLY_RULE_KEYS)
       : new Set<string>();
   return sortTasksByDueAt(current.flatMap((candidate) => {
-    if (candidate.id === source.id || parentReplyClosureIds.has(candidate.id)) {
+    const reopensRequestFollowUp = reopensTrialRequestFollowUp(source, candidate);
+    if (reopenedTaskIds.has(candidate.id) || reopensRequestFollowUp) {
       const status = statusForDueAt(candidate.dueAt!, reopenedAt, input.timeZone);
       const tone: TaskTone = status === "overdue" ? "red" : status === "today" ? "amber" : "blue";
       return [{
@@ -921,9 +956,25 @@ export function formatJiaowubaoTodayTaskTitle(input: Readonly<{
   }
 }
 
+function trialRequestFollowUpTasks(
+  input: TrialScheduleMatch & Readonly<{ currentTasks?: readonly OpsTask[] }>,
+  shared: Omit<Parameters<typeof task>[0], "ruleKey" | "title" | "dueAt">,
+  deadlines: Readonly<{ shortNoticeFinalize: boolean; n2Deadline: Date; n3Deadline: Date }>,
+): OpsTask[] {
+  if (!pendingTrialRequestFollowUp(input, input.currentTasks ?? [])) return [];
+  return [{ ...task({
+    ...shared,
+    ruleKey: TRIAL_JWB_REQUEST_FOLLOW_UP_RULE,
+    title: `《教务+教统》【跟进二要一发】<${input.studentName}> <${input.link.teacherName}>`,
+    dueAt: deadlines.shortNoticeFinalize ? deadlines.n2Deadline : deadlines.n3Deadline,
+    category: "LP",
+  }), trialRequestFollowUpRules: [...(input.requestFollowUpRules ?? [])] }];
+}
+
 export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly<{
   now: Date | string;
   paymentManagedByBooking?: boolean;
+  currentTasks?: readonly OpsTask[];
 }>): OpsTask[] {
   const start = new Date(input.link.startsAt);
   const end = new Date(input.link.endsAt);
@@ -958,7 +1009,8 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
     minute: "2-digit",
     hourCycle: "h23",
   }).format(end);
-  return [
+  const tasks: OpsTask[] = [
+    ...trialRequestFollowUpTasks(input, shared, { shortNoticeFinalize, n2Deadline, n3Deadline }),
     ...(leadDays === null || leadDays >= 3 ? [
       task({
         ...shared,
@@ -1013,6 +1065,7 @@ export function generateJiaowubaoTrialTasks(input: TrialScheduleMatch & Readonly
       tone: "red",
     }),
   ];
+  return finalizedTrialLpTasks(tasks, input.trialLpFinalized, now);
 }
 
 export function replaceRuleTasks(
@@ -1034,7 +1087,7 @@ export function replaceRuleTasks(
     const candidateWithNote = existing?.completionNote
       ? { ...candidate, completionNote: existing.completionNote, completionNoteUpdatedAt: existing.completionNoteUpdatedAt }
       : candidate;
-    next.push(existing?.status === "done" ? existing : candidateWithNote);
+    next.push(existing?.status === "done" && !reopensTrialLpFinalize(existing, candidate) ? existing : candidateWithNote);
   }
   return next;
 }

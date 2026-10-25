@@ -49,21 +49,34 @@ function targetStudentId(lpItemsRow: OpsStateRow, lpItemId: string) {
     : null;
 }
 
+function ledgerTransactionEntities(field: string) {
+  return field === "lpFinalized" || field === "resultStatus"
+    ? ["lpItems", "tasks"] : ["lpItems"];
+}
+
 function authorize(input: {
   rows: OpsStateRow[];
   actor: string;
   fullAdmin: boolean;
   session: Parameters<typeof buildOpsAccessContext>[3];
   lpItemId: string;
+  field: string;
 }) {
   const lpItemsRow = input.rows.find((row) => row.entity === "lpItems");
   if (!lpItemsRow) return null;
   const studentId = targetStudentId(lpItemsRow, input.lpItemId);
   if (!studentId) return null;
   const access = buildOpsAccessContext(input.rows, input.actor, input.fullAdmin, input.session);
-  if (!canWriteOpsTransaction(access, "lpItems", ["lpItems"])
+  if (!canWriteOpsTransaction(access, "lpItems", ledgerTransactionEntities(input.field))
     || !canOperateStudent(access, studentId)) return null;
   return { access, studentId };
+}
+
+function taskReceipt(rows: OpsStateRow[], access: Parameters<typeof filterOpsStateRows>[1], field: string) {
+  if (field !== "lpFinalized" && field !== "resultStatus") return {};
+  const tasksRow = filterOpsStateRows(rows, access).find((row) => row.entity === "tasks");
+  if (!tasksRow) throw new OpsStoreError("LP 任务状态不可见。", "invalid_commit_result");
+  return { tasksRow };
 }
 
 export async function POST(request: Request) {
@@ -89,9 +102,10 @@ export async function POST(request: Request) {
       actor,
     });
     if (replay[0]) {
-      const students = await getOpsState(["students"]);
-      const rows = [...students, replay[0].lp_items_row];
-      const authorized = authorize({ rows, actor, fullAdmin, session, lpItemId: replay[0].lp_item_id });
+      const related = await getOpsState(command.field === "lpFinalized" || command.field === "resultStatus"
+        ? ["students", "teachers", "bookings", "tasks"] : ["students"]);
+      const rows = [...related, replay[0].lp_items_row];
+      const authorized = authorize({ rows, actor, fullAdmin, session, lpItemId: replay[0].lp_item_id, field: replay[0].field });
       if (!authorized) {
         return noStore({ error: "当前账号不能操作该试听学生。", code: "student_scope_forbidden" }, 403);
       }
@@ -104,13 +118,14 @@ export async function POST(request: Request) {
         commandKey: replay[0].command_key,
         lpItemId: replay[0].lp_item_id,
         field: replay[0].field,
+        ...taskReceipt(rows, authorized.access, replay[0].field),
         lpItemsRow,
         auditEntryId: replay[0].audit_entry_id,
       });
     }
 
     const rows = await getOpsState(["students", "lpItems"]);
-    const authorized = authorize({ rows, actor, fullAdmin, session, lpItemId: command.lpItemId });
+    const authorized = authorize({ rows, actor, fullAdmin, session, lpItemId: command.lpItemId, field: command.field });
     if (!authorized) {
       const exists = records(rows.find((row) => row.entity === "lpItems"))
         .some((item) => item.id === command.lpItemId);
@@ -132,13 +147,16 @@ export async function POST(request: Request) {
     if (!saved[0]?.lp_items_row) {
       throw new OpsStoreError("试听台账原子事务没有返回完整状态。", "invalid_commit_result");
     }
-    const committedRows = rows.map((row) => row.entity === "lpItems" ? saved[0]!.lp_items_row : row);
+    const related = command.field === "lpFinalized" || command.field === "resultStatus"
+      ? await getOpsState(["teachers", "bookings", "tasks"]) : [];
+    const committedRows = [...rows.map((row) => row.entity === "lpItems" ? saved[0]!.lp_items_row : row), ...related];
     const committedAccess = authorize({
       rows: committedRows,
       actor,
       fullAdmin,
       session,
       lpItemId: saved[0].lp_item_id,
+      field: saved[0].field,
     });
     if (!committedAccess) {
       return noStore({ error: "当前账号不能操作该试听学生。", code: "student_scope_forbidden" }, 403);
@@ -152,6 +170,7 @@ export async function POST(request: Request) {
       commandKey: saved[0].command_key,
       lpItemId: saved[0].lp_item_id,
       field: saved[0].field,
+      ...taskReceipt(committedRows, committedAccess.access, saved[0].field),
       lpItemsRow,
       auditEntryId: saved[0].audit_entry_id,
     });

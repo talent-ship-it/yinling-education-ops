@@ -24,10 +24,11 @@ test("preserves the handbook review columns and adds readonly Jiaowubao schedule
     "是否付费",
     "备注",
     "教务宝小课表",
+    "LP 已定稿",
   ]);
 });
 
-test("keeps all 13 persisted ledger fields editable through the dedicated atomic route", () => {
+test("keeps persisted ledger fields editable through the dedicated atomic route", () => {
   for (const field of [
     "studentName",
     "guardianWechat",
@@ -42,6 +43,7 @@ test("keeps all 13 persisted ledger fields editable through the dedicated atomic
     "resultStatus",
     "trialPaid",
     "trialLedgerNote",
+    "lpFinalized",
   ]) {
     assert.match(client, new RegExp(`(?:field: "${field}"|saveTrialLedgerFieldAtomic\\((?:item|input\\.item), "${field}")`));
   }

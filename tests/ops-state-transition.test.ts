@@ -947,6 +947,7 @@ test("generic LP saves cannot bypass the field-level trial ledger transaction", 
     trialLedgerOverrides: { teacher: "Zara Baker" },
   }], rows), dedicated);
   assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialPaid: false }], rows), dedicated);
+  assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialLpFinalized: true }], rows), dedicated);
   assert.throws(() => transition("lpItems", [lp], [{ ...lp, trialLedgerNote: "Review" }], rows), dedicated);
   assert.throws(() => transition("lpItems", [lp], [{
     ...lp,

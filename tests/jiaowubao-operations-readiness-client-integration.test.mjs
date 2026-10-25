@@ -15,7 +15,7 @@ function section(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test("admin dashboard keeps the task, today, and risk panels", () => {
+test("admin dashboard keeps tasks and schedule retains lesson and risk panels", () => {
   const dashboard = section(
     client,
     "  const renderDashboard = () => {",
@@ -23,10 +23,12 @@ test("admin dashboard keeps the task, today, and risk panels", () => {
   );
 
   assert.match(dashboard, /<ToDoList tasks=\{visibleTasks\}/);
-  assert.match(dashboard, /className="panel today-panel"/);
-  assert.match(dashboard, /<h2>今日课程<\/h2>/);
-  assert.match(dashboard, /className="panel risk-panel"/);
-  assert.match(dashboard, /<h2>风险与缺口<\/h2>/);
+  const overview = section(client, "  const renderScheduleOverview = () => {", "\n\n  const renderDashboard = () => {");
+  assert.doesNotMatch(dashboard, /today-panel|risk-panel/);
+  assert.match(overview, /className="panel today-panel"/);
+  assert.match(overview, /<h2>今日课程<\/h2>/);
+  assert.match(overview, /className="panel risk-panel"/);
+  assert.match(overview, /<h2>风险与缺口<\/h2>/);
   assert.doesNotMatch(
     dashboard,
     /TeacherAvailabilityCompletionPanel|JiaowubaoOperationsReadinessPanel|JiaowubaoScheduleMappingPriorityReviewPanel/,
@@ -37,7 +39,7 @@ test("legacy dashboard readiness panels are not rendered for teacher workspaces"
   const teacherDashboard = section(
     client,
     "  const renderTeacherDashboard = () => {",
-    "\n\n  const renderDashboard = () => {",
+    "\n\n  const renderScheduleOverview = () => {",
   );
 
   assert.doesNotMatch(

@@ -22,12 +22,14 @@ function handlerFor(startMarker, endMarker) {
   return client.slice(start, end);
 }
 
-test("AVA completion is an administrator-dashboard-only, fail-closed reader and risk source", () => {
+test("AVA completion is an administrator-schedule-only, fail-closed reader and risk source", () => {
   const effect = effectFor('void fetch("/api/teacher-availability/completion", {');
   const dashboard = handlerFor("  const renderDashboard = () => {", "\n\n  const renderStudents = () => {");
+  const overview = handlerFor("  const renderScheduleOverview = () => {", "\n\n  const renderDashboard = () => {");
+  const schedule = handlerFor("  const renderSchedule = () => {", "\n\n  const renderLp = () => {");
   const teacherDashboard = client.slice(client.indexOf("const renderTeacherDashboard"), client.indexOf("const renderDashboard"));
 
-  assert.match(effect, /if \(!canUseAdminScope \|\| !isAdminView \|\| active !== "dashboard"\) return;/);
+  assert.match(effect, /if \(!canUseAdminScope \|\| !isAdminView \|\| active !== "schedule"\) return;/);
   assert.match(effect, /method: "GET"/);
   assert.match(effect, /cache: "no-store"/);
   assert.match(effect, /parseTeacherAvailabilityCompletionInbox\(body\)/);
@@ -35,15 +37,18 @@ test("AVA completion is an administrator-dashboard-only, fail-closed reader and 
   assert.doesNotMatch(effect, /method: "(?:POST|PUT|PATCH|DELETE)"/);
 
   assert.match(dashboard, /<ToDoList tasks=\{visibleTasks\}/);
-  assert.match(dashboard, /className="panel today-panel"/);
-  assert.match(dashboard, /<h2>今日课程<\/h2>/);
-  assert.match(dashboard, /className="panel risk-panel"/);
-  assert.match(dashboard, /<h2>风险与缺口<\/h2>/);
+  assert.match(overview, /className="panel today-panel"/);
+  assert.match(overview, /<h2>今日课程<\/h2>/);
+  assert.match(overview, /className="panel risk-panel"/);
+  assert.match(overview, /<h2>风险与缺口<\/h2>/);
   assert.doesNotMatch(dashboard, /TeacherAvailabilityCompletionPanel|JiaowubaoOperationsReadinessPanel|JiaowubaoScheduleMappingPriorityReviewPanel/);
-  assert.match(dashboard, /const authoritativeAvaInbox = isAdminView && canUseAdminScope/);
-  assert.match(dashboard, /const authoritativeAvaSummary = authoritativeAvaInbox\?\.summary \?\? null;/);
-  assert.match(dashboard, /authoritativeAvaSummary\.missing \+ authoritativeAvaSummary\.invalid/);
-  assert.doesNotMatch(dashboard, /availabilityWindows \?\? \[\]\)\.some\(/);
+  assert.match(overview, /const authoritativeAvaInbox = isAdminView && canUseAdminScope/);
+  assert.match(overview, /const authoritativeAvaSummary = authoritativeAvaInbox\?\.summary \?\? null;/);
+  assert.match(overview, /authoritativeAvaSummary\.missing \+ authoritativeAvaSummary\.invalid/);
+  assert.doesNotMatch(overview, /availabilityWindows \?\? \[\]\)\.some\(/);
+  assert.doesNotMatch(dashboard, /today-panel|risk-panel|renderScheduleOverview/);
+  assert.match(schedule, /renderScheduleOverview\(\)/);
+  assert.match(client, /useState<ToDoFilter>\("today"\)/);
   assert.doesNotMatch(teacherDashboard, /TeacherAvailabilityCompletionPanel|teacher-availability\/completion/);
 });
 

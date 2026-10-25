@@ -298,7 +298,7 @@ test("retains core operations workflows and responsive UI", async () => {
   assert.match(client, /onConfirm: async \(\) => \{\s*await writeBookingCapacityMutation\(\{ action: "delete", bookingId: booking\.id \}\)/);
   assert.match(client, /kind !== "代课" && firstTeacherStudentBooking/);
   assert.match(client, /<ToDoList tasks=\{visibleTasks\}/);
-  assert.match(toDoList, /TO_DO_FILTERS = \["all", "today", "试听", "排课", "LP", "考试", "续课", "请假代课"\]/);
+  assert.match(toDoList, /TO_DO_FILTERS = \["all", "today", "overdue", "parent-follow-up", "preparation", "试听", "排课", "LP", "考试", "续课", "请假代课"\]/);
   assert.match(toDoList, /title="今日到期"/);
   assert.match(toDoList, /title="已逾期"/);
   assert.match(toDoList, /sortTasksByDueAt/);
@@ -673,7 +673,9 @@ test("covers current scheduling, LP, AVA and student record changes", async () =
   assert.match(client, /type="submit" disabled=\{confirmBusy\}>\{confirmBusy/);
   assert.match(client, /actionLabel: undo \? translateInterfaceText\("撤销", displayPreferences\.language\)/);
   assert.match(client, /current\?\.id === toastId/);
-  assert.match(client, /<h2>\{stage\}<\/h2>/);
+  assert.match(client, /aria-label=\{`\$\{item.title\} 当前阶段`\}/);
+  assert.match(client, /\{stageControls\(item, true\)\}/);
+  assert.doesNotMatch(client, /<section className="kanban-board">/);
   assert.match(css, /\.kanban-board header h2 \{ font:inherit; margin:0; \}/);
   assert.match(client, /window\.matchMedia\("\(min-width: 761px\) and \(pointer: fine\)"\)/);
   assert.doesNotMatch(client, /id="password"[^>]*autoFocus/);

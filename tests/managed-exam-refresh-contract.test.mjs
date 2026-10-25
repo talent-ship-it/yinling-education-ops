@@ -43,7 +43,7 @@ test("the state reader derives versions, scoped rows, and projection from one op
 test("cross-owner exam identity remains non-navigable in every refreshed reminder surface", () => {
   assert.match(client, /return examStudents\.filter\(\(student\) =>/);
   assert.match(client, /managedExamStudentIds\.has\(student\.id\) \? <span className="managed-exam-reminder"/);
-  assert.match(client, /canOpen=\{\(task\) => !managedExamStudentIds\.has\(task\.studentId\) && !managedTrialPaymentStudentIds\.has\(task\.studentId\)\}/);
+  assert.match(client, /canOpen=\{\(task\) => task\.ruleKey !== "jiaowubao\.unclosed" && !managedExamStudentIds\.has\(task\.studentId\) && !managedTrialPaymentStudentIds\.has\(task\.studentId\)\}/);
   assert.match(client, /studentName=\{\(studentId\) => taskStudentNames\.get\(studentId\)\}/);
   assert.match(client, /action=\{managedExamStudentIds\.has\(nearestExam\.id\) \? undefined/);
   assert.match(toDoList, /canOpen\?\.\(task\) === false[\s\S]*task-copy-static/);

@@ -214,7 +214,7 @@ test("new submissions follow the concise handover templates and require a valid 
 });
 
 test("keeps business result independent from stage and restricts it by workflow type", () => {
-  const trialLedgerStatuses = ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败", "被家长取消", "NIL"];
+  const trialLedgerStatuses = ["试听成功", "试听失败", "有希望报名", "试听未进行", "在读试听成功", "在读试听失败", "被家长取消", "NIL", "延迟待安排"];
   assert.deepEqual(TRIAL_LEDGER_RESULT_STATUSES, trialLedgerStatuses);
   assert.deepEqual(allowedLpResultStatuses("试听 LP"), trialLedgerStatuses);
   assert.deepEqual(allowedLpResultStatuses("换老师试听"), trialLedgerStatuses);

@@ -1138,6 +1138,7 @@ function assertLpItemsTransition(currentPayload: unknown, nextPayload: unknown) 
         "resultStatus",
         "trialLedgerOverrides",
         "trialPaid",
+        "trialLpFinalized",
         "trialLedgerNote",
         "trialLedgerAudit",
       ] as const;

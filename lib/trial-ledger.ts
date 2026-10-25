@@ -29,6 +29,7 @@ export const TRIAL_LEDGER_FIELDS = [
   ...TRIAL_LEDGER_OVERRIDE_FIELDS,
   "resultStatus",
   "trialPaid",
+  "lpFinalized",
   "trialLedgerNote",
 ] as const;
 
@@ -54,6 +55,7 @@ export type TrialLedgerRecord = Readonly<{
   resultStatus?: LpResultStatus;
   trialLedgerOverrides?: TrialLedgerOverrides;
   trialPaid?: boolean;
+  trialLpFinalized?: boolean;
   trialLedgerNote?: string;
   trialLedgerAudit?: readonly TrialLedgerAuditEntry[];
 }>;
@@ -149,6 +151,11 @@ export function normalizeTrialLedgerFieldValue(
       }
       return normalized;
     }
+    case "lpFinalized":
+      if (typeof value !== "boolean") {
+        throw new TrialLedgerError("invalid_command", "LP定稿必须是是、否或自动判断。");
+      }
+      return value;
     case "trialPaid":
       if (typeof value !== "boolean") {
         throw new TrialLedgerError("invalid_command", "是否付费必须是是、否或自动判断。");
@@ -209,6 +216,7 @@ export function trialLedgerStoredValue(
     return value === undefined ? undefined : normalizeTrialLedgerFieldValue(field, value);
   }
   if (field === "trialPaid") return item.trialPaid;
+  if (field === "lpFinalized") return item.trialLpFinalized;
   if (field === "trialLedgerNote") {
     return item.trialLedgerNote?.trim() || undefined;
   }

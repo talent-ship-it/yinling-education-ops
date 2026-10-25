@@ -123,7 +123,7 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   function committedReply(body: PostedCommand) {
     const selectedId = body.studentId ?? "SYNTH-LP-NEW-STUDENT";
     if (body.newStudent) entities.students = [...entities.students as unknown[], { ...student, id: selectedId, name: body.fields.studentName, guardianWechat: body.newStudent.guardianWechat, timezone: body.newStudent.timezone }];
-    entities.lpItems = [{ id: LP_ID, studentId: selectedId, title: "Synthetic Trial LP", workflowType: "试听 LP", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: body.fields }];
+    entities.lpItems = [...entities.lpItems as unknown[], { id: LP_ID, studentId: selectedId, title: "Synthetic Trial LP", workflowType: "试听 LP", owner: "Ella", stage: "待资料", due: "2026-10-23", fields: body.fields }];
     for (const entity of ["students", "lpItems", "tasks", "files"]) versions[entity]++;
     committed = true;
     return { committed: true, applied: true, studentId: selectedId, lpItemId: LP_ID, studentsRow: row("students"), lpItemsRow: row("lpItems"), tasksRow: row("tasks"), filesRow: row("files") };
@@ -195,7 +195,7 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
   await page.goto("/#section=lp");
   await expect(page.getByRole("heading", { name: "机器人交接草稿", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /核对并创建 LP/u }).first()).toBeVisible();
-  return { posted, reads, errors, unexpected, requests, screenshotReads, screenshotPosted };
+  return { posted, reads, errors, unexpected, requests, screenshotReads, screenshotPosted, entities };
 }
 
 async function openDraft(page: Page) {
@@ -238,7 +238,12 @@ test("new student's received handover prefills the review and confirms one LP", 
 });
 
 test("matched handover leaves the completed view to show the new LP for the existing student", async ({ page }) => {
-  const f = await syntheticWorkspace(page, { matched: true });
+  const historicalLp = {
+    id: "SYNTH-LP-HISTORY", studentId: STUDENT_ID, title: "Synthetic Historical LP", workflowType: "老师新 LP",
+    owner: "Ella", stage: "完成", due: "2026-10-01", revisionNumber: 2,
+    fields: { subject: "Y8 English", teacher: "Synthetic Previous Teacher", documentUrl: "https://docs.example.invalid/historical-lp" },
+  };
+  const f = await syntheticWorkspace(page, { matched: true, lpItems: [structuredClone(historicalLp)] });
   const views = page.getByRole("group", { name: "LP 保存视图", exact: true });
   await views.getByRole("button", { name: /^已完成/u }).click();
   const dialog = await openDraft(page);
@@ -251,7 +256,13 @@ test("matched handover leaves the completed view to show the new LP for the exis
   expect(f.posted[0].studentId).toBe(STUDENT_ID);
   expect(f.posted[0].newStudent).toBeUndefined();
   await expect(views.getByRole("button", { name: /^进行中/u })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("combobox", { name: "Synthetic Trial LP 当前阶段", exact: true })).toHaveValue("待资料");
+  const details = await openTrialDetails(page, "Synthetic Trial LP");
+  await expect(details.getByRole("combobox", { name: "Synthetic Trial LP 当前阶段", exact: true })).toHaveValue("待资料");
+  expect(f.entities.lpItems).toHaveLength(2);
+  expect(f.entities.lpItems).toContainEqual(historicalLp);
+  await views.getByRole("button", { name: /^已完成/u }).click();
+  await expect(page.getByRole("combobox", { name: "Synthetic Historical LP 当前阶段", exact: true })).toHaveValue("完成");
+  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toBeVisible();
   assertClean(f);
 });
 
@@ -318,18 +329,31 @@ async function handoverValues(dialog: Locator) {
   return Object.fromEntries(await Promise.all(fields.map(async (field) => [field, await dialog.locator(`[name="${field}"]`).inputValue()])));
 }
 
+function trialLedgerRow(page: Page, title: string) {
+  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr")
+    .filter({ has: page.getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true }) });
+}
+
+async function openTrialDetails(page: Page, title: string) {
+  const row = trialLedgerRow(page, title);
+  await expect(row).toBeVisible();
+  const details = row.locator("details.trial-intake-details");
+  if (await details.getAttribute("open") === null) await details.getByText("查看试听交接详情", { exact: true }).click();
+  await expect(details.getByRole("combobox", { name: `${title} 当前阶段`, exact: true })).toBeVisible();
+  return details;
+}
+
 async function createSyntheticLp(page: Page) {
   const dialog = await openDraft(page);
   await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole("heading", { name: "Synthetic Trial LP", exact: true })).toBeVisible();
+  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toBeVisible();
+  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toHaveCount(1);
 }
 
 async function openScreenshotConfirmation(page: Page) {
-  const card = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Trial LP", exact: true }) });
-  const details = card.locator("details.trial-intake-details");
-  if (await details.getAttribute("open") === null) await details.locator("summary").click();
-  await card.getByRole("button", { name: "补全教务宝小课表", exact: true }).click();
+  const details = await openTrialDetails(page, "Synthetic Trial LP");
+  await details.getByRole("button", { name: "补全教务宝小课表", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "补全教务宝小课表", exact: true });
   await expect(dialog).toBeVisible();
   return dialog;
@@ -594,20 +618,18 @@ test("trusted trial schedules remain readonly beside manual ledger overrides and
       trialSchedule: { ...trialSchedule, eventId: "synthetic-change-schedule", courseName: "Synthetic Complete Change Course", sharedAccountLabel: "试听学员C2026", sharedAccountLetter: "c" },
     },
   ] });
-  const row = page.getByRole("row").filter({ has: page.getByRole("combobox", { name: "Synthetic Student 老师", exact: true }) }).first();
-  await expect(row.getByRole("combobox", { name: "Synthetic Student 老师", exact: true })).toHaveValue("Synthetic Manual Teacher");
-  await expect(row.getByRole("combobox", { name: "Synthetic Student 科目", exact: true })).toHaveValue("Synthetic Manual Subject");
+  const row = trialLedgerRow(page, "Synthetic Trial Metadata");
+  await expect(row.getByLabel("Synthetic Student 老师", { exact: true })).toHaveValue("Synthetic Manual Teacher");
+  await expect(row.getByLabel("Synthetic Student 科目", { exact: true })).toHaveValue("Synthetic Manual Subject");
   await expect(row.getByLabel("Synthetic Student 上课日期", { exact: true })).toHaveValue("2026-10-23");
   await expect(row.getByLabel("Synthetic Student 上课时间（墨尔本）", { exact: true })).toHaveValue("09:30");
   const api = row.getByRole("region", { name: "教务宝小课表", exact: true });
   for (const value of [candidate.teacherName, candidate.courseName, "2026-10-22", "19:05 – 20:05", "60 分钟", candidate.sharedAccountLabel]) await expect(api.getByText(value, { exact: true })).toBeVisible();
   await expect(api.locator("input,select,button,textarea")).toHaveCount(0);
-  const trial = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Trial Metadata", exact: true }) });
-  await trial.locator("summary").click();
+  const trial = await openTrialDetails(page, "Synthetic Trial Metadata");
   await expect(trial.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("60 分钟", { exact: true })).toBeVisible();
   await expect(trial.getByText("交接试听时长", { exact: true }).locator("..")).toHaveText("交接试听时长45 分钟");
-  const change = page.locator(".kanban-card").filter({ has: page.getByRole("heading", { name: "Synthetic Teacher Change", exact: true }) });
-  await change.locator("summary").click();
+  const change = await openTrialDetails(page, "Synthetic Teacher Change");
   await expect(change.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("Synthetic Complete Change Course", { exact: true })).toBeVisible();
   await expect(change.getByText("试听学员C2026", { exact: true })).toBeVisible();
   await expect(change.getByRole("button", { name: "补全教务宝小课表", exact: true })).toHaveCount(0);

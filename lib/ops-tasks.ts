@@ -57,6 +57,7 @@ export interface OpsTask {
   anchorBookingId?: string;
   /** Trial-request identity retained after an authoritative booking takes over. */
   requestAnchorBookingId?: string;
+  trialRequestFollowUpRules?: readonly string[];
   closedAt?: string;
 }
 
