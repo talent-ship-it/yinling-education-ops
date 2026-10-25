@@ -1359,7 +1359,18 @@ function configuration() {
   return { url: url.replace(/\/$/, ""), publishableKey, secret };
 }
 
-async function parseRpcPayload(response: Response, controller: AbortController) {
+const UNCLOSED_SNAPSHOT_VOID_RPCS = new Set([
+  "begin_jiaowubao_unclosed_snapshot",
+  "stage_jiaowubao_unclosed_snapshot",
+  "abort_jiaowubao_unclosed_snapshot",
+]);
+
+function isUnclosedSnapshotNoContent(response: Response, name: string) {
+  return response.status === 204 && response.body === null && UNCLOSED_SNAPSHOT_VOID_RPCS.has(name);
+}
+
+async function parseRpcPayload(response: Response, controller: AbortController, name: string) {
+  if (isUnclosedSnapshotNoContent(response, name)) return undefined;
   try {
     return await response.json() as unknown;
   } catch (error) {
@@ -1390,7 +1401,7 @@ async function requestRpc(
   received(response);
   return Object.freeze({
     response,
-    payload: await parseRpcPayload(response, controller),
+    payload: await parseRpcPayload(response, controller, name),
   });
 }
 
