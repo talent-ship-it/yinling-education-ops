@@ -8,6 +8,7 @@ import ts from "typescript";
 
 import { createJiaowubaoMcpScheduleReader } from "../lib/jiaowubao-mcp-node.ts";
 import { createJiaowubaoScheduleReader } from "../lib/jiaowubao-schedule-provider-node.ts";
+import { runJiaowubaoScheduleHorizonCollection } from "../lib/jiaowubao-schedule-horizon-runner.ts";
 import {
   JIAOWUBAO_SCHEDULE_SNAPSHOT_SOURCE_KEY,
   assertJiaowubaoScheduleSnapshotPageBytes,
@@ -141,6 +142,7 @@ function routeHarness(fetchImpl, projectionDiagnostic = null) {
       jiaowubaoScheduleSourcePageRows,
       jiaowubaoScheduleSnapshotRows,
     },
+    "@/lib/jiaowubao-schedule-horizon-runner": { runJiaowubaoScheduleHorizonCollection },
     "@/lib/jiaowubao-schedule-runtime-budget": {
       JIAOWUBAO_SCHEDULE_COLLECTION_RESERVE_MS,
       JIAOWUBAO_SCHEDULE_AUTHORITY_TIMEOUT_MS,
