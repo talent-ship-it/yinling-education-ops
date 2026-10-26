@@ -1,4 +1,7 @@
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "jiaowubao-schedule-mapping-catalog", source: "tests/sql/jiaowubao-schedule-mapping-catalog-runtime.sql", steps: [
+    { kind: "sql", file: "tests/sql/jiaowubao-schedule-mapping-catalog-runtime.sql" },
+  ] },
   { id: "unclosed-lesson-scheduler-activation", source: "tests/sql/unclosed-lesson-scheduler-activation-runtime.py", steps: [
     { kind: "python", file: "tests/sql/unclosed-lesson-scheduler-activation-runtime.py" },
   ] },
