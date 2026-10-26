@@ -175,3 +175,67 @@ begin
   end if;
 end;
 $fixture$;
+
+do $duplicate_fixture$
+declare start_day date := (clock_timestamp() at time zone 'Australia/Melbourne')::date;
+  lease_key text := 'jwb-open-api-schedule-sync:1760000000000:00000000-0000-4000-8000-000000000005';
+  active_run uuid; initial jsonb; restarted jsonb; aborted jsonb; first_page jsonb;
+  constraint_name_value text;
+  revision_two text := 'sha256:' || repeat('2',64);
+begin
+  select id into active_run from internal.jiaowubao_schedule_horizon_runs where state in ('collecting','ready');
+  perform public.abort_jiaowubao_schedule_horizon_collection(
+    'schedule-horizon-fixture-secret',lease_key,active_run,'Ops Admin');
+  initial := public.begin_jiaowubao_schedule_horizon_collection(
+    'schedule-horizon-fixture-secret',lease_key,start_day,start_day+92,revision_two,'Ops Admin');
+  select jsonb_agg(jsonb_build_object(
+    'sourceKey','jwb-open-api:schedule:duplicate-fixture-' || item::text,
+    'record',jsonb_build_object('cal_id','duplicate-fixture-' || item::text,'teacher_title','Synthetic Teacher')
+  ) order by item) into first_page from generate_series(1,100) item;
+  perform public.stage_jiaowubao_schedule_horizon_page(
+    'schedule-horizon-fixture-secret',lease_key,(initial ->> 'runId')::uuid,0,0,1,first_page,'Ops Admin');
+  begin
+    perform public.stage_jiaowubao_schedule_horizon_page(
+      'schedule-horizon-fixture-secret',lease_key,(initial ->> 'runId')::uuid,0,0,2,
+      '[{"sourceKey":"jwb-open-api:schedule:duplicate-fixture-1","record":{"cal_id":"duplicate-fixture-1","teacher_title":"Conflicting Synthetic Teacher"}}]'::jsonb,
+      'Ops Admin');
+    raise exception 'cross-page conflicting source was accepted';
+  exception when unique_violation then
+    get stacked diagnostics constraint_name_value = constraint_name;
+    if constraint_name_value <> 'jiaowubao_schedule_horizon_items_pkey' then
+      raise exception 'unexpected duplicate constraint';
+    end if;
+  end;
+  if (select count(*) from internal.jiaowubao_schedule_horizon_pages where run_id=(initial ->> 'runId')::uuid) <> 1
+     or (select count(*) from internal.jiaowubao_schedule_horizon_items where run_id=(initial ->> 'runId')::uuid) <> 100
+     or not exists(select 1 from internal.jiaowubao_schedule_horizon_runs
+       where id=(initial ->> 'runId')::uuid and first_pass_count=100 and next_page=2 and state='collecting') then
+    raise exception 'rejected duplicate changed page checkpoint';
+  end if;
+  begin
+    perform public.stage_jiaowubao_schedule_horizon_page(
+      'schedule-horizon-fixture-secret',lease_key,(initial ->> 'runId')::uuid,0,0,1,first_page,'Ops Admin');
+    raise exception 'old page checkpoint was accepted';
+  exception when object_not_in_prerequisite_state then null;
+  end;
+  aborted := public.abort_jiaowubao_schedule_horizon_collection(
+    'schedule-horizon-fixture-secret',lease_key,(initial ->> 'runId')::uuid,'Ops Admin');
+  if aborted ->> 'runId' <> initial ->> 'runId' or aborted ->> 'aborted' <> 'true' then
+    raise exception 'abort receipt did not confirm discarded run';
+  end if;
+  restarted := public.begin_jiaowubao_schedule_horizon_collection(
+    'schedule-horizon-fixture-secret',lease_key,start_day,start_day+92,revision_two,'Ops Admin');
+  if restarted ->> 'runId' = initial ->> 'runId'
+     or (restarted ->> 'passNumber')::integer <> 0
+     or (restarted ->> 'windowIndex')::integer <> 0
+     or (restarted ->> 'nextPage')::integer <> 1
+     or (restarted ->> 'firstPassCount')::integer <> 0
+     or (restarted ->> 'secondPassCount')::integer <> 0
+     or exists(select 1 from internal.jiaowubao_schedule_horizon_pages where run_id=(initial ->> 'runId')::uuid)
+     or exists(select 1 from internal.jiaowubao_schedule_horizon_items where run_id=(initial ->> 'runId')::uuid)
+     or not exists(select 1 from internal.jiaowubao_open_api_schedule_snapshot_current
+       where api_source_key='jwb-open-api-schedule' and revision=revision_two and row_count=0) then
+    raise exception 'restart reused discarded data or changed published source';
+  end if;
+end;
+$duplicate_fixture$;
