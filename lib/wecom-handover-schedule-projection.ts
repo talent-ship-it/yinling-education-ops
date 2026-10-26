@@ -130,9 +130,10 @@ function sourceContext(source: WecomLpDraftRawSource, students: readonly Student
   return { source, draft, ...sourceIdentity(source, draft, students), ...sourceScheduling(source, draft, teachers), ...sourceWindow(source) };
 }
 function teacherAlternativeIds(label: string, teachers: readonly RecordValue[]) {
-  const exact = teachers.filter((teacher) => teacherKey(teacher.name) === teacherKey(label)).map((teacher) => text(teacher.id)).filter(Boolean);
-  if (exact.length || !label || /\s/u.test(label)) return unique(exact);
-  return unique(teachers.filter((teacher) => teacherKey(text(teacher.name).split(/\s+/u)[0]) === teacherKey(label)).map((teacher) => text(teacher.id)).filter(Boolean));
+  const exact = unique(teachers.filter((teacher) => teacherKey(teacher.name) === teacherKey(label)).map((teacher) => text(teacher.id)).filter(Boolean));
+  if (exact.length || !label || /\s/u.test(label)) return exact.length === 1 ? exact : [];
+  const firstNames = unique(teachers.filter((teacher) => teacherKey(text(teacher.name).split(/\s+/u)[0]) === teacherKey(label)).map((teacher) => text(teacher.id)).filter(Boolean));
+  return firstNames.length === 1 || /^[A-Za-z]+$/u.test(label) ? firstNames : [];
 }
 function teacherChoices(value: unknown, teachers: readonly RecordValue[]) {
   const label = text(value);
@@ -142,7 +143,7 @@ function teacherChoices(value: unknown, teachers: readonly RecordValue[]) {
   const parts = label.split(/\s*[,，、/+&;；]\s*/u);
   if (parts.length > 1) {
     const choices = parts.map((part) => teacherAlternativeIds(part, teachers));
-    return { ids: choices.every((ids) => ids.length === 1) ? unique(choices.flat()) : [], alias: true, provided: true };
+    return { ids: choices.every((ids) => ids.length > 0) ? unique(choices.flat()) : [], alias: true, provided: true };
   }
   const tokens = label.split(/\s+/u);
   const choices = tokens.map((token) => teachers.filter((teacher) => teacherKey(text(teacher.name).split(/\s+/u)[0]) === teacherKey(token)).map((teacher) => text(teacher.id)).filter(Boolean));
