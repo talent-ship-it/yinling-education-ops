@@ -99,14 +99,66 @@ test("unknown learners and ownerless learners are visible only to unrestricted r
   assert.equal(project([lesson()], [schedule()], globalScope, state).rows[0]!.ownerUnmatched, true);
 });
 
-test("branch ambiguity and conflicting event details cannot borrow schedule teacher hours", () => {
-  for (const records of [[lesson({ branch_id: undefined })], [lesson(), lesson({ branch_id: 2 })]]) {
-    const result = project(records);
-    assert.ok(result.rows.every((item) => item.difference === null));
-    assert.ok(result.rows.filter((item) => item.students.length).every((item) => item.teacherHours === null));
-  }
+test("multiple branches and conflicting event details cannot borrow schedule teacher hours", () => {
+  const result = project([lesson(), lesson({ branch_id: 2 })]);
+  assert.ok(result.rows.every((item) => item.difference === null));
+  assert.ok(result.rows.filter((item) => item.students.length).every((item) => item.teacherHours === null));
   const conflict = project([lesson()], [schedule({ time_title: "10:00-11:00" })]);
   assert.ok(conflict.rows.every((item) => item.difference === null));
+});
+
+test("a unique unknown-branch candidate shows both source hours once without establishing a difference", () => {
+  const members = [lesson({ branch_id: undefined, hours: 1 }), lesson({ branch_id: undefined, mem_id: 3, mem_title: "Synthetic Three", hours: 1 })];
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: members, scheduleRecords: [schedule()], stateRows: rows() });
+  const result = monthlyHourDiscrepancies({ projection, stateRows: rows(), scope: globalScope });
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0]!.teacherHours, 1);
+  assert.equal(result.rows[0]!.studentHours, 2);
+  assert.equal(result.rows[0]!.difference, null);
+  assert.equal(result.rows[0]!.sourceMatch, "candidate");
+  assert.equal(result.rows[0]!.reason, "分校来源待确认（候选对照）");
+  assert.equal(result.rows[0]!.status, "待核查");
+  assert.equal(projection.teachers[0]!.sourceHours, null);
+  assert.ok(projection.teachers[0]!.unresolvedLessonCount > 0);
+  const equal = project([lesson({ branch_id: undefined, hours: 1 })]);
+  assert.equal(equal.rows.length, 1);
+  assert.equal(equal.rows[0]!.difference, null);
+});
+
+test("unknown-branch candidates require complete agreeing event and teacher evidence", () => {
+  const incompleteOrConflicting = [
+    { time_title: null }, { course_title: null }, { dated: "2026-09-08" },
+    { time_title: "10:00-11:00" }, { course_title: "Other Course" },
+    { team_title: "Other Class" }, { teacher_id: 11 }, { teacher_title: "Other Teacher" },
+  ];
+  for (const extra of incompleteOrConflicting) {
+    const result = project([lesson({ branch_id: undefined, ...extra })]);
+    assert.equal(result.rows.some((row) => row.sourceMatch === "candidate"), false, JSON.stringify(extra));
+    assert.ok(result.rows.filter((row) => row.students.length).every((row) => row.teacherHours === null));
+    assert.ok(result.rows.every((row) => row.difference === null));
+  }
+  const noDetails = project([lesson({ branch_id: undefined, time_title: null, course_title: null })], [schedule({ time_title: null, course_title: null })]);
+  assert.equal(noDetails.rows.some((row) => row.sourceMatch === "candidate"), false);
+});
+
+test("unknown-branch candidates stay separate when a calendar has multiple branches or schedules", () => {
+  const unknown = lesson({ branch_id: undefined });
+  for (const result of [
+    project([unknown, lesson({ mem_id: 3, mem_title: "Synthetic Three" })]),
+    project([unknown], [schedule(), schedule({ time_title: "10:00-11:00" })]),
+  ]) {
+    assert.equal(result.rows.some((row) => row.sourceMatch === "candidate"), false);
+    assert.ok(result.rows.filter((row) => row.students.length).every((row) => row.teacherHours === null));
+  }
+});
+
+test("candidate display preserves staff scope and whole-group owner filtering", () => {
+  const members = [lesson({ branch_id: undefined }), lesson({ branch_id: undefined, mem_id: 2, mem_title: "Synthetic Two" })];
+  assert.deepEqual(project(members, [schedule()], staffScope), { rows: [], operationsOwners: [] });
+  const result = project([members[0]!], [schedule()], staffScope);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0]!.sourceMatch, "candidate");
+  assert.deepEqual(result.rows[0]!.operationsOwners, ["Ella"]);
 });
 
 test("schedule-only evidence stays uncheckable and is never treated as zero student hours", () => {

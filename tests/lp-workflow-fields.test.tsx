@@ -106,6 +106,18 @@ test("renders the distinguishing saved fields for all seven LP workflow types", 
   }
 });
 
+test("handover timestamps use readable local formatting without changing other saved text", () => {
+  const fields = { requestSentAt: "2026-10-21T02:00:00.000Z", preferredTime: "2026-10-25 after school", timeMentioned: true };
+  const html = renderToStaticMarkup(<LpWorkflowDetails type="试听 LP" fields={fields} />);
+  assert.match(html, /2026\/10\/21 13:00/);
+  assert.doesNotMatch(html, /2026-10-21T02:00:00.000Z/);
+  assert.match(html, /2026-10-25 after school/);
+  const custom = renderToStaticMarkup(<LpWorkflowDetails type="试听 LP" fields={fields} formatTime={(value) => `Local display ${value.slice(0, 10)}`} />);
+  assert.match(custom, /Local display 2026-10-21/);
+  const historical = renderToStaticMarkup(<LpWorkflowDetails type="试听 LP" fields={{ requestSentAt: "unknown historical time" }} />);
+  assert.match(historical, /unknown historical time/);
+});
+
 function formData(
   workflowType: string,
   values: Record<string, string> = {},

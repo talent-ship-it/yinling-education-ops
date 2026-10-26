@@ -51,7 +51,7 @@ export type JiaowubaoScheduleMappingReviewPanelProps = Readonly<{
 }>;
 
 const MAX_TEACHERS = 512;
-const MAX_SUBJECTS_PER_TEACHER = 120;
+const MAX_SUBJECTS_PER_TEACHER = 1024;
 const MAX_CANDIDATES = 120;
 const OPAQUE_KEY = /^sha256:[a-f0-9]{64}$/;
 const CANONICAL_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;

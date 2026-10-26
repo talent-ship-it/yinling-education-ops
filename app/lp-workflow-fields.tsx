@@ -935,6 +935,7 @@ export type LpRevisionHistoryProps = Readonly<{
 export type LpWorkflowDetailsProps = Readonly<{
   type: LpWorkflowType;
   fields: LpFieldValues;
+  formatTime?: (value: string) => string;
 }>;
 
 function httpUrl(value: unknown) {
@@ -954,17 +955,23 @@ function displayLpFieldValue(value: LpFieldValues[string]) {
   return value.trim() || null;
 }
 
+function displayLpDetailValue(key: string, value: string, formatTime: LpWorkflowDetailsProps["formatTime"]) {
+  if (key !== "requestSentAt" || Number.isNaN(new Date(value).getTime())) return value;
+  return formatTime?.(value) ?? historyTime(value, "Australia/Melbourne");
+}
+
 /** Read-only, schema-scoped view of the fields saved for one of the seven LP workflows. */
-export function LpWorkflowDetails({ type, fields }: LpWorkflowDetailsProps) {
+export function LpWorkflowDetails({ type, fields, formatTime }: LpWorkflowDetailsProps) {
   const entries = getLpWorkflowSchema(type).fields.flatMap((field) => {
     if (field.visibleWhen && fields[field.visibleWhen.field] !== field.visibleWhen.equals) return [];
     if (field.key === "preferredTime" && type !== "学生报名交接" && fields.timeMentioned !== true) return [];
     const value = displayLpFieldValue(fields[field.key]);
-    return value === null ? [] : [{ field, value }];
+    if (value === null) return [];
+    return [{ field, value: displayLpDetailValue(field.key, value, formatTime) }];
   });
   const visibleEntries = entries.filter(({ field }) => field.key !== LP_WORKFLOW_FORM_NAMES.responsibleOperations);
 
-  return <section aria-label={`${type} 字段`}>
+  return <section className="lp-workflow-details" aria-label={`${type} 字段`}>
     {visibleEntries.length ? <div className="detail-section split">
       {visibleEntries.map(({ field, value }) => {
         const url = field.control === "url" ? httpUrl(value) : null;
