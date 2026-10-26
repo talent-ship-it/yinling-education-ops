@@ -16,6 +16,7 @@ export type MonthlyHourDiscrepancy = Readonly<{
   teacherHours: number | null;
   studentHours: number | null;
   difference: number | null;
+  sourceMatch: "matched" | "candidate" | "unlinked";
   operationsOwners: readonly string[];
   ownerUnmatched: boolean;
   status: "待核查";
@@ -78,6 +79,15 @@ function joinProblem(group: LessonGroup): string | null {
   return null;
 }
 
+function candidateSchedule(group: LessonGroup): Schedule | null {
+  if (group.branchCount !== 1 || !isJiaowubaoCompletedLessonUnknownBranchId(group.members[0]!.branchId) || group.schedules.length !== 1) return null;
+  const schedule = group.schedules[0]!;
+  if (!schedule.timeTitle || (!schedule.courseTitle && !schedule.teamTitle) || !schedule.teachers.length) return null;
+  const complete = group.members.every((member) => member.lessonDate === schedule.lessonDate
+    && member.timeTitle === schedule.timeTitle && member.courseTitle === schedule.courseTitle && member.teamTitle === schedule.teamTitle);
+  return complete && scheduleMatchesGroup(schedule, group.members) ? schedule : null;
+}
+
 function unverifiedTeachers(members: readonly Member[]): Teacher[] {
   const teachers = new Map<string, Teacher>();
   for (const member of members) {
@@ -108,7 +118,7 @@ function differenceReason(teacher: Teacher, hours: number | null, problem: strin
   return "课时不等";
 }
 
-function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers: readonly Teacher[]; sample: Pick<Schedule, "lessonDate" | "timeTitle" | "courseTitle">; id: string; problem: string | null; owners: Owners }>): MonthlyHourDiscrepancy[] {
+function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers: readonly Teacher[]; sample: Pick<Schedule, "lessonDate" | "timeTitle" | "courseTitle">; id: string; problem: string | null; owners: Owners; candidate?: boolean }>): MonthlyHourDiscrepancy[] {
   const hours = studentHours(input.members);
   return input.teachers.flatMap((teacher, index) => {
     const comparable = !input.problem && !teacher.sourceTeacherHoursIssue && teacher.sourceTeacherHours !== null && hours !== null;
@@ -125,6 +135,7 @@ function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers:
       teacherHours: teacher.sourceTeacherHours,
       studentHours: hours,
       difference,
+      sourceMatch: input.candidate ? "candidate" as const : input.problem ? "unlinked" as const : "matched" as const,
       ...ownersFor(input.members, input.owners),
       status: "待核查" as const,
       reason: differenceReason(teacher, hours, input.problem),
@@ -132,9 +143,10 @@ function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers:
   });
 }
 
-function groupDiscrepancies(group: LessonGroup, owners: Owners) {
+function groupDiscrepancies(group: LessonGroup, owners: Owners, candidate: Schedule | null) {
   const problem = joinProblem(group);
   const sample = group.members[0]!;
+  if (candidate) return discrepancyRows({ members: group.members, teachers: candidate.teachers, sample, id: sample.sourceKey, problem: "分校来源待确认（候选对照）", owners, candidate: true });
   const matchedTeachers = problem ? [] : group.schedules[0]!.teachers;
   const teachers = matchedTeachers.length ? matchedTeachers : unverifiedTeachers(group.members);
   return discrepancyRows({ members: group.members, teachers, sample, id: sample.sourceKey, problem, owners });
@@ -143,11 +155,13 @@ function groupDiscrepancies(group: LessonGroup, owners: Owners) {
 export function monthlyHourDiscrepancies(input: Readonly<{ projection: JiaowubaoCompletedLessonProjection; stateRows: readonly OpsStateRow[]; scope: MonthlyHourDiscrepancyScope; owner?: string }>) {
   const owners = ownersByStudent(input.stateRows);
   const groups = groupedLessons(input.projection);
+  const candidates = new Map(groups.map((group) => [group, candidateSchedule(group)]));
   const reconciled = new Set(groups.filter((group) => joinProblem(group) === null).map((group) => group.schedules[0]!.sourceKey));
-  const rows = groups.filter((group) => groupVisible(group.members, input.scope, owners)).flatMap((group) => groupDiscrepancies(group, owners));
+  const displayedCandidates = new Set([...candidates.values()].filter((schedule): schedule is Schedule => schedule !== null).map((schedule) => schedule.sourceKey));
+  const rows = groups.filter((group) => groupVisible(group.members, input.scope, owners)).flatMap((group) => groupDiscrepancies(group, owners, candidates.get(group) ?? null));
   if (input.scope.includeUnmatched) {
     for (const schedule of input.projection.scheduleEvents) {
-      if (reconciled.has(schedule.sourceKey)) continue;
+      if (reconciled.has(schedule.sourceKey) || displayedCandidates.has(schedule.sourceKey)) continue;
       rows.push(...discrepancyRows({ members: [], teachers: schedule.teachers.length ? schedule.teachers : unverifiedTeachers([]), sample: schedule, id: schedule.sourceKey, problem: "缺少可核对的学生记录", owners }));
     }
   }

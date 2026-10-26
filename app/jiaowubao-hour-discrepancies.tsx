@@ -7,7 +7,7 @@ import type { MonthlyHourDiscrepancy } from "../lib/jiaowubao-monthly-hour-discr
 type Query = { month: string; owner: string; reload: number };
 type Result = { report: MonthlyHourDiscrepancyReport | null; loading: boolean; error: string | null };
 const roles = { primary: "主教", assistant: "助教", third: "第三老师" };
-const hours = (value: number | null) => value === null ? "未提供" : String(value);
+const hours = (value: number | null, awaitingSource: boolean) => value === null ? awaitingSource ? "待关联来源" : "来源未提供或异常" : String(value);
 
 function DiscrepancyRow({ item }: { item: MonthlyHourDiscrepancy }) {
   return <tr>
@@ -15,24 +15,26 @@ function DiscrepancyRow({ item }: { item: MonthlyHourDiscrepancy }) {
     <td>{item.courseTitle ?? "课程未提供"}</td>
     <td>{item.students.map((student) => student.name).join("、") || "未匹配学生"}</td>
     <td>{item.teacher}<br />{roles[item.teacherRole]}</td>
-    <td>{hours(item.teacherHours)}</td><td>{hours(item.studentHours)}</td>
-    <td>{item.difference === null ? "不可核对" : String(item.difference)}</td>
+    <td>{hours(item.teacherHours, item.sourceMatch === "unlinked")}{item.sourceMatch === "candidate" && <><br />候选来源</>}</td>
+    <td>{hours(item.studentHours, item.students.length === 0)}</td>
+    <td>{item.sourceMatch === "candidate" ? "分校待确认" : item.difference === null ? "不可核对" : String(item.difference)}</td>
     <td>{[...item.operationsOwners, ...(item.ownerUnmatched ? ["未匹配教务"] : [])].join("、")}</td>
     <td><span className="status-pill amber">{item.status}</span><br />{item.reason}</td>
   </tr>;
 }
 
-function DiscrepancyTable({ rows }: { rows: readonly MonthlyHourDiscrepancy[] }) {
+export function JiaowubaoHourDiscrepancyTable({ rows }: { rows: readonly MonthlyHourDiscrepancy[] }) {
   const [page, setPage] = useState(0);
-  const visible = rows.slice(page * 100, (page + 1) * 100);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / 100) - 1));
+  const visible = rows.slice(currentPage * 100, (currentPage + 1) * 100);
   return <><div className="trial-ledger-scroll"><table className="trial-ledger-table" style={{ minWidth: 1120 }}>
     <caption>月度课时待核查记录 · 日期与时间（墨尔本）</caption>
     <thead><tr>{["日期与时间", "课程", "学生", "老师", "老师课时", "学生课时合计", "差异", "教务", "核查状态"].map((title) => <th scope="col" key={title}>{title}</th>)}</tr></thead>
     <tbody>{visible.map((item) => <DiscrepancyRow key={item.id} item={item} />)}</tbody>
   </table></div>
-    <div className="panel-header"><span>共 {rows.length} 条 · 第 {page + 1} 页</span><div>
-      <button type="button" className="secondary-button" disabled={page === 0} onClick={() => setPage(page - 1)}>上一页</button>
-      <button type="button" className="secondary-button" disabled={(page + 1) * 100 >= rows.length} onClick={() => setPage(page + 1)}>下一页</button>
+    <div className="panel-header"><span>共 {rows.length} 条待核查 · 第 {currentPage + 1} 页</span><div>
+      <button type="button" className="secondary-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</button>
+      <button type="button" className="secondary-button" disabled={(currentPage + 1) * 100 >= rows.length} onClick={() => setPage(currentPage + 1)}>下一页</button>
     </div></div>
   </>;
 }
@@ -71,6 +73,6 @@ export function JiaowubaoHourDiscrepanciesPanel() {
     </div>
     {result.loading && <p className="empty-inline" role="status">正在读取月度课时…</p>}
     {!result.loading && result.error && <p className="form-error" role="alert">{result.error}</p>}
-    {!result.loading && !result.error && report && (report.rows.length ? <DiscrepancyTable rows={report.rows} /> : <p className="empty-inline" role="status">该月份及筛选范围内没有待核查课节。</p>)}
+    {!result.loading && !result.error && report && (report.rows.length ? <JiaowubaoHourDiscrepancyTable key={`${report.month}:${query.owner}:${report.revision}`} rows={report.rows} /> : <p className="empty-inline" role="status">该月份及筛选范围内没有待核查课节。</p>)}
   </section>;
 }
