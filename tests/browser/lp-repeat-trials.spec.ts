@@ -114,15 +114,21 @@ async function syntheticWorkspace(page: Page, options: { failThirdOnce?: boolean
 function lpView(page: Page, label: string) {
   return page.getByRole("group", { name: "LP 保存视图", exact: true }).getByRole("button", { name: new RegExp(`^${label}`, "u") });
 }
-function ledgerRow(page: Page, title: string) {
-  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr")
-    .filter({ has: page.getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true }) });
+function ledgerRow(page: Page, id: string) {
+  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr:not(.trial-ledger-detail-row)")
+    .filter({ has: page.locator(`button[aria-controls="trial-intake-${id}"]`) });
 }
 function trialStage(page: Page, title: string) {
-  return ledgerRow(page, title).getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true });
+  return page.getByRole("region", { name: `${title} 试听交接详情`, exact: true }).getByRole("combobox", { name: `${title} 当前阶段`, exact: true });
 }
-function trialResult(page: Page, title: string) {
-  return ledgerRow(page, title).getByRole("combobox", { name: "Synthetic Repeat Student 试听状态", exact: true });
+function trialResult(page: Page, id: string) {
+  return ledgerRow(page, id).getByRole("combobox", { name: "Synthetic Repeat Student 试听状态", exact: true });
+}
+async function openTrialDetails(page: Page, id: string) {
+  const toggle = ledgerRow(page, id).locator("button[aria-controls]");
+  await expect(toggle).toBeVisible();
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 async function openCreate(page: Page, description: string) {
   await page.getByRole("button", { name: "创建 LP", exact: true }).first().click();
@@ -137,14 +143,14 @@ async function createLp(page: Page, description: string) {
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
 }
-async function completeLp(page: Page, title: string) {
-  await ledgerRow(page, title).getByText("查看试听交接详情", { exact: true }).click();
+async function completeLp(page: Page, id: string, title: string) {
+  await openTrialDetails(page, id);
   await trialStage(page, title).selectOption("完成");
   const dialog = page.getByRole("alertdialog", { name: "确认完成 LP", exact: true });
   await dialog.getByRole("button", { name: "调整为 完成", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(trialStage(page, title)).toHaveValue("完成");
-  await expect(ledgerRow(page, title)).toBeVisible();
+  await expect(ledgerRow(page, id)).toBeVisible();
 }
 function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
   expect(fixture.errors).toEqual([]);
@@ -154,16 +160,17 @@ function assertClean(fixture: Awaited<ReturnType<typeof syntheticWorkspace>>) {
 test("completed trials do not hide later trials for the same student, including a safe retry", async ({ page }) => {
   const f = await syntheticWorkspace(page, { failThirdOnce: true });
   await createLp(page, "Synthetic first trial");
-  await trialResult(page, "Synthetic Trial LP 1").selectOption("试听失败");
-  await expect(trialResult(page, "Synthetic Trial LP 1")).toHaveValue("试听失败");
-  await completeLp(page, "Synthetic Trial LP 1");
+  await trialResult(page, "SYNTH-REPEAT-LP-1").selectOption("试听失败");
+  await expect(trialResult(page, "SYNTH-REPEAT-LP-1")).toHaveValue("试听失败");
+  await completeLp(page, "SYNTH-REPEAT-LP-1", "Synthetic Trial LP 1");
   const firstCompleted = structuredClone(f.items()[0]);
 
   await createLp(page, "Synthetic second trial");
+  await openTrialDetails(page, "SYNTH-REPEAT-LP-2");
   await expect(trialStage(page, "Synthetic Trial LP 2")).toHaveValue("待资料");
-  await expect(ledgerRow(page, "Synthetic Trial LP 2")).toBeVisible();
+  await expect(ledgerRow(page, "SYNTH-REPEAT-LP-2")).toBeVisible();
   expect(f.items()[0]).toEqual(firstCompleted);
-  await completeLp(page, "Synthetic Trial LP 2");
+  await completeLp(page, "SYNTH-REPEAT-LP-2", "Synthetic Trial LP 2");
   const secondCompleted = structuredClone(f.items()[1]);
 
   const dialog = await openCreate(page, "Synthetic third trial");
@@ -173,8 +180,9 @@ test("completed trials do not hide later trials for the same student, including 
   expect(f.items()).toHaveLength(2);
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
+  await openTrialDetails(page, "SYNTH-REPEAT-LP-3");
   await expect(trialStage(page, "Synthetic Trial LP 3")).toHaveValue("待资料");
-  await expect(ledgerRow(page, "Synthetic Trial LP 3")).toBeVisible();
+  await expect(ledgerRow(page, "SYNTH-REPEAT-LP-3")).toBeVisible();
   expect(f.posted).toHaveLength(4);
   expect(f.posted[3]).toEqual(f.posted[2]);
   expect(new Set(f.posted.map((command) => command.commandKey)).size).toBe(3);
@@ -185,11 +193,11 @@ test("completed trials do not hide later trials for the same student, including 
   expect(f.stageWrites).toHaveLength(2);
   const ledger = page.getByRole("region", { name: "LP 交接台账", exact: true });
   await ledger.getByRole("combobox", { name: "业务结果", exact: true }).selectOption("试听失败");
-  await expect(ledger.locator("tbody tr")).toHaveCount(1);
-  await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+  await expect(ledger.locator("tbody tr:not(.trial-ledger-detail-row)")).toHaveCount(1);
+  await expect(ledgerRow(page, "SYNTH-REPEAT-LP-1")).toBeVisible();
   await ledger.getByRole("button", { name: "清除筛选", exact: true }).click();
-  await expect(ledger.locator("tbody tr")).toHaveCount(3);
-  await expect(trialResult(page, "Synthetic Trial LP 1")).toHaveValue("试听失败");
+  await expect(ledger.locator("tbody tr:not(.trial-ledger-detail-row)")).toHaveCount(3);
+  await expect(trialResult(page, "SYNTH-REPEAT-LP-1")).toHaveValue("试听失败");
   assertClean(f);
 });
 
@@ -201,9 +209,11 @@ test("a replay preserves the returned LP's completed stage and the unrelated wai
   await expect(page.getByText("合成服务暂不可用；可安全重试", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+  await expect(ledgerRow(page, "SYNTH-REPEAT-LP-1")).toBeVisible();
+  await openTrialDetails(page, "SYNTH-REPEAT-LP-1");
   await expect(trialStage(page, "Synthetic Trial LP 1")).toHaveValue("完成");
-  await expect(ledgerRow(page, "Synthetic Unrelated LP")).toBeVisible();
+  await expect(ledgerRow(page, "SYNTH-UNRELATED-LP")).toBeVisible();
+  await openTrialDetails(page, "SYNTH-UNRELATED-LP");
   await expect(trialStage(page, "Synthetic Unrelated LP")).toHaveValue("待资料");
   expect(f.items()[0]).toEqual(unrelated);
   await expect(page.getByText("LP 已确认，系统没有重复保存", { exact: true })).toBeVisible();
@@ -221,7 +231,8 @@ for (const view of ["全部", "等待资料/确认"]) {
     await lpView(page, view).click();
     await createLp(page, `Synthetic compatible ${view} trial`);
     await expect(lpView(page, view)).toHaveAttribute("aria-pressed", "true");
-    await expect(ledgerRow(page, "Synthetic Trial LP 1")).toBeVisible();
+    await expect(ledgerRow(page, "SYNTH-REPEAT-LP-1")).toBeVisible();
+    await openTrialDetails(page, "SYNTH-REPEAT-LP-1");
     await expect(trialStage(page, "Synthetic Trial LP 1")).toHaveValue("待资料");
     expect(f.items()[0]).toEqual(legacy);
     expect(f.posted).toHaveLength(1);

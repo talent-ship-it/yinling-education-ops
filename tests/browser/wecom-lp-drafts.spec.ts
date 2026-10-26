@@ -262,7 +262,7 @@ test("matched handover leaves the completed view to show the new LP for the exis
   expect(f.entities.lpItems).toContainEqual(historicalLp);
   await views.getByRole("button", { name: /^已完成/u }).click();
   await expect(page.getByRole("combobox", { name: "Synthetic Historical LP 当前阶段", exact: true })).toHaveValue("完成");
-  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toBeVisible();
+  await expect(trialLedgerRow(page, LP_ID)).toBeVisible();
   assertClean(f);
 });
 
@@ -329,16 +329,18 @@ async function handoverValues(dialog: Locator) {
   return Object.fromEntries(await Promise.all(fields.map(async (field) => [field, await dialog.locator(`[name="${field}"]`).inputValue()])));
 }
 
-function trialLedgerRow(page: Page, title: string) {
-  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr")
-    .filter({ has: page.getByRole("combobox", { name: `${title} 当前阶段`, exact: true, includeHidden: true }) });
+function trialLedgerRow(page: Page, id: string) {
+  return page.getByRole("region", { name: "LP 交接台账", exact: true }).locator("tbody tr:not(.trial-ledger-detail-row)")
+    .filter({ has: page.locator(`button[aria-controls="trial-intake-${id}"]`) });
 }
 
-async function openTrialDetails(page: Page, title: string) {
-  const row = trialLedgerRow(page, title);
+async function openTrialDetails(page: Page, title: string, id = LP_ID) {
+  const row = trialLedgerRow(page, id);
   await expect(row).toBeVisible();
-  const details = row.locator("details.trial-intake-details");
-  if (await details.getAttribute("open") === null) await details.getByText("查看试听交接详情", { exact: true }).click();
+  const toggle = row.locator("button[aria-controls]");
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const details = page.getByRole("region", { name: `${title} 试听交接详情`, exact: true });
   await expect(details.getByRole("combobox", { name: `${title} 当前阶段`, exact: true })).toBeVisible();
   return details;
 }
@@ -347,8 +349,8 @@ async function createSyntheticLp(page: Page) {
   const dialog = await openDraft(page);
   await dialog.getByRole("button", { name: "确认并创建 LP", exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toBeVisible();
-  await expect(trialLedgerRow(page, "Synthetic Trial LP")).toHaveCount(1);
+  await expect(trialLedgerRow(page, LP_ID)).toBeVisible();
+  await expect(trialLedgerRow(page, LP_ID)).toHaveCount(1);
 }
 
 async function openScreenshotConfirmation(page: Page) {
@@ -618,7 +620,7 @@ test("trusted trial schedules remain readonly beside manual ledger overrides and
       trialSchedule: { ...trialSchedule, eventId: "synthetic-change-schedule", courseName: "Synthetic Complete Change Course", sharedAccountLabel: "试听学员C2026", sharedAccountLetter: "c" },
     },
   ] });
-  const row = trialLedgerRow(page, "Synthetic Trial Metadata");
+  const row = trialLedgerRow(page, LP_ID);
   await expect(row.getByLabel("Synthetic Student 老师", { exact: true })).toHaveValue("Synthetic Manual Teacher");
   await expect(row.getByLabel("Synthetic Student 科目", { exact: true })).toHaveValue("Synthetic Manual Subject");
   await expect(row.getByLabel("Synthetic Student 上课日期", { exact: true })).toHaveValue("2026-10-23");
@@ -629,7 +631,7 @@ test("trusted trial schedules remain readonly beside manual ledger overrides and
   const trial = await openTrialDetails(page, "Synthetic Trial Metadata");
   await expect(trial.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("60 分钟", { exact: true })).toBeVisible();
   await expect(trial.getByText("交接试听时长", { exact: true }).locator("..")).toHaveText("交接试听时长45 分钟");
-  const change = await openTrialDetails(page, "Synthetic Teacher Change");
+  const change = await openTrialDetails(page, "Synthetic Teacher Change", "SYNTH-CHANGE-TRIAL");
   await expect(change.getByRole("region", { name: "教务宝小课表", exact: true }).getByText("Synthetic Complete Change Course", { exact: true })).toBeVisible();
   await expect(change.getByText("试听学员C2026", { exact: true })).toBeVisible();
   await expect(change.getByRole("button", { name: "补全教务宝小课表", exact: true })).toHaveCount(0);

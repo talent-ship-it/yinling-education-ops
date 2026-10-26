@@ -65,7 +65,7 @@ async function syntheticLedger(page: Page) {
 test("the LP type dropdown lists and finds all seven handover types", async ({ page }) => {
   const f = await syntheticLedger(page);
   const type = f.panel.getByRole("combobox", { name: "LP 类型", exact: true });
-  const rows = f.panel.locator("tbody tr");
+  const rows = f.panel.locator("tbody tr:not(.trial-ledger-detail-row)");
   await expect(type.locator("option")).toHaveText(["全部类型", ...LP_WORKFLOW_TYPES]);
   await expect(rows).toHaveCount(7);
   for (const workflowType of LP_WORKFLOW_TYPES) {
@@ -94,7 +94,7 @@ test("the LP type dropdown lists and finds all seven handover types", async ({ p
 
 test("handover types combine with ownership and outcomes without entering trial payment statistics", async ({ page }) => {
   const f = await syntheticLedger(page);
-  const rows = f.panel.locator("tbody tr");
+  const rows = f.panel.locator("tbody tr:not(.trial-ledger-detail-row)");
   await f.panel.getByRole("combobox", { name: "LP 类型", exact: true }).selectOption("老师 LP 修改");
   await f.panel.getByRole("combobox", { name: "教务", exact: true }).selectOption("Ella");
   await expect(rows).toHaveCount(0);
@@ -119,7 +119,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.setViewportSize(viewport);
     const f = await syntheticLedger(page);
     await f.panel.getByRole("combobox", { name: "LP 类型", exact: true }).selectOption("试听 LP");
-    const toggle = f.panel.getByRole("button", { name: "查看试听交接详情", exact: true });
+    const toggle = f.panel.locator('button[aria-controls="trial-intake-SYNTH-LEDGER-LP-0"]');
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     const detailRow = f.panel.locator(".trial-ledger-detail-row");
