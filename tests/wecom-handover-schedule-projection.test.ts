@@ -241,6 +241,70 @@ test("composite teacher first names preserve every exact alias as candidates", (
   assert.equal(project({ sources: [exact, rival], rows: rows([child], [], directory), events: [second] }).status, "ambiguous");
 });
 
+test("separated teacher alternatives resolve exact names and unique first names as candidates", () => {
+  const teachers = [{ id: "TEA-1", name: "Sam Example" }, { id: "TEA-2", name: "Tynan Sample" }];
+  const named = { ...child, name: "Alex示例", guardianWechat: "New Parent" };
+  const titled = event("title-only", { sourceTeacherLabel: "Sam Example", courseName: "Year8 English - Alex示例试听" });
+  for (const label of ["Sam/Tynan", "Sam / Tynan", "sam/tynan", "Sam Example/Tynan", "Sam/Tynan Sample", "Sam Example/Tynan Sample", "Sam，Tynan", "Sam+Tynan", "Sam&Tynan", "Sam;Tynan"]) {
+    const unknown = messageSource("handover-1", "New Parent");
+    const original = { ...unknown, messages: unknown.messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", label) })) };
+    const identified = { ...original, studentName: named.name, status: "identified" as const, messages: [...original.messages, {
+      messageId: "quoted-reply", text: "Alex示例@教务AI助手", studentNameHint: named.name, sentAt: checkedAt,
+    }] };
+    for (const candidate of [original, identified]) {
+      const data = input({ sources: [candidate], rows: rows([], [], teachers), events: [titled] });
+      const before = JSON.stringify(data);
+      const result = prepareWecomHandoverScheduleProjection(data)[0]!;
+      assert.equal(result.status, "candidate", label);
+      assert.equal(result.matchedStudentId, null);
+      assert.equal(result.candidates[0]!.studentId, null);
+      assert.equal(result.candidates[0]!.studentName, named.name);
+      assert.equal(result.candidates[0]!.schedule.teacherId, "TEA-1");
+      assert.equal(result.candidates[0]!.schedule.sharedAccountLetter, "b");
+      assert.equal(JSON.stringify(data), before);
+    }
+    const anchored = project({ sources: [identified], rows: rows([named], [], teachers), events: [titled] });
+    assert.equal(anchored.status, "candidate", label);
+    assert.equal(anchored.matchedStudentId, null);
+  }
+});
+
+test("separated teacher alternatives reject missing or ambiguous names without a partial match", () => {
+  const teachers = [{ id: "TEA-1", name: "Sam Example" }, { id: "TEA-2", name: "Tynan Sample" }];
+  const titled = event("title-only", { sourceTeacherLabel: "Sam Example", courseName: "Year8 English - Alex示例试听" });
+  const candidate = (label: string) => {
+    const original = messageSource("handover-1", "New Parent");
+    return { ...original, studentName: "Alex示例", messages: original.messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", label) })) };
+  };
+  for (const label of ["Sam/Unknown", "Unknown/Tynan", "Sam/", "/Tynan", "Sam//Tynan", "Sam Other/Tynan"]) {
+    assert.equal(project({ sources: [candidate(label)], rows: rows([], [], teachers), events: [titled] }).candidates.length, 0, label);
+  }
+  for (const duplicate of [
+    { id: "TEA-3", name: "Sam Other" },
+    { id: "TEA-3", name: "Tynan Other" },
+    { id: "TEA-3", name: "Sam Example" },
+  ]) {
+    const result = project({ sources: [candidate("Sam/Tynan")], rows: rows([], [], [...teachers, duplicate]), events: [titled] });
+    assert.equal(result.matchedStudentId, null);
+    assert.equal(result.candidates.length, 0);
+  }
+});
+
+test("separated teacher alternatives retain schedule competition and explicit student conflicts", () => {
+  const teachers = [{ id: "TEA-1", name: "Sam Example" }, { id: "TEA-2", name: "Tynan Sample" }];
+  const original = messageSource("handover-1", "New Parent");
+  const candidate = { ...original, studentName: "Alex示例", messages: original.messages.map((message) => ({ ...message, text: message.text.replace("Synthetic Teacher", "Sam/Tynan") })) };
+  const titled = event("title-only", { sourceTeacherLabel: "Sam Example", courseName: "Year8 English - Alex示例试听" });
+  const second = { ...titled, eventId: "second", sourceTeacherLabel: "Tynan Sample" };
+  const result = project({ sources: [candidate], rows: rows([], [], teachers), events: [titled, second] });
+  assert.equal(result.status, "ambiguous");
+  assert.equal(result.matchedStudentId, null);
+  assert.deepEqual(result.candidates.map((entry) => entry.studentId), [null, null]);
+  for (const conflicted of [{ ...candidate, studentName: "Different Child" }, { ...candidate, status: "identity_conflict" }]) {
+    assert.equal(project({ sources: [conflicted], rows: rows([], [], teachers), events: [titled] }).candidates.length, 0);
+  }
+});
+
 test("reschedules use the current snapshot and a canceled historical future event never returns", () => {
   const old = event("old-event", { startsAt: "2026-10-23T08:00:00.000Z", endsAt: "2026-10-23T09:00:00.000Z", historical: true });
   const coverage = [...currentCoverage, { ...currentCoverage[0]!, historical: true }];
