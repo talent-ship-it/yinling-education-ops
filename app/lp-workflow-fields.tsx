@@ -955,6 +955,11 @@ function displayLpFieldValue(value: LpFieldValues[string]) {
   return value.trim() || null;
 }
 
+function displayLpDetailValue(key: string, value: string, formatTime: LpWorkflowDetailsProps["formatTime"]) {
+  if (key !== "requestSentAt" || Number.isNaN(new Date(value).getTime())) return value;
+  return formatTime?.(value) ?? historyTime(value, "Australia/Melbourne");
+}
+
 /** Read-only, schema-scoped view of the fields saved for one of the seven LP workflows. */
 export function LpWorkflowDetails({ type, fields, formatTime }: LpWorkflowDetailsProps) {
   const entries = getLpWorkflowSchema(type).fields.flatMap((field) => {
@@ -962,10 +967,7 @@ export function LpWorkflowDetails({ type, fields, formatTime }: LpWorkflowDetail
     if (field.key === "preferredTime" && type !== "学生报名交接" && fields.timeMentioned !== true) return [];
     const value = displayLpFieldValue(fields[field.key]);
     if (value === null) return [];
-    const displayValue = field.key === "requestSentAt" && !Number.isNaN(new Date(value).getTime())
-      ? formatTime?.(value) ?? historyTime(value, "Australia/Melbourne")
-      : value;
-    return [{ field, value: displayValue }];
+    return [{ field, value: displayLpDetailValue(field.key, value, formatTime) }];
   });
   const visibleEntries = entries.filter(({ field }) => field.key !== LP_WORKFLOW_FORM_NAMES.responsibleOperations);
 

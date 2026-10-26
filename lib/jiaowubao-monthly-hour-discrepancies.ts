@@ -79,10 +79,14 @@ function joinProblem(group: LessonGroup): string | null {
   return null;
 }
 
+function candidateHasDetails(schedule: Schedule) {
+  return Boolean(schedule.timeTitle && (schedule.courseTitle || schedule.teamTitle) && schedule.teachers.length);
+}
+
 function candidateSchedule(group: LessonGroup): Schedule | null {
   if (group.branchCount !== 1 || !isJiaowubaoCompletedLessonUnknownBranchId(group.members[0]!.branchId) || group.schedules.length !== 1) return null;
   const schedule = group.schedules[0]!;
-  if (!schedule.timeTitle || (!schedule.courseTitle && !schedule.teamTitle) || !schedule.teachers.length) return null;
+  if (!candidateHasDetails(schedule)) return null;
   const complete = group.members.every((member) => member.lessonDate === schedule.lessonDate
     && member.timeTitle === schedule.timeTitle && member.courseTitle === schedule.courseTitle && member.teamTitle === schedule.teamTitle);
   return complete && scheduleMatchesGroup(schedule, group.members) ? schedule : null;
@@ -120,6 +124,7 @@ function differenceReason(teacher: Teacher, hours: number | null, problem: strin
 
 function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers: readonly Teacher[]; sample: Pick<Schedule, "lessonDate" | "timeTitle" | "courseTitle">; id: string; problem: string | null; owners: Owners; candidate?: boolean }>): MonthlyHourDiscrepancy[] {
   const hours = studentHours(input.members);
+  const sourceMatch = input.candidate ? "candidate" as const : input.problem ? "unlinked" as const : "matched" as const;
   return input.teachers.flatMap((teacher, index) => {
     const comparable = !input.problem && !teacher.sourceTeacherHoursIssue && teacher.sourceTeacherHours !== null && hours !== null;
     const difference = comparable ? (Math.round(teacher.sourceTeacherHours! * 10_000) - Math.round(hours! * 10_000)) / 10_000 : null;
@@ -135,7 +140,7 @@ function discrepancyRows(input: Readonly<{ members: readonly Member[]; teachers:
       teacherHours: teacher.sourceTeacherHours,
       studentHours: hours,
       difference,
-      sourceMatch: input.candidate ? "candidate" as const : input.problem ? "unlinked" as const : "matched" as const,
+      sourceMatch,
       ...ownersFor(input.members, input.owners),
       status: "待核查" as const,
       reason: differenceReason(teacher, hours, input.problem),
