@@ -113,3 +113,46 @@ test("handover types combine with ownership and outcomes without entering trial 
   expect(f.errors).toEqual([]);
   expect(f.unexpected).toEqual([]);
 });
+
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test(`expanded trial details remain readable at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const f = await syntheticLedger(page);
+    await f.panel.getByRole("combobox", { name: "LP 类型", exact: true }).selectOption("试听 LP");
+    const toggle = f.panel.getByRole("button", { name: "查看试听交接详情", exact: true });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const detailRow = f.panel.locator(".trial-ledger-detail-row");
+    await expect(detailRow.locator("td")).toHaveAttribute("colspan", "16");
+    const detail = detailRow.getByRole("region", { name: "Synthetic Ledger LP 0 试听交接详情", exact: true });
+    await expect(detail.getByRole("region", { name: "试听 LP 字段", exact: true })).toContainText("21/10/2026");
+    await expect(detail).not.toContainText("2026-10-21T02:00:00.000Z");
+    const stage = detail.getByRole("combobox", { name: "Synthetic Ledger LP 0 当前阶段", exact: true });
+    expect((await stage.boundingBox())!.width).toBeGreaterThanOrEqual(140);
+    const layout = await detail.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const container = node.closest(".trial-ledger-scroll")!.getBoundingClientRect();
+      const fields = node.querySelector(".detail-section.split")!;
+      return {
+        width: rect.width,
+        containerWidth: container.width,
+        columns: getComputedStyle(fields).gridTemplateColumns.split(" ").length,
+        pageOverflow: document.documentElement.scrollWidth > window.innerWidth,
+      };
+    });
+    expect(layout.width).toBeGreaterThan(Math.min(260, viewport.width - 40));
+    expect(layout.width).toBeLessThanOrEqual(layout.containerWidth);
+    expect(layout.columns).toBe(viewport.width < 760 ? 1 : 2);
+    expect(layout.pageOverflow).toBe(false);
+    await f.panel.locator(".trial-ledger-scroll").evaluate((node) => { node.scrollLeft = node.scrollWidth; });
+    const scrolled = await detail.boundingBox();
+    const container = await f.panel.locator(".trial-ledger-scroll").boundingBox();
+    expect(scrolled!.x).toBeGreaterThanOrEqual(container!.x);
+    expect(scrolled!.x + scrolled!.width).toBeLessThanOrEqual(container!.x + container!.width + 1);
+    await f.panel.locator(".trial-ledger-scroll").evaluate((node) => { node.scrollLeft = 0; });
+    await toggle.click();
+    await expect(detailRow).toHaveCount(0);
+    expect(f.errors).toEqual([]);
+    expect(f.unexpected).toEqual([]);
+  });
+}

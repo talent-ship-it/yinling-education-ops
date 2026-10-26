@@ -129,7 +129,7 @@ import {
   type DisplayPreferences,
   type InterfaceLanguage,
 } from "@/lib/display-preferences";
-import { FormEvent, ReactNode, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, ReactNode, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
@@ -3059,6 +3059,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [lpDraftStudentId, setLpDraftStudentId] = useState(defaults.defaultSelectedStudentId);
   const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
   const [trialScreenshotItem, setTrialScreenshotItem] = useState<LpItem | null>(null);
+  const [expandedTrialIntakeIds, setExpandedTrialIntakeIds] = useState<string[]>([]);
   const [examDraft, setExamDraft] = useState<StudentExamRecord | null>(null);
   const [examFormResetToken, setExamFormResetToken] = useState(0);
   const [examSubmissionBusy, setExamSubmissionBusy] = useState(false);
@@ -8947,11 +8948,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     };
     const trialIntakeDetails = (item: LpItem) => {
       if (item.workflowType !== "试听 LP" && item.workflowType !== "换老师试听") return null;
-      return <details className="trial-intake-details">
-        <summary>查看试听交接详情</summary>
+      return <section className="trial-intake-details" aria-label={`${item.title} 试听交接详情`}>
         {trialScreenshotAllowed(item) && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
         {stageControls(item, true)}
-        <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} />
+        <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} formatTime={(value) => formatInstant(new Date(value), displayPreferences.timezone, displayPreferences)} />
         <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} pendingLabel={pendingScheduleLabel(item)} />
         {item.trialIntake ? <dl>
           <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
@@ -8961,7 +8961,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <div><dt>试卷</dt><dd>{item.trialIntake.paperRequired ? "需要发卷并收卷" : "不需要"}{item.trialIntake.paperNote ? ` · ${item.trialIntake.paperNote}` : ""}</dd></div>
           <div><dt>交接试听时长</dt><dd>{item.trialIntake.trialDurationMinutes} 分钟{item.trialIntake.trialDurationNote ? ` · ${item.trialIntake.trialDurationNote}` : ""}</dd></div>
         </dl> : item.workflowType === "试听 LP" ? <p>历史试听 LP 未包含新版手册字段。</p> : null}
-      </details>;
+      </section>;
     };
 
     return <>
@@ -9043,8 +9043,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>—</td>
                 <td>—</td>
               </tr>;
-              return <tr key={item.id}>
-                <td>{ledgerTextCell({ item, field: "studentName", automaticValue: automaticStudentName, label: `${automaticStudentName || item.id} 学生姓名`, list: "trial-ledger-student-options", placeholder: "未提到", openStudent: true })}{trialIntakeDetails(item)}</td>
+              const detailId = `trial-intake-${encodeURIComponent(item.id)}`;
+              const detailExpanded = expandedTrialIntakeIds.includes(item.id);
+              return <Fragment key={item.id}><tr>
+                <td>{ledgerTextCell({ item, field: "studentName", automaticValue: automaticStudentName, label: `${automaticStudentName || item.id} 学生姓名`, list: "trial-ledger-student-options", placeholder: "未提到", openStudent: true })}<button className="trial-intake-toggle" type="button" aria-expanded={detailExpanded} aria-controls={detailId} onClick={() => setExpandedTrialIntakeIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}>{detailExpanded ? "收起试听交接详情" : "查看试听交接详情"}</button></td>
                 <td>{ledgerTextCell({ item, field: "guardianWechat", automaticValue: automaticGuardianWechat, label: `${automaticStudentName || item.id} 家长微信名`, list: "trial-ledger-guardian-options", placeholder: "待填写" })}</td>
                 <td>{ledgerSelectCell({ item, field: "workflowType", automaticValue: item.workflowType ?? "试听 LP", label: `${automaticStudentName || item.id} LP 类型`, options: TRIAL_LEDGER_WORKFLOW_TYPES })}</td>
                 <td>{ledgerTextCell({ item, field: "lessonMonth", automaticValue: automaticLessonMonth, label: `${automaticStudentName || item.id} 上课月份`, type: "month", placeholder: "待排课", sourceLabel: "按墨尔本排课自动生成" })}</td>
@@ -9060,7 +9062,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{ledgerTextCell({ item, field: "trialLedgerNote", automaticValue: "", label: `${automaticStudentName || item.id} 试听备注`, placeholder: "补充备注" })}</td>
                 <td><TrialScheduleDetails schedule={schedule} pendingLabel={pendingScheduleLabel(item)} onComplete={trialScreenshotAllowed(item) ? () => setTrialScreenshotItem(item) : undefined} /></td>
                 <td><input type="checkbox" aria-label={`${automaticStudentName || item.id} LP 已定稿`} checked={item.trialLpFinalized === true} disabled={trialLedgerSaving[`${item.id}:lpFinalized`] === true} onChange={(event) => { void saveTrialLedgerFieldAtomic(item, "lpFinalized", event.target.checked).catch((error: unknown) => notify(error instanceof Error ? error.message : "LP 定稿状态保存失败")); }} /></td>
-              </tr>;
+              </tr>{detailExpanded && <tr className="trial-ledger-detail-row" id={detailId}><td colSpan={16}>{trialIntakeDetails(item)}</td></tr>}</Fragment>;
             })}</tbody>
           </table>
           <datalist id="trial-ledger-student-options">{scopedStudents.map((student) => <option value={student.name} key={student.id} />)}</datalist>
