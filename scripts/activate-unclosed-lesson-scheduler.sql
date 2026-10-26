@@ -1,10 +1,12 @@
-begin;
+begin isolation level serializable;
 set local lock_timeout = '2s';
 set local statement_timeout = '10s';
-lock table cron.job in share row exclusive mode;
 
 do $preflight$
 begin
+  if current_setting('transaction_isolation') <> 'serializable' then
+    raise exception 'Scheduler activation requires a serializable transaction; no job created';
+  end if;
   if exists (select 1 from unnest(array[
     'public.read_jiaowubao_unclosed_snapshot(text)',
     'public.begin_jiaowubao_unclosed_snapshot(text,uuid,text,timestamptz,integer)',
