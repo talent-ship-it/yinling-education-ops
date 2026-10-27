@@ -557,14 +557,49 @@ function draftPanel(page: Page) {
 
 async function filterDay(page: Page, from = "2026-10-20", to = from) {
   const panel = draftPanel(page);
-  await panel.getByLabel("开始日期", { exact: true }).fill(from);
-  await panel.getByLabel("结束日期", { exact: true }).fill(to);
+  await panel.getByLabel("开始日期", { exact: true }).fill(`${from}T00:00`);
+  await panel.getByLabel("结束日期", { exact: true }).fill(`${to}T23:59`);
   await panel.getByRole("button", { name: "筛选", exact: true }).click();
 }
 
 function queryOf(url: URL) {
   return Object.fromEntries(url.searchParams);
 }
+
+test("the ledger request range also filters robot handovers and resets their pagination", async ({ page }) => {
+  const f = await syntheticWorkspace(page, {
+    sourcePage: rangePage,
+    lpItems: [{ id: LP_ID, studentId: STUDENT_ID, title: "Synthetic Existing LP", workflowType: "试听 LP",
+      owner: "Ella", stage: "待资料", due: "2026-08-31", requestedAt: "2026-08-28T01:14:00.000Z" }],
+  });
+  const ledger = page.getByRole("region", { name: "LP 交接台账", exact: true });
+  const panel = draftPanel(page);
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(3);
+  await ledger.getByLabel("需求时间从（北京时间）", { exact: true }).fill("2026-10-20T00:00");
+  await ledger.getByLabel("需求时间至（北京时间）", { exact: true }).fill("2026-10-20T23:59");
+  await expect(ledger.locator("tbody tr")).toHaveCount(0);
+  await expect(panel.getByText("Synthetic Midnight", { exact: true })).toBeVisible();
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20T00:00");
+  await expect(panel.getByLabel("结束日期", { exact: true })).toHaveValue("2026-10-20T23:59");
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59" });
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(2);
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", cursor: "day-next" });
+  await panel.getByRole("button", { name: "清除", exact: true }).click();
+  await expect(ledger.getByLabel("需求时间从（北京时间）", { exact: true })).toHaveValue("");
+  await expect(ledger.getByLabel("需求时间至（北京时间）", { exact: true })).toHaveValue("");
+  await expect(ledger.locator("tbody tr")).toHaveCount(1);
+  await filterDay(page);
+  await expect(ledger.getByLabel("需求时间从（北京时间）", { exact: true })).toHaveValue("2026-10-20T00:00");
+  await ledger.getByRole("button", { name: "清除筛选", exact: true }).click();
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("");
+  await expect(panel.getByText("Synthetic Earlier", { exact: true })).toBeVisible();
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai" });
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
 
 test("date range paginates with the same timezone and refresh or clear resets its cursor", async ({ page }) => {
   const f = await syntheticWorkspace(page, { sourcePage: rangePage });
@@ -574,16 +609,16 @@ test("date range paginates with the same timezone and refresh or clear resets it
   await filterDay(page);
   await expect(panel.getByRole("button", { name: "Synthetic Midnight 核对并创建 LP", exact: true })).toBeVisible();
   await expect(panel.getByText("Synthetic Earlier", { exact: true })).toHaveCount(0);
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59" });
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", cursor: "day-next" });
   await expect(panel.locator("time")).toHaveText([/20\/10\/2026.*00:00/u, /20\/10\/2026.*23:59/u]);
   expect(await panel.locator("time").evaluateAll((times) => times.map((time) => time.getAttribute("datetime")))).toEqual([midnight.handoverAt, latest.messages[0].sentAt]);
   await expect(panel.getByText("2 条", { exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(panel.locator(".collection-row")).toHaveCount(1);
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59" });
   await panel.getByRole("button", { name: "清除", exact: true }).click();
   await expect(panel.getByText("Synthetic Earlier", { exact: true })).toBeVisible();
   await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("");
@@ -629,7 +664,7 @@ test("applying a range discards an older page that resolves after the filter cha
   await expect(panel.locator(".collection-row")).toHaveCount(1);
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", cursor: "day-next" });
   assertClean(f);
 });
 
@@ -733,9 +768,9 @@ test("background refresh updates reconciled results while preserving loaded page
   await expect.poll(() => f.reads.length).toBeGreaterThan(before);
   await expect(panel.getByText("Synthetic Screenshot Teacher", { exact: true })).toBeVisible();
   await expect(panel.locator(".collection-row")).toHaveCount(2);
-  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20");
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20T00:00");
   await expect(dialog.locator('[name="subject"]')).toHaveValue("Synthetic unsaved edit");
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", cursor: "day-next" });
   expect(f.posted).toEqual([]);
   assertClean(f);
 });

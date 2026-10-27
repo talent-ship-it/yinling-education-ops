@@ -13,7 +13,7 @@ test("preserves the handbook review columns and adds readonly Jiaowubao schedule
     "家长微信名",
     "LP 类型",
     "上课月份",
-    "请求日期/时间",
+    "请求日期/时间（北京时间）",
     "上课日期",
     "上课时间（墨尔本）",
     "教务",

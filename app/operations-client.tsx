@@ -420,6 +420,7 @@ import {
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
+  trialLedgerRequestTime,
   trialFollowUpStatus,
   type TrialLedgerViewState,
 } from "@/lib/trial-ledger-view";
@@ -8701,7 +8702,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       const student = studentById(item.studentId);
       const liveMatch = trialScheduleMatchByLpId.get(item.id);
       const schedule = liveMatch?.link ?? item.trialSchedule;
-      const requestAt = item.trialIntake?.requestSentAt ?? item.requestedAt;
+      const requestAt = trialLedgerRequestTime(item);
       const resultOptions = allowedLpResultStatuses(item.workflowType ?? "试听 LP");
       const automaticStudentName = liveMatch?.studentName || schedule?.studentName
         || item.trialIntake?.studentName || student?.name || "";
@@ -8941,7 +8942,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           item.trialIntake?.studentName,
           fields.studentNameKnown === true && fields.studentName,
         ].some(Boolean),
-        requestAt: item.trialIntake?.requestSentAt ?? item.requestedAt,
+        requestAt: trialLedgerRequestTime(item),
         windowStartsAt: trialScheduleWindow.startsAt,
         loading: jiaowubaoImportedScheduleLoading,
         sourceState: currentJiaowubaoImportedSchedule?.state,
@@ -8952,11 +8953,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       return <section className="trial-intake-details" aria-label={`${item.title} 试听交接详情`}>
         {trialScreenshotAllowed(item) && <button className="secondary-button" type="button" onClick={() => setTrialScreenshotItem(item)}>补全教务宝小课表</button>}
         {stageControls(item, true)}
-        <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} formatTime={(value) => formatInstant(new Date(value), displayPreferences.timezone, displayPreferences)} />
+        <LpWorkflowDetails type={item.workflowType} fields={item.fields ?? {}} formatTime={(value) => formatInstant(new Date(value), WECOM_HANDOVER_TIMEZONE, displayPreferences)} />
         <TrialScheduleDetails schedule={trialScheduleMatchByLpId.get(item.id)?.link ?? item.trialSchedule} pendingLabel={pendingScheduleLabel(item)} />
         {item.trialIntake ? <dl>
           <div><dt>规划老师</dt><dd>{item.trialIntake.planner}</dd></div>
-          <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), displayPreferences.timezone, displayPreferences)}</dd></div>
+          <div><dt>交接时间</dt><dd>{formatInstant(new Date(item.trialIntake.requestSentAt), WECOM_HANDOVER_TIMEZONE, displayPreferences)}</dd></div>
           <div><dt>对接对象</dt><dd>{[item.trialIntake.contactParents ? "家长" : "", item.trialIntake.contactStudent ? "学生本人" : ""].filter(Boolean).join("、")}{item.trialIntake.contactNote ? ` · ${item.trialIntake.contactNote}` : ""}</dd></div>
           <div><dt>写作</dt><dd>{item.trialIntake.writingRequired ? "需要" : "不需要"}{item.trialIntake.writingNote ? ` · ${item.trialIntake.writingNote}` : ""}</dd></div>
           <div><dt>试卷</dt><dd>{item.trialIntake.paperRequired ? "需要发卷并收卷" : "不需要"}{item.trialIntake.paperNote ? ` · ${item.trialIntake.paperNote}` : ""}</dd></div>
@@ -9021,7 +9022,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           {visibleTrialLedgerEntries.length ? <div className="trial-ledger-scroll">
           <table className="trial-ledger-table">
             <caption className="visually-hidden">LP 交接台账</caption>
-            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">业务结果</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th><th scope="col">LP 已定稿</th></tr></thead>
+            <thead><tr><th scope="col">学生姓名</th><th scope="col">家长微信名</th><th scope="col">LP 类型</th><th scope="col">上课月份</th><th scope="col">请求日期/时间（北京时间）</th><th scope="col">上课日期</th><th scope="col">上课时间（墨尔本）</th><th scope="col">教务</th><th scope="col">课程规划老师</th><th scope="col">科目</th><th scope="col">老师</th><th scope="col">业务结果</th><th scope="col">是否付费</th><th scope="col">备注</th><th scope="col">教务宝小课表</th><th scope="col">LP 已定稿</th></tr></thead>
             <tbody>{visibleTrialLedgerEntries.map((entry) => {
               const { item, schedule, requestAt, resultOptions, automaticStudentName, automaticGuardianWechat, automaticScheduledAt, automaticLessonMonth, automaticPlanner, automaticSubject, automaticTeacher, automaticPaid, storedPaid } = entry;
               const paidKey = `${item.id}:trialPaid`;
@@ -9031,7 +9032,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{entry.row.guardianWechat || "—"}</td>
                 <td>{entry.row.workflowType}</td>
                 <td>{entry.row.lessonMonth || "—"}</td>
-                <td>{requestAt ? formatInstant(new Date(requestAt), displayPreferences.timezone, displayPreferences) : "—"}</td>
+                <td>{requestAt ? formatInstant(new Date(requestAt), WECOM_HANDOVER_TIMEZONE, displayPreferences) : "—"}</td>
                 <td>—</td>
                 <td>—</td>
                 <td>{entry.row.operationsOwner || "—"}</td>
@@ -9051,7 +9052,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
                 <td>{ledgerTextCell({ item, field: "guardianWechat", automaticValue: automaticGuardianWechat, label: `${automaticStudentName || item.id} 家长微信名`, list: "trial-ledger-guardian-options", placeholder: "待填写" })}</td>
                 <td>{ledgerSelectCell({ item, field: "workflowType", automaticValue: item.workflowType ?? "试听 LP", label: `${automaticStudentName || item.id} LP 类型`, options: TRIAL_LEDGER_WORKFLOW_TYPES })}</td>
                 <td>{ledgerTextCell({ item, field: "lessonMonth", automaticValue: automaticLessonMonth, label: `${automaticStudentName || item.id} 上课月份`, type: "month", placeholder: "待排课", sourceLabel: "按墨尔本排课自动生成" })}</td>
-                <td>{ledgerTextCell({ item, field: "requestedAt", automaticValue: requestAt ?? "", label: `${automaticStudentName || item.id} 请求日期和时间`, type: "datetime-local", timezone: displayPreferences.timezone, placeholder: "待填写" })}</td>
+                <td>{ledgerTextCell({ item, field: "requestedAt", automaticValue: requestAt ?? "", label: `${automaticStudentName || item.id} 请求日期和时间（北京时间）`, type: "datetime-local", timezone: WECOM_HANDOVER_TIMEZONE, placeholder: "待填写" })}</td>
                 <td>{ledgerSchedulePartCell({ item, automaticValue: automaticScheduledAt, part: "date", label: `${automaticStudentName || item.id} 上课日期`, sourceLabel: schedule?.source === "jiaowubao-open-api" ? "教务宝真实数据" : "等待排课" })}</td>
                 <td>{ledgerSchedulePartCell({ item, automaticValue: automaticScheduledAt, part: "time", label: `${automaticStudentName || item.id} 上课时间（墨尔本）`, sourceLabel: schedule?.source === "jiaowubao-open-api" ? "教务宝真实数据" : "等待排课" })}</td>
                 <td>{ledgerSelectCell({ item, field: "operationsOwner", automaticValue: item.owner, label: `${automaticStudentName || item.id} 教务`, options: TRIAL_OPERATIONS })}</td>
@@ -9075,6 +9076,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
         key={sessionOperator}
+        range={{ from: activeTrialLedgerView.requestedFrom, to: activeTrialLedgerView.requestedTo }}
+        onRangeChange={(range) => updateTrialLedgerView({ requestedFrom: range.from, requestedTo: range.to })}
         timeDisplay={{ timezone: WECOM_HANDOVER_TIMEZONE, label: timezoneLabel(WECOM_HANDOVER_TIMEZONE, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), WECOM_HANDOVER_TIMEZONE, displayPreferences) }}
         students={readableScopedStudents}
         expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}

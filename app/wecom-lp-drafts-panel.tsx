@@ -25,12 +25,14 @@ export type HandoverTimeDisplay = Readonly<{
   formatTime: (value: string) => string;
 }>;
 
-type DraftRange = Readonly<{ from: string; to: string }>;
+export type DraftRange = Readonly<{ from: string; to: string }>;
 
 type WecomLpDraftsPanelProps = Readonly<{
   timeDisplay: HandoverTimeDisplay;
   onSelect: (source: WecomLpDraftSource) => void;
   refreshKey: number;
+  range: DraftRange;
+  onRangeChange: (range: DraftRange) => void;
 }>;
 
 async function readDrafts(signal: AbortSignal, range: DraftRange, timezone: string, cursor?: string | null): Promise<DraftPage> {
@@ -261,8 +263,8 @@ function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; 
     onApply(empty);
   }
   return <form className="form-grid" aria-label="交接时间筛选" onSubmit={apply} style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: 12, margin: 16, paddingTop: 0 }}>
-    <label style={{ flex: "1 1 160px" }}>开始日期<input type="date" value={dates.from} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, from: event.target.value })); setError(""); }} /></label>
-    <label style={{ flex: "1 1 160px" }}>结束日期<input type="date" value={dates.to} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, to: event.target.value })); setError(""); }} /></label>
+    <label style={{ flex: "1 1 160px" }}>开始日期<input type="datetime-local" value={dates.from} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, from: event.target.value })); setError(""); }} /></label>
+    <label style={{ flex: "1 1 160px" }}>结束日期<input type="datetime-local" value={dates.to} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, to: event.target.value })); setError(""); }} /></label>
     <button className="primary-button" type="submit">筛选</button>
     <button className="secondary-button" type="button" onClick={clear}>清除</button>
     <small style={{ color: "var(--muted)", flexBasis: "100%" }}>时区：{timeDisplay.label}（{timeDisplay.timezone}）</small>
@@ -270,9 +272,8 @@ function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; 
   </form>;
 }
 
-export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay }: WecomLpDraftsPanelProps) {
+export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay, range, onRangeChange }: WecomLpDraftsPanelProps) {
   const headingId = useId();
-  const [range, setRange] = useState<DraftRange>({ from: "", to: "" });
   const { view, refresh, loadMore } = useDraftPages(refreshKey, range, timeDisplay.timezone);
 
   return <section className="panel collection-shell" aria-labelledby={headingId} aria-busy={view.busy}>
@@ -283,7 +284,7 @@ export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay }: WecomL
       </div>
       <button className="secondary-button" type="button" disabled={view.busy} onClick={refresh}><RefreshCw size={16} aria-hidden="true" />刷新</button>
     </header>
-    <DraftRangeFilter range={range} timeDisplay={timeDisplay} onApply={(value) => { setRange(value); refresh(); }} />
+    <DraftRangeFilter key={`${range.from}:${range.to}`} range={range} timeDisplay={timeDisplay} onApply={(value) => { onRangeChange(value); refresh(); }} />
     {view.error && <p className="form-error" role="alert" style={{ margin: 16 }}>{view.error}</p>}
     <DraftPanelBody loading={view.loading} drafts={view.drafts} error={view.error} onSelect={onSelect} timeDisplay={timeDisplay} />
     <DraftPanelFooter cursor={view.nextCursor} loading={view.loadingMore} loadMore={loadMore} />

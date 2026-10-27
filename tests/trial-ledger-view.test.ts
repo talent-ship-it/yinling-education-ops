@@ -11,6 +11,7 @@ import {
   trialLedgerViewHasFilters,
   trialLedgerViewStats,
   trialLedgerViewStorageKey,
+  trialLedgerRequestTime,
   trialFollowUpStatus,
   type TrialLedgerViewRow,
 } from "../lib/trial-ledger-view";
@@ -64,6 +65,15 @@ const rows: TrialLedgerViewRow[] = [{
   paid: false,
   note: "waiting schedule",
 }];
+
+test("reads explicit handover fields before the legacy request timestamp and preserves missing dates", () => {
+  const fields = { requestSentAt: "2026-10-24T02:00:00.000Z" };
+  assert.equal(trialLedgerRequestTime({ fields, requestedAt: "2026-10-27T02:00:00.000Z" }), fields.requestSentAt);
+  assert.equal(trialLedgerRequestTime({ fields, trialIntake: { requestSentAt: "2026-10-24T01:00:00.000Z" } }), "2026-10-24T01:00:00.000Z");
+  assert.equal(trialLedgerRequestTime({ requestedAt: "2026-10-24T03:00:00.000Z" }), "2026-10-24T03:00:00.000Z");
+  assert.equal(trialLedgerRequestTime({ fields: { requestSentAt: "invalid" } }), "");
+  assert.equal(trialLedgerRequestTime({}), "");
+});
 
 test("keeps trial ledger browser filters actor-scoped and rejects malformed storage", () => {
   assert.notEqual(trialLedgerViewStorageKey("Ella"), trialLedgerViewStorageKey("Tiffany"));

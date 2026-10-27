@@ -114,6 +114,22 @@ test("handover types combine with ownership and outcomes without entering trial 
   expect(f.unexpected).toEqual([]);
 });
 
+test("explicit handover dates display and filter in Beijing for every LP workflow", async ({ page }) => {
+  const f = await syntheticLedger(page);
+  const rows = f.panel.locator("tbody tr:not(.trial-ledger-detail-row)");
+  const requestTimes = rows.locator('input[type="datetime-local"]');
+  await expect(requestTimes).toHaveCount(2);
+  expect(await requestTimes.evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual(["2026-10-21T10:00", "2026-10-21T10:00"]);
+  await expect(rows.nth(1).locator("td").nth(4)).toHaveText(/21\/10\/2026.*10:00/u);
+  await f.panel.getByLabel("需求时间从（北京时间）", { exact: true }).fill("2026-10-21T10:00");
+  await f.panel.getByLabel("需求时间至（北京时间）", { exact: true }).fill("2026-10-21T10:00");
+  await expect(rows).toHaveCount(7);
+  await f.panel.getByLabel("需求时间从（北京时间）", { exact: true }).fill("2026-10-21T10:01");
+  await expect(rows).toHaveCount(0);
+  expect(f.errors).toEqual([]);
+  expect(f.unexpected).toEqual([]);
+});
+
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
   test(`expanded trial details remain readable at ${viewport.width}px`, async ({ page }) => {
     await page.setViewportSize(viewport);

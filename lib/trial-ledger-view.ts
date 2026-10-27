@@ -211,6 +211,16 @@ export function trialLedgerViewStorageKey(actor: string) {
   return `yinling:trial-ledger-view:v1:${encodeURIComponent(key)}`;
 }
 
+export function trialLedgerRequestTime(item: Readonly<{
+  trialIntake?: Readonly<{ requestSentAt: string }>;
+  fields?: Readonly<{ requestSentAt?: unknown }>;
+  requestedAt?: string;
+}>) {
+  const source = [item.trialIntake?.requestSentAt, item.fields?.requestSentAt, item.requestedAt]
+    .find((value): value is string => typeof value === "string" && Boolean(value.trim()) && Number.isFinite(Date.parse(value)));
+  return source ?? "";
+}
+
 export function trialLedgerViewHasFilters(state: TrialLedgerViewState) {
   const defaults = defaultTrialLedgerViewState();
   return (Object.keys(defaults) as Array<keyof TrialLedgerViewState>)
