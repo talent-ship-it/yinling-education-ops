@@ -26,17 +26,25 @@ async function syntheticAudit(page: Page) {
     managedExamSnapshot: { versions: { students: 1, tasks: 1 }, students: [] },
     managedTrialPaymentSnapshot: { versions: { students: 1, tasks: 1, bookings: 1, lpItems: 1 }, students: [] },
   };
+  function sharedState(url: URL) {
+    if (url.searchParams.get("mode") === "versions") return { versions: Object.keys(entities).map(stateRow) };
+    return { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(stateRow), ...snapshots };
+  }
+  function report(url: URL) {
+    const owner = url.searchParams.get("owner");
+    return {
+      month: url.searchParams.get("month") || "2026-09", defaultMonth: "2026-09", revision: `sha256:${"a".repeat(64)}`, publishedAt: "2026-10-01T00:00:00.000Z",
+      operationsOwners: ["Ella", "Tara"], rows: rows.filter((row) => !owner || row.operationsOwners.includes(owner)),
+    };
+  }
   function reply(route: Route, url: URL) {
     switch (url.pathname) {
       case "/api/demo-session": return route.fulfill({ json: { ok: true, user: "Nixon", role: "admin", mustChangePassword: false } });
       case "/api/nixon-session": return route.fulfill({ json: { ok: true } });
       case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots } });
-      case "/api/app-state": return route.fulfill({ json: url.searchParams.get("mode") === "versions" ? { versions: Object.keys(entities).map(stateRow) } : { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(stateRow), ...snapshots } });
+      case "/api/app-state": return route.fulfill({ json: sharedState(url) });
       case "/api/audit": return route.fulfill({ json: { entries: [] } });
-      case "/api/jiaowubao-open-api/hour-discrepancies": return route.fulfill({ json: {
-        month: url.searchParams.get("month") || "2026-09", defaultMonth: "2026-09", revision: `sha256:${"a".repeat(64)}`, publishedAt: "2026-10-01T00:00:00.000Z",
-        operationsOwners: ["Ella", "Tara"], rows: rows.filter((row) => !url.searchParams.get("owner") || row.operationsOwners.includes(url.searchParams.get("owner")!)),
-      } });
+      case "/api/jiaowubao-open-api/hour-discrepancies": return route.fulfill({ json: report(url) });
       default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
     }
   }
