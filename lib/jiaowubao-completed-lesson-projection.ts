@@ -178,14 +178,18 @@ function resolveEntity(input: Readonly<{
   sourceId: string | null;
   sourceName: string | null;
   lookup: EntityLookup;
+  sourceIdDisambiguatesName?: boolean;
 }>): Readonly<{ id: string | null; name: string | null; match: MatchStrategy }> {
   const sourceCandidates = input.sourceId ? [...new Set(input.lookup.idsBySourceId.get(input.sourceId) ?? [])] : [];
   const byName = uniqueCandidates(input.lookup.idsByNameKey, nameKeys(input.sourceName));
-  if (sourceCandidates.length > 1 || byName.length > 1) return Object.freeze({ id: null, name: null, match: "ambiguous" });
+  if (sourceCandidates.length > 1) return Object.freeze({ id: null, name: null, match: "ambiguous" });
   const sourceIdCandidate = sourceCandidates[0] ?? null;
+  if (byName.length > 1 && (!input.sourceIdDisambiguatesName || !sourceIdCandidate || !byName.includes(sourceIdCandidate))) {
+    return Object.freeze({ id: null, name: null, match: "ambiguous" });
+  }
   const nameCandidate = byName[0] ?? null;
   // Never use name evidence to paper over conflicting durable IDs.
-  if (sourceIdCandidate && nameCandidate && sourceIdCandidate !== nameCandidate) {
+  if (sourceIdCandidate && byName.length && !byName.includes(sourceIdCandidate)) {
     return Object.freeze({ id: null, name: null, match: "ambiguous" });
   }
   const resolved = sourceIdCandidate ?? nameCandidate;
@@ -226,7 +230,7 @@ function resolveStudent(recordValue: JiaowubaoCompletedLessonRecord, lookup: Ent
       match: "trial_course_title" as const,
     });
   }
-  return resolveEntity({ sourceId: recordValue.memberId, sourceName: recordValue.memberName, lookup });
+  return resolveEntity({ sourceId: recordValue.memberId, sourceName: recordValue.memberName, lookup, sourceIdDisambiguatesName: true });
 }
 
 export function projectJiaowubaoCompletedLessonRecords(input: Readonly<{

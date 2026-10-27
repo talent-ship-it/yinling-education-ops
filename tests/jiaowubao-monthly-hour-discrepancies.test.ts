@@ -7,6 +7,7 @@ import { monthlyHourDiscrepancies, type MonthlyHourDiscrepancyScope } from "../l
 import { getMonthlyHourDiscrepancyReport, MonthlyHourDiscrepancyError } from "../lib/jiaowubao-monthly-hour-discrepancies-service";
 import type { OpsStateRow, JiaowubaoCompletedLessonSnapshotPage } from "../lib/ops-store";
 import type { DemoSessionIdentity } from "../lib/demo-session-token";
+import { monthlyHourValuesDiffer } from "../lib/jiaowubao-hour-discrepancy-filter";
 
 const period = { start: "2026-09-01", end: "2026-09-30" };
 const revision = `sha256:${"a".repeat(64)}`;
@@ -43,6 +44,18 @@ test("teacher hours come from the schedule role while a student's zero remains z
   assert.deepEqual(result.rows[0]!.operationsOwners, ["Ella"]);
   assert.equal(JSON.stringify(result).includes("9999"), false);
   assert.equal(JSON.stringify(result).includes("must-stay-private"), false);
+});
+
+test("monthly owner reporting follows a unique JWB student id despite a duplicate name-only record", async () => {
+  const state = rows();
+  (state[0]!.payload as Record<string, unknown>[]).push({ id: "S1-duplicate", name: "Synthetic One(CHN)", owner: "Molly" });
+  const result = await getMonthlyHourDiscrepancyReport({ now, session: staff, fullAdmin: false }, dependencies({
+    lessons: [lesson({ mem_title: "Synthetic One(CHN)" })], state,
+  }));
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0]!.students, [{ id: "S1", name: "Synthetic One" }]);
+  assert.deepEqual(result.rows[0]!.operationsOwners, ["Ella"]);
+  assert.equal(result.rows[0]!.ownerUnmatched, false);
 });
 
 test("equal zero credits do not become a false missing-hours issue", () => {
@@ -99,6 +112,21 @@ test("unknown learners and ownerless learners are visible only to unrestricted r
   assert.equal(project([lesson()], [schedule()], globalScope, state).rows[0]!.ownerUnmatched, true);
 });
 
+test("existing historical operations owners remain visible without making them newly assignable", async () => {
+  for (const owner of ["Tara", "Eileen", "思佳", "Tara 教务"]) {
+    const state = rows();
+    (state[0]!.payload as Record<string, unknown>[])[0]!.owner = owner;
+    const expected = owner === "Tara 教务" ? "Tara" : owner;
+    const result = await getMonthlyHourDiscrepancyReport({ now, session: admin, fullAdmin: false, owner: expected }, dependencies({ state }));
+    assert.equal(result.rows.length, 1);
+    assert.deepEqual(result.rows[0]!.operationsOwners, [expected]);
+    assert.equal(result.rows[0]!.ownerUnmatched, false);
+    assert.deepEqual(result.operationsOwners, [expected]);
+    const staffResult = await getMonthlyHourDiscrepancyReport({ now, session: staff, fullAdmin: false }, dependencies({ state }));
+    assert.deepEqual(staffResult.rows, []);
+  }
+});
+
 test("multiple branches and conflicting event details cannot borrow schedule teacher hours", () => {
   const result = project([lesson(), lesson({ branch_id: 2 })]);
   assert.ok(result.rows.every((item) => item.difference === null));
@@ -123,6 +151,24 @@ test("a unique unknown-branch candidate shows both source hours once without est
   const equal = project([lesson({ branch_id: undefined, hours: 1 })]);
   assert.equal(equal.rows.length, 1);
   assert.equal(equal.rows[0]!.difference, null);
+});
+
+test("numeric mismatch filtering includes candidate comparisons and excludes equal or invalid evidence", () => {
+  const unequal = project([lesson({ branch_id: undefined, hours: 2 })]).rows[0]!;
+  assert.equal(monthlyHourValuesDiffer(unequal), true);
+  assert.equal(unequal.difference, null);
+  assert.equal(unequal.reason, "分校来源待确认（候选对照）");
+  const equal = project([lesson({ branch_id: undefined, hours: 1 })]).rows[0]!;
+  assert.equal(monthlyHourValuesDiffer(equal), false);
+  for (const row of [
+    { ...unequal, teacherHours: null },
+    { ...unequal, studentHours: null },
+    { ...unequal, teacherHours: -1 },
+    { ...unequal, teacherHours: 25 },
+    { ...unequal, sourceMatch: "unlinked" as const },
+    { ...unequal, teacherHours: 0.1 + 0.2, studentHours: 0.3 },
+  ]) assert.equal(monthlyHourValuesDiffer(row), false);
+  assert.equal(monthlyHourValuesDiffer(project().rows[0]!), true);
 });
 
 test("unknown-branch candidates require complete agreeing event and teacher evidence", () => {
