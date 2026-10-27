@@ -1,5 +1,7 @@
 import { displayTimezoneOptions } from "./display-preferences";
 
+export const WECOM_HANDOVER_TIMEZONE = "Asia/Shanghai";
+
 export function wecomDraftTimezone(location: unknown) {
   if (typeof location !== "string") return "";
   const value = location.trim();

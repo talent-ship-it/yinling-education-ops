@@ -474,5 +474,9 @@ test("source-managed unclosed tasks expose lesson locators without manual lifecy
   const html = render([item], "all");
   assert.match(html, /课节明细（日期 · 编号）/);
   assert.match(html, /2026-08-10 · 12345/);
+  assert.match(html, /class="task-copy task-copy-static"/);
+  assert.match(html, /aria-expanded="false" aria-controls=/);
+  assert.match(html, /<ul id="[^"]+" hidden=""/);
+  assert.doesNotMatch(html, /<button class="task-copy"/);
   assert.doesNotMatch(html, /编辑备注：|无法完成：|aria-label="完成：|恢复到待办：|补截止时间/);
 });

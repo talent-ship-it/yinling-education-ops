@@ -66,6 +66,7 @@ import {
 } from "lucide-react";
 
 import { cleanTimezone } from "@/lib/timezone";
+import { WECOM_HANDOVER_TIMEZONE } from "@/lib/wecom-lp-draft-timezone";
 import { AccountLifecycleWorkspace } from "@/app/account-lifecycle-workspace";
 import { AuthStatusScreen } from "@/app/auth-status-screen";
 import { JiaowubaoAuthorityStatusPanel } from "@/app/jiaowubao-authority-status";
@@ -9074,7 +9075,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
         key={sessionOperator}
-        timeDisplay={{ timezone: scheduleTimezone, label: timezoneLabel(scheduleTimezone, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), scheduleTimezone, displayPreferences) }}
+        timeDisplay={{ timezone: WECOM_HANDOVER_TIMEZONE, label: timezoneLabel(WECOM_HANDOVER_TIMEZONE, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), WECOM_HANDOVER_TIMEZONE, displayPreferences) }}
         students={readableScopedStudents}
         expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}
         fieldOptions={{

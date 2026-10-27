@@ -92,6 +92,7 @@ type WorkspaceOptions = {
   screenshotMatches?: ReturnType<typeof screenshotMatch>[];
   screenshotConfirmStatuses?: number[];
   lpItems?: unknown[];
+  unclosedTasks?: unknown[];
 };
 
 async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
@@ -172,6 +173,7 @@ async function syntheticWorkspace(page: Page, options: WorkspaceOptions = {}) {
       case "/api/app-snapshot": return route.fulfill({ json: { ...entities, versions, ...snapshots() } });
       case "/api/app-state": return route.fulfill({ json: sharedStateReply(url) });
       case "/api/audit": return route.fulfill({ json: { entries: [] } });
+      case "/api/jiaowubao-open-api/unclosed-tasks": return route.fulfill({ json: { tasks: options.unclosedTasks ?? [] } });
       default: return route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
     }
   }
@@ -493,6 +495,41 @@ test("a source conflict closes LP supplementation and reopening requires a new r
 });
 
 
+for (const width of [1280, 390]) {
+  test(`unclosed lesson details toggle with pointer and keyboard at ${width}px without changing tasks`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const f = await syntheticWorkspace(page, { unclosedTasks: [{
+      id: "SYNTH-UNCLOSED", ruleKey: "jiaowubao.unclosed", title: "【未结课】<未匹配教务> <2 节>",
+      owner: "", studentId: "SYNTH-UNCLOSED", category: "课后", status: "today", tone: "amber",
+      due: "今天", dueAt: NOW, trigger: "2026-10-18 · 12345\n2026-10-19 · 12346",
+    }] });
+    await page.getByRole("button", { name: "工作台", exact: true }).click();
+    const toggle = page.getByRole("button", { name: "课节明细（日期 · 编号）", exact: true });
+    const lessons = page.locator(".task-lesson-details ul");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(lessons).toBeHidden();
+    expect(await toggle.evaluate((button) => Boolean(button.parentElement?.closest("button")))).toBe(false);
+    const section = new URL(page.url()).hash;
+    const requestsBeforeToggle = f.requests.length;
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(lessons).toBeVisible();
+    await expect(lessons.locator("li")).toHaveText(["2026-10-18 · 12345", "2026-10-19 · 12346"]);
+    await toggle.press("Enter");
+    await expect(lessons).toBeHidden();
+    await toggle.press("Space");
+    await expect(lessons).toBeVisible();
+    const reads = f.requests.filter(({ url }) => url.pathname === "/api/jiaowubao-open-api/unclosed-tasks").length;
+    await page.clock.fastForward(60_000);
+    await expect.poll(() => f.requests.filter(({ url }) => url.pathname === "/api/jiaowubao-open-api/unclosed-tasks").length).toBeGreaterThan(reads);
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(lessons).toBeVisible();
+    expect(new URL(page.url()).hash).toBe(section);
+    expect(f.requests.slice(requestsBeforeToggle).filter(({ method }) => method !== "GET")).toEqual([]);
+    assertClean(f);
+  });
+}
+
 function timedSource(id: string, name: string, sentAt: string, confirmed = false) {
   const initial = source(template.replace("Synthetic Student", name));
   return {
@@ -502,9 +539,9 @@ function timedSource(id: string, name: string, sentAt: string, confirmed = false
   };
 }
 
-const earliest = timedSource("synthetic-earliest", "Synthetic Earlier", "2026-10-19T12:00:00.000Z");
-const midnight = timedSource("synthetic-midnight", "Synthetic Midnight", "2026-10-19T13:00:00.000Z");
-const latest = { ...timedSource("synthetic-latest", "Synthetic Latest", "2026-10-20T12:59:00.000Z", true), handoverAt: undefined };
+const earliest = timedSource("synthetic-earliest", "Synthetic Earlier", "2026-10-19T15:00:00.000Z");
+const midnight = timedSource("synthetic-midnight", "Synthetic Midnight", "2026-10-19T16:00:00.000Z");
+const latest = { ...timedSource("synthetic-latest", "Synthetic Latest", "2026-10-20T15:59:00.000Z", true), handoverAt: undefined };
 
 function rangePage(url: URL): SourcePage {
   if (!url.searchParams.has("from")) return url.searchParams.has("cursor")
@@ -532,30 +569,30 @@ function queryOf(url: URL) {
 test("date range paginates with the same timezone and refresh or clear resets its cursor", async ({ page }) => {
   const f = await syntheticWorkspace(page, { sourcePage: rangePage });
   const panel = draftPanel(page);
-  expect(queryOf(f.reads[0])).toEqual({ timezone: "Australia/Melbourne" });
-  await expect(panel.getByText("时区：墨尔本（Australia/Melbourne）", { exact: true })).toBeVisible();
+  expect(queryOf(f.reads[0])).toEqual({ timezone: "Asia/Shanghai" });
+  await expect(panel.getByText("时区：北京时间（中国）（Asia/Shanghai）", { exact: true })).toBeVisible();
   await filterDay(page);
   await expect(panel.getByRole("button", { name: "Synthetic Midnight 核对并创建 LP", exact: true })).toBeVisible();
   await expect(panel.getByText("Synthetic Earlier", { exact: true })).toHaveCount(0);
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20" });
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
   await expect(panel.locator("time")).toHaveText([/20\/10\/2026.*00:00/u, /20\/10\/2026.*23:59/u]);
   expect(await panel.locator("time").evaluateAll((times) => times.map((time) => time.getAttribute("datetime")))).toEqual([midnight.handoverAt, latest.messages[0].sentAt]);
   await expect(panel.getByText("2 条", { exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(panel.locator(".collection-row")).toHaveCount(1);
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20" });
   await panel.getByRole("button", { name: "清除", exact: true }).click();
   await expect(panel.getByText("Synthetic Earlier", { exact: true })).toBeVisible();
   await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("");
   await expect(panel.getByLabel("结束日期", { exact: true })).toHaveValue("");
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai" });
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.locator("time")).toHaveText([/19\/10\/2026.*23:00/u, /20\/10\/2026.*00:00/u, /20\/10\/2026.*23:59/u]);
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", cursor: "all-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", cursor: "all-next" });
   assertClean(f);
 });
 
@@ -592,7 +629,7 @@ test("applying a range discards an older page that resolves after the filter cha
   await expect(panel.locator(".collection-row")).toHaveCount(1);
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Synthetic Latest 已创建 LP", exact: true })).toBeDisabled();
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
   assertClean(f);
 });
 
@@ -698,7 +735,7 @@ test("background refresh updates reconciled results while preserving loaded page
   await expect(panel.locator(".collection-row")).toHaveCount(2);
   await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20");
   await expect(dialog.locator('[name="subject"]')).toHaveValue("Synthetic unsaved edit");
-  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Australia/Melbourne", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20", to: "2026-10-20", cursor: "day-next" });
   expect(f.posted).toEqual([]);
   assertClean(f);
 });

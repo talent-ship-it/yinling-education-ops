@@ -10,8 +10,8 @@ test("handover date ranges include the whole selected local day", () => {
     cursor: "handover-31", from: "2026-10-19T16:00:00.000Z", before: "2026-10-20T16:00:00.000Z",
   });
   assert.deepEqual(query(""), { cursor: null, from: null, before: null });
-  assert.deepEqual(query("from=2026-10-20"), { cursor: null, from: "2026-10-19T13:00:00.000Z", before: null });
-  assert.deepEqual(query("to=2026-10-20"), { cursor: null, from: null, before: "2026-10-20T13:00:00.000Z" });
+  assert.deepEqual(query("from=2026-10-20"), { cursor: null, from: "2026-10-19T16:00:00.000Z", before: null });
+  assert.deepEqual(query("to=2026-10-20"), { cursor: null, from: null, before: "2026-10-20T16:00:00.000Z" });
 });
 
 test("handover calendar bounds handle 23 and 25 hour days and half-hour offsets", () => {
@@ -35,5 +35,5 @@ test("invalid or ambiguous handover query values cannot broaden the range or sco
     "from=2026-10-20&from=2026-10-20", "to=&to=2026-10-20", "timezone=Asia/Shanghai&timezone=Asia/Shanghai",
     "cursor=one&cursor=two", "actor=Other", "fullAdmin=true",
   ]) assert.throws(() => query(value), LpAtomicError, value);
-  assert.equal(query("from=2028-02-29&to=2028-02-29").from, "2028-02-28T13:00:00.000Z");
+  assert.equal(query("from=2028-02-29&to=2028-02-29").from, "2028-02-28T16:00:00.000Z");
 });

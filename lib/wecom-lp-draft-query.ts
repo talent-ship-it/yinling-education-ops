@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { displayTimezoneOptions } from "./display-preferences";
 import { LpAtomicError } from "./lp-atomic-service";
-import { DEFAULT_TIMEZONE } from "./timezone";
+import { WECOM_HANDOVER_TIMEZONE } from "./wecom-lp-draft-timezone";
 
 export type WecomLpDraftQuery = Readonly<{ cursor: string | null; from: string | null; before: string | null }>;
 
@@ -24,7 +24,7 @@ export function parseWecomLpDraftQuery(params: URLSearchParams): WecomLpDraftQue
   }
   const cursor = params.get("cursor") || null;
   if (cursor && !/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,239}$/u.test(cursor)) invalid("分页参数无效。");
-  const timezone = params.get("timezone") ?? DEFAULT_TIMEZONE;
+  const timezone = params.get("timezone") ?? WECOM_HANDOVER_TIMEZONE;
   if (!displayTimezoneOptions.some((option) => option.id === timezone)) invalid("请选择有效的交接时间时区。");
   const from = params.get("from") || null;
   const to = params.get("to") || null;
