@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Pencil, RotateCcw, X } from "lucide-react";
+import { ChevronRight, Pencil, RotateCcw, X } from "lucide-react";
 
 import { formatCompactTaskDeadline, formatTaskDeadline, hasAutomaticTaskDeadline, isExecutableOpenTask, matchesTaskDeadlineDate, OpsTask, sortTasksByDueAt, statusForDueAt, taskTitlePresentation } from "../lib/ops-tasks";
 import type { TaskTrialSchedule } from "../lib/task-trial-schedule";
@@ -105,6 +105,18 @@ function TrialLessonTime({ schedule, deadlineTimeZone, deadlineTimeZoneLabel, de
 
 type Editor = Readonly<{ taskId: string; mode: "note" | "cannot"; value: string }>;
 
+function UnclosedLessonDetails({ lessons }: { lessons: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const listId = React.useId();
+  return <div className="task-lesson-details">
+    <button className="task-lesson-toggle" type="button" aria-expanded={expanded} aria-controls={listId} onClick={() => setExpanded((value) => !value)}>
+      <ChevronRight size={14} aria-hidden="true" />
+      课节明细（日期 · 编号）
+    </button>
+    <ul id={listId} hidden={!expanded}>{lessons.split("\n").map((lesson) => <li key={lesson}>{lesson}</li>)}</ul>
+  </div>;
+}
+
 function TaskRows({
   tasks,
   view,
@@ -156,7 +168,7 @@ function TaskRows({
           <strong>{title.primary}</strong>
           {title.details.length > 0 ? <small className="task-title-details">{title.details.join(" · ")}</small> : null}
           {supportingCopy ? <span>{supportingCopy}</span> : null}
-          {sourceManaged && task.trigger ? <details><summary>课节明细（日期 · 编号）</summary><ul>{task.trigger.split("\n").map((lesson) => <li key={lesson}>{lesson}</li>)}</ul></details> : null}
+          {sourceManaged && task.trigger ? <UnclosedLessonDetails lessons={task.trigger} /> : null}
           <TrialLessonTime schedule={taskSchedule(task)} deadlineTimeZone={deadlineTimeZone} deadlineTimeZoneLabel={deadlineTimeZoneLabel} deadlineTimeFormat={deadlineTimeFormat} />
           {noteDate ? <time className="task-note-date" dateTime={task.completionNoteUpdatedAt}
             title={`备注于 ${noteDate} · ${deadlineTimeZoneLabel}`}
@@ -164,7 +176,7 @@ function TaskRows({
         </>;
         return <div className={`task-row to-do-row ${task.status} ${task.completionOutcome ?? ""}`} role="listitem" key={task.id}>
           <span className={`task-dot ${task.tone}`} aria-hidden="true" />
-          {canOpen?.(task) === false
+          {sourceManaged || canOpen?.(task) === false
             ? <div className="task-copy task-copy-static">
                 {copy}
               </div>

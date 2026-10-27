@@ -1637,6 +1637,12 @@ body {
 .to-do-row .task-note-date { color:var(--muted); font-size:10px; line-height:1.5; }
 .to-do-row .due-label.pending { color:#78867e; font-family:inherit; font-weight:700; }
 .to-do-row .task-copy-static { cursor:default; }
+.task-lesson-toggle { align-items:center; background:#fff; border:1px solid var(--line); border-radius:5px; color:var(--brand-ink); cursor:pointer; display:flex; font:inherit; gap:5px; min-height:36px; padding:6px 9px; text-align:left; }
+.task-lesson-toggle:hover { background:var(--green-soft); }
+.task-lesson-toggle:focus-visible { outline:2px solid var(--brand-ink); outline-offset:2px; }
+.task-lesson-toggle[aria-expanded="true"] svg { transform:rotate(90deg); }
+.task-lesson-details ul { margin:8px 0 0; overflow-wrap:anywhere; padding-left:22px; }
+.task-lesson-details li { line-height:1.6; }
 .to-do-row .complete-button { height:36px; width:36px; }
 @media (min-width:721px) {
   .to-do-row { grid-template-columns:7px minmax(0,1fr) 176px; }
