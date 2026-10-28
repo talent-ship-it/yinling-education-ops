@@ -4,9 +4,10 @@ import { createWecomLpIntakeHandlers } from "../lib/wecom-lp-intake-service";
 import type { DemoSessionIdentity } from "../lib/demo-session-token";
 import type { OpsStateRow, confirmWecomLpDraftAtomic, readWecomLpDrafts, readWecomHandoverScheduleEvidence } from "../lib/ops-store";
 import type { WecomLpDraftRawSource } from "../lib/wecom-lp-intake";
+import type { WecomHandoverScheduleEvidence } from "../lib/wecom-handover-schedule-types";
 const fields = { responsibleOperations: "Ella", planner: "Eileen", requestSentAt: "2026-10-20T09:00:00.000Z", assignedTeacher: "Synthetic Teacher", subject: "Y8 English", oneSentenceDescription: "Synthetic learning needs", locationTimezone: "VIC", contactParents: true, contactStudent: false, contactPerson: "家长", timeMentioned: false, studentNameKnown: true, studentName: "Synthetic Child", trialDurationMinutes: 60, trialPaymentMethod: "后置付费试听", writingRequired: false, paperRequired: false, specifiedContentStatus: "无需指定", preparationFollowUp: "是", isUniversityStudent: false };
 const command = { commandKey: "b011aafd-7bb4-43d6-a52a-6c529221a55a", caseId: "d6385b25-691c-424f-a81b-5de3835ea703", sourceMessageId: "synthetic-handover-1", sourceRevision: "a".repeat(64), fields, expectedVersions: { students: 1, lpItems: 1, tasks: 1, files: 1 }, studentId: "STU-1" };
-function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string; applied?: boolean; evidence?: Awaited<ReturnType<typeof readWecomHandoverScheduleEvidence>>; evidenceError?: boolean } = {}) {
+function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; source?: WecomLpDraftRawSource | null; errorCode?: string; applied?: boolean; evidence?: Awaited<ReturnType<typeof readWecomHandoverScheduleEvidence>>; evidenceError?: boolean; readPage?: (input: Parameters<typeof readWecomLpDrafts>[0]) => Awaited<ReturnType<typeof readWecomLpDrafts>> } = {}) {
   const student = { id: "STU-1", name: "Synthetic Child", owner: "Ella", planner: "Tara", guardianWechat: "Synthetic Parent" };
   const rows: OpsStateRow[] = ["students", "lpItems", "tasks", "files"].map((entity) => ({ entity, payload: entity === "students" ? [student, { ...student, id: "STU-OTHER", name: "Other Synthetic Child", guardianWechat: "Other Synthetic Parent", owner: "Tiffany" }] : [], version: 1, updated_at: fields.requestSentAt, updated_by: "synthetic" }));
   const source: WecomLpDraftRawSource = { id: command.sourceMessageId, sourceMessageId: command.sourceMessageId, caseId: command.caseId, sourceRevision: command.sourceRevision, wechatName: "Synthetic Parent", studentName: "Synthetic Child", operationsOwner: "Ella", coursePlanner: "Eileen", status: "identified", createdAt: fields.requestSentAt, messages: [{ messageId: command.sourceMessageId, text: "【安排教师】：Synthetic Teacher\n【安排科目】：Y8 English", sentAt: fields.requestSentAt }], confirmed: null };
@@ -18,7 +19,7 @@ function harness(options: { fullAdmin?: boolean; session?: DemoSessionIdentity; 
     readRows: async () => rows,
     readScheduleEvidence: async (input) => { evidenceReads.push(input); if (options.evidenceError) throw new Error("private-database-error"); return options.evidence ?? []; },
     readDraft: async () => options.source === undefined ? source : options.source,
-    readDrafts: async (input) => { reads.push(input); return { rows: options.source === null ? [] : [options.source ?? source], nextCursor: null, total: 1 }; },
+    readDrafts: async (input) => { reads.push(input); return options.readPage?.(input) ?? { rows: options.source === null ? [] : [options.source ?? source], nextCursor: null, total: 1 }; },
     confirm: async (input) => {
       saved.push(input);
       if (options.errorCode) throw Object.assign(new Error("synthetic database failure"), { code: options.errorCode });
@@ -196,4 +197,115 @@ test("committed legacy handovers replay their stored trial intent after business
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).code, "draft_conflict");
   assert.equal(changed.saved.length, 1);
+});
+
+function pagedSources(sources: readonly WecomLpDraftRawSource[]) {
+  return (input: Parameters<typeof readWecomLpDrafts>[0]) => {
+    const start = input.cursor ? sources.findIndex((source) => source.sourceMessageId === input.cursor) + 1 : 0;
+    const rows = sources.slice(start, start + 30);
+    return { rows, nextCursor: start + rows.length < sources.length ? rows.at(-1)!.sourceMessageId : null, total: sources.length };
+  };
+}
+function numberedSource(index: number, searchText = ""): WecomLpDraftRawSource {
+  const base = harness().source;
+  const id = `synthetic-filter-${String(index).padStart(3, "0")}`;
+  return { ...base, id, sourceMessageId: id, messages: [{ ...base.messages[0], messageId: id, text: `${base.messages[0].text}\n${searchText}` }] };
+}
+function scheduleEvidence(source: WecomLpDraftRawSource, status: "matched" | "candidate" | "no_match"): WecomHandoverScheduleEvidence {
+  return {
+    algorithmVersion: "2", sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision,
+    snapshotRevision: `sha256:${"b".repeat(64)}`, checkedAt: fields.requestSentAt, status,
+    matchedStudentId: status === "matched" ? "STU-1" : null,
+    candidates: status === "no_match" ? [] : [{
+      studentId: "STU-1", studentName: "Synthetic Child", sourceRunId: "private-synthetic-run",
+      schedule: { source: "jiaowubao-open-api", eventId: `event-${source.sourceMessageId}`, startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z",
+        teacherName: "Synthetic Teacher", teacherId: null, courseName: "Y8 English", studentName: "Synthetic Child", plannerHint: null, matchedAt: fields.requestSentAt },
+    }],
+  };
+}
+
+test("sparse search scans every authorized range page and reports the filtered total", async () => {
+  const sources = Array.from({ length: 90 }, (_, index) => numberedSource(index, index % 13 === 0 ? "Needle" : "Other"));
+  const f = harness({ readPage: pagedSources(sources) });
+  const response = await f.handlers.GET(new Request("https://synthetic.invalid/api?query=needle&from=2026-10-20&to=2026-10-20"));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.drafts.map((source: { id: string }) => source.id), sources.filter((_, index) => index % 13 === 0).map((source) => source.id));
+  assert.equal(body.total, 7);
+  assert.equal(body.nextCursor, null);
+  assert.equal(f.reads.length, 3);
+  for (const input of f.reads) {
+    assert.equal(input.actor, "Ella"); assert.equal(input.fullAdmin, false);
+    assert.equal(input.from, "2026-10-19T16:00:00.000Z"); assert.equal(input.before, "2026-10-20T16:00:00.000Z");
+    assert.equal(input.query, undefined); assert.equal(input.scheduleMatch, undefined);
+  }
+  assert.deepEqual(f.evidenceReads.map((read) => read.sourceMessageIds.length), [30, 30, 30]);
+  assert.equal(f.saved.length, 0);
+});
+
+test("filtered pagination retains matches within raw page boundaries without repeats or omissions", async () => {
+  const sources = Array.from({ length: 75 }, (_, index) => numberedSource(index, index % 2 === 0 ? "ＮＥＥＤＬＥ" : ""));
+  const f = harness({ readPage: pagedSources(sources) });
+  const first = await (await f.handlers.GET(new Request("https://synthetic.invalid/api?query=needle"))).json();
+  assert.equal(first.total, 38); assert.equal(first.drafts.length, 30); assert.equal(first.nextCursor, sources[58].sourceMessageId);
+  const second = await (await f.handlers.GET(new Request(`https://synthetic.invalid/api?query=needle&cursor=${first.nextCursor}`))).json();
+  assert.equal(second.total, 38); assert.equal(second.drafts.length, 8); assert.equal(second.nextCursor, null);
+  assert.deepEqual([...first.drafts, ...second.drafts].map((source: { id: string }) => source.id), sources.filter((_, index) => index % 2 === 0).map((source) => source.id));
+  assert.equal(f.reads.length, 6);
+});
+
+test("schedule filters include visible candidates and exclude nontrial handovers from both states", async () => {
+  const sources = Array.from({ length: 4 }, (_, index) => numberedSource(index));
+  sources[3] = { ...sources[3], messages: [{ ...sources[3].messages[0], text: "老生LP修改 信息交接\n【学生姓名】：Synthetic Child\n【涉及科目】：English\n【变动内容】：Synthetic update" }] };
+  const f = harness({ readPage: pagedSources(sources), evidence: [
+    scheduleEvidence(sources[0], "matched"), scheduleEvidence(sources[1], "candidate"), scheduleEvidence(sources[2], "no_match"),
+  ] });
+  const matched = await (await f.handlers.GET(new Request("https://synthetic.invalid/api?scheduleMatch=matched&query=synthetic"))).json();
+  assert.equal(matched.total, 2);
+  assert.deepEqual(matched.drafts.map((source: { id: string }) => source.id), sources.slice(0, 2).map((source) => source.id));
+  assert.equal(matched.drafts[1].trialSchedule, undefined);
+  assert.equal(matched.drafts[1].scheduleEvidence.candidates.length, 1);
+  const unmatched = await (await f.handlers.GET(new Request("https://synthetic.invalid/api?scheduleMatch=unmatched"))).json();
+  assert.equal(unmatched.total, 1); assert.equal(unmatched.drafts[0].id, sources[2].id);
+  assert.equal(f.saved.length, 0);
+});
+
+test("schedule outages cannot classify handovers as having no small timetable", async () => {
+  const f = harness({ evidenceError: true });
+  for (const scheduleMatch of ["matched", "unmatched"]) {
+    const response = await f.handlers.GET(new Request(`https://synthetic.invalid/api?scheduleMatch=${scheduleMatch}`));
+    const body = await response.json();
+    assert.equal(response.status, 200); assert.deepEqual(body.drafts, []); assert.equal(body.total, 0);
+  }
+  const all = await (await f.handlers.GET(new Request("https://synthetic.invalid/api?query=Synthetic"))).json();
+  assert.equal(all.total, 1); assert.equal(all.drafts[0].scheduleEvidenceUnavailable, true);
+});
+
+test("text search finds resolved roster names and visible ownership without creating records", async () => {
+  const original = harness().source;
+  const f = harness({ source: { ...original, studentName: null, messages: [{ ...original.messages[0], text: original.messages[0].text }], coursePlanner: "Eileen" } });
+  for (const query of ["Synthetic Child", "synthetic parent", "Ella", "EILEEN", "Y8 English", "English   Synthetic_Parent", "试听 LP"]) {
+    const response = await f.handlers.GET(new Request(`https://synthetic.invalid/api?query=${encodeURIComponent(query)}`));
+    const body = await response.json();
+    assert.equal(body.total, 1, query);
+  }
+  assert.equal(f.saved.length, 0);
+});
+
+test("invalid and unstable filtered cursors fail safely without partial results", async () => {
+  const sources = [numberedSource(0, "Needle"), numberedSource(1, "Needle")];
+  const absent = harness({ readPage: pagedSources(sources) });
+  assert.equal((await absent.handlers.GET(new Request("https://synthetic.invalid/api?query=needle&cursor=missing-source"))).status, 400);
+  const duplicate = harness({ readPage: () => ({ rows: [sources[0], sources[0]], nextCursor: null, total: 2 }) });
+  let read = 0;
+  const repeated = harness({ readPage: () => ({ rows: [sources[read++]], nextCursor: sources[0].sourceMessageId, total: 90 }) });
+  const empty = harness({ readPage: () => ({ rows: [], nextCursor: "empty-page", total: 90 }) });
+  for (const f of [duplicate, repeated, empty]) {
+    const response = await f.handlers.GET(new Request("https://synthetic.invalid/api?query=needle"));
+    assert.equal(response.status, 503); assert.equal((await response.json()).code, "invalid_draft_page");
+    assert.equal(f.saved.length, 0);
+  }
+  const teacher = harness({ session: { user: "Synthetic Teacher", role: "teacher" } });
+  assert.equal((await teacher.handlers.GET(new Request("https://synthetic.invalid/api?query=needle&scheduleMatch=unmatched"))).status, 403);
+  assert.equal(teacher.reads.length, 0);
 });

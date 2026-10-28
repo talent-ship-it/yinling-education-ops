@@ -425,6 +425,7 @@ import {
   type TrialLedgerViewState,
 } from "@/lib/trial-ledger-view";
 import { TENCENT_TRIAL_LEDGER_URL } from "@/lib/tencent-trial-ledger-mirror";
+import type { DraftResultCount } from "@/app/wecom-lp-drafts-panel";
 import {
   JIAOWUBAO_TRIAL_SYNC_MAX_MATCHES,
   jiaowubaoTrialMissingScheduleRefs,
@@ -3057,6 +3058,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const [trialLedgerView, setTrialLedgerView] = useState<TrialLedgerViewState>(defaultTrialLedgerViewState);
   const [trialLedgerViewReady, setTrialLedgerViewReady] = useState(false);
   const [trialLedgerViewOwner, setTrialLedgerViewOwner] = useState("");
+  const [wecomDraftResult, setWecomDraftResult] = useState<DraftResultCount | null>(null);
   const [lpDraftType, setLpDraftType] = useState<LpWorkflowType>(LP_WORKFLOW_TYPES[0]);
   const [lpDraftStudentId, setLpDraftStudentId] = useState(defaults.defaultSelectedStudentId);
   const [lpRevisionDraft, setLpRevisionDraft] = useState<LpItem | null>(null);
@@ -8698,6 +8700,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     const activeTrialLedgerView = trialLedgerViewInteractive
       ? trialLedgerView
       : defaultTrialLedgerViewState();
+    const canReadWecomDrafts = !isTeacherView && (isAdminView || currentOperator === sessionOperator);
+    const wecomDraftResultKey = JSON.stringify([sessionOperator, activeTrialLedgerView.requestedFrom, activeTrialLedgerView.requestedTo, activeTrialLedgerView.query, activeTrialLedgerView.scheduleMatch]);
+    const wecomDraftCount = wecomDraftResult?.key === wecomDraftResultKey ? wecomDraftResult.count : null;
     const trialLedgerEntries = trialLedgerItems.map((item) => {
       const student = studentById(item.studentId);
       const liveMatch = trialScheduleMatchByLpId.get(item.id);
@@ -8988,11 +8993,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       /></Suspense>}
       <section className="panel trial-ledger-panel" aria-labelledby="trial-ledger-title">
         <header className="panel-header trial-ledger-header"><div><h2 id="trial-ledger-title">LP 交接台账</h2></div><div className="trial-ledger-status"><StatusPill tone={currentJiaowubaoImportedSchedule?.state === "complete" ? "green" : currentJiaowubaoImportedSchedule?.state === "stale" ? "amber" : "purple"}>{jiaowubaoImportedScheduleLoading ? "读取教务宝" : currentJiaowubaoImportedSchedule?.state === "complete" ? "真实课表已连接" : currentJiaowubaoImportedSchedule?.state === "stale" ? "快照已过期" : "等待真实课表"}</StatusPill><span>{trialLedgerStats.total === trialLedgerItems.length ? `${trialLedgerItems.length} 条记录` : `${trialLedgerStats.total} / ${trialLedgerItems.length} 条记录`}</span></div></header>
-        {trialLedgerItems.length ? <>
           <section className="trial-ledger-tools" aria-label="LP 台账筛选与排序">
             <div className="trial-ledger-filter-grid">
-              <label className="trial-ledger-query"><span>搜索</span><input disabled={!trialLedgerViewInteractive} type="search" value={activeTrialLedgerView.query} placeholder="学生、家长微信、交接内容或备注" onChange={(event) => updateTrialLedgerView({ query: event.target.value })} /></label>
-              <label><span>课表匹配</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.scheduleMatch} onChange={(event) => updateTrialLedgerView({ scheduleMatch: event.target.value as TrialLedgerViewState["scheduleMatch"] })}><option value="all">全部匹配情况</option><option value="matched">已匹配课表</option><option value="unmatched">未匹配课表</option></select></label>
+              <label className="trial-ledger-query"><span>搜索</span><input disabled={!trialLedgerViewInteractive} type="search" maxLength={120} value={activeTrialLedgerView.query} placeholder="学生、家长微信、交接内容或备注" onChange={(event) => updateTrialLedgerView({ query: event.target.value })} /></label>
+              <label><span>课表匹配</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.scheduleMatch} onChange={(event) => updateTrialLedgerView({ scheduleMatch: event.target.value as TrialLedgerViewState["scheduleMatch"] })}><option value="all">全部匹配情况</option><option value="matched">有小课表</option><option value="unmatched">无小课表</option></select></label>
               <label><span>需求时间从（北京时间）</span><input disabled={!trialLedgerViewInteractive} type="datetime-local" value={activeTrialLedgerView.requestedFrom} onChange={(event) => updateTrialLedgerView({ requestedFrom: event.target.value })} /></label>
               <label><span>需求时间至（北京时间）</span><input disabled={!trialLedgerViewInteractive} type="datetime-local" value={activeTrialLedgerView.requestedTo} onChange={(event) => updateTrialLedgerView({ requestedTo: event.target.value })} /></label>
               {(["parentFollowUp", "preparationFollowUp"] as const).map((key) => <label key={key}><span>{key === "parentFollowUp" ? "二要一发" : "备课跟进"}</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView[key]} onChange={(event) => updateTrialLedgerView({ [key]: event.target.value })}><option value="all">全部跟进状态</option><option value="required">需要跟进</option><option value="completed">已跟进</option><option value="not_required">不需要跟进</option></select></label>)}
@@ -9008,6 +9012,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               <label><span>是否付费</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.paid} onChange={(event) => updateTrialLedgerView({ paid: event.target.value as TrialLedgerViewState["paid"] })}><option value="all">全部</option><option value="paid">是</option><option value="unpaid">否</option></select></label>
               <label><span>排序字段</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortKey} onChange={(event) => updateTrialLedgerView({ sortKey: event.target.value as TrialLedgerViewState["sortKey"] })}><option value="scheduledAt">上课日期/时间</option><option value="requestedAt">请求日期/时间</option><option value="lessonMonth">上课月份</option><option value="studentName">学生姓名</option></select></label>
               <label><span>排序方向</span><select disabled={!trialLedgerViewInteractive} value={activeTrialLedgerView.sortDirection} onChange={(event) => updateTrialLedgerView({ sortDirection: event.target.value as TrialLedgerViewState["sortDirection"] })}><option value="desc">降序（最新优先）</option><option value="asc">升序（最早优先）</option></select></label>
+            </div>
+            <div className="trial-ledger-tool-footer" role="status" aria-label="交接筛选结果">
+              <span>已创建 LP：{trialLedgerStats.total} 条</span>
+              {canReadWecomDrafts && <button className="secondary-button" type="button" aria-controls="wecom-lp-drafts" onClick={() => { const panel = document.getElementById("wecom-lp-drafts"); panel?.scrollIntoView({ block: "start" }); panel?.querySelector("h2")?.focus({ preventScroll: true }); }}>{wecomDraftCount === null ? "查看机器人交接" : `机器人交接：${wecomDraftCount} 条`}</button>}
             </div>
             <div className="trial-ledger-tool-footer">
               <span><Filter size={14} aria-hidden="true" />筛选只保存在当前登录账号，不影响其他人。</span>
@@ -9071,14 +9079,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <datalist id="trial-ledger-guardian-options">{Array.from(new Set(scopedStudents.map((student) => student.guardianWechat || student.guardian).filter(Boolean))).map((guardian) => <option value={guardian} key={guardian} />)}</datalist>
           <datalist id="trial-ledger-subject-options">{Array.from(new Set([...courses.map((course) => course.name), ...scopedStudents.map((student) => student.course)].filter(Boolean))).map((subject) => <option value={subject} key={subject} />)}</datalist>
           <datalist id="trial-ledger-teacher-options">{recordTeachers.map((teacher) => <option value={teacher.name} key={teacher.id} />)}</datalist>
-        </div> : <div className="empty-inline trial-ledger-filter-empty">当前筛选没有符合条件的交接记录；清除筛选即可查看全部 {trialLedgerItems.length} 条。</div>}
-        </> : <div className="empty-inline">还没有 LP 交接记录；创建后会自动进入台账。</div>}
+        </div> : <div className="empty-inline trial-ledger-filter-empty">{trialLedgerItems.length ? `当前筛选没有符合条件的已创建 LP；清除筛选即可查看全部 ${trialLedgerItems.length} 条。` : "还没有已创建的 LP。"}</div>}
       </section>
-      {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
+      {canReadWecomDrafts && <Suspense fallback={null}><WecomLpDraftWorkspace
         key={sessionOperator}
         rangeFilter={{
-          value: { from: activeTrialLedgerView.requestedFrom, to: activeTrialLedgerView.requestedTo },
-          onChange: (range) => updateTrialLedgerView({ requestedFrom: range.from, requestedTo: range.to }),
+          resultKey: wecomDraftResultKey,
+          onCountChange: setWecomDraftResult,
+          value: { from: activeTrialLedgerView.requestedFrom, to: activeTrialLedgerView.requestedTo, query: activeTrialLedgerView.query, scheduleMatch: activeTrialLedgerView.scheduleMatch },
+          onChange: (range) => updateTrialLedgerView({ requestedFrom: range.from, requestedTo: range.to, query: range.query, scheduleMatch: range.scheduleMatch }),
         }}
         timeDisplay={{ timezone: WECOM_HANDOVER_TIMEZONE, label: timezoneLabel(WECOM_HANDOVER_TIMEZONE, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), WECOM_HANDOVER_TIMEZONE, displayPreferences) }}
         students={readableScopedStudents}
