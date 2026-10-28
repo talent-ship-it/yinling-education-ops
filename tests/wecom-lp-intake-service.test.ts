@@ -65,6 +65,30 @@ test("database failures preserve conflict, authorization and unavailable status 
     assert.doesNotMatch(JSON.stringify(await response.json()), /synthetic database failure/);
   }
 });
+test("a repost arriving before or during confirmation returns a specific refresh message", async () => {
+  for (const stage of ["readDraft", "confirm"] as const) {
+    let confirms = 0;
+    const f = harness();
+    const handlers = createWecomLpIntakeHandlers({
+      readSession: async () => ({ session: { user: "Ella", role: "staff", permissions: ["operations.read", "operations.write"] }, fullAdmin: false }),
+      readRows: async () => f.rows,
+      readDraft: async () => {
+        if (stage === "readDraft") throw Object.assign(new Error("wecom_lp_source_superseded"), { code: "40001" });
+        return f.source;
+      },
+      readDrafts: async () => ({ rows: [], total: 0, nextCursor: null }),
+      readScheduleEvidence: async () => [],
+      confirm: async () => {
+        confirms += 1;
+        throw Object.assign(new Error("wecom_lp_source_superseded"), { code: "40001" });
+      },
+    });
+    const response = await handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(command) }));
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "这条交接已有更新版本，请刷新后确认最新草稿。", code: "draft_superseded" });
+    assert.equal(confirms, stage === "readDraft" ? 0 : 1);
+  }
+});
 test("draft reads validate cursors, decorate fields and only preselect visible students", async () => {
   const f = harness(); const response = await f.handlers.GET(new Request("https://synthetic.invalid/api"));
   assert.equal(response.status, 200); const body = await response.json();

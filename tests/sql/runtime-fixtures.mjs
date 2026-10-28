@@ -1,4 +1,29 @@
+const wecomLpBusinessSetupSteps = [
+  { kind: "sql", file: "tests/sql/wecom-lp-business-handover-setup.sql" },
+  { kind: "sql-fragment", file: "supabase/migrations/20261019000100_wecom_safe_guardian_identity.sql",
+    start: "create or replace function internal.wecom_guardian_identity_label(p_value text)",
+    end: "do $wecom_guardian_identity_patch$" },
+  { kind: "sql", file: "supabase/migrations/20261020104800_wecom_lp_handover_time_range.sql" },
+  { kind: "sql-fragment", file: "tests/sql/wecom-handover-schedule-run-metadata-runtime.sql",
+    start: "alter table internal.jiaowubao_open_api_schedule_snapshot_ingest_runs disable trigger guard_jiaowubao_open_api_schedule_snapshot_run;\nupdate internal.jiaowubao_open_api_schedule_snapshot_ingest_runs r set canonical_rows_sha256=(",
+    end: "create temporary table fixture_metadata_before as" },
+  { kind: "sql", file: "tests/sql/wecom-lp-business-metadata-setup.sql" },
+  { kind: "sql", file: "supabase/migrations/20261021130241_lp_business_handover_types.sql" },
+  { kind: "sql", file: "tests/sql/wecom-repeat-trial-upgrade-setup.sql" },
+  { kind: "sql", file: "supabase/migrations/20261022064824_classify_repeat_trials.sql" },
+  { kind: "sql", file: "supabase/migrations/20261025212941_wecom_quoted_handover_identity.sql" },
+];
+
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-lp-latest-repost", source: "tests/sql/wecom-lp-latest-repost-runtime.sql", steps: [
+    ...wecomLpBusinessSetupSteps,
+    { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },
+    { kind: "sql", file: "tests/sql/wecom-lp-latest-repost-runtime.sql" },
+    { kind: "python", file: "tests/sql/wecom-lp-latest-repost-concurrency.py" },
+  ] },
+  { id: "wecom-lp-latest-repost-batch", source: "tests/sql/wecom-lp-latest-repost-batch-runtime.py", steps: [
+    { kind: "python", file: "tests/sql/wecom-lp-latest-repost-batch-runtime.py" },
+  ] },
   { id: "jiaowubao-schedule-mapping-catalog", source: "tests/sql/jiaowubao-schedule-mapping-catalog-runtime.sql", steps: [
     { kind: "sql", file: "tests/sql/jiaowubao-schedule-mapping-catalog-runtime.sql" },
   ] },
@@ -30,19 +55,7 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "tests/sql/lp-business-scheduler-runtime.sql" },
   ] },
   { id: "wecom-lp-business-handover", source: "tests/sql/wecom-lp-business-handover-runtime.sql", steps: [
-    { kind: "sql", file: "tests/sql/wecom-lp-business-handover-setup.sql" },
-    { kind: "sql-fragment", file: "supabase/migrations/20261019000100_wecom_safe_guardian_identity.sql",
-      start: "create or replace function internal.wecom_guardian_identity_label(p_value text)",
-      end: "do $wecom_guardian_identity_patch$" },
-    { kind: "sql", file: "supabase/migrations/20261020104800_wecom_lp_handover_time_range.sql" },
-    { kind: "sql-fragment", file: "tests/sql/wecom-handover-schedule-run-metadata-runtime.sql",
-      start: "alter table internal.jiaowubao_open_api_schedule_snapshot_ingest_runs disable trigger guard_jiaowubao_open_api_schedule_snapshot_run;\nupdate internal.jiaowubao_open_api_schedule_snapshot_ingest_runs r set canonical_rows_sha256=(",
-      end: "create temporary table fixture_metadata_before as" },
-    { kind: "sql", file: "tests/sql/wecom-lp-business-metadata-setup.sql" },
-    { kind: "sql", file: "supabase/migrations/20261021130241_lp_business_handover_types.sql" },
-    { kind: "sql", file: "tests/sql/wecom-repeat-trial-upgrade-setup.sql" },
-    { kind: "sql", file: "supabase/migrations/20261022064824_classify_repeat_trials.sql" },
-    { kind: "sql", file: "supabase/migrations/20261025212941_wecom_quoted_handover_identity.sql" },
+    ...wecomLpBusinessSetupSteps,
     { kind: "sql", file: "tests/sql/wecom-lp-business-handover-runtime.sql" },
   ] },
   { id: "wecom-handover-schedule-workflow-batch", source: "tests/sql/wecom-handover-schedule-workflow-batch-runtime.ts", steps: [
