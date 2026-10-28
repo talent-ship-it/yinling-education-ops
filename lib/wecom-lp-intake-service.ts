@@ -35,6 +35,9 @@ function failure(error: unknown) {
   if (error instanceof IntakeError) return json({ error: error.message, code: error.code }, error.status);
   if (error instanceof LpAtomicError) return json({ error: error.message, code: error.code }, 400);
   const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  if (code === "40001" && error instanceof Error && error.message === "wecom_lp_source_superseded") {
+    return json({ error: "这条交接已有更新版本，请刷新后确认最新草稿。", code: "draft_superseded" }, 409);
+  }
   const mapped = storeFailures[code];
   if (mapped) return json({ error: mapped[1], code: mapped[2] }, mapped[0]);
   return json({ error: "交接草稿暂时无法读取或保存，请重试。", code: "unavailable" }, 503);
