@@ -9076,8 +9076,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       </section>
       {!isTeacherView && (isAdminView || currentOperator === sessionOperator) && <Suspense fallback={null}><WecomLpDraftWorkspace
         key={sessionOperator}
-        range={{ from: activeTrialLedgerView.requestedFrom, to: activeTrialLedgerView.requestedTo }}
-        onRangeChange={(range) => updateTrialLedgerView({ requestedFrom: range.from, requestedTo: range.to })}
+        rangeFilter={{
+          value: { from: activeTrialLedgerView.requestedFrom, to: activeTrialLedgerView.requestedTo },
+          onChange: (range) => updateTrialLedgerView({ requestedFrom: range.from, requestedTo: range.to }),
+        }}
         timeDisplay={{ timezone: WECOM_HANDOVER_TIMEZONE, label: timezoneLabel(WECOM_HANDOVER_TIMEZONE, displayPreferences.language), formatTime: (value) => formatInstant(new Date(value), WECOM_HANDOVER_TIMEZONE, displayPreferences) }}
         students={readableScopedStudents}
         expectedVersions={{ students: studentsShared.version, lpItems: lpShared.version, tasks: tasksShared.version, files: filesShared.version }}

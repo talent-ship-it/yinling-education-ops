@@ -7,12 +7,18 @@ export type WecomLpDraftQuery = Readonly<{ cursor: string | null; from: string |
 
 function invalid(message: string): never { throw new LpAtomicError("invalid_command", message); }
 
-function boundary(date: string | null, timezone: string, exclusiveEnd: boolean) {
-  if (!date) return null;
+function parseBoundary(date: string, timezone: string) {
   const minute = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/u.test(date);
+  if (!minute && !/^\d{4}-\d{2}-\d{2}$/u.test(date)) invalid("请选择有效的交接日期。");
   const instant = DateTime.fromISO(date, { zone: timezone });
   const canonical = minute ? instant.toFormat("yyyy-MM-dd'T'HH:mm") : instant.toISODate();
-  if ((!minute && !/^\d{4}-\d{2}-\d{2}$/u.test(date)) || !instant.isValid || instant.year < 1900 || canonical !== date) invalid("请选择有效的交接日期。");
+  if (!instant.isValid || instant.year < 1900 || canonical !== date) invalid("请选择有效的交接日期。");
+  return { instant, minute };
+}
+
+function boundary(date: string | null, timezone: string, exclusiveEnd: boolean) {
+  if (!date) return null;
+  const { instant, minute } = parseBoundary(date, timezone);
   const bound = exclusiveEnd ? minute ? instant.plus({ minutes: 1 }) : instant.plus({ days: 1 }).startOf("day") : instant;
   const iso = bound.toUTC().toISO();
   if (!iso || bound.year > 9999) invalid("请选择有效的交接日期。");
