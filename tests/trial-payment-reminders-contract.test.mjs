@@ -206,7 +206,7 @@ test("client polls and mutates payment lifecycle without optimistic task writes"
   assert.match(client, /const adminCanComplete = isAdminSession && isAdminView/);
   assert.match(client, /managedTrialPaymentStudentIds\.has\(task\.studentId\)/);
   assert.match(client, /mutateManagedTrialPayment\(task\.id, "reopen"\)/);
-  assert.match(client, /canReopen=\{\(task\) => !isManagedTrialPaymentTask\(task\)[\s\S]*isManagedTrialPaymentConfirmationTask\(task\)\}/);
+  assert.match(client, /canReopen=\{\(task\) => task\.ruleKey !== "wecom\.handover\.identity"[\s\S]*!isManagedTrialPaymentTask\(task\)[\s\S]*isManagedTrialPaymentConfirmationTask\(task\)\)\}/);
   assert.match(list, /canReopen\?\.\(task\) !== false \? <button/);
   const submitStart = client.indexOf("const mutateManagedTrialPayment = useCallback");
   const submitEnd = client.indexOf("const completeTask =", submitStart);

@@ -15,6 +15,15 @@ const wecomLpBusinessSetupSteps = [
 ];
 
 export const sqlRuntimeFixtures = Object.freeze([
+  { id: "wecom-handover-tasks", source: "tests/sql/wecom-handover-tasks-runtime.sql", steps: [
+    ...wecomLpBusinessSetupSteps,
+    { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028110954_wecom_lp_repost_identity_prefilter.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028114403_wecom_lp_nonretryable_conflicts.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028160000_wecom_handover_tasks.sql" },
+    { kind: "sql", file: "tests/sql/wecom-handover-tasks-runtime.sql" },
+    { kind: "typescript", file: "tests/sql/wecom-handover-task-payload.ts", databaseArgument: true },
+  ] },
   { id: "wecom-lp-latest-repost", source: "tests/sql/wecom-lp-latest-repost-runtime.sql", steps: [
     ...wecomLpBusinessSetupSteps,
     { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },

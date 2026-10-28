@@ -286,7 +286,6 @@
     "lib/tencent-trial-ledger-sync-plan.ts:targetRecordValues",
     "lib/trial-ledger-view.ts:TRIAL_LEDGER_SORT_KEYS",
     "lib/trial-operations.ts:TRIAL_INTAKE_FIELD_KEYS",
-    "lib/trial-operations.ts:TRIAL_SCHEDULING_REMINDER_RULE_KEYS",
     "lib/trial-payment-pending.ts:TRIAL_PAYMENT_PENDING_NAMESPACE",
     "lib/trial-payment-pending.ts:TRIAL_PAYMENT_PENDING_SCHEMA",
     "lib/trial-payment-pending.ts:TRIAL_PAYMENT_PENDING_LIMIT",

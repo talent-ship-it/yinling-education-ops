@@ -1,6 +1,27 @@
-# 当前任务：LP 微信交接重发后采用最新草稿
+# 当前任务：修复 Zarek / Alex 交接匹配和试听后续任务
 
-## 目标与范围
+## 本次目标与范围
+- 用户要求修复 Zarek 叶芯诚（27号14:21补充真名与微信名）和 Alex 王政（周日交接）的真实数据，并补齐交接匹配后自动完成任务、生成二要一发和备课任务的功能并上线。
+- 已明确授权本次所需应用发布及两例相关数据恢复；只依据真实归档、身份和课表修复，不猜学生关联或时间，不改HR判断、付款、供应商课表或无关历史。
+- Worktree: /Users/nixon/.codex/worktrees/hr-handover-task-chain-20261028/feedback-20260812；branch codex/hr-handover-task-chain-20261028；base origin/main 5951a08b786aeeb4473884652d7b97e914a07ba9。
+- 共享main有AGENTS/DESIGN及工资相关受保护修改；本任务只在上述独立worktree修改。
+- 使用现有工作流、身份匹配、任务生成、原子写入和fixture；主代理实施。最终生产候选至多一次独立审查，若触及数据库则审查精确迁移和恢复范围。
+
+## 当前状态
+- 已读项目规则、设计系统、现有任务链路；凭据验证：公司批准helper check supabase=available。
+- 原始归档证实两例均为 identified，未有正式学生、LP或任务。Alex交接10/25、补真名10/25；Zarek交接10/27 14:21、补真名14:23。课表Alex10/29 17:30北京时间、Zarek10/30；分别应10/28和10/29备课。
+- 根因：任务生成挂在正式LP确认后，企业微信交接仅生成草稿，不会把身份匹配和后续任务送进To Do。
+- 已新增交接任务投影/服务/权限/专属保存RPC、私表迁移和现有ToDo接入。复用现有二要一发、N-3、N-1规则，不生成原始交接标为否的写作/试卷。
+- 真实PG16迁移、保存读回、旧版本拒绝、越权/匿名拒绝、LP确认承接及最新回执PASS；补充TS实际生成payload经服务保存/刷新/恢复待办PASS。PGHOST=127.0.0.1 PGPORT=55438，LC_ALL=C。
+- 全量unit 2800/2800、12项聚焦、scripts typecheck、architecture、Fallow三个门槛、lint和完整build PASS。lint仅既有1条warning；bundle anonymous24606B/authenticated942695B。
+- 真实只读输入79条sources、22条events已生成核对：Zarek身份done/10月29日备课；Alex指定内容、N-3和10月28日备课。此前保存RPC漏了自动排课进度规则已修复并真实PG回归。
+- 当前无生产写入或新发布，未提交。真实归档只读证据保存profile scratch/hr-handover-task-{discovery,authority}.json，原件不进Git。
+
+## 下一步
+- 完成一次独立候选审查，通过GitHub/Vercel发布，精确迁移后读回。主分支仍为5951a08，应用候选尚未提交；本次review初次仅因shell TMPDIR不同未启动模型，改用profile scratch绝对路径。
+- 真实公司页面验收使用本任务Space11/p1，已只读确认生产公司Admin登录有效；Space9保持用户控制。
+
+## 历史：上一任务范围
 - 用户要求同一 LP 交接修改重发后按最新消息抓取，避免多份未确认草稿。
 - 在本独立 worktree 实现并验证。叶级 AGENTS.md 40-56 有应用发布常设授权；生产数据库迁移不在该授权内，须单独批准后再配套发布。
 - 不删除微信归档，不改已确认 LP、学生归属、HR 判断、排课或付款。
