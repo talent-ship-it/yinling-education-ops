@@ -31,6 +31,14 @@ function boundary(date: string | null, timezone: string, exclusiveEnd: boolean) 
   return iso;
 }
 
+function draftFilters(params: URLSearchParams) {
+  const query = (params.get("query") ?? "").trim();
+  if (query.length > 240 || /[\u0000-\u001f\u007f]/u.test(query)) invalid("请输入有效的交接搜索内容。");
+  const scheduleMatch = params.get("scheduleMatch") ?? "all";
+  if (!["all", "matched", "unmatched"].includes(scheduleMatch)) invalid("请选择有效的课表匹配状态。");
+  return { ...(query ? { query } : {}), ...(scheduleMatch !== "all" ? { scheduleMatch: scheduleMatch as "matched" | "unmatched" } : {}) };
+}
+
 export function parseWecomLpDraftQuery(params: URLSearchParams): WecomLpDraftQuery {
   const allowed = ["cursor", "from", "to", "timezone", "query", "scheduleMatch"];
   for (const key of params.keys()) {
@@ -43,9 +51,5 @@ export function parseWecomLpDraftQuery(params: URLSearchParams): WecomLpDraftQue
   const from = boundary(params.get("from") || null, timezone, false);
   const before = boundary(params.get("to") || null, timezone, true);
   if (from && before && from >= before) invalid("结束日期不能早于开始日期。");
-  const query = (params.get("query") ?? "").trim();
-  if (query.length > 240 || /[\u0000-\u001f\u007f]/u.test(query)) invalid("请输入有效的交接搜索内容。");
-  const scheduleMatch = params.get("scheduleMatch") ?? "all";
-  if (!["all", "matched", "unmatched"].includes(scheduleMatch)) invalid("请选择有效的课表匹配状态。");
-  return { cursor, from, before, ...(query ? { query } : {}), ...(scheduleMatch !== "all" ? { scheduleMatch: scheduleMatch as "matched" | "unmatched" } : {}) };
+  return { cursor, from, before, ...draftFilters(params) };
 }

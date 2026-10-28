@@ -111,27 +111,29 @@ function matchesDraftFilters(source: WecomLpDraftSource, query: WecomLpDraftQuer
   const haystack = normalize(text);
   return query.query.split(/\s+/u).map(normalize).filter(Boolean).every((token) => haystack.includes(token));
 }
+type FilteredDraftAccumulator = { drafts: WecomLpDraftSource[]; sources: Set<string>; afterCursor: boolean; total: number };
+function collectFilteredDrafts(result: FilteredDraftAccumulator, drafts: readonly WecomLpDraftSource[], query: WecomLpDraftQuery) {
+  for (const source of drafts) {
+    if (result.sources.has(source.sourceMessageId)) fail(503, "交接分页数据已变化，请刷新后重试。", "invalid_draft_page");
+    result.sources.add(source.sourceMessageId);
+    const matches = matchesDraftFilters(source, query);
+    if (matches) result.total += 1;
+    if (result.afterCursor && matches && result.drafts.length < 31) result.drafts.push(source);
+    if (source.sourceMessageId === query.cursor) result.afterCursor = true;
+  }
+}
 async function filteredDraftPage(dependencies: Dependencies, ctx: Context, query: WecomLpDraftQuery) {
-  const drafts: WecomLpDraftSource[] = [];
-  const sources = new Set<string>();
+  const result: FilteredDraftAccumulator = { drafts: [], sources: new Set(), afterCursor: query.cursor === null, total: 0 };
   const cursors = new Set<string>();
   let cursor: string | null = null;
-  let afterCursor = query.cursor === null;
-  let total = 0;
   do {
     const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, from: query.from, before: query.before, cursor });
-    for (const source of await decoratePage(dependencies, ctx, page.rows)) {
-      if (sources.has(source.sourceMessageId)) fail(503, "交接分页数据已变化，请刷新后重试。", "invalid_draft_page");
-      sources.add(source.sourceMessageId);
-      const matches = matchesDraftFilters(source, query);
-      if (matches) total += 1;
-      if (afterCursor && matches && drafts.length < 31) drafts.push(source);
-      if (source.sourceMessageId === query.cursor) afterCursor = true;
-    }
+    collectFilteredDrafts(result, await decoratePage(dependencies, ctx, page.rows), query);
     cursor = page.nextCursor;
     if (cursor && (!page.rows.length || cursors.has(cursor))) fail(503, "交接分页数据已变化，请刷新后重试。", "invalid_draft_page");
     if (cursor) cursors.add(cursor);
   } while (cursor);
+  const { drafts, total, afterCursor } = result;
   if (!afterCursor) fail(400, "分页参数已失效，请刷新后重试。", "invalid_command");
   return { drafts: drafts.slice(0, 30), nextCursor: drafts.length > 30 ? drafts[29].sourceMessageId : null, total };
 }
