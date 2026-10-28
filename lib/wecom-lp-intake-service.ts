@@ -5,8 +5,8 @@ import { LpAtomicError } from "./lp-atomic-service";
 import { buildWecomLpDraft } from "./wecom-lp-draft";
 import { decorateWecomLpDraft } from "./wecom-lp-draft-enrichment";
 import { applyWecomHandoverScheduleEvidence } from "./wecom-handover-schedule-display";
-import { parseWecomLpDraftQuery } from "./wecom-lp-draft-query";
-import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation } from "./wecom-lp-intake";
+import { parseWecomLpDraftQuery, type WecomLpDraftQuery } from "./wecom-lp-draft-query";
+import { matchWecomDraftStudent, parseWecomLpConfirmation, type WecomLpConfirmation, type WecomLpDraftSource } from "./wecom-lp-intake";
 import type { OpsStateRow, readWecomLpDraft, readWecomLpDrafts, readWecomHandoverScheduleEvidence, confirmWecomLpDraftAtomic } from "./ops-store";
 
 type Dependencies = {
@@ -98,12 +98,50 @@ async function decoratePage(dependencies: Dependencies, ctx: Context, sources: r
     return drafts.map((source) => isTrialDraft(source) ? { ...source, scheduleEvidenceUnavailable: true } : source);
   }
 }
+function matchesDraftFilters(source: WecomLpDraftSource, query: WecomLpDraftQuery) {
+  if (query.scheduleMatch) {
+    const trial = source.draft.workflowType === "试听 LP" || source.draft.workflowType === "换老师试听";
+    const schedule = Boolean(source.trialSchedule || source.scheduleEvidence?.candidates.length);
+    if (!trial || (query.scheduleMatch === "matched" ? !schedule : schedule || source.scheduleEvidenceUnavailable)) return false;
+  }
+  if (!query.query) return true;
+  const normalize = (value: string) => value.normalize("NFKC").toLocaleLowerCase("en-AU").replace(/[\s\p{P}\p{S}_]+/gu, "");
+  const text = [source.studentName, source.resolvedStudentName, source.wechatName, source.operationsOwner, source.coursePlanner, source.draft.workflowType,
+    ...Object.values(source.draft.fields), ...source.messages.map((message) => message.text)].filter((value): value is string => typeof value === "string").join("\n");
+  const haystack = normalize(text);
+  return query.query.split(/\s+/u).map(normalize).filter(Boolean).every((token) => haystack.includes(token));
+}
+async function filteredDraftPage(dependencies: Dependencies, ctx: Context, query: WecomLpDraftQuery) {
+  const drafts: WecomLpDraftSource[] = [];
+  const sources = new Set<string>();
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  let afterCursor = query.cursor === null;
+  let total = 0;
+  do {
+    const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, from: query.from, before: query.before, cursor });
+    for (const source of await decoratePage(dependencies, ctx, page.rows)) {
+      if (sources.has(source.sourceMessageId)) fail(503, "交接分页数据已变化，请刷新后重试。", "invalid_draft_page");
+      sources.add(source.sourceMessageId);
+      const matches = matchesDraftFilters(source, query);
+      if (matches) total += 1;
+      if (afterCursor && matches && drafts.length < 31) drafts.push(source);
+      if (source.sourceMessageId === query.cursor) afterCursor = true;
+    }
+    cursor = page.nextCursor;
+    if (cursor && (!page.rows.length || cursors.has(cursor))) fail(503, "交接分页数据已变化，请刷新后重试。", "invalid_draft_page");
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  if (!afterCursor) fail(400, "分页参数已失效，请刷新后重试。", "invalid_command");
+  return { drafts: drafts.slice(0, 30), nextCursor: drafts.length > 30 ? drafts[29].sourceMessageId : null, total };
+}
 export function createWecomLpIntakeHandlers(dependencies: Dependencies) {
   return {
     GET: async (request: Request) => {
       try {
         const ctx = await context(dependencies);
         const query = parseWecomLpDraftQuery(new URL(request.url).searchParams);
+        if (query.query || query.scheduleMatch) return json(await filteredDraftPage(dependencies, ctx, query));
         const page = await dependencies.readDrafts({ actor: ctx.session.user, fullAdmin: ctx.fullAdmin, ...query });
         return json({ drafts: await decoratePage(dependencies, ctx, page.rows), nextCursor: page.nextCursor, total: page.total });
       } catch (error) { return failure(error); }

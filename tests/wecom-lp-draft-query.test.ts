@@ -37,6 +37,19 @@ test("shared request filters use Beijing minutes and include the entire ending m
   });
 });
 
+test("handover search and schedule filters retain the optimized unfiltered query shape", () => {
+  assert.deepEqual(query("query=%20%20&scheduleMatch=all"), query(""));
+  assert.deepEqual(query("query=%20Synthetic%20Parent%20&scheduleMatch=unmatched"), {
+    cursor: null, from: null, before: null, query: "Synthetic Parent", scheduleMatch: "unmatched",
+  });
+  assert.equal(query("scheduleMatch=matched").scheduleMatch, "matched");
+  assert.equal(query(`query=${"a".repeat(240)}`).query?.length, 240);
+  for (const value of [
+    `query=${"a".repeat(241)}`, "query=hello%00there", "query=one&query=two",
+    "scheduleMatch=unknown", "scheduleMatch=", "scheduleMatch=matched&scheduleMatch=unmatched",
+  ]) assert.throws(() => query(value), LpAtomicError, value);
+});
+
 test("invalid or ambiguous handover query values cannot broaden the range or scope", () => {
   for (const value of [
     "from=2026-10-21&to=2026-10-20", "from=2026-02-29", "to=2026-02-30", "from=2026-1-01",
