@@ -4,7 +4,7 @@ import { useRef, useState, type FormEvent, type ComponentType, type ReactNode } 
 import { BookOpen } from "lucide-react";
 import { RecordPicker } from "@/app/record-picker";
 import { LpWorkflowFields, parseLpWorkflowFormData, type LpWorkflowFieldsProps } from "@/app/lp-workflow-fields";
-import { WecomLpDraftsPanel, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
+import { WecomLpDraftsPanel, type DraftRange, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
 import { wecomDraftTimezone } from "@/lib/wecom-lp-draft-timezone";
 import { WECOM_LP_WORKFLOW_TYPES } from "@/lib/wecom-lp-draft";
@@ -13,6 +13,7 @@ import type { LpAtomicExpectedVersions } from "@/lib/lp-atomic-service";
 type Commit = Readonly<{ studentId: string; lpItemId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
 type Props = Readonly<{
   timeDisplay: HandoverTimeDisplay;
+  rangeFilter: Readonly<{ value: DraftRange; onChange: (range: DraftRange) => void }>;
   students: readonly { id: string; name: string; course: string; owner?: string; planner?: string }[];
   expectedVersions: LpAtomicExpectedVersions;
   fieldOptions: Pick<LpWorkflowFieldsProps, "responsibleOperationsOptions" | "teacherOptions" | "subjectOptions" | "timezoneOptions" | "plannerOptions">;
@@ -70,7 +71,11 @@ function DraftStudentFields({ source, students, timezoneOptions, createStudent, 
   </>;
 }
 
-export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions, fieldOptions, Dialog, notify, onCommitted }: Props) {
+function workflowInitialValues(source: WecomLpDraftSource, students: Props["students"], studentId: string) {
+  return { responsibleOperations: source.draft.operationsOwner ?? students.find((student) => student.id === studentId)?.owner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"];
+}
+
+export function WecomLpDraftWorkspace({ timeDisplay, rangeFilter, students, expectedVersions, fieldOptions, Dialog, notify, onCommitted }: Props) {
   const [source, setSource] = useState<WecomLpDraftSource | null>(null);
   const [createStudent, setCreateStudent] = useState(false);
   const [studentId, setStudentId] = useState("");
@@ -111,11 +116,11 @@ export function WecomLpDraftWorkspace({ timeDisplay, students, expectedVersions,
     finally { busyRef.current = false; setBusy(false); }
   }
   return <>
-    <WecomLpDraftsPanel timeDisplay={timeDisplay} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(draft.draft.workflowType === "试听 LP" && !draft.matchedStudentId); }} />
+    <WecomLpDraftsPanel timeDisplay={timeDisplay} range={rangeFilter.value} onRangeChange={rangeFilter.onChange} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(draft.draft.workflowType === "试听 LP" && !draft.matchedStudentId); }} />
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
       <DraftStudentFields source={source} students={students} timezoneOptions={fieldOptions.timezoneOptions} createStudent={createStudent} onCreateStudentChange={setCreateStudent} studentId={studentId} onStudentIdChange={setStudentId} />
-      <LpWorkflowFields screenshotTarget={{ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision }} key={`${source.sourceMessageId}:${studentId}`} initialType={source.draft.workflowType ?? "试听 LP"} requireExplicitSelection initialValues={{ responsibleOperations: source.draft.operationsOwner ?? students.find((student) => student.id === studentId)?.owner ?? "", ...source.draft.fields } as LpWorkflowFieldsProps["initialValues"]} {...fieldOptions} />
+      <LpWorkflowFields screenshotTarget={{ caseId: source.caseId, sourceMessageId: source.sourceMessageId, sourceRevision: source.sourceRevision }} key={`${source.sourceMessageId}:${studentId}`} initialType={source.draft.workflowType ?? "试听 LP"} requireExplicitSelection initialValues={workflowInitialValues(source, students, studentId)} {...fieldOptions} />
       <footer><button className="secondary-button" type="button" disabled={busy} onClick={close}>取消</button><button className="primary-button" type="submit" disabled={busy || !source.draft.workflowType}><BookOpen size={16} />{busy ? "正在保存…" : "确认并创建 LP"}</button></footer>
     </form></Dialog>}
   </>;

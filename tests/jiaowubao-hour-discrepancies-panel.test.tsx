@@ -18,6 +18,8 @@ test("the monthly audit panel renders scoped month/owner controls and a loading 
   assert.match(html, /aria-label="月度课时核查"/);
   assert.match(html, /type="month"/);
   assert.match(html, /aria-label="课时核查教务"/);
+  assert.match(html, /aria-label="课时核查课时对比"/);
+  assert.match(html, /老师课时 ≠ 学生课时合计/);
   assert.match(html, /role="status"/);
   assert.match(html, /正在读取月度课时/);
   assert.match(html, /disabled=""/);

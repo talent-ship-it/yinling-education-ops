@@ -1,7 +1,7 @@
 import { scheduleMatchesGroup, type JiaowubaoCompletedScheduleTeacherEvidence } from "./jiaowubao-completed-lesson-reconciliation";
 import type { JiaowubaoCompletedLessonProjection, JiaowubaoCompletedLessonProjectionItem } from "./jiaowubao-completed-lesson-projection";
 import { isJiaowubaoCompletedLessonUnknownBranchId } from "./jiaowubao-completed-lesson-branch";
-import { resolveAssignableOperationsOwner } from "./demo-users";
+import { resolveDemoOperationsName, resolveDemoStaffAlias } from "./demo-users";
 import type { OpsStateRow } from "./ops-store";
 
 export type MonthlyHourDiscrepancyScope = Readonly<{ studentIds: ReadonlySet<string>; includeUnmatched: boolean }>;
@@ -40,7 +40,7 @@ function ownersByStudent(rows: readonly OpsStateRow[]): Owners {
   if (!Array.isArray(payload)) return owners;
   for (const item of payload.filter(record)) {
     if (typeof item.id !== "string") continue;
-    const owner = resolveAssignableOperationsOwner(item.owner);
+    const owner = resolveDemoOperationsName(resolveDemoStaffAlias(item.owner) ?? item.owner);
     owners.set(item.id, owners.has(item.id) ? null : owner);
   }
   return owners;

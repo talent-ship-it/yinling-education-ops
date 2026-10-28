@@ -27,6 +27,16 @@ test("handover calendar bounds handle 23 and 25 hour days and half-hour offsets"
   }
 });
 
+test("shared request filters use Beijing minutes and include the entire ending minute", () => {
+  assert.deepEqual(query("from=2026-10-14T13:26&to=2026-10-27T13:27"), {
+    cursor: null, from: "2026-10-14T05:26:00.000Z", before: "2026-10-27T05:28:00.000Z",
+  });
+  assert.deepEqual(query("from=2026-10-20T00:00&to=2026-10-20T23:59"), query("from=2026-10-20&to=2026-10-20"));
+  assert.deepEqual(query("from=2026-10-20T10:00&to=2026-10-20T10:00"), {
+    cursor: null, from: "2026-10-20T02:00:00.000Z", before: "2026-10-20T02:01:00.000Z",
+  });
+});
+
 test("invalid or ambiguous handover query values cannot broaden the range or scope", () => {
   for (const value of [
     "from=2026-10-21&to=2026-10-20", "from=2026-02-29", "to=2026-02-30", "from=2026-1-01",
@@ -34,6 +44,9 @@ test("invalid or ambiguous handover query values cannot broaden the range or sco
     "timezone=Invalid/Zone", "timezone=", "timezone=UTC", "cursor=bad%20cursor",
     "from=2026-10-20&from=2026-10-20", "to=&to=2026-10-20", "timezone=Asia/Shanghai&timezone=Asia/Shanghai",
     "cursor=one&cursor=two", "actor=Other", "fullAdmin=true",
+    "from=2026-10-20T25:00", "from=2026-02-30T10:00", "to=2026-10-20T10:60",
+    "from=2026-10-20T10:01&to=2026-10-20T10:00", "from=2026-10-20T10:00:00",
+    "from=2026-10-04T02:30&timezone=Australia/Melbourne",
   ]) assert.throws(() => query(value), LpAtomicError, value);
   assert.equal(query("from=2028-02-29&to=2028-02-29").from, "2028-02-28T16:00:00.000Z");
 });

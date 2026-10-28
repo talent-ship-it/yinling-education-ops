@@ -386,6 +386,41 @@ test("conflicting exact source-id and name proofs stay unresolved", () => {
   assert.equal(projection.items[0].studentMatch, "ambiguous");
 });
 
+test("one durable student id resolves a duplicated normalized name without borrowing an unlinked record", () => {
+  const rows = stateRows();
+  rows[0].payload.unshift({ id: "stu-rita-unlinked", name: "Rita Wu (CHN)" });
+  const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: 702, mem_title: "Rita Wu(CHN)", type: 1 }), { start: "2026-08-01", end: "2026-08-31" });
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: rows });
+  assert.equal(projection.items[0].studentId, "stu-rita");
+  assert.equal(projection.items[0].studentMatch, "source_id");
+  assert.equal(projection.ambiguousStudentCount, 0);
+  rows[0].payload.find((student) => student.id === "stu-rita-unlinked").jwbSourceRow = 702;
+  const duplicatedId = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: rows });
+  assert.equal(duplicatedId.items[0].studentId, null);
+  assert.equal(duplicatedId.items[0].studentMatch, "ambiguous");
+});
+
+test("duplicate names without a durable student id or with disjoint id evidence remain ambiguous", () => {
+  const rows = stateRows();
+  rows[0].payload.push({ id: "stu-fiona-duplicate", name: "Fiona周雨霏(CHN)" });
+  for (const mem_id of [999, 702]) {
+    const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id, mem_title: "Fiona周雨霏", type: 1 }), { start: "2026-08-01", end: "2026-08-31" });
+    const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: rows });
+    assert.equal(projection.items[0].studentId, null);
+    assert.equal(projection.items[0].studentMatch, "ambiguous");
+  }
+});
+
+test("student source-id disambiguation does not change duplicate teacher-name authority", () => {
+  const rows = stateRows();
+  rows[1].payload[0].jwbSourceRow = 80;
+  rows[1].payload.push({ id: "teacher-duplicate", name: "Crystal Wong" });
+  const record = projectJiaowubaoCompletedLessonRecord(sourceRecord({ mem_id: 702, mem_title: "Rita Wu", type: 1 }), { start: "2026-08-01", end: "2026-08-31" });
+  const projection = projectJiaowubaoCompletedLessonRecords({ records: [record], stateRows: rows });
+  assert.equal(projection.items[0].teachers[0].teacherId, null);
+  assert.equal(projection.items[0].teachers[0].teacherMatch, "ambiguous");
+});
+
 
 test("stored roster line breaks remain readable without changing source identity or hours", () => {
   const rows = stateRows();

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { MonthlyHourDiscrepancyReport } from "../lib/jiaowubao-monthly-hour-discrepancies-service";
 import type { MonthlyHourDiscrepancy } from "../lib/jiaowubao-monthly-hour-discrepancies";
+import { monthlyHourValuesDiffer } from "../lib/jiaowubao-hour-discrepancy-filter";
 
 type Query = { month: string; owner: string; reload: number };
 type Result = { report: MonthlyHourDiscrepancyReport | null; loading: boolean; error: string | null };
@@ -51,6 +52,7 @@ async function readReport(query: Query, signal: AbortSignal) {
 
 export function JiaowubaoHourDiscrepanciesPanel() {
   const [query, setQuery] = useState<Query>({ month: "", owner: "", reload: 0 });
+  const [comparison, setComparison] = useState("all");
   const [result, setResult] = useState<Result>({ report: null, loading: true, error: null });
   const changeQuery = (next: Query) => { setResult((current) => ({ ...current, loading: true, error: null })); setQuery(next); };
   useEffect(() => {
@@ -63,6 +65,7 @@ export function JiaowubaoHourDiscrepanciesPanel() {
     return () => controller.abort();
   }, [query]);
   const report = result.report;
+  const visibleRows = report?.rows.filter((row) => comparison !== "different" || monthlyHourValuesDiffer(row)) ?? [];
   return <section className="panel data-panel" aria-label="月度课时核查">
     <div className="panel-header"><h2>月度课时核查</h2><button type="button" className="secondary-button" disabled={result.loading} onClick={() => changeQuery({ ...query, reload: query.reload + 1 })}>刷新</button></div>
     <div className="form-grid">
@@ -70,9 +73,12 @@ export function JiaowubaoHourDiscrepanciesPanel() {
       <label>教务<select aria-label="课时核查教务" value={query.owner} onChange={(event) => changeQuery({ ...query, owner: event.target.value })}>
         <option value="">全部教务</option>{report?.operationsOwners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}<option value="unmatched">未匹配教务</option>
       </select></label>
+      <label>课时对比<select aria-label="课时核查课时对比" value={comparison} onChange={(event) => setComparison(event.target.value)}>
+        <option value="all">全部待核查</option><option value="different">老师课时 ≠ 学生课时合计</option>
+      </select></label>
     </div>
     {result.loading && <p className="empty-inline" role="status">正在读取月度课时…</p>}
     {!result.loading && result.error && <p className="form-error" role="alert">{result.error}</p>}
-    {!result.loading && !result.error && report && (report.rows.length ? <JiaowubaoHourDiscrepancyTable key={`${report.month}:${query.owner}:${report.revision}`} rows={report.rows} /> : <p className="empty-inline" role="status">该月份及筛选范围内没有待核查课节。</p>)}
+    {!result.loading && !result.error && report && (visibleRows.length ? <JiaowubaoHourDiscrepancyTable key={`${report.month}:${query.owner}:${comparison}:${report.revision}`} rows={visibleRows} /> : <p className="empty-inline" role="status">该月份及筛选范围内没有待核查课节。</p>)}
   </section>;
 }
