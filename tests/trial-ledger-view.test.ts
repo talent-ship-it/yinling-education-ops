@@ -234,6 +234,7 @@ test("filters authoritative schedule matches independently of manually entered t
     { ...rows[0]!, scheduleMatched: false },
     { ...rows[1]!, scheduleMatched: true },
     { ...rows[2]!, scheduleMatched: false },
+    { ...rows[0]!, id: "non-trial", workflowType: "老师 LP 修改", scheduleMatched: false },
   ];
   const state = defaultTrialLedgerViewState();
   assert.deepEqual(filterAndSortTrialLedgerRows(source, { ...state, scheduleMatch: "matched" }).map((row) => row.id), ["LP-2"]);

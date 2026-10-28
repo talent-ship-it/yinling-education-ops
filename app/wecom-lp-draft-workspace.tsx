@@ -4,7 +4,7 @@ import { useRef, useState, type FormEvent, type ComponentType, type ReactNode } 
 import { BookOpen } from "lucide-react";
 import { RecordPicker } from "@/app/record-picker";
 import { LpWorkflowFields, parseLpWorkflowFormData, type LpWorkflowFieldsProps } from "@/app/lp-workflow-fields";
-import { WecomLpDraftsPanel, type DraftRange, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
+import { WecomLpDraftsPanel, type DraftFilters, type DraftResultCount, type HandoverTimeDisplay } from "@/app/wecom-lp-drafts-panel";
 import type { WecomLpDraftSource } from "@/lib/wecom-lp-intake";
 import { wecomDraftTimezone } from "@/lib/wecom-lp-draft-timezone";
 import { WECOM_LP_WORKFLOW_TYPES } from "@/lib/wecom-lp-draft";
@@ -13,7 +13,7 @@ import type { LpAtomicExpectedVersions } from "@/lib/lp-atomic-service";
 type Commit = Readonly<{ studentId: string; lpItemId: string; studentsRow: unknown; lpItemsRow: unknown; tasksRow: unknown; filesRow: unknown }>;
 type Props = Readonly<{
   timeDisplay: HandoverTimeDisplay;
-  rangeFilter: Readonly<{ value: DraftRange; onChange: (range: DraftRange) => void }>;
+  rangeFilter: Readonly<{ value: DraftFilters; onChange: (range: DraftFilters) => void; resultKey: string; onCountChange: (result: DraftResultCount) => void }>;
   students: readonly { id: string; name: string; course: string; owner?: string; planner?: string }[];
   expectedVersions: LpAtomicExpectedVersions;
   fieldOptions: Pick<LpWorkflowFieldsProps, "responsibleOperationsOptions" | "teacherOptions" | "subjectOptions" | "timezoneOptions" | "plannerOptions">;
@@ -116,7 +116,7 @@ export function WecomLpDraftWorkspace({ timeDisplay, rangeFilter, students, expe
     finally { busyRef.current = false; setBusy(false); }
   }
   return <>
-    <WecomLpDraftsPanel timeDisplay={timeDisplay} range={rangeFilter.value} onRangeChange={rangeFilter.onChange} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(draft.draft.workflowType === "试听 LP" && !draft.matchedStudentId); }} />
+    <WecomLpDraftsPanel timeDisplay={timeDisplay} range={rangeFilter.value} onRangeChange={rangeFilter.onChange} resultKey={rangeFilter.resultKey} onCountChange={rangeFilter.onCountChange} refreshKey={refresh} onSelect={(draft) => { setSource(draft); setStudentId(draft.matchedStudentId ?? ""); setCreateStudent(draft.draft.workflowType === "试听 LP" && !draft.matchedStudentId); }} />
     {source && <Dialog title="核对机器人交接" onClose={close}><form key={`${source.sourceMessageId}:${source.sourceRevision}`} className="form-grid" onSubmit={submit}>
       <SourceNotes source={source} />
       <DraftStudentFields source={source} students={students} timezoneOptions={fieldOptions.timezoneOptions} createStudent={createStudent} onCreateStudentChange={setCreateStudent} studentId={studentId} onStudentIdChange={setStudentId} />

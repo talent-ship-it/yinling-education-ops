@@ -266,7 +266,7 @@ function matchesRequestRange(value: string, from: number | null, to: number | nu
 }
 
 function matchesReviewFilters(row: TrialLedgerViewRow, state: TrialLedgerViewState) {
-  if (state.scheduleMatch !== ALL && row.scheduleMatched !== (state.scheduleMatch === "matched")) return false;
+  if (state.scheduleMatch !== ALL && (!trialTypes.has(row.workflowType) || row.scheduleMatched !== (state.scheduleMatch === "matched"))) return false;
   if (state.parentFollowUp !== ALL && row.parentFollowUp !== state.parentFollowUp) return false;
   if (state.preparationFollowUp !== ALL && row.preparationFollowUp !== state.preparationFollowUp) return false;
   return true;

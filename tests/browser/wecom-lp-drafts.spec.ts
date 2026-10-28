@@ -583,6 +583,10 @@ test("the ledger request range also filters robot handovers and resets their pag
   await expect(panel.locator(".collection-row")).toHaveCount(1);
   await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20T00:00");
   await expect(panel.getByLabel("结束日期", { exact: true })).toHaveValue("2026-10-20T23:59");
+  const handoverResults = ledger.getByRole("button", { name: "机器人交接：2 条", exact: true });
+  await expect(ledger.getByRole("status", { name: "交接筛选结果", exact: true })).toContainText("已创建 LP：0 条");
+  await handoverResults.click();
+  await expect(panel.getByRole("heading", { name: "机器人交接草稿", exact: true })).toBeFocused();
   expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59" });
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.locator(".collection-row")).toHaveCount(2);
@@ -597,6 +601,75 @@ test("the ledger request range also filters robot handovers and resets their pag
   await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("");
   await expect(panel.getByText("Synthetic Earlier", { exact: true })).toBeVisible();
   expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai" });
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("shared handover search and small-timetable filters work without any created LP", async ({ page }) => {
+  const missing = timedSource("synthetic-no-schedule", "Synthetic Missing Schedule", "2026-10-20T02:00:00.000Z");
+  const matched = { ...timedSource("synthetic-with-schedule", "Synthetic With Schedule", "2026-10-20T03:00:00.000Z"),
+    trialSchedule: { source: "jiaowubao-open-api", eventId: "synthetic-event", startsAt: "2026-10-22T08:00:00.000Z", endsAt: "2026-10-22T09:00:00.000Z",
+      courseName: "Synthetic English", studentName: "Synthetic With Schedule", teacherName: "Synthetic Teacher", teacherId: null, plannerHint: null, matchedAt: NOW } };
+  const f = await syntheticWorkspace(page, { sourcePage: (url) => {
+    const rows = url.searchParams.get("scheduleMatch") === "unmatched" ? [missing]
+      : url.searchParams.get("scheduleMatch") === "matched" ? [matched] : [missing, matched];
+    const drafts = url.searchParams.get("query") === "Missing" ? rows.filter((row) => row.id === missing.id) : rows;
+    return { drafts, total: drafts.length, nextCursor: null };
+  } });
+  const ledger = page.getByRole("region", { name: "LP 交接台账", exact: true });
+  const panel = draftPanel(page);
+  const search = ledger.getByRole("searchbox", { name: "搜索", exact: true });
+  const schedule = ledger.getByRole("combobox", { name: "课表匹配", exact: true });
+  await expect(search).toBeVisible();
+  await expect(ledger.getByRole("button", { name: "机器人交接：2 条", exact: true })).toBeVisible();
+  await schedule.selectOption("unmatched");
+  await search.fill("Missing");
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  await expect(panel.getByLabel("搜索交接", { exact: true })).toHaveValue("Missing");
+  await expect(panel.getByRole("combobox", { name: "课表匹配", exact: true })).toHaveValue("unmatched");
+  await expect(ledger.getByRole("button", { name: "机器人交接：1 条", exact: true })).toBeVisible();
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", query: "Missing", scheduleMatch: "unmatched" });
+  await filterDay(page);
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", query: "Missing", scheduleMatch: "unmatched" });
+  await panel.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  expect(f.reads.at(-1)!.searchParams.get("scheduleMatch")).toBe("unmatched");
+  await panel.getByLabel("搜索交接", { exact: true }).fill("");
+  await panel.getByRole("combobox", { name: "课表匹配", exact: true }).selectOption("matched");
+  await panel.getByRole("button", { name: "筛选", exact: true }).click();
+  await expect(search).toHaveValue("");
+  await expect(schedule).toHaveValue("matched");
+  await expect(panel.getByText("Synthetic With Schedule", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Synthetic Missing Schedule", { exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(schedule).toHaveValue("matched");
+  await expect(panel.getByLabel("开始日期", { exact: true })).toHaveValue("2026-10-20T00:00");
+  await ledger.getByRole("button", { name: "清除筛选", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(2);
+  await expect(panel.getByRole("combobox", { name: "课表匹配", exact: true })).toHaveValue("all");
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+  await expect(panel.getByRole("combobox", { name: "课表匹配", exact: true })).toBeVisible();
+  expect(f.posted).toEqual([]);
+  assertClean(f);
+});
+
+test("small-timetable pagination retains search and date filters and resets when the filter changes", async ({ page }) => {
+  const f = await syntheticWorkspace(page, { sourcePage: rangePage });
+  const ledger = page.getByRole("region", { name: "LP 交接台账", exact: true });
+  const panel = draftPanel(page);
+  await filterDay(page);
+  await ledger.getByRole("searchbox", { name: "搜索", exact: true }).fill("Synthetic");
+  await ledger.getByRole("combobox", { name: "课表匹配", exact: true }).selectOption("unmatched");
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  await panel.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(panel.locator(".collection-row")).toHaveCount(2);
+  expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59", query: "Synthetic", scheduleMatch: "unmatched", cursor: "day-next" });
+  await ledger.getByRole("combobox", { name: "课表匹配", exact: true }).selectOption("matched");
+  await expect(panel.locator(".collection-row")).toHaveCount(1);
+  expect(f.reads.at(-1)!.searchParams.has("cursor")).toBe(false);
+  expect(f.reads.at(-1)!.searchParams.get("scheduleMatch")).toBe("matched");
   expect(f.posted).toEqual([]);
   assertClean(f);
 });

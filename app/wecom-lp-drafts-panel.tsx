@@ -25,22 +25,28 @@ export type HandoverTimeDisplay = Readonly<{
   formatTime: (value: string) => string;
 }>;
 
-export type DraftRange = Readonly<{ from: string; to: string }>;
+export type DraftFilters = Readonly<{ from: string; to: string; query: string; scheduleMatch: "all" | "matched" | "unmatched" }>;
+export type DraftResultCount = Readonly<{ key: string; count: number | null }>;
 
 type WecomLpDraftsPanelProps = Readonly<{
   timeDisplay: HandoverTimeDisplay;
   onSelect: (source: WecomLpDraftSource) => void;
   refreshKey: number;
-  range: DraftRange;
-  onRangeChange: (range: DraftRange) => void;
+  range: DraftFilters;
+  onRangeChange: (range: DraftFilters) => void;
+  resultKey: string;
+  onCountChange: (result: DraftResultCount) => void;
 }>;
 
-async function readDrafts(signal: AbortSignal, range: DraftRange, timezone: string, cursor?: string | null): Promise<DraftPage> {
+function draftQuery(range: DraftFilters, timezone: string, cursor?: string | null) {
   const query = new URLSearchParams({ timezone });
-  if (range.from) query.set("from", range.from);
-  if (range.to) query.set("to", range.to);
-  if (cursor) query.set("cursor", cursor);
-  const response = await fetch(`/api/operations/wecom-lp-drafts?${query}`, { cache: "no-store", signal });
+  const values = { from: range.from, to: range.to, query: range.query.trim(), scheduleMatch: range.scheduleMatch === "all" ? "" : range.scheduleMatch, cursor };
+  for (const [key, value] of Object.entries(values)) if (value) query.set(key, value);
+  return query;
+}
+
+async function readDrafts(signal: AbortSignal, range: DraftFilters, timezone: string, cursor?: string | null): Promise<DraftPage> {
+  const response = await fetch(`/api/operations/wecom-lp-drafts?${draftQuery(range, timezone, cursor)}`, { cache: "no-store", signal });
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "读取机器人交接草稿失败");
   if (!Array.isArray(result.drafts)) throw new Error("机器人交接草稿返回格式异常");
@@ -90,7 +96,7 @@ function visibleDraftPage(state: DraftPanelState, key: string) {
   return { loading: false, busy: state.loadingMore, drafts: state.drafts, error: state.error, count: state.error ? null : state.total ?? state.drafts.length, nextCursor: state.nextCursor, loadingMore: state.loadingMore };
 }
 
-async function readLoadedDrafts(signal: AbortSignal, range: DraftRange, timezone: string, count: number) {
+async function readLoadedDrafts(signal: AbortSignal, range: DraftFilters, timezone: string, count: number) {
   let page = await readDrafts(signal, range, timezone);
   const drafts = new Map(page.drafts.map((source) => [source.id, source]));
   const cursors = new Set<string>();
@@ -102,9 +108,9 @@ async function readLoadedDrafts(signal: AbortSignal, range: DraftRange, timezone
   return { ...page, drafts: [...drafts.values()] };
 }
 
-function useDraftBackgroundRefresh(count: number | null, range: DraftRange, timezone: string, key: string,
+function useDraftBackgroundRefresh(count: number | null, range: DraftFilters, timezone: string, key: string,
   setState: Dispatch<SetStateAction<DraftPanelState>>, loadingMore: RefObject<boolean>, controllerRef: RefObject<AbortController | null>) {
-  const { from, to } = range;
+  const { from, to, query, scheduleMatch } = range;
   useEffect(() => {
     if (count === null) return;
     const poller = createSharedStatePoller({
@@ -117,7 +123,7 @@ function useDraftBackgroundRefresh(count: number | null, range: DraftRange, time
         const controller = new AbortController();
         controllerRef.current = controller;
         try {
-          const page = await readLoadedDrafts(AbortSignal.any([signal, controller.signal]), { from, to }, timezone, count);
+          const page = await readLoadedDrafts(AbortSignal.any([signal, controller.signal]), { from, to, query, scheduleMatch }, timezone, count);
           if (!controller.signal.aborted && !signal.aborted) setState((value) => value.key === key && !value.loadingMore ? { ...page, key, error: "", loadingMore: false } : value);
         } catch (error: unknown) {
           if (!controller.signal.aborted) throw error;
@@ -138,17 +144,17 @@ function useDraftBackgroundRefresh(count: number | null, range: DraftRange, time
       controllerRef.current?.abort();
       controllerRef.current = null;
     };
-  }, [count, from, to, timezone, key, setState, loadingMore, controllerRef]);
+  }, [count, from, to, query, scheduleMatch, timezone, key, setState, loadingMore, controllerRef]);
 }
 
-function useDraftPages(refreshKey: number, range: DraftRange, timezone: string) {
+function useDraftPages(refreshKey: number, range: DraftFilters, timezone: string) {
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [state, setState] = useState<DraftPanelState>({ key: "", drafts: [], nextCursor: null, error: "", loadingMore: false });
   const controllerRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
   const backgroundControllerRef = useRef<AbortController | null>(null);
-  const { from, to } = range;
-  const loadKey = `${refreshKey}:${refreshVersion}:${timezone}:${from}:${to}`;
+  const { from, to, query, scheduleMatch } = range;
+  const loadKey = JSON.stringify([refreshKey, refreshVersion, timezone, from, to, query, scheduleMatch]);
   const current = state.key === loadKey;
   useDraftBackgroundRefresh(current ? state.drafts.length : null, range, timezone, loadKey, setState, loadingMoreRef, backgroundControllerRef);
 
@@ -156,13 +162,13 @@ function useDraftPages(refreshKey: number, range: DraftRange, timezone: string) 
     const controller = new AbortController();
     controllerRef.current = controller;
     loadingMoreRef.current = false;
-    void readDrafts(controller.signal, { from, to }, timezone).then((page) => {
+    void readDrafts(controller.signal, { from, to, query, scheduleMatch }, timezone).then((page) => {
       if (!controller.signal.aborted) setState({ ...page, key: loadKey, error: "", loadingMore: false });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setState({ key: loadKey, drafts: [], nextCursor: null, error: messageOf(error, "读取机器人交接草稿失败"), loadingMore: false });
     });
     return () => controller.abort();
-  }, [loadKey, from, to, timezone]);
+  }, [loadKey, from, to, query, scheduleMatch, timezone]);
 
   async function loadMore() {
     const request = nextPageRequest(state, current, controllerRef.current, loadingMoreRef.current);
@@ -246,7 +252,7 @@ function DraftPanelFooter({ cursor, loading, loadMore }: { cursor: string | null
   return <footer style={{ display: "flex", justifyContent: "center", padding: 16 }}><button className="secondary-button" type="button" disabled={loading} onClick={() => { void loadMore(); }}>{loading ? "读取中…" : "加载更多"}</button></footer>;
 }
 
-function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; onApply: (range: DraftRange) => void; timeDisplay: HandoverTimeDisplay }) {
+function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftFilters; onApply: (range: DraftFilters) => void; timeDisplay: HandoverTimeDisplay }) {
   const [dates, setDates] = useState(range);
   const [error, setError] = useState("");
   const errorId = useId();
@@ -257,12 +263,14 @@ function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; 
     onApply(dates);
   }
   function clear() {
-    const empty = { from: "", to: "" };
+    const empty: DraftFilters = { from: "", to: "", query: "", scheduleMatch: "all" };
     setDates(empty);
     setError("");
     onApply(empty);
   }
   return <form className="form-grid" aria-label="交接时间筛选" onSubmit={apply} style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: 12, margin: 16, paddingTop: 0 }}>
+    <label style={{ flex: "2 1 240px" }}>搜索交接<input type="search" maxLength={120} value={dates.query} placeholder="学生、家长微信或交接内容" onChange={(event) => setDates((value) => ({ ...value, query: event.target.value }))} /></label>
+    <label style={{ flex: "1 1 160px" }}>课表匹配<select value={dates.scheduleMatch} onChange={(event) => setDates((value) => ({ ...value, scheduleMatch: event.target.value as DraftFilters["scheduleMatch"] }))}><option value="all">全部匹配情况</option><option value="matched">有小课表</option><option value="unmatched">无小课表</option></select></label>
     <label style={{ flex: "1 1 160px" }}>开始日期<input type="datetime-local" value={dates.from} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, from: event.target.value })); setError(""); }} /></label>
     <label style={{ flex: "1 1 160px" }}>结束日期<input type="datetime-local" value={dates.to} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => { setDates((value) => ({ ...value, to: event.target.value })); setError(""); }} /></label>
     <button className="primary-button" type="submit">筛选</button>
@@ -272,19 +280,20 @@ function DraftRangeFilter({ range, onApply, timeDisplay }: { range: DraftRange; 
   </form>;
 }
 
-export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay, range, onRangeChange }: WecomLpDraftsPanelProps) {
+export function WecomLpDraftsPanel({ onSelect, refreshKey, timeDisplay, range, onRangeChange, resultKey, onCountChange }: WecomLpDraftsPanelProps) {
   const headingId = useId();
   const { view, refresh, loadMore } = useDraftPages(refreshKey, range, timeDisplay.timezone);
+  useEffect(() => { onCountChange({ key: resultKey, count: view.count }); }, [resultKey, view.count, onCountChange]);
 
-  return <section className="panel collection-shell" aria-labelledby={headingId} aria-busy={view.busy}>
+  return <section className="panel collection-shell" id="wecom-lp-drafts" aria-labelledby={headingId} aria-busy={view.busy}>
     <header className="panel-header" style={{ gap: 12, flexWrap: "wrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h2 id={headingId}>机器人交接草稿</h2>
+        <h2 id={headingId} tabIndex={-1}>机器人交接草稿</h2>
         {view.count !== null && <span className="status-pill neutral">{view.count} 条</span>}
       </div>
       <button className="secondary-button" type="button" disabled={view.busy} onClick={refresh}><RefreshCw size={16} aria-hidden="true" />刷新</button>
     </header>
-    <DraftRangeFilter key={`${range.from}:${range.to}`} range={range} timeDisplay={timeDisplay} onApply={(value) => { onRangeChange(value); refresh(); }} />
+    <DraftRangeFilter key={JSON.stringify(range)} range={range} timeDisplay={timeDisplay} onApply={(value) => { onRangeChange(value); refresh(); }} />
     {view.error && <p className="form-error" role="alert" style={{ margin: 16 }}>{view.error}</p>}
     <DraftPanelBody loading={view.loading} drafts={view.drafts} error={view.error} onSelect={onSelect} timeDisplay={timeDisplay} />
     <DraftPanelFooter cursor={view.nextCursor} loading={view.loadingMore} loadMore={loadMore} />
