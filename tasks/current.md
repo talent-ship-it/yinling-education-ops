@@ -19,7 +19,7 @@
 - 主目录存在其他任务的 AGENTS.md、DESIGN.md 和工资相关改动，均不修改。
 - 公司 GitHub 只读身份验证：talent-ship-it。
 
-## 状态
+## 上线前实现与验证记录
 - 已实现最新草稿判定、分页前过滤、旧来源拒绝确认、按群锁定并发到达，以及 409 刷新提示。
 - 现有归档与已确认 LP 不删除；仅未确认版本按明确身份、业务类型和科目分组。
 - PostgreSQL 16.15 隔离 fixture：精确迁移 + SQL 回归 + Python 两连接并发 PASS；原有 business fixture PASS。
@@ -45,6 +45,18 @@
 - 远端SQL和browser-smoke PASS；verify发现新增条件触发Fallow health门槛，已将相同判断提为小函数；本地Fallow全门槛及52项测试通过，未放宽门槛。
 - Fresh生产18个函数与已重放基线全部一致；迁移尚未存在，归档103、确认0。通过公司登录会话取全47条草稿，保存对照；明确重复组两版为2026-10-19 10:29和10:42，页面均显示。
 
+## 生产发布与验收
+- 最新组合 head 9ad826a444a607448f8e94f62cb45d55e4be25b5 的11项远端检查全部 SUCCESS，Vercel preview READY 后开始发布。
+- 生产迁移20261028083500已应用并独立读回：精确批准SHA256不变；18个原函数属性和权限保持，6个函数体更新，4个私有helper、索引、触发器均存在。
+- PR147已squash合并，merge SHA=24b4a0ae26f5a544646dbb3fb07a1b2c4908b5f8。Vercel生产dpl_CtmyXGRUPWqoBkA4nVc7SAnptCCY READY，app.insiderleadsedu.com已分配；GitHub Production deployment 7383278585 状态success。
+- 真实公司Admin会话完整读回46/46条草稿，迁移前47条；精确只移除10:29旧版，10:42新版保留。两版原归档保留，归档总数103、确认0。
+- 首次及早期自动刷新曾返回503；后续完整两页和多次搜索读取200。正在查只读日志并验证旧来源提交返回409，无生产测试LP写入。
+- 证据位于当前profile scratch/lp-latest-production-migration-readback.json、lp-latest-release-merged.json、lp-latest-browser-after-migration-all.json。
+- 503已复现，生产整批latest helper在3秒外被取消；单条source/key成功，角色anon维持原3秒。无锁等待；没有提升超时或修改资源。
+- 同范围修正migration20261028110954：在完整repost_key比较前按已有trial_handover_id作必要条件过滤，保留全部分组语义。SHA256=986fe7f3901b3787b30e8a054fa0915ca0922b16850036650d8c4b52dccc9e75。
+- 新84消息同群不同身份fixture旧版3488次key调用触发原断言失败，候选<=85通过；完整latest功能与确认竞争fixture通过，同库除prosrc外pg_proc全等，lint 0 errors。
+- 独立只读审查deleg_cb36129e进行中，仅审这一行SQL及计数回归；不得将原审查失败改写为通过。
+
 ## 下一步
-- 正常 GitHub PR 和所有远端门禁通过后执行隔离迁移，读取迁移历史和函数定义确认；合并触发生产发布。
-- 用生产公司 Ego 会话验证受影响交接列表和草稿；尚未进行真实微信群撤回重发，不得以本地测试代替此项。
+- 审查与当前head门禁通过后发布上述必要性能修正，读回函数和权限；完成受保护的旧版409提交及真实生产页面复验再结束。
+- 未进行真实微信群撤回重发，不把历史两版对照或本地测试称作该项验收。
