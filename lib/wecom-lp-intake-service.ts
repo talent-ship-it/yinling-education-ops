@@ -26,13 +26,14 @@ const storeFailures: Record<string, readonly [number, string, string]> = {
   PGRST202: [501, "交接草稿数据库功能尚未就绪。", "contract_unavailable"],
   "42883": [501, "交接草稿数据库功能尚未就绪。", "contract_unavailable"],
   "40001": [409, "交接来源已变化或已确认，请刷新草稿后重试。", "draft_conflict"],
+  PT409: [409, "交接来源已变化或已确认，请刷新草稿后重试。", "draft_conflict"],
   "23505": [409, "交接来源已变化或已确认，请刷新草稿后重试。", "draft_conflict"],
   "42501": [403, "当前账号不能处理这条交接。", "scope_forbidden"],
   P0002: [404, "未找到交接来源。", "source_not_found"],
   "22023": [400, "交接内容需要核对，未创建学生或 LP。", "invalid_draft"],
 };
 function isSupersededSource(error: unknown, code: string) {
-  return code === "40001" && error instanceof Error && error.message === "wecom_lp_source_superseded";
+  return ["40001", "PT409"].includes(code) && error instanceof Error && error.message === "wecom_lp_source_superseded";
 }
 function failure(error: unknown) {
   if (error instanceof IntakeError) return json({ error: error.message, code: error.code }, error.status);

@@ -60,27 +60,28 @@ test("source mismatches and forged input never reach the transaction", async () 
   assert.equal((await f.post({ ...command, fullAdmin: true })).status, 400); assert.equal(f.saved.length, 0);
 });
 test("database failures preserve conflict, authorization and unavailable status without exposing errors", async () => {
-  for (const [code, status] of [["40001", 409], ["23505", 409], ["42501", 403], ["P0002", 404], ["22023", 400], ["PGRST202", 501], ["unknown", 503]] as const) {
+  for (const [code, status] of [["40001", 409], ["PT409", 409], ["23505", 409], ["42501", 403], ["P0002", 404], ["22023", 400], ["PGRST202", 501], ["unknown", 503]] as const) {
     const response = await harness({ errorCode: code }).post(); assert.equal(response.status, status);
     assert.doesNotMatch(JSON.stringify(await response.json()), /synthetic database failure/);
   }
 });
 test("a repost arriving before or during confirmation returns a specific refresh message", async () => {
-  for (const stage of ["readDraft", "confirm"] as const) {
+  const cases = ["40001", "PT409"].flatMap((code) => ["readDraft", "confirm"].map((stage) => ({ code, stage })));
+  for (const { code, stage } of cases) {
     let confirms = 0;
     const f = harness();
     const handlers = createWecomLpIntakeHandlers({
       readSession: async () => ({ session: { user: "Ella", role: "staff", permissions: ["operations.read", "operations.write"] }, fullAdmin: false }),
       readRows: async () => f.rows,
       readDraft: async () => {
-        if (stage === "readDraft") throw Object.assign(new Error("wecom_lp_source_superseded"), { code: "40001" });
+        if (stage === "readDraft") throw Object.assign(new Error("wecom_lp_source_superseded"), { code });
         return f.source;
       },
       readDrafts: async () => ({ rows: [], total: 0, nextCursor: null }),
       readScheduleEvidence: async () => [],
       confirm: async () => {
         confirms += 1;
-        throw Object.assign(new Error("wecom_lp_source_superseded"), { code: "40001" });
+        throw Object.assign(new Error("wecom_lp_source_superseded"), { code });
       },
     });
     const response = await handlers.POST(new Request("https://synthetic.invalid/api", { method: "POST", body: JSON.stringify(command) }));

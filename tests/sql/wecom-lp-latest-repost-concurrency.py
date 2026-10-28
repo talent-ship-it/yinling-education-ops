@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 PSQL = os.environ.get("PSQL", "psql")
-BASE = [PSQL, "-X", "-qAt", "-v", "ON_ERROR_STOP=1"]
+BASE = [PSQL, "-X", "-qAt", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose"]
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -53,7 +53,7 @@ select 'newer_arrival_locked';
     if writer.stdout.readline().strip() != "newer_arrival_locked":
         raise AssertionError("newer arrival did not acquire the room lock")
     busy = subprocess.run(BASE + ["-c", confirm], text=True, capture_output=True, timeout=10)
-    if busy.returncode == 0 or "wecom_lp_confirmation_busy" not in busy.stderr:
+    if busy.returncode == 0 or "PT409: wecom_lp_confirmation_busy" not in busy.stderr:
         raise AssertionError("confirmation did not reject concurrent arrival: " + busy.stderr)
     writer.stdin.write("commit;\n")
     writer.stdin.close()
@@ -61,7 +61,7 @@ select 'newer_arrival_locked';
     if writer.returncode:
         raise AssertionError(writer.stderr.read())
     stale = subprocess.run(BASE + ["-c", confirm], text=True, capture_output=True, timeout=10)
-    if stale.returncode == 0 or "wecom_lp_source_superseded" not in stale.stderr:
+    if stale.returncode == 0 or "PT409: wecom_lp_source_superseded" not in stale.stderr:
         raise AssertionError("committed arrival did not reject the stale confirmation: " + stale.stderr)
     if sql("select internal.fixture_wecom_lp_versions()") != versions:
         raise AssertionError("rejected confirmation changed business state")
