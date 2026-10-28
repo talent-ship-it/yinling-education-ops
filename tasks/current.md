@@ -41,6 +41,9 @@
 - Fresh main 为 9169fbd，PR145 增加交接搜索与小课表筛选，触及同一服务和测试；先保留原候选提交再 rebase，验证组合行为。
 - 原七文件 manifest 逐一比对 PASS，批准迁移 SHA256 不变；公司 GitHub talent-ship-it、Vercel talent-2867/目标项目已 fresh 验证。
 - Ego Space 6 为本任务新建；生产域名公司 Admin 真实登录会话可用，无需认证输入。
+- Rebase 到 9169fbd 无冲突；组合测试52/52、lint和build PASS。PR147，首个head b027077。
+- 远端SQL和browser-smoke PASS；verify发现新增条件触发Fallow health门槛，已将相同判断提为小函数；本地Fallow全门槛及52项测试通过，未放宽门槛。
+- Fresh生产18个函数与已重放基线全部一致；迁移尚未存在，归档103、确认0。通过公司登录会话取全47条草稿，保存对照；明确重复组两版为2026-10-19 10:29和10:42，页面均显示。
 
 ## 下一步
 - 正常 GitHub PR 和所有远端门禁通过后执行隔离迁移，读取迁移历史和函数定义确认；合并触发生产发布。

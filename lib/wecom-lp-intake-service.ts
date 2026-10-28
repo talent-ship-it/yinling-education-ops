@@ -31,11 +31,14 @@ const storeFailures: Record<string, readonly [number, string, string]> = {
   P0002: [404, "未找到交接来源。", "source_not_found"],
   "22023": [400, "交接内容需要核对，未创建学生或 LP。", "invalid_draft"],
 };
+function isSupersededSource(error: unknown, code: string) {
+  return code === "40001" && error instanceof Error && error.message === "wecom_lp_source_superseded";
+}
 function failure(error: unknown) {
   if (error instanceof IntakeError) return json({ error: error.message, code: error.code }, error.status);
   if (error instanceof LpAtomicError) return json({ error: error.message, code: error.code }, 400);
   const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
-  if (code === "40001" && error instanceof Error && error.message === "wecom_lp_source_superseded") {
+  if (isSupersededSource(error, code)) {
     return json({ error: "这条交接已有更新版本，请刷新后确认最新草稿。", code: "draft_superseded" }, 409);
   }
   const mapped = storeFailures[code];
