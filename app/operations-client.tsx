@@ -197,6 +197,7 @@ import {
 import type { LpRevisionHistoryProps, LpWorkflowDetailsProps, LpWorkflowFieldsProps, parseLpWorkflowFormData } from "@/app/lp-workflow-fields";
 import { ToDoList, type TaskDeadlineTimeZone, type ToDoFilter } from "@/app/to-do-list";
 import { useJiaowubaoUnclosedTasks } from "@/app/use-jiaowubao-unclosed-tasks";
+import { useWecomHandoverTasks } from "@/app/use-wecom-handover-tasks";
 import { buildStudentRecordsPanelData, StudentRecordsPanel, type StudentHistoricalJwbSnapshot, type StudentRecordPanelSection } from "@/app/student-records-panel";
 import { CoursePackageSummary } from "@/app/course-package-summary";
 import { JiaowubaoHourDiscrepanciesPanel } from "@/app/jiaowubao-hour-discrepancies";
@@ -3999,9 +4000,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     () => new Set(managedTrialPaymentStudents.map((student) => student.id)),
     [managedTrialPaymentStudents],
   );
+  const handoverTaskFeed = useWecomHandoverTasks(active === "dashboard" && !isTeacherView, currentOperator, isAdminView);
   const taskStudentNames = useMemo(() => new Map(
-    [...examStudents, ...managedTrialPaymentStudents].map((student) => [student.id, student.name]),
-  ), [examStudents, managedTrialPaymentStudents]);
+    [...examStudents, ...managedTrialPaymentStudents, ...handoverTaskFeed.students].map((student) => [student.id, student.name]),
+  ), [examStudents, managedTrialPaymentStudents, handoverTaskFeed.students]);
   const scopedTasks = useMemo(() => isAdminView ? tasks : tasks.filter((task) => {
     const managedTrialPaymentTask = isManagedTrialPaymentTask(task);
     if (managedTrialPaymentTask) {
@@ -4036,11 +4038,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     () => new Map(trialScheduleMatches.map((match) => [match.lpItemId, match])),
     [trialScheduleMatches],
   );
-  const trialTaskSchedule = useCallback((task: OpsTask) => resolveTaskTrialSchedule(task, {
+  const trialTaskSchedule = useCallback((task: OpsTask) => handoverTaskFeed.schedules.find((schedule) => schedule.taskId === task.id) ?? resolveTaskTrialSchedule(task, {
     lpItems: scopedLpItems,
     bookings: scopedBookings,
     bookingStartsAt: (booking) => bookingInstant(booking).toISOString(),
-  }), [scopedBookings, scopedLpItems]);
+  }), [scopedBookings, scopedLpItems, handoverTaskFeed.schedules]);
   const trialTaskTitle = useCallback((task: OpsTask) => {
     const schedule = task.requestAnchorBookingId
       ? lpItems.find((item) => item.id === task.requestAnchorBookingId)?.trialSchedule
@@ -5208,7 +5210,15 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return () => { cancelled = true; };
   }, [mutateManagedTrialPayment, sessionOperator]);
 
+  const mutateHandoverTask = (taskId: string, action: "complete" | "reopen" | "cannot" | "note", note?: string) => {
+    if (!handoverTaskFeed.tasks.some((task) => task.id === taskId)) return false;
+    void handoverTaskFeed.mutate(taskId, action, note)
+      .then(() => notify(action === "complete" ? "任务已完成" : action === "reopen" ? "任务已恢复到 To Do" : "任务已保存"))
+      .catch((error: unknown) => notify(error instanceof Error ? error.message : "交接任务保存失败"));
+    return true;
+  };
   const completeTask = (taskId: string) => {
+    if (mutateHandoverTask(taskId, "complete")) return;
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status === "done") return;
     if (task.ruleKey === TRIAL_PENDING_SCHEDULING_RULE_KEY) {
@@ -5257,6 +5267,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   );
 
   const cannotDoTask = (taskId: string, reason: string) => {
+    if (mutateHandoverTask(taskId, "cannot", reason)) return;
     const task = tasks.find((item) => item.id === taskId);
     const note = reason.trim();
     if (!task || task.status === "done" || !note) return;
@@ -5280,6 +5291,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const reopenTask = (taskId: string) => {
+    if (mutateHandoverTask(taskId, "reopen")) return;
     const task = tasks.find((item) => item.id === taskId);
     if (!task || task.status !== "done") return;
     if (taskUsesDedicatedLifecycle(task)) {
@@ -5319,6 +5331,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   };
 
   const updateTaskNote = (taskId: string, note: string) => {
+    if (mutateHandoverTask(taskId, "note", note)) return;
     const task = tasks.find((item) => item.id === taskId);
     if (!task) return;
     if (taskUsesDedicatedLifecycle(task)) {
@@ -5387,10 +5400,10 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const unclosedTaskFeed = useJiaowubaoUnclosedTasks(active === "dashboard" && !isTeacherView, currentOperator, isAdminView);
   const visibleTasks = useMemo(() => {
     const now = taskRefreshKey ? new Date(taskRefreshKey) : new Date();
-    return sortTasksByDueAt([...scopedTasks, ...unclosedTaskFeed.tasks]
+    return sortTasksByDueAt([...scopedTasks, ...unclosedTaskFeed.tasks, ...handoverTaskFeed.tasks]
       .filter((task) => !isTrialAcceptanceFixtureTask(task, taskStudentNames.get(task.studentId)))
       .map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
-  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames, unclosedTaskFeed.tasks]);
+  }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames, unclosedTaskFeed.tasks, handoverTaskFeed.tasks]);
 
   const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
     const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
@@ -8122,7 +8135,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       <ViewHeading eyebrow={todayLabel} showContext title="工作台" actions={<><button className="secondary-button" type="button" onClick={() => setActive("schedule")}><CalendarDays size={17} /> 查看排课</button><button className="primary-button" type="button" onClick={() => setModal("student")}><UserPlus size={17} /> 新建学生</button></>} />
       <section className="task-workspace">
         {unclosedTaskFeed.error && <div className="form-error" role="alert">未结课任务暂时无法读取。</div>}
-        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} taskSchedule={trialTaskSchedule} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => !isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task)} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => task.ruleKey !== "jiaowubao.unclosed" && !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
+        {handoverTaskFeed.error && <div className="form-error" role="alert">交接任务暂时无法读取。</div>}
+        <div><ToDoList tasks={visibleTasks} key={currentOperator} deadlineTimeZone={taskDeadlineTimeZone} deadlineTimeZoneLabel={taskDeadlineTimeZoneLabel} deadlineTimeFormat={displayPreferences.timeFormat} taskTitle={trialTaskTitle} taskSchedule={trialTaskSchedule} studentName={(studentId) => taskStudentNames.get(studentId)} filter={taskFilter} onFilterChange={setTaskFilter} onComplete={completeTask} onCannotDo={cannotDoTask} onReopen={reopenTask} canReopen={(task) => task.ruleKey !== "wecom.handover.identity" && !(task.studentId.startsWith("WECOM:") && task.ruleKey === "trial.scheduling") && (!isManagedTrialPaymentTask(task) || task.completionOutcome === "cannot_do" || isManagedTrialPaymentConfirmationTask(task))} onUpdateNote={updateTaskNote} onRepairDeadline={canUseAdminScope && isAdminView ? (task) => { const currentTask = tasks.find((candidate) => candidate.id === task.id); if (!currentTask) return; setLegacyTaskDeadlineDraft(currentTask); setModal("legacyTaskDeadline"); } : undefined} canRepairDeadline={(task) => !Object.hasOwn(task, "ruleKey") && !Object.hasOwn(task, "anchorBookingId") && task.status !== "done"} onParentReplied={recordTrialParentReply} onTeacherReplied={recordTrialTeacherReply} onOpen={(task) => goToStudent(task.studentId)} canOpen={(task) => !task.studentId.startsWith("WECOM:") && task.ruleKey !== "jiaowubao.unclosed" && !managedExamStudentIds.has(task.studentId) && !managedTrialPaymentStudentIds.has(task.studentId)} /><button className="text-button" type="button" onClick={() => setModal("task")}><Plus size={16} /> 添加内部任务</button></div>
       </section>
     </>;
   };

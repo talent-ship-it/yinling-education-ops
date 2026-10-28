@@ -1997,6 +1997,21 @@ export function readWecomArchiveInbox(limit = 100) {
   });
 }
 
+export function readWecomHandoverTaskInput() {
+  return rpc<import("./wecom-handover-tasks").HandoverTaskInput>("read_wecom_handover_task_input", { p_secret: configuration().secret });
+}
+
+export function saveWecomHandoverTasks(input: {
+  sourceMessageId: string; sourceRevision: string; snapshotRevision: string; inputRevision: string;
+  expectedVersion: number; tasks: readonly import("./ops-tasks").OpsTask[]; actor: string; fullAdmin: boolean;
+}) {
+  return rpc<number>("save_wecom_handover_tasks", {
+    p_secret: configuration().secret, p_source_message_id: input.sourceMessageId, p_source_revision: input.sourceRevision,
+    p_snapshot_revision: input.snapshotRevision, p_input_revision: input.inputRevision, p_expected_version: input.expectedVersion,
+    p_tasks: input.tasks, p_actor: input.actor, p_full_admin: input.fullAdmin,
+  });
+}
+
 /** Case-first inbox: older unresolved identities must not age out behind messages. */
 export function readWecomHandoverCases(input: {
   filter: import("./wecom-handover-review").WecomHandoverFilter;
