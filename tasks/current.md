@@ -15,10 +15,12 @@
 - 真实PG16迁移、保存读回、旧版本拒绝、越权/匿名拒绝、LP确认承接及最新回执PASS；补充TS实际生成payload经服务保存/刷新/恢复待办PASS。PGHOST=127.0.0.1 PGPORT=55438，LC_ALL=C。
 - 全量unit 2800/2800、12项聚焦、scripts typecheck、architecture、Fallow三个门槛、lint和完整build PASS。lint仅既有1条warning；bundle anonymous24606B/authenticated942695B。
 - 真实只读输入79条sources、22条events已生成核对：Zarek身份done/10月29日备课；Alex指定内容、N-3和10月28日备课。此前保存RPC漏了自动排课进度规则已修复并真实PG回归。
-- 当前无生产写入或新发布，未提交。真实归档只读证据保存profile scratch/hr-handover-task-{discovery,authority}.json，原件不进Git。
+- 已提交初版83c4305并创建PR151；当前review修正尚未提交，无本次生产写入或新发布。真实归档只读证据保存profile scratch/hr-handover-task-{discovery,authority}.json，原件不进Git。
+- 一次独立审查发现3项：改期后已完成任务历史丢失、未知身份未参与课表竞争、LP确认承接旧身份状态。一次集中修正及对应TS/真实PG红绿回归通过；保留原审查失败报告，不声称二次独立PASS。
+- 全量真实输入复验揭示Alex同老师/科目受到两条未知姓名交接竞争。仅当已验证交接全名与唯一课表标题全名一致时，为提醒保留现有全部安全检查并排除仅缺姓名的候选；已知/冲突身份仍参与竞争，正式身份和LP不被自动确认。57项聚焦及两位真实输入任务/日期核对PASS；Fallow全门槛PASS。
 
 ## 下一步
-- 完成一次独立候选审查，通过GitHub/Vercel发布，精确迁移后读回。主分支仍为5951a08，应用候选尚未提交；本次review初次仅因shell TMPDIR不同未启动模型，改用profile scratch绝对路径。
+- 完成集中修正的发布检查和提交，等待PR151精确head的CI/Vercel，精确迁移后读回、合并发布并验收。生产迁移与应用均未发布；旧preflight仅为旧候选证据，需按修正后迁移生成新preflight。
 - 真实公司页面验收使用本任务Space11/p1，已只读确认生产公司Admin登录有效；Space9保持用户控制。
 
 ## 历史：上一任务范围

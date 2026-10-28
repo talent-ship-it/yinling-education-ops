@@ -15,7 +15,11 @@ create function pg_temp.fixture_tasks_payload() returns jsonb language sql as $$
  'studentId','WECOM:'||(source->>'caseId'),'owner','Abby','title','Synthetic specified content',
  'anchorBookingId','bot:tasks:source','ruleKey','trial.manual-request.specified-content','status','done','tone','green','category','LP',
  'completionOutcome','done','closedAt','2026-10-28T08:00:00.000Z','dueAt','2026-10-29T08:00:00.000Z',
- 'completionNote','Synthetic durable note','completionNoteUpdatedAt','2026-10-28T08:00:00.000Z')) from fixture_tasks_command;
+ 'completionNote','Synthetic durable note','completionNoteUpdatedAt','2026-10-28T08:00:00.000Z'),
+ jsonb_build_object('id',internal.trial_manual_task_id('bot:tasks:source','wecom.handover.identity'),
+ 'studentId','WECOM:'||(source->>'caseId'),'owner','Abby','title','Previously unresolved identity',
+ 'anchorBookingId','bot:tasks:source','ruleKey','wecom.handover.identity','status','overdue','tone','blue','category','试听',
+ 'dueAt','2026-10-29T08:00:00.000Z','completionNote','Preserve identity note')) from fixture_tasks_command;
 $$;
 
 do $saved_tasks$
@@ -65,7 +69,8 @@ begin
  if (select count(*) from jsonb_array_elements(tasks) t where t->>'anchorBookingId'=receipt.lp_item_id
    and t->>'ruleKey'='trial.manual-request.specified-content')<>1 then raise exception 'task_confirmation_duplicate_action'; end if;
  if not exists(select 1 from jsonb_array_elements(tasks) t where t->>'anchorBookingId'=receipt.lp_item_id
-   and t->>'ruleKey'='wecom.handover.identity' and t->>'status'='done') then raise exception 'task_confirmation_identity_lost'; end if;
+   and t->>'ruleKey'='wecom.handover.identity' and t->>'status'='done' and t->>'completionOutcome'='done'
+  and t->>'completionNote'='Preserve identity note') then raise exception 'task_confirmation_identity_lost'; end if;
  if exists(select 1 from jsonb_array_elements(public.read_wecom_handover_task_input('wecom-fixture-secret')->'sources') s
    where s->>'sourceMessageId'='bot:tasks:source') then raise exception 'task_confirmed_still_pending'; end if;
  begin

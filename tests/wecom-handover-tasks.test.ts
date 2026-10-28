@@ -46,6 +46,46 @@ test("multiple events, wrong names, conflicts, and historical events never close
     assert.notEqual(group.tasks.find((task) => task.ruleKey === "trial.scheduling")?.status, "done");
   }
 });
+test("rescheduling preserves completed task history and its note", () => {
+  const data = input();
+  const first = handoverTaskGroups(data, now)[0]!;
+  const old = first.tasks.find((task) => task.ruleKey === "trial.jiaowubao.prep-n1")!;
+  data.states = [{ sourceMessageId: "one", version: 1, tasks: first.tasks.map((task) => task.id === old.id
+    ? { ...task, status: "done", completionOutcome: "done", closedAt: now.toISOString(), completionNote: "Prepared original lesson" } : task) }];
+  data.events = data.events.map((event) => ({ ...event, eventId: "event-rebooked", startsAt: "2026-10-31T08:00:00.000Z", endsAt: "2026-10-31T09:00:00.000Z", sourceDate: "2026-10-31" }));
+  const after = handoverTaskGroups(data, now)[0]!;
+  assert.equal(after.tasks.find((task) => task.id === old.id)?.status, "done");
+  assert.equal(after.tasks.find((task) => task.id === old.id)?.completionNote, "Prepared original lesson");
+  assert.ok(after.tasks.some((task) => task.ruleKey === old.ruleKey && task.id !== old.id && task.status !== "done"));
+});
+test("an unresolved handover still competes without a complete course-title name", () => {
+  const unresolved = source("unresolved", "");
+  unresolved.studentName = null;
+  unresolved.identityAt = null;
+  unresolved.status = "awaiting_student_name";
+  const data = input([source(), unresolved]);
+  data.rows = data.rows.map((row) => row.entity === "students" ? { ...row, payload: [{ id: "STU-1", name: "Synthetic Child" }] } : row);
+  data.events = data.events.map((event) => ({ ...event, courseName: "Year8 English trial", sourceParticipants: [{ memberId: null, label: "Synthetic Child" }] }));
+  const group = handoverTaskGroups(data, now).find((entry) => entry.source.sourceMessageId === "one")!;
+  assert.equal(group.schedule, undefined);
+  assert.ok(!group.tasks.some((task) => task.ruleKey === "trial.jiaowubao.prep-n1"));
+  assert.notEqual(group.tasks.find((task) => task.ruleKey === "trial.scheduling")?.status, "done");
+});
+test("an exact verified handover name in the course title resolves unnamed reminder contention", () => {
+  const unresolved = source("unresolved", "");
+  unresolved.studentName = null;
+  unresolved.identityAt = null;
+  unresolved.status = "awaiting_student_name";
+  const groups = handoverTaskGroups(input([source(), unresolved]), now);
+  const known = groups.find((entry) => entry.source.sourceMessageId === "one")!;
+  const unknown = groups.find((entry) => entry.source.sourceMessageId === "unresolved")!;
+  assert.equal(known.schedule?.eventId, "event-one");
+  assert.ok(known.tasks.some((task) => task.ruleKey === "trial.jiaowubao.prep-n1"));
+  assert.equal(unknown.schedule, undefined);
+  assert.ok(!unknown.tasks.some((task) => task.ruleKey === "trial.jiaowubao.prep-n1"));
+  unresolved.status = "identity_conflict";
+  assert.equal(handoverTaskGroups(input([source(), unresolved]), now)[0]!.schedule, undefined);
+});
 function harness(session: DemoSessionIdentity = { user: "Erin", role: "staff", permissions: ["operations.read", "operations.write"], scopeMembers: [{ kind: "all", key: "*" }] }, fullAdmin = false) {
   let data = input([source("one", "Synthetic Child", "是")]);
   let writes = 0;

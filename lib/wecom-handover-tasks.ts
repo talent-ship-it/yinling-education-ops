@@ -3,6 +3,7 @@ import { DEFAULT_TEACHING_CONTROL_WATCHER, deterministicTaskId, formatTaskDeadli
 import { completeTrialSchedulingReminderTasks, generateJiaowubaoTrialTasks, generateTrialManualRequestTasks, type TrialScheduleLink } from "./trial-operations";
 import { completeTrialRequestFollowUps, trialRequestFollowUpRules } from "./trial-handover-tasks";
 import { prepareWecomHandoverScheduleProjection } from "./wecom-handover-schedule-projection";
+import { wecomHandoverScheduleTitleName } from "./wecom-handover-schedule-title";
 import type { WecomHandoverScheduleInput } from "./wecom-handover-schedule-types";
 import type { WecomLpDraftRawSource } from "./wecom-lp-intake";
 
@@ -14,10 +15,20 @@ export const HANDOVER_IDENTITY_RULE = "wecom.handover.identity";
 const FOLLOW_UP_RULES = new Set(["trial.jiaowubao.request-follow-up-n3", "trial.jiaowubao.prep-n1"]);
 
 function nameKey(value: string) { return value.normalize("NFKC").toLocaleLowerCase("en-AU").replace(/\s+/gu, ""); }
+function taskScheduleEvidence(source: HandoverTaskSource, input: HandoverTaskInput, now: Date) {
+  const project = (sources: HandoverTaskSource[]) => prepareWecomHandoverScheduleProjection({ ...input, sources, targetSourceMessageIds: [source.sourceMessageId], checkedAt: now })[0];
+  const evidence = project(input.sources);
+  const candidate = evidence?.candidates.length === 1 ? evidence.candidates[0] : undefined;
+  if (evidence?.status !== "ambiguous" || !candidate || candidate.studentId !== null
+    || nameKey(wecomHandoverScheduleTitleName(candidate.schedule.courseName) ?? "") !== nameKey(source.studentName!)) return evidence;
+  // A verified handover name and the complete course-title name identify this
+  // reminder. Unnamed handovers remain competitors for courses without that proof.
+  return project(input.sources.filter((entry) => entry.studentName || buildWecomLpDraft(entry.messages).studentName
+    || !["awaiting_name", "awaiting_student_name"].includes(entry.status)));
+}
 function taskSchedule(source: HandoverTaskSource, input: HandoverTaskInput, now: Date) {
   if (source.status !== "identified" || !source.studentName) return undefined;
-  const sources = input.sources.filter((entry) => entry.status === "identified" && entry.studentName);
-  const evidence = prepareWecomHandoverScheduleProjection({ ...input, sources, targetSourceMessageIds: [source.sourceMessageId], checkedAt: now })[0];
+  const evidence = taskScheduleEvidence(source, input, now);
   if (!evidence || !["matched", "candidate"].includes(evidence.status) || evidence.candidates.length !== 1) return undefined;
   const candidate = evidence.candidates[0]!;
   if (nameKey(candidate.studentName) !== nameKey(source.studentName)) return undefined;
@@ -91,6 +102,8 @@ function restorePaperTasks(current: OpsTask[], previous: OpsTask[], sourceMessag
 function mergeHistory(generated: OpsTask[], state: HandoverTaskState | undefined, source: HandoverTaskSource, now: Date): OpsTask[] {
   const byId = new Map((state?.tasks ?? []).map((task) => [task.id, task]));
   const current = generated.map((task) => restoreTask(task, byId.get(task.id)));
+  const currentIds = new Set(current.map((task) => task.id));
+  current.push(...(state?.tasks ?? []).filter((task) => task.status === "done" && !currentIds.has(task.id)));
   restorePaperTasks(current, state?.tasks ?? [], source.sourceMessageId);
   return closeCompletedFollowUps(current, now);
 }

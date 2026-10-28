@@ -108,7 +108,7 @@ grant execute on function public.save_wecom_handover_tasks(text,text,text,text,t
 
 create function internal.transfer_wecom_handover_tasks()
 returns trigger language plpgsql security definer set search_path = '' as $$
-declare saved public.ops_state%rowtype; previous jsonb; transferred jsonb; item jsonb; source jsonb; identity_at timestamptz;
+declare saved public.ops_state%rowtype; previous jsonb; transferred jsonb; item jsonb; source jsonb; identity_at timestamptz; saved_identity jsonb;
 begin
   source := internal.wecom_lp_draft_source(new.source_message_id);
   if source is null or new.case_id is null or coalesce(new.confirmation_intent->>'workflowType','试听 LP') <> '试听 LP' then return new; end if;
@@ -116,6 +116,7 @@ begin
   select tasks into previous from internal.wecom_handover_task_state where source_message_id=new.source_message_id;
   transferred := '[]'::jsonb;
   for item in select value from jsonb_array_elements(coalesce(previous,'[]')) loop
+    if item->>'ruleKey'='wecom.handover.identity' then saved_identity := item; continue; end if;
     item := item || jsonb_build_object('studentId',new.student_id,'owner',new.confirmation_intent->'assignment'->>'owner');
     if item->>'ruleKey' like 'trial.jiaowubao.%' then
       item := item || jsonb_build_object('requestAnchorBookingId',new.lp_item_id);
@@ -125,16 +126,14 @@ begin
     end if;
     transferred := transferred || jsonb_build_array(item);
   end loop;
-  if not exists(select 1 from jsonb_array_elements(transferred) t where t->>'ruleKey'='wecom.handover.identity') then
-    select i.sent_at into identity_at from internal.wecom_trial_handover_cases c
-      join internal.wecom_archive_messages i on i.message_id=c.identity_message_id where c.id=new.case_id;
-    transferred := transferred || jsonb_build_array(jsonb_build_object('id',internal.trial_manual_task_id(new.lp_item_id,'wecom.handover.identity'),
+  select i.sent_at into identity_at from internal.wecom_trial_handover_cases c
+    join internal.wecom_archive_messages i on i.message_id=c.identity_message_id where c.id=new.case_id;
+  transferred := transferred || jsonb_build_array(coalesce(saved_identity,'{}'::jsonb) || jsonb_build_object('id',internal.trial_manual_task_id(new.lp_item_id,'wecom.handover.identity'),
       'title','《教务》【交接身份匹配】<'||coalesce(source->>'studentName',source->>'wechatName')||'>',
       'owner',new.confirmation_intent->'assignment'->>'owner','studentId',new.student_id,'status','done','tone','green','category','LP',
       'ruleKey','wecom.handover.identity','anchorBookingId',new.lp_item_id,'result','真名和微信名已匹配，交接身份任务自动完成',
       'dueAt',to_char(coalesce(identity_at,new.confirmed_at) at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-      'closedAt',to_char(coalesce(identity_at,new.confirmed_at) at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')));
-  end if;
+      'closedAt',to_char(coalesce(identity_at,new.confirmed_at) at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'completionOutcome','done'));
   select coalesce(jsonb_agg(t.value order by t.ordinality),'[]') into previous
     from jsonb_array_elements(saved.payload) with ordinality t(value,ordinality)
     where not exists(select 1 from jsonb_array_elements(transferred) x where x->>'id'=t.value->>'id');
