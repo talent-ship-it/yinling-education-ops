@@ -3722,7 +3722,8 @@ summary,
 }
 #main-content { scroll-margin-top:76px; }
 #main-content:focus { outline:none; }
-#jiaowubao-schedule-mapping-review-title { scroll-margin-top:78px; }
+#jiaowubao-schedule-mapping-review-title,
+#wecom-lp-drafts { scroll-margin-top:78px; }
 
 .app-shell { background:transparent; }
 

@@ -587,6 +587,7 @@ test("the ledger request range also filters robot handovers and resets their pag
   await expect(ledger.getByRole("status", { name: "交接筛选结果", exact: true })).toContainText("已创建 LP：0 条");
   await handoverResults.click();
   await expect(panel.getByRole("heading", { name: "机器人交接草稿", exact: true })).toBeFocused();
+  expect(await panel.locator("h2").evaluate((heading) => heading.getBoundingClientRect().top >= document.querySelector(".topbar")!.getBoundingClientRect().bottom)).toBe(true);
   expect(queryOf(f.reads.at(-1)!)).toEqual({ timezone: "Asia/Shanghai", from: "2026-10-20T00:00", to: "2026-10-20T23:59" });
   await panel.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(panel.locator(".collection-row")).toHaveCount(2);
