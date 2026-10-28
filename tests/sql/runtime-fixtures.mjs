@@ -18,8 +18,16 @@ export const sqlRuntimeFixtures = Object.freeze([
   { id: "wecom-lp-latest-repost", source: "tests/sql/wecom-lp-latest-repost-runtime.sql", steps: [
     ...wecomLpBusinessSetupSteps,
     { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028110642_optimize_wecom_lp_repost_candidate_reads.sql" },
     { kind: "sql", file: "tests/sql/wecom-lp-latest-repost-runtime.sql" },
     { kind: "python", file: "tests/sql/wecom-lp-latest-repost-concurrency.py" },
+  ] },
+  { id: "wecom-lp-repost-performance", source: "tests/sql/wecom-lp-repost-performance-runtime.sql", steps: [
+    ...wecomLpBusinessSetupSteps,
+    { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },
+    { kind: "sql", file: "tests/sql/wecom-lp-repost-performance-baseline.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028110642_optimize_wecom_lp_repost_candidate_reads.sql" },
+    { kind: "sql", file: "tests/sql/wecom-lp-repost-performance-runtime.sql" },
   ] },
   { id: "wecom-lp-latest-repost-batch", source: "tests/sql/wecom-lp-latest-repost-batch-runtime.py", steps: [
     { kind: "python", file: "tests/sql/wecom-lp-latest-repost-batch-runtime.py" },
