@@ -55,8 +55,16 @@
 - 503已复现，生产整批latest helper在3秒外被取消；单条source/key成功，角色anon维持原3秒。无锁等待；没有提升超时或修改资源。
 - 同范围修正migration20261028110954：在完整repost_key比较前按已有trial_handover_id作必要条件过滤，保留全部分组语义。SHA256=986fe7f3901b3787b30e8a054fa0915ca0922b16850036650d8c4b52dccc9e75。
 - 新84消息同群不同身份fixture旧版3488次key调用触发原断言失败，候选<=85通过；完整latest功能与确认竞争fixture通过，同库除prosrc外pg_proc全等，lint 0 errors。
-- 独立只读审查deleg_cb36129e进行中，仅审这一行SQL及计数回归；不得将原审查失败改写为通过。
+- 独立只读审查deleg_cb36129e PASS，绑定精确986fe7候选；report.md保存在scratch/lp-prefilter-independent-20261028，不改变原候选的失败报告。
+- migration20261028110954已执行并读回，除prosrc外函数属性全等、依赖未变、归档103/确认0。真实83条批量判定在原3s内完成，HTTP含管理请求2572ms，精确1旧版被替代。
+- PR148已在11项current-head全SUCCESS及preview READY后合并，merge=f6659c3a8aaeaffb03ea695fde2b8db25d7169e1；生产部署dpl_FGHbYH19NzK4n1zzAj9FgNnwiKqL构建中。
+- 公司会话完整两页47/47且唯一，较上次46增加一条新交接，未移除任何保留记录；旧10:29隐藏、新10:42保留，搜索200/total1。不要把当前47误称去重失效。
+- 旧来源POST持续503/约17.6秒；生产PostgREST14.5活动在短事务中反复执行同一read_wecom_lp_draft，日志每秒wecom_lp_source_superseded；已定位40001触发网关自动重试，与批量扫描超时是两条路径。只读诊断scratch/lp-postgrest-retry-diagnosis.json。
+- 计划同范围必要修正migration20261028114403，仅将本功能两个函数的superseded和confirmation_busy错误改PT409，保留其他真正并发冲突40001；应用兼容新旧码，仍给用户draft_superseded刷新提示。旧SQL和TS新增断言均已红灯复现。
+- 非重试SQL最终SHA256=a266c08dbc5f10d4d4a05564d4ef43f2ef77ac23b76a50e9b09532691fc08dae。确认函数原有busy共2处，首次候选计数1触发drift守卫，修为2后完整latest及两连接竞争PASS；未修改历史迁移。
+- 51项相关TS、Fallow、lint、完整build PASS，lint仅既有warning；同库精确候选事务重放后两函数pg_proc除prosrc全等并ROLLBACK。生产22函数只读preflight匹配，归档106、确认0；新增归档是自然入站，不能写死历史103。
+- 独立审查deleg_2983ddca已派发，仅审六文件最终manifest；本顶层会话第三次且最后一次委派。等待结果时保留候选不变。
 
 ## 下一步
-- 审查与当前head门禁通过后发布上述必要性能修正，读回函数和权限；完成受保护的旧版409提交及真实生产页面复验再结束。
+- 非重试业务409回归及必要审查、发布门禁通过后先发布兼容应用，再精确迁移，完成真实公司页面和受保护旧来源POST409验收。
 - 未进行真实微信群撤回重发，不把历史两版对照或本地测试称作该项验收。

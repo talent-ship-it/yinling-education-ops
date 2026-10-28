@@ -19,6 +19,7 @@ export const sqlRuntimeFixtures = Object.freeze([
     ...wecomLpBusinessSetupSteps,
     { kind: "sql", file: "supabase/migrations/20261028083500_wecom_lp_latest_repost.sql" },
     { kind: "sql", file: "supabase/migrations/20261028110954_wecom_lp_repost_identity_prefilter.sql" },
+    { kind: "sql", file: "supabase/migrations/20261028114403_wecom_lp_nonretryable_conflicts.sql" },
     { kind: "sql", file: "tests/sql/wecom-lp-latest-repost-runtime.sql" },
     { kind: "python", file: "tests/sql/wecom-lp-latest-repost-concurrency.py" },
   ] },

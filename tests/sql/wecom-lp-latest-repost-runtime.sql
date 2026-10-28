@@ -57,7 +57,7 @@ begin
   begin
     perform public.read_wecom_lp_draft('wecom-fixture-secret','bot:latest:old','Abby',false);
     raise exception 'latest_repost_single_read_allowed_old_source';
-  exception when serialization_failure then
+  exception when sqlstate 'PT409' then
     if sqlerrm <> 'wecom_lp_source_superseded' then raise; end if;
   end;
   source := internal.wecom_lp_draft_source('bot:latest:old');
@@ -67,7 +67,7 @@ begin
       'STU-DRAFT-1',null,internal.fixture_wecom_lp_fields(),
       '{"owner":"Abby","planner":"Tara","mayReassign":false}',internal.fixture_wecom_lp_versions(),'Abby',false,'试听 LP');
     raise exception 'latest_repost_stale_tab_confirmed_old_source';
-  exception when serialization_failure then
+  exception when sqlstate 'PT409' then
     if sqlerrm <> 'wecom_lp_source_superseded' then raise; end if;
   end;
   if state_before <> internal.fixture_wecom_lp_versions() or archive_before <> (select count(*) from internal.wecom_archive_messages) then
