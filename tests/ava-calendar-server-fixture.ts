@@ -114,6 +114,8 @@ export function serverFixture(state = fixture(), hook: (rpc: string, body: Recor
   const auth = useServerSession ? load("../lib/demo-auth.ts", {
     "@/lib/nixon-auth": {}, "@/lib/demo-users": {}, "@/lib/demo-session-token": sessionTokens,
     "@/lib/demo-teacher-login": teacherLogin, "@/lib/account-credentials": credentials, "@/lib/ops-store": store,
+    "next/headers": { cookies: async () => ({ get: () => undefined }) },
+    "@/lib/account-impersonation": { IMPERSONATION_COOKIE_NAME: "acting" },
   }, environment, fixtureFetch, () => state.now) as typeof import("../lib/demo-auth") : null;
   let sessionReads = 0;
   const imports = {

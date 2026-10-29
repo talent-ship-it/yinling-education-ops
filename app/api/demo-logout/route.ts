@@ -4,6 +4,7 @@ import { DEMO_COOKIE_NAME } from "@/lib/demo-auth";
 import { parseServerSessionToken, SERVER_SESSION_MAX_AGE_SECONDS } from "@/lib/demo-session-token";
 import { NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { revokeCurrentAccountSession } from "@/lib/ops-store";
+import { IMPERSONATION_COOKIE_NAME, parseImpersonationToken } from "@/lib/account-impersonation";
 
 export const dynamic = "force-dynamic";
 const LOGOUT_RETRY_COOKIE_NAME = "yinling_logout_retry";
@@ -40,6 +41,12 @@ function serialiseRetryTokens(tokens: readonly string[]) {
   return `${LOGOUT_RETRY_LIST_PREFIX}${unique.join("~")}`;
 }
 
+function targetSessionTokens(identityCookie: string | undefined) {
+  if (!identityCookie) return [];
+  const claim = parseImpersonationToken(identityCookie);
+  return retryTokens(claim?.targetSessionToken);
+}
+
 async function revokeServerSession(cookieValue: string) {
   const envelope = parseServerSessionToken(cookieValue);
   if (!envelope) return true;
@@ -66,9 +73,10 @@ export async function POST(request: Request) {
   const primaryCookieValue = cookieStore.get(DEMO_COOKIE_NAME)?.value;
   const storedRetryCookieValue = cookieStore.get(LOGOUT_RETRY_COOKIE_NAME)?.value;
   const pendingRetryTokens = retryTokens(storedRetryCookieValue);
+  const switchedTokens = targetSessionTokens(cookieStore.get(IMPERSONATION_COOKIE_NAME)?.value);
   const candidateTokens = [...new Set(retryRequested
     ? pendingRetryTokens
-    : [...retryTokens(primaryCookieValue), ...pendingRetryTokens])];
+    : [...retryTokens(primaryCookieValue), ...switchedTokens, ...pendingRetryTokens])];
   const revocationResults = await Promise.all(candidateTokens.map((token) => revokeServerSession(token)));
   const unresolvedTokens = candidateTokens.filter((_, index) => !revocationResults[index]);
   const serverSessionRevoked = unresolvedTokens.length === 0;
@@ -84,6 +92,7 @@ export async function POST(request: Request) {
   if (!retryRequested) {
     response.cookies.set(DEMO_COOKIE_NAME, "", expiredCookie);
     response.cookies.set(NIXON_COOKIE_NAME, "", expiredCookie);
+    response.cookies.set(IMPERSONATION_COOKIE_NAME, "", expiredCookie);
   }
   if (serverSessionRevoked) {
     response.cookies.set(LOGOUT_RETRY_COOKIE_NAME, "", { ...retryCookie, maxAge: 0 });

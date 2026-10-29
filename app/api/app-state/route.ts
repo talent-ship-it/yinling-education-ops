@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { privateJsonResponse } from "@/lib/private-json-response";
 
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
@@ -109,12 +110,12 @@ export async function GET(request: NextRequest) {
       ? managedTrialPaymentStudentProjectionSnapshot(rows, access)
       : undefined;
 
-    return noStore({
+    return privateJsonResponse({
       rows: visibleRows,
       sources,
       ...(managedExamSnapshot ? { managedExamSnapshot } : {}),
       ...(managedTrialPaymentSnapshot ? { managedTrialPaymentSnapshot } : {}),
-    });
+    }, request);
   } catch {
     const message = "共享数据读取失败。";
     return noStore({ error: message }, 503);
@@ -194,7 +195,7 @@ export async function PUT(request: NextRequest) {
       actor: context.actor,
       scopeVersions,
     });
-    return noStore({ row: filterOpsStateRows(saved, access)[0] });
+    return privateJsonResponse({ row: filterOpsStateRows(saved, access)[0] }, request);
   } catch (error) {
     if (error instanceof JiaowubaoPayrollAuthorityError) {
       return noStore({ error: "教务宝课时或老师、学生映射需要重新核对，请刷新后重试。" }, 409);

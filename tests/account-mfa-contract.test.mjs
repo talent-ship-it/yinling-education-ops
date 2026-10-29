@@ -42,7 +42,7 @@ test("MFA setup reveals the secret only to its owner before confirmation", () =>
   assert.match(route, /expectedAccessVersion: session\.accessVersion/);
   assert.equal(route.match(/\.\.\.securitySnapshot/g)?.length, 3);
   assert.match(route, /account_security_session_stale/);
-  assert.match(route, /staleSecuritySession\(\)/);
+  assert.match(route, /staleSecuritySession\(Boolean\(session\.impersonator\)\)/);
   assert.match(route, /return noStore\(\{ ok: true, secret, otpauthUri/);
   assert.match(route, /expireAuthCookies/);
   assert.match(login, /decryptMfaSecret/);
