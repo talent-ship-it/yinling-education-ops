@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 
 import { ClassroomMaterialsError, externalMaterialUrl, materialId, materialListInput, materialMaxBytes, materialTitle } from "@/lib/classroom-materials";
+import { accountIdentityKey } from "@/lib/account-credentials";
+import { materialsPreviewResult, resolveMaterialsViewer } from "@/lib/classroom-materials-preview";
+import { getAccountByIdentity } from "@/lib/ops-store";
 import { materialsBody, materialsErrorResponse, materialsResponse, materialsSession } from "@/lib/classroom-materials-server";
 import { materialRpc, materialsStorageConfigured } from "@/lib/classroom-materials-store";
 
@@ -11,8 +14,9 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const session = await materialsSession();
-    const result = await materialRpc(session.accountId, "list", materialListInput(request.nextUrl.searchParams));
-    return materialsResponse({ ...result, canPresent: session.role === "teacher", configured: materialsStorageConfigured(), uploadScope: createHash("sha256").update(`materials-upload:${session.accountId}`).digest("hex"), maxFileBytes: materialMaxBytes() });
+    const viewer = await resolveMaterialsViewer(session, request.nextUrl.searchParams.get("viewAsTeacher"), (name) => getAccountByIdentity(accountIdentityKey(name, "teacher")));
+    const result = await materialRpc(viewer.accountId, "list", materialListInput(request.nextUrl.searchParams));
+    return materialsResponse({ ...materialsPreviewResult(result, viewer.preview), canPresent: !viewer.preview && session.role === "teacher", configured: materialsStorageConfigured(), uploadScope: viewer.preview ? undefined : createHash("sha256").update(`materials-upload:${session.accountId}`).digest("hex"), maxFileBytes: materialMaxBytes() });
   } catch (error) { return materialsErrorResponse(error); }
 }
 

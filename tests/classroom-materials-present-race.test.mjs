@@ -6,6 +6,7 @@ import test from "node:test";
 import ts from "typescript";
 
 import * as validators from "../lib/classroom-materials.ts";
+import { materialsPreviewResult, resolveMaterialsViewer } from "../lib/classroom-materials-preview.ts";
 
 const require = createRequire(import.meta.url);
 function route(path, dependencies) {
@@ -74,6 +75,9 @@ test("library exposes classroom use capability only for the teacher role", async
   for (const role of ["teacher", "admin", "limited-admin"]) {
     const api = route("../app/api/classroom/materials/route.ts", {
       "@/lib/classroom-materials": validators,
+      "@/lib/account-credentials": { accountIdentityKey: () => assert.fail("normal listing must not impersonate") },
+      "@/lib/classroom-materials-preview": { materialsPreviewResult, resolveMaterialsViewer },
+      "@/lib/ops-store": { getAccountByIdentity: async () => assert.fail("normal listing needs no preview account") },
       "@/lib/classroom-materials-server": {
         materialsSession: async () => ({ ...session, role }),
         materialsResponse: (body) => body,

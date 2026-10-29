@@ -108,6 +108,7 @@ export function timezoneLabelFor(timezone: string, language: InterfaceLanguage) 
 }
 
 const englishTerms: Record<string, string> = {
+  "资源": "Resources",
   "工作台": "Workspace",
   "学生档案": "Students",
   "老师资源": "Teachers",

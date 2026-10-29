@@ -499,6 +499,7 @@ const teacherSubjectOptions = [
 
 type Section =
   | "dashboard"
+  | "resources"
   | "students"
   | "teachers"
   | "schedule"
@@ -1202,6 +1203,7 @@ type TeacherImportPreview = {
 
 const navigationDefinitions: Array<{ id: Section; label: string; icon: typeof LayoutDashboard; group: "work" | "support" }> = [
   { id: "dashboard", label: "工作台", icon: LayoutDashboard, group: "work" },
+  { id: "resources", label: "资源", icon: FolderOpen, group: "work" },
   { id: "students", label: "学生档案", icon: Users, group: "work" },
   { id: "teachers", label: "老师资源", icon: GraduationCap, group: "work" },
   { id: "schedule", label: "排课", icon: CalendarDays, group: "work" },
@@ -1226,7 +1228,7 @@ function navigationFor(language: InterfaceLanguage) {
 }
 
 const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "ava-calendar", "courses", "lp", "operations", "renewals", "messages", "files", "accounts"]);
-const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
+const teacherSectionIds = new Set<Section>(["dashboard", "resources", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
 const noPayrollAdminSectionIds = new Set<Section>(navigationDefinitions.filter((item) => item.id !== "payroll").map((item) => item.id));
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "yinling.sidebar-collapsed";
 
@@ -12307,11 +12309,21 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           )}
         </section>
         <Suspense fallback={<section className="panel" aria-busy="true">正在加载教材库…</section>}>
-          <ClassroomMaterialsPanel teachers={teachers.map(({ id, name }) => ({ id, name }))} selectedClassroom={roomBooking && !historicalRoom && !roomClosed ? { bookingId: roomBooking.id, occurrenceId: roomBooking.occurrenceKey, sourceDate: roomBooking.sourceDate } : undefined} notify={notify} />
+          <ClassroomMaterialsPanel key={currentOperator} teachers={teachers.map(({ id, name }) => ({ id, name }))} viewAsTeacher={canUseAdminScope && isTeacherView ? currentOperator : undefined} selectedClassroom={roomBooking && !historicalRoom && !roomClosed ? { bookingId: roomBooking.id, occurrenceId: roomBooking.occurrenceKey, sourceDate: roomBooking.sourceDate } : undefined} notify={notify} />
         </Suspense>
       </>
     );
   };
+
+  const renderResources = () => (
+    <>
+      <ViewHeading eyebrow="教学资料" title={displayTerm("资源", displayPreferences.language)} />
+      <p className="inline-note">{isAdminView ? "按年级整理教材，再通过文件夹或单份教材授权给老师。" : "这里显示已授权给你的教材。进入课堂后，点击“课堂资料”即可选用。"}</p>
+      <Suspense fallback={<section className="panel" aria-busy="true">正在加载教材库…</section>}>
+        <ClassroomMaterialsPanel key={currentOperator} teachers={teachers.map(({ id, name }) => ({ id, name }))} viewAsTeacher={canUseAdminScope && isTeacherView ? currentOperator : undefined} notify={notify} />
+      </Suspense>
+    </>
+  );
 
   const renderAccounts = () => (
     <>
@@ -12348,6 +12360,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     switch (active) {
       case "dashboard":
         return renderDashboard();
+      case "resources":
+        return renderResources();
       case "students":
         return renderStudents();
       case "teachers":
