@@ -1,4 +1,5 @@
 "use client";
+import { AccountIdentityPicker, ReturnAdministratorButton, switchAccountIdentity } from "./account-identity-picker";
 
 import type { ClassroomAttendance } from "@/lib/classroom-attendance";
 import { dateTimeFormat } from "@/lib/date-time-format";
@@ -134,7 +135,6 @@ import { FormEvent, Fragment, ReactNode, Suspense, lazy, useCallback, useEffect,
 import { flushSync } from "react-dom";
 import {
   DEMO_LIMITED_ADMIN_USER,
-  DEMO_STAFF_USERS,
   matchesOperationsOwnerFilter,
   operationsOwnerFilterOptions,
   operationsOwnerFormOptions,
@@ -2429,19 +2429,20 @@ function AccountPasswordForm({
   </form>;
 }
 
-function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy, logoutError }: { user: string; onChanged: () => void; onLogout: () => void; logoutBusy: boolean; logoutError: string }) {
+function AuthPasswordChangeScreen({ user, onChanged, onLogout, canReturnAdministrator, logoutBusy, logoutError }: { user: string; onChanged: () => void; onLogout: () => void; canReturnAdministrator?: boolean; logoutBusy: boolean; logoutError: string }) {
   return <main className="login-shell password-change-shell">
     <section className="login-panel password-change-panel">
       <div className="brand-mark">吟</div>
       <h1>请先设置新密码</h1>
+      {canReturnAdministrator && <ReturnAdministratorButton />}
       <AccountPasswordForm accountLabel={user === "Nixon" ? "Admin" : user} accountLogin={user} forced onChanged={onChanged} onLogout={onLogout} logoutBusy={logoutBusy} logoutError={logoutError} />
     </section>
   </main>;
 }
 
-async function fetchSupabaseSnapshot() {
-  const response = await fetch("/api/app-snapshot", { cache: "no-store" });
-  const body = await response.json().catch(() => ({}));
+async function fetchSupabaseSnapshot(signal?: AbortSignal) {
+  const { response, body: receivedBody } = await fetchJsonWithTimeout(fetch, "/api/app-snapshot", { cache: "no-store", signal }, 30_000);
+  const body = receivedBody ?? {};
   if (!response.ok) throw new Error(body.error || "真实资料读取失败。");
   const payload = body as ImportPayload;
   const managedExamSnapshot = parseManagedExamProjectionSnapshot(
@@ -2658,6 +2659,8 @@ export type OperationsInitialSession = Readonly<{
   user: string;
   role: DemoSessionRole | "";
   mustChangePassword: boolean;
+  canSwitchIdentity?: boolean;
+  impersonator?: string | null;
 }>;
 
 function workspaceSessionRole(role: DemoSessionRole | ""): DemoSessionRole {
@@ -2671,14 +2674,16 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
+  const [dataAttempt, setDataAttempt] = useState(0);
 
   useEffect(() => {
     if (sessionMustChangePassword) return;
 
     let active = true;
+    const controller = new AbortController();
     Promise.all([
-      fetchSupabaseSnapshot(),
-      fetch("/api/nixon-session", { cache: "no-store" }).then((response) => response.json()).catch(() => ({ ok: false })),
+      fetchSupabaseSnapshot(controller.signal),
+      fetchJsonWithTimeout(fetch, "/api/nixon-session", { cache: "no-store", signal: controller.signal }).then(({ body }) => body ?? { ok: false }).catch(() => ({ ok: false })),
     ])
       .then(([payload, nixonSession]) => {
         if (!active) return;
@@ -2688,14 +2693,15 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setDataError(error instanceof Error ? error.message : "Supabase 数据读取失败。");
+        setDataError(error instanceof Error && error.name !== "AbortError" ? error.message : "资料读取超时，请重试。");
         setInitialData(null);
       });
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [sessionMustChangePassword]);
+  }, [sessionMustChangePassword, dataAttempt]);
 
   const logoutFromPasswordChange = async () => {
     if (passwordLogoutBusy) return;
@@ -2723,20 +2729,23 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
     }
   };
 
-  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={initialSession.user} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
-  if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
+  if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={initialSession.user} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} canReturnAdministrator={initialSession.canSwitchIdentity === true && Boolean(initialSession.impersonator)} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
+  if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError}>
+    <button type="button" onClick={() => { setDataError(""); setDataAttempt((attempt) => attempt + 1); }}>重试读取资料</button>
+    {initialSession.canSwitchIdentity ? <button type="button" onClick={() => void switchAccountIdentity(null).catch((error: unknown) => setDataError(error instanceof Error ? error.message : "返回管理员失败。"))}>返回管理员</button> : null}
+  </AuthStatusScreen>;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
-  return <OperationsWorkspace key={`${initialSession.role}:${initialSession.user}`} initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
+  return <OperationsWorkspace key={`${initialSession.role}:${initialSession.user}`} initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} canSwitchIdentity={initialSession.canSwitchIdentity === true || nixonAuthenticated} impersonator={initialSession.impersonator} />;
 }
 
-function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole }) {
+function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperator, initialRole, canSwitchIdentity, impersonator }: { initialData?: ImportPayload; initialNixonUnlocked: boolean; initialOperator: string; initialRole: DemoSessionRole; canSwitchIdentity: boolean; impersonator?: string | null }) {
   const defaults = useMemo(() => buildRuntimeDefaults(initialData), [initialData]);
   const [active, setActive] = useWorkspaceLocation<Section>("section", "dashboard");
   const isAvaCalendarView = active === "ava-calendar";
   const sessionOperator = initialOperator || (initialNixonUnlocked ? "Nixon" : defaults.defaultStudents.find((student) => student.owner && student.owner !== "Nixon")?.owner ?? "Abby");
   const isAdminSession = initialNixonUnlocked && initialRole === "admin" && sessionOperator === "Nixon";
-  const [currentOperator, setCurrentOperator] = useState(sessionOperator);
+  const currentOperator = sessionOperator;
   const [displayPreferences, setDisplayPreferences] = useState<DisplayPreferences>(() => readAccountDisplayPreferences(sessionOperator, initialRole, (key) => window.localStorage.getItem(key)));
   const taskDeadlineTimeZone = cleanTimezone(displayPreferences.timezone);
   const taskDeadlineTimeZoneLabel = timezoneLabelFor(taskDeadlineTimeZone, displayPreferences.language);
@@ -4185,7 +4194,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return student && teacher ? bookingHasDstRisk(booking, student, teacher) : false;
   }), [scopedBookings, students, teachers]);
   const ownerOptions = useMemo(() => operationsOwnerFilterOptions(recordStudents.map((student) => student.owner)), [recordStudents]);
-  const operatorOptions = useMemo(() => canUseAdminScope ? Array.from(new Set([sessionOperator, DEMO_LIMITED_ADMIN_USER, ...DEMO_STAFF_USERS, ...ownerOptions.filter((owner) => owner !== "Nixon"), ...recordTeachers.map((teacher) => teacher.name)])) : [sessionOperator], [canUseAdminScope, ownerOptions, recordTeachers, sessionOperator]);
+
   const teamOwnerOptions = useMemo(() => operationsOwnerFormOptions(isAdminView ? undefined : currentOperator), [currentOperator, isAdminView]);
   const sourceGroups = useMemo(() => partitionOpsSources(syncSources), [syncSources]);
   const jiaowubaoAuthorityStatus = useMemo(() => findJiaowubaoAuthorityStatus(syncSources), [syncSources]);
@@ -5407,49 +5416,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       .map((task) => refreshTaskStatus(task, now, taskDeadlineTimeZone)));
   }, [scopedTasks, taskDeadlineTimeZone, taskRefreshKey, taskStudentNames, unclosedTaskFeed.tasks, handoverTaskFeed.tasks]);
 
-  const switchOperator = (operator: string, accountRole?: DemoSessionRole) => {
-    const teacherView = accountRole ? accountRole === "teacher" : teacherOperatorNames.has(operator);
-    const adminScope = accountRole
-      ? accountRole === "admin" || accountRole === "limited-admin"
-      : operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER;
-    const teacher = teacherView ? recordTeachers.find((item) => item.name.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase()) : undefined;
-    const teacherStudentIds = new Set(teacher ? bookings.filter((booking) => booking.teacherId === teacher.id).map((booking) => booking.studentId) : []);
-    const allowedStudents = adminScope ? recordStudents : teacherView ? recordStudents.filter((student) => student.teacher.trim().toLocaleLowerCase() === operator.trim().toLocaleLowerCase() || teacherStudentIds.has(student.id)) : recordStudents.filter((student) => student.owner === operator);
-    setCurrentOperator(operator);
-    setTaskFilter("today");
-    setStudentView(adminScope || teacherView ? "all" : "mine");
-    setStudentOwner("all");
-    setStudentPage(1);
-    setSelectedStudentIds([]);
-    const firstOwnedStudent = allowedStudents[0];
-    const allowedStudentIds = new Set(allowedStudents.map((student) => student.id));
-    if (firstOwnedStudent) setSelectedStudentId(firstOwnedStudent.id);
-    else setSelectedStudentId("");
-    if (teacher) setSelectedTeacherId(teacher.id);
-    const firstBooking = bookings.find((booking) => teacher ? booking.teacherId === teacher.id : allowedStudentIds.has(booking.studentId));
-    const firstMessage = messages.find((message) => allowedStudentIds.has(message.studentId));
-    const firstOperation = operations.find((operation) => allowedStudentIds.has(operation.studentId));
-    if (firstBooking) selectBookingRecord(firstBooking);
-    else {
-      setSelectedBookingId("");
-      setSelectedBookingDate(null);
-      setSelectedBookingDateId(null);
-      setSelectedBookingOccurrenceKey(null);
-      setSelectedBookingSourceDate(null);
-    }
-    if (firstMessage) setSelectedMessageId(firstMessage.id);
-    else setSelectedMessageId("");
-    if (firstOperation) setSelectedOperationId(firstOperation.id);
-    else setSelectedOperationId("");
-    if (!adminScope && !(teacherView ? teacherSectionIds : staffSectionIds).has(active)) setActive("dashboard");
-    if (operator === DEMO_LIMITED_ADMIN_USER && active === "payroll") setActive("dashboard");
-    notify(adminScope ? "已切换到全局管理视图" : teacherView ? `已切换到 ${operator} 的老师视图` : `已切换到 ${operator} 的个人工作视图`);
-  };
-
-  const requestOperatorSwitch = (operator: string) => {
-    if (!canUseAdminScope && operator !== sessionOperator) return;
-    switchOperator(operator);
-  };
 
   const logout = async () => {
     setLogoutBusy(true);
@@ -5633,7 +5599,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           if (nextManagedTrialPaymentSnapshot) {
             replaceManagedTrialPaymentProjection(nextManagedTrialPaymentSnapshot);
           }
-        } else if (!stopped && navigator.onLine) {
+        }
+        if (!stopped && navigator.onLine) {
           reportSharedSync("synced", "已同步");
         }
       },
@@ -12345,7 +12312,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           accountPasswordResetCommandRef.current = null;
           setModal("accountPasswordReset");
         }}
-        onViewAccount={(account: AccountDirectoryRecord) => switchOperator(account.account_name, account.account_role)}
+        onViewAccount={(account: AccountDirectoryRecord) => { void switchAccountIdentity(account.account_id).catch((error: unknown) => notify(error instanceof Error ? error.message : "切换账号失败。")); }}
       />
     </>
   );
@@ -14537,18 +14504,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               </button>
               {operatorMenuOpen ? <section className="operator-menu" role="menu" aria-label={interfaceText.switchView}>
                 <header><span>{interfaceText.switchView}</span></header>
-                <div className="operator-menu-list">
-                  {operatorOptions.map((operator) => {
-                    const profile = operatorProfile(operator, teacherOperatorNames);
-                    const selected = operator === currentOperator;
-                    return <button className={selected ? "operator-menu-item selected" : "operator-menu-item"} type="button" role="menuitemradio" aria-checked={selected} key={operator} onClick={() => { requestOperatorSwitch(operator); setOperatorMenuOpen(false); }}>
-                      <Avatar initials={operator === "Nixon" || operator === DEMO_LIMITED_ADMIN_USER ? "AD" : operator.slice(0, 2).toUpperCase()} tone={profile.tone} />
-                      <span className="operator-menu-copy"><strong>{operatorLabel(operator)}</strong><small>{profile.role}</small></span>
-                      {selected ? <Check size={15} aria-hidden="true" /> : null}
-                    </button>;
-                  })}
-                </div>
+                {canSwitchIdentity && <div className="operator-menu-list"><AccountIdentityPicker user={currentOperator} role={initialRole} onError={notify} /></div>}
                 <footer className="operator-menu-footer">
+                  {impersonator && <button type="button" onClick={() => { void switchAccountIdentity(null).catch((error: unknown) => notify(error instanceof Error ? error.message : "返回管理员失败。")); }}>返回管理员</button>}
                   <button className="operator-password" type="button" onClick={() => { setModal("accountPasswordChange"); setOperatorMenuOpen(false); }}><KeyRound size={15} aria-hidden="true" />{displayPreferences.language === "en-AU" ? "Change password" : "修改密码"}</button>
                   <button className="operator-preferences" type="button" onClick={() => { setDisplayPreferencesOpen(true); setOperatorMenuOpen(false); }}><Settings size={15} aria-hidden="true" />{interfaceText.profilePreferences}</button>
                   <button className="operator-logout" type="button" disabled={logoutBusy} onClick={() => void logout()}><LogOut size={15} aria-hidden="true" />{logoutBusy ? (displayPreferences.language === "en-AU" ? "Signing out" : "正在退出") : interfaceText.logOut}</button>
@@ -14570,7 +14528,8 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       {mobileMenuOpen && <div className="mobile-nav-backdrop" role="presentation" onMouseDown={() => setMobileMenuOpen(false)}>
         <section className="mobile-nav-drawer" id="mobile-function-menu" role="dialog" aria-modal="true" aria-label={displayPreferences.language === "en-AU" ? "All functions" : "全部功能"} onMouseDown={(event) => event.stopPropagation()}>
           <header><div><h2>{displayPreferences.language === "en-AU" ? "Where to work" : "去哪里处理工作"}</h2></div><IconButton label={displayPreferences.language === "en-AU" ? "Close menu" : "关闭功能菜单"} onClick={() => setMobileMenuOpen(false)}><X size={19} /></IconButton></header>
-          <label className="mobile-operator-picker"><span>{interfaceText.currentView}</span><select value={currentOperator} onChange={(event) => requestOperatorSwitch(event.target.value)} aria-label={displayPreferences.language === "en-AU" ? "Switch current operator" : "切换当前操作人"}>{operatorOptions.map((operator) => <option value={operator} key={operator}>{operatorLabel(operator)} · {operatorProfile(operator, teacherOperatorNames).role}</option>)}</select></label>
+          {canSwitchIdentity && <AccountIdentityPicker user={currentOperator} role={initialRole} onError={notify} />}
+          {impersonator && <button className="secondary-button" type="button" onClick={() => { void switchAccountIdentity(null).catch((error: unknown) => notify(error instanceof Error ? error.message : "返回管理员失败。")); }}>返回管理员</button>}
           <div className="mobile-nav-grid">
             {visibleNavigation.map((item) => {
               const Icon = item.icon;

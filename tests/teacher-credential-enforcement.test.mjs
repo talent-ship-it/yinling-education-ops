@@ -43,6 +43,8 @@ function authModule(store) {
     "@/lib/nixon-auth": {}, "@/lib/demo-users": users,
     "@/lib/demo-session-token": tokens, "@/lib/demo-teacher-login": teacherLogin,
     "@/lib/account-credentials": credentials, "@/lib/ops-store": store,
+    "next/headers": { cookies: async () => ({ get: () => undefined }) },
+    "@/lib/account-impersonation": { IMPERSONATION_COOKIE_NAME: "acting" },
   });
 }
 

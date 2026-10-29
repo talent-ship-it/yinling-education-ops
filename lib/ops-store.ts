@@ -4193,6 +4193,41 @@ export async function createAccountSession(input: {
   return rows[0] ?? null;
 }
 
+export async function createAccountImpersonationSession(input: {
+  actorAccountId: string;
+  actorSessionId: string;
+  targetAccountId: string;
+  sessionId: string;
+  tokenHash: string;
+  expectedCredentialVersion: number;
+  expectedAccessVersion: number;
+  userAgent?: string | null;
+}) {
+  const { secret } = configuration();
+  const payload = {
+    p_secret: secret,
+    p_actor_account_id: input.actorAccountId,
+    p_actor_session_id: input.actorSessionId,
+    p_target_account_id: input.targetAccountId,
+    p_session_id: input.sessionId,
+    p_token_hash: input.tokenHash,
+    p_expected_credential_version: input.expectedCredentialVersion,
+    p_expected_access_version: input.expectedAccessVersion,
+    p_user_agent: input.userAgent ?? null,
+  };
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const rows = await rpc<AccountSessionCreateResult[]>("create_account_impersonation_session", payload);
+      return rows[0] ?? null;
+    } catch (error) {
+      // These PostgreSQL failures roll back the entire attempt, so the same
+      // token/session can be retried without creating a second ledger entry.
+      if (!(error instanceof OpsStoreError) || !["55P03", "40P01"].includes(error.code ?? "") || attempt >= 3) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+  }
+}
+
 export async function getAccountSession(tokenHash: string, options: OpsRpcOptions = {}) {
   const { secret } = configuration();
   const rows = await rpc<AccountSessionResolution[]>(ACCOUNT_SESSION_READ_RPC, {

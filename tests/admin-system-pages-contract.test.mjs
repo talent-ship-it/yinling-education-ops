@@ -72,7 +72,7 @@ test("administrator system pages keep visible controls connected to their bounda
   assert.match(accounts, /canManageAccounts=\{isAdminSession\}/);
   assert.match(accounts, /refreshVersion=\{accountLifecycleRefreshVersion\}/);
   assert.match(accounts, /onResetPassword=\{\(account: AccountDirectoryRecord\) =>/);
-  assert.match(accounts, /onViewAccount=\{\(account: AccountDirectoryRecord\) => switchOperator\(account\.account_name, account\.account_role\)\}/);
+  assert.match(accounts, /onViewAccount=\{\(account: AccountDirectoryRecord\) => \{ void switchAccountIdentity\(account\.account_id\)\.catch/);
   assert.match(accountWorkspace, /onUpdateAccess=\{\(change\) => void updateAccess\(change\)\}/);
   assert.match(accountWorkspace, /onSetStatus=\{\(change\) => void updateStatus\(change\)\}/);
   assert.match(accountWorkspace, /onRevokeSessions=\{\(account\) => void revokeSelectedSessions\(account\)\}/);

@@ -1,4 +1,4 @@
-.panel { background:#fff; border:1px solid var(--line,#dce6e3); border-radius:7px; color:var(--ink,#17231e); padding:22px; }
+.panel { background:var(--surface-raised,#fff); border:1px solid var(--line,#dce6e3); border-radius:7px; color:var(--ink,#17231e); padding:22px; }
 .heading { align-items:center; display:flex; justify-content:space-between; margin-bottom:20px; }
 .heading h2 { align-items:center; display:flex; font-size:16px; gap:9px; margin:0; }
 .heading h2 svg { color:#61bdb5; }
@@ -63,6 +63,13 @@
 .grantRow input { accent-color:#278576; height:16px; justify-self:center; width:16px; }
 .grantCheck { align-items:center; display:grid; gap:4px; justify-items:center; }
 .grantCheck small { color:#8c9b93; font-size:9px; }
+.panel :is(.secondary,.loadMore),.dialog { background:var(--surface-raised,#fff); color:var(--ink,#17231e); border-color:var(--line,#dce6e3); }
+.panel :is(.search,.listHeader,.row,.uploads,.uploadRow),.dialog :is(.grantList,.grantRow,.search) { border-color:var(--line,#dce6e3); }
+.panel :is(.fileName,.search input),.dialog :is(.field input,.grantRow) { color:var(--ink,#17231e); }
+.panel :is(.search,.breadcrumbs span,.breadcrumbs button,.listHeader,.size,.empty,.uploadRow small),.dialog :is(.field,.grantHeader,.grantCheck small) { color:var(--muted,#68766e); }
+.panel :is(.actions button,.searchButton,.uploads button,.uploadRow button),.dialog .iconButton { color:var(--brand-deep,#17645e); }
+.panel .secondary:hover:not(:disabled),.panel .actions button:hover:not(:disabled),.dialog :is(.grantHeader,.field input) { background:var(--surface-muted,#f7faf9); }
+.dialog { color-scheme:inherit; }
 @media(max-width:760px) {
   .panel { padding:15px; }
   .toolbar { gap:7px; }

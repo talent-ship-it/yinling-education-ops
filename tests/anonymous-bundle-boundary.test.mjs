@@ -16,7 +16,7 @@ test("anonymous login defers the operations workspace bundle until authenticatio
   assert.match(authClient, /ssr: false/);
   assert.match(authClient, /readInitialSession\(fetch, controller\.signal\)/);
   assert.match(authClient, /AUTH_SESSION_TIMEOUT_MS = 10_000/);
-  assert.match(authClient, /\.catch\(\(\) => \{\s*if \(!controller\.signal\.aborted\) setSession\(null\);\s*\}\)\s*\.finally\(\(\) => \{\s*if \(!controller\.signal\.aborted\) setAuthLoading\(false\);/);
+  assert.match(authClient, /\.catch\(\(error: unknown\) => \{\s*if \(!controller\.signal\.aborted\) \{\s*setSession\(null\);\s*if \(error instanceof IdentitySessionError\) setIdentityError\(error\.message\);\s*\}\s*\}\)\s*\.finally\(\(\) => \{\s*if \(!controller\.signal\.aborted\) setAuthLoading\(false\);/);
   assert.match(authClient, /if \(!session\) return <AuthLoginScreen/);
   assert.match(authClient, /return <OperationsApp initialSession=\{session\} \/>/);
   assert.match(operationsClient, /export default function OperationsApp\(\{ initialSession \}: \{ initialSession: OperationsInitialSession \}\)/);

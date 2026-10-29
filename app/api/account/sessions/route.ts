@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { IMPERSONATION_COOKIE_NAME } from "@/lib/account-impersonation";
 
 import { resolveAccountRequestContext } from "@/lib/account-request-context";
 import { getAccountSessions, OpsStoreError, revokeAccountSessions } from "@/lib/ops-store";
@@ -57,8 +58,12 @@ export async function DELETE(request: Request) {
       reauthRequired: targetAccountId === context.session.accountId,
     });
     if (targetAccountId === context.session.accountId) {
-      response.cookies.set("yinling_demo_auth", "", { path: "/", maxAge: 0 });
-      response.cookies.set("yinling_nixon_auth", "", { path: "/", maxAge: 0 });
+      if (context.session.impersonator) {
+        response.cookies.set(IMPERSONATION_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+      } else {
+        response.cookies.set("yinling_demo_auth", "", { path: "/", maxAge: 0 });
+        response.cookies.set("yinling_nixon_auth", "", { path: "/", maxAge: 0 });
+      }
     }
     return response;
   } catch {

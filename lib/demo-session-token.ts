@@ -35,6 +35,8 @@ export type DemoSessionIdentity = Readonly<{
   /** Effective server-owned authorization for database-backed sessions. */
   permissions?: readonly string[];
   scopeMembers?: readonly DemoSessionScopeMember[];
+  /** Original administrator remains separate from the effective account. */
+  impersonator?: Readonly<{ user: string; accountId: string; sessionId: string }>;
 }>;
 
 export type ServerSessionEnvelope = Readonly<{

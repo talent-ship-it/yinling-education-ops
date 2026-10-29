@@ -1,6 +1,9 @@
 import "server-only";
 
 import { createHmac } from "node:crypto";
+import { cookies } from "next/headers";
+import { IMPERSONATION_COOKIE_NAME, resolveImpersonatedSession } from "@/lib/account-impersonation";
+import { NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 
 import {
   matchesLimitedAdminPassword,
@@ -83,6 +86,8 @@ type CurrentDemoSessionOptions = Readonly<{
   /** Only the session-status and self-service password routes may opt in. */
   allowPasswordChangeRequired?: boolean;
   rpcOptions?: OpsRpcOptions;
+  /** Only the switch/return endpoint may read the original account directly. */
+  ignoreImpersonation?: boolean;
 }>;
 
 function serverSessionIdentity(session: AccountSessionResolution): DemoSessionIdentity {
@@ -152,7 +157,22 @@ export async function getCurrentDemoSession(
   options: CurrentDemoSessionOptions = {},
 ): Promise<CurrentDemoSessionResolution> {
   const server = await currentServerSession(value, options);
-  if (server) return server;
+  if (server) {
+    if (!server.session || options.ignoreImpersonation) return server;
+    const cookieStore = await cookies();
+    const token = cookieStore.get(IMPERSONATION_COOKIE_NAME)?.value;
+    if (!token) return server;
+    const effective = await resolveImpersonatedSession({
+      actor: server.session,
+      token,
+      elevationCookie: cookieStore.get(NIXON_COOKIE_NAME)?.value,
+      rpcOptions: options.rpcOptions,
+    });
+    if ("session" in effective && effective.mustChangePassword && !options.allowPasswordChangeRequired) {
+      return { error: "请先修改管理员重置的临时密码。", status: 403 };
+    }
+    return effective;
+  }
 
   const session = getDemoSession(value);
   if (!session) return { error: "请先输入访问密码。", status: 401 };
