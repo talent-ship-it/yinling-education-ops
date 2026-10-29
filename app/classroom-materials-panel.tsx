@@ -355,8 +355,10 @@ function useMaterialNavigation() {
   return { folderId, query, setQuery, search, setSearch, revision, browse, refresh: () => setRevision((value) => value + 1) };
 }
 
-function materialListParams(folderId: string | null, search: string, offset = 0) {
-  return new URLSearchParams({ folderId: folderId || "root", q: search, offset: String(offset), limit: "100" });
+function materialListParams(folderId: string | null, search: string, offset = 0, viewAsTeacher?: string) {
+  const params = new URLSearchParams({ folderId: folderId || "root", q: search, offset: String(offset), limit: "100" });
+  if (viewAsTeacher) params.set("viewAsTeacher", viewAsTeacher);
+  return params;
 }
 
 function uniqueRows<T extends { id: string }>(items: T[]) {
@@ -368,23 +370,23 @@ function mergeMaterialPage(current: MaterialView, key: string, next: MaterialLis
   return { key, data: { ...next, folders: uniqueRows([...current.data.folders, ...next.folders]), materials: uniqueRows([...current.data.materials, ...next.materials]) } };
 }
 
-function useMaterialListing(navigation: ReturnType<typeof useMaterialNavigation>, setError: (message: string) => void) {
+function useMaterialListing(navigation: ReturnType<typeof useMaterialNavigation>, setError: (message: string) => void, viewAsTeacher?: string) {
   const { folderId, search, revision } = navigation;
   const [view, setView] = useState<MaterialView>({ key: "" });
   const [moreBusy, setMoreBusy] = useState(false);
-  const key = (folderId || "root") + ":" + search + ":" + revision;
+  const key = JSON.stringify([viewAsTeacher, folderId, search, revision]);
   useEffect(() => {
     const controller = new AbortController();
-    void request<MaterialList>("?" + materialListParams(folderId, search), { signal: controller.signal })
+    void request<MaterialList>("?" + materialListParams(folderId, search, 0, viewAsTeacher), { signal: controller.signal })
       .then((data) => { if (!controller.signal.aborted) setView({ key, data }); })
       .catch((error) => { if (!controller.signal.aborted) setView({ key, error: messageOf(error) }); });
     return () => controller.abort();
-  }, [folderId, search, key]);
+  }, [folderId, search, key, viewAsTeacher]);
   const more = async () => {
     setMoreBusy(true); setError("");
     const offset = view.data?.nextOffset ?? 0;
     try {
-      const next = await request<MaterialList>("?" + materialListParams(folderId, search, offset));
+      const next = await request<MaterialList>("?" + materialListParams(folderId, search, offset, viewAsTeacher));
       setView((current) => mergeMaterialPage(current, key, next));
     } catch (error) { setError(messageOf(error)); } finally { setMoreBusy(false); }
   };
@@ -392,7 +394,7 @@ function useMaterialListing(navigation: ReturnType<typeof useMaterialNavigation>
   return { loading, data: loading ? undefined : view.data, error: loading ? undefined : view.error, moreBusy, more };
 }
 
-type MaterialInteractions = { canManage: boolean; canPresent: boolean; selectedClassroom?: Classroom; busy: string; act: (material: Material, present: boolean) => void; grant: (target: GrantTarget) => void };
+type MaterialInteractions = { canManage: boolean; canPresent: boolean; readOnly?: boolean; selectedClassroom?: Classroom; busy: string; act: (material: Material, present: boolean) => void; grant: (target: GrantTarget) => void };
 function materialActionDisabled(material: Material, busy: string) { return material.status !== "ready" || !!busy; }
 function materialCanDownload(material: Material) { return material.kind === "link" || !!material.canDownload; }
 function PresentMaterialAction({ material, interaction }: { material: Material; interaction: MaterialInteractions }) {
@@ -402,6 +404,7 @@ function DownloadMaterialAction({ material, interaction }: { material: Material;
   return <button type="button" disabled={materialActionDisabled(material, interaction.busy)} onClick={() => interaction.act(material, false)}><Download size={14} />{material.kind === "link" ? "打开链接" : "下载"}</button>;
 }
 function MaterialActions({ material, interaction }: { material: Material; interaction: MaterialInteractions }) {
+  if (interaction.readOnly) return <span className={styles.size}>已授权</span>;
   return <div className={styles.actions}>
     {interaction.canPresent && <PresentMaterialAction material={material} interaction={interaction} />}
     {materialCanDownload(material) && <DownloadMaterialAction material={material} interaction={interaction} />}
@@ -569,8 +572,8 @@ function MaterialAlerts({ errors }: { errors: Array<string | undefined> }) {
   return errors.filter(Boolean).map((error, index) => <p role="alert" className={styles.error} key={index}>{error}</p>);
 }
 
-export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, notify }: {
-  teachers: Teacher[]; selectedClassroom?: Classroom; notify?: (message: string) => void;
+export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, notify, viewAsTeacher }: {
+  teachers: Teacher[]; selectedClassroom?: Classroom; notify?: (message: string) => void; viewAsTeacher?: string;
 }) {
   const navigation = useMaterialNavigation();
   const { folderId, refresh, browse } = navigation;
@@ -580,7 +583,7 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
   const [dragging, setDragging] = useState(false);
   const uploadJobs = useMaterialUploadJobs(refresh);
   const { uploadRows } = uploadJobs;
-  const listing = useMaterialListing(navigation, setActionError);
+  const listing = useMaterialListing(navigation, setActionError, viewAsTeacher);
   const { loading } = listing;
   const data = listing.data || { canManage: false, configured: false, canPresent: false, breadcrumbs: [] };
   const canManage = !!data.canManage;
@@ -592,12 +595,13 @@ export default function ClassroomMaterialsPanel({ teachers, selectedClassroom, n
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
     onDrop={(event) => { event.preventDefault(); setDragging(false); if (!canUpload) return; try { void queueFiles(materialDropFiles(event.dataTransfer)); } catch (error) { setActionError(messageOf(error)); } }}>
     <header className={styles.heading}><h2><Folder size={21} />资料库</h2><button type="button" className={styles.iconButton} aria-label="刷新资料库" onClick={refresh} disabled={loading}><RefreshCw size={16} /></button></header>
+    {viewAsTeacher && <p className="inline-note">正在预览 {viewAsTeacher} 可见的教材。课堂使用和下载请使用该老师账号登录。</p>}
     <div className={styles.toolbar}><MaterialUploadControls canManage={canManage} canUpload={canUpload} queueFiles={queueFiles} create={setModal} /><MaterialSearch navigation={navigation} /></div>
     <MaterialBreadcrumbs folders={data.breadcrumbs} browse={browse} />
     <MaterialAlerts errors={[listing.error, storageError(listing.data), actionError]} />
     <div className={styles.list} aria-busy={loading}>
       <div className={styles.listHeader}><span>名称</span><span>大小</span><span>操作</span></div>
-      <MaterialListBody listing={listing} navigation={navigation} interaction={{ canManage, canPresent: !!data.canPresent, selectedClassroom, busy: actionBusy, act: actOnMaterial, grant: setGrantTarget }} />
+      <MaterialListBody listing={listing} navigation={navigation} interaction={{ canManage, canPresent: !!data.canPresent, readOnly: !!viewAsTeacher, selectedClassroom, busy: actionBusy, act: actOnMaterial, grant: setGrantTarget }} />
     </div>
     <MoreMaterials listing={listing} />
     <UploadQueue uploads={{ rows: uploadRows, pause: (id) => pauseUploadJob(uploadJobs, id), resume: (id) => resumeUploadJob(uploadJobs, id), clear: () => clearCompletedUploads(uploadJobs) }} />

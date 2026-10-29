@@ -179,9 +179,10 @@ test("uses the complete role-scoped navigation in the 375px More drawer", async 
     "function navigationFor",
   );
   const navigationIds = [...definitions.matchAll(/\bid: "([^"]+)"/g)].map((match) => match[1]);
-  assert.equal(navigationIds.length, 18);
+  assert.equal(navigationIds.length, 19);
   assert.deepEqual(navigationIds, [
     "dashboard",
+    "resources",
     "students",
     "teachers",
     "schedule",
@@ -267,7 +268,7 @@ test("keeps page navigation and classroom/API boundaries aligned for every signe
   assert.deepEqual(sectionIds("staffSectionIds"), [
     "dashboard", "students", "teachers", "schedule", "ava-calendar", "courses", "lp", "operations", "renewals", "messages", "files", "accounts",
   ]);
-  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
+  assert.deepEqual(sectionIds("teacherSectionIds"), ["dashboard", "resources", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
   assert.doesNotMatch(client, /staffSectionIds = new Set<Section>\([^)]*"classroom"/s);
   assert.doesNotMatch(client, /teacherSectionIds = new Set<Section>\([^)]*"payroll"/s);
   assert.match(client, /const noPayrollAdminSectionIds = new Set<Section>\(navigationDefinitions\.filter\(\(item\) => item\.id !== "payroll"\)/);
