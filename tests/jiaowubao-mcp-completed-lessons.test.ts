@@ -87,6 +87,29 @@ test("logical pages preserve the persisted hundred-row cursor and reserve every 
   assert.equal(source.names.filter((name) => name === "get_branch_detail").length, 1);
 });
 
+test("a delayed MCP handshake cannot consume the interval before the first business request", async (context) => {
+  let clock = Date.now();
+  context.mock.method(Date, "now", () => clock);
+  const starts: number[] = [];
+  const source = fixture((args) => {
+    starts.push(clock);
+    return paged(20, args);
+  });
+  const fetchImpl: typeof fetch = async (url, init) => {
+    if (JSON.parse(String(init?.body)).method === "initialize") clock += 11_000;
+    return source.fetchImpl(url, init);
+  };
+  let nextAllowed = clock;
+  const reservations: number[] = [];
+  await provider({ ...source, fetchImpl }, async () => {
+    clock = Math.max(clock, nextAllowed);
+    reservations.push(clock);
+    nextAllowed = clock + 3_200;
+  }).readPage(QUERY);
+  assert.deepEqual(starts, reservations);
+  assert.equal(starts[1]! - starts[0]!, 3_200);
+});
+
 test("truncated native content reduces page size at the absolute offset without dropping or repeating records", async () => {
   const source = fixture((args) => Number(args.limit) === 10 && Number(args.page) === 3
     ? { text: `{"truncated":"${"x".repeat(20_000)}` } : paged(113, args));

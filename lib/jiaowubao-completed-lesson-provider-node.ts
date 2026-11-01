@@ -32,7 +32,6 @@ async function readNativePage(
     if (Date.now() >= config.deadlineAt) {
       throw new JiaowubaoOpenApiError("request_timeout", "教务宝已消课本轮读取时间已到。");
     }
-    await config.beforeRequest();
     try {
       const response = await native({
         ...input.query, page: input.offset / limit + 1, limit,
@@ -53,6 +52,7 @@ export function createJiaowubaoCompletedLessonReader(config: Config) {
     fetchImpl: config.fetchImpl,
     expectedBranchId: env.JIAOWUBAO_MCP_EXPECTED_BRANCH_ID || undefined,
     expectedBranchTitle: env.JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE || undefined,
+    beforeRequest: config.beforeRequest,
   }) : null;
   return Object.freeze({
     source: useMcp ? "mcp" as const : "rest" as const,

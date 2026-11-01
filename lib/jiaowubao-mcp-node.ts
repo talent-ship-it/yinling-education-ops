@@ -11,7 +11,13 @@ const MCP_URL = "https://card.jwbpro.com/open/jwb/mcp";
 const MAX_RESPONSE_BYTES = 1_048_576;
 const REQUEST_TIMEOUT_MS = 12_000;
 type JsonRecord = Record<string, unknown>;
-type ReaderConfig = Readonly<{ token: string; fetchImpl?: typeof fetch; expectedBranchId?: string; expectedBranchTitle?: string }>;
+type ReaderConfig = Readonly<{
+  token: string;
+  fetchImpl?: typeof fetch;
+  expectedBranchId?: string;
+  expectedBranchTitle?: string;
+  beforeRequest?: () => Promise<void>;
+}>;
 
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -406,20 +412,15 @@ function createMcpToolReader(config: ReaderConfig) {
     }
   }
 
-  return async (name: "query_schedule_list" | "query_lesson_list", args: JsonRecord, options: JiaowubaoScheduleRequestOptions = {}) => {
+  async function withTimeout(
+    options: JiaowubaoScheduleRequestOptions,
+    operation: (signal: AbortSignal) => Promise<JsonRecord>,
+  ) {
     const timeout = readTimeout(options);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      if (!initialized) {
-        version = initializedVersion(await post("initialize", controller.signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
-        await post("notifications/initialized", controller.signal);
-        if (config.expectedBranchId !== undefined || config.expectedBranchTitle !== undefined) {
-          assertInstitution(toolData(await post("tools/call", controller.signal, { name: "get_branch_detail", arguments: {} })), config);
-        }
-        initialized = true;
-      }
-      return toolData(await post("tools/call", controller.signal, { name, arguments: args }));
+      return await operation(controller.signal);
     } catch (error) {
       if (controller.signal.aborted) requestTimeout();
       if (error instanceof JiaowubaoOpenApiError) throw error;
@@ -427,6 +428,31 @@ function createMcpToolReader(config: ReaderConfig) {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async function initialize(signal: AbortSignal) {
+    if (!initialized) {
+      version = initializedVersion(await post("initialize", signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
+      await post("notifications/initialized", signal);
+      if (config.expectedBranchId !== undefined || config.expectedBranchTitle !== undefined) {
+        assertInstitution(toolData(await post("tools/call", signal, { name: "get_branch_detail", arguments: {} })), config);
+      }
+      initialized = true;
+    }
+    return {};
+  }
+
+  return async (name: "query_schedule_list" | "query_lesson_list", args: JsonRecord, options: JiaowubaoScheduleRequestOptions = {}) => {
+    const query = (signal: AbortSignal) => post("tools/call", signal, { name, arguments: args }).then(toolData);
+    if (!config.beforeRequest) {
+      return withTimeout(options, async (signal) => {
+        await initialize(signal);
+        return query(signal);
+      });
+    }
+    if (!initialized) await withTimeout(options, initialize);
+    await config.beforeRequest();
+    return withTimeout(options, query);
   };
 }
 

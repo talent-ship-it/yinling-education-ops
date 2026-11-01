@@ -189,7 +189,7 @@ function validStageReceipt(value: Readonly<Record<string, unknown>>, runId: stri
   return value.runId === runId && value.pageIndex === pageIndex && value.rowCount === rowCount;
 }
 
-function progressResult(collection: ActiveMemberCollection, sourcePageCount = 0): JiaowubaoCompletedLessonSyncResult {
+function progressResult(collection: ActiveMemberCollection, sourcePageCount = 0, retryAfterSeconds = 300): JiaowubaoCompletedLessonSyncResult {
   return Object.freeze({
     outcome: "in_progress",
     month: collection.month,
@@ -197,7 +197,7 @@ function progressResult(collection: ActiveMemberCollection, sourcePageCount = 0)
     memberCount: collection.memberCount,
     completedMemberCount: collection.completedMemberCount,
     sourcePageCount,
-    retryAfterSeconds: 300,
+    retryAfterSeconds,
   });
 }
 
@@ -415,6 +415,8 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
   const runKey = `jwb-completed-lessons-sync:${now}:${period.month}`;
   const workerStartedAt = Date.now();
   let acquired = false;
+  let collection: ActiveMemberCollection | null = null;
+  let sourcePageCount = 0;
   try {
     const lease = await claimJiaowubaoCompletedLessonSyncLease({ month: period.month, runKey, actor: ACTOR });
     if (!lease || typeof lease.acquired !== "boolean" || typeof lease.runKey !== "string"
@@ -426,7 +428,7 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
     }
     acquired = true;
 
-    let collection = readCollection(
+    collection = readCollection(
       await getJiaowubaoCompletedLessonMemberCollection({ month: period.month, runKey, actor: ACTOR }),
       period.month,
     );
@@ -528,7 +530,6 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
           return progressResult(collection);
         }
       }
-      let sourcePageCount = 0;
       const reader = createJiaowubaoCompletedLessonReader({
         deadlineAt: workerStartedAt + WORKER_TIME_BUDGET_MS,
         beforeRequest: async () => {
@@ -695,6 +696,15 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
       memberCount: completedCollection.memberCount,
       completedMemberCount: completedCollection.completedMemberCount,
     });
+  } catch (error) {
+    if (collection && ["collecting", "ready"].includes(collection.state)
+      && error instanceof JiaowubaoOpenApiError
+      && ["rate_limited", "upstream_unavailable", "request_timeout"].includes(error.code)) {
+      const retry = error.retryAfterSeconds;
+      return progressResult(collection, sourcePageCount,
+        typeof retry === "number" && Number.isSafeInteger(retry) && retry > 0 && retry <= 3_600 ? retry : 300);
+    }
+    throw error;
   } finally {
     if (acquired) {
       await releaseJiaowubaoCompletedLessonSyncLease({ month: period.month, runKey, actor: ACTOR }).catch(() => undefined);
