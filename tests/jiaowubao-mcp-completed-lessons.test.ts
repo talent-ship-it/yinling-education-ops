@@ -48,12 +48,17 @@ function paged(total: number, args: Args): ToolResult {
   return { total: String(total), lists: Array.from({ length: Math.max(0, Math.min(Number(args.limit), total - offset)) }, (_, i) => row(offset + i)) };
 }
 
-function provider(source: ReturnType<typeof fixture>, beforeRequest: () => Promise<void> = async () => undefined) {
+function provider(
+  source: ReturnType<typeof fixture>,
+  beforeRequest: () => Promise<void> = async () => undefined,
+  env: Record<string, string | undefined> = {},
+) {
   return createJiaowubaoCompletedLessonReader({
     env: {
       JIAOWUBAO_SCHEDULE_SOURCE: "mcp", INSIDERLEADS_JWB_MCP_TOKEN: TOKEN,
       JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "Synthetic Institution",
       JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "7",
+      ...env,
     },
     fetchImpl: source.fetchImpl, beforeRequest, deadlineAt: Date.now() + 60_000,
   });
@@ -74,6 +79,95 @@ test("lesson MCP pins the institution, forces completed member scope and accepts
   assert.deepEqual(await reader.readPage(QUERY), { list: [], total: 0 });
   assert.deepEqual(source.names, ["get_branch_detail", "query_lesson_list"]);
   assert.deepEqual(source.calls, [{ ...QUERY, limit: 10, over: 1, order: "asc" }]);
+});
+
+test("monthly MCP selection uses configured token and institution independently of the schedule transport", async () => {
+  for (const scheduleSource of [undefined, "rest"]) {
+    for (const pins of [
+      { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "Synthetic Institution", JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: undefined },
+      { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: undefined, JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "7" },
+      { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "Synthetic Institution", JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "7" },
+    ]) {
+      const source = fixture((args) => paged(0, args));
+      const reader = provider(source, undefined, { JIAOWUBAO_SCHEDULE_SOURCE: scheduleSource, ...pins });
+      assert.equal(reader.source, "mcp");
+      assert.deepEqual(await reader.readPage(QUERY), { list: [], total: 0 });
+      assert.deepEqual(source.names, ["get_branch_detail", "query_lesson_list"]);
+    }
+  }
+});
+
+test("monthly reader keeps REST when automatic MCP configuration is incomplete", () => {
+  for (const scheduleSource of [undefined, "rest"]) {
+    for (const incomplete of [
+      { INSIDERLEADS_JWB_MCP_TOKEN: undefined },
+      { INSIDERLEADS_JWB_MCP_TOKEN: "" },
+      { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: undefined, JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: undefined },
+      { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "", JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "" },
+    ]) {
+      const source = fixture((args) => paged(0, args));
+      const reader = provider(source, undefined, { JIAOWUBAO_SCHEDULE_SOURCE: scheduleSource, ...incomplete });
+      assert.equal(reader.source, "rest");
+      assert.deepEqual(source.names, []);
+      assert.deepEqual(source.calls, []);
+    }
+  }
+});
+
+test("monthly MCP configuration rejects invalid tokens and explicit missing tokens before fetching", () => {
+  const source = fixture((args) => paged(0, args));
+  for (const scheduleSource of [undefined, "rest", "mcp"]) {
+    assert.throws(() => provider(source, undefined, {
+      JIAOWUBAO_SCHEDULE_SOURCE: scheduleSource, INSIDERLEADS_JWB_MCP_TOKEN: "invalid token",
+    }), errorCode("not_configured"));
+  }
+  for (const token of [undefined, ""]) {
+    assert.throws(() => provider(source, undefined, { INSIDERLEADS_JWB_MCP_TOKEN: token }), errorCode("not_configured"));
+  }
+  assert.deepEqual(source.names, []);
+  assert.deepEqual(source.calls, []);
+});
+
+test("explicit monthly MCP retains its existing optional institution pin behavior", async () => {
+  const source = fixture((args) => paged(0, args));
+  const reader = provider(source, undefined, {
+    JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: undefined, JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: undefined,
+  });
+  assert.equal(reader.source, "mcp");
+  assert.deepEqual(await reader.readPage(QUERY), { list: [], total: 0 });
+  assert.deepEqual(source.names, ["query_lesson_list"]);
+});
+
+test("automatically selected monthly MCP rejects mismatched institution pins before lesson reads", async () => {
+  for (const mismatch of [
+    { JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "Other Synthetic Institution" },
+    { JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "8" },
+  ]) {
+    const source = fixture((args) => paged(0, args));
+    const reader = provider(source, undefined, { JIAOWUBAO_SCHEDULE_SOURCE: "rest", ...mismatch });
+    assert.equal(reader.source, "mcp");
+    await assert.rejects(reader.readPage(QUERY), errorCode("upstream_rejected"));
+    assert.deepEqual(source.names, ["get_branch_detail"]);
+    assert.deepEqual(source.calls, []);
+  }
+});
+
+test("monthly MCP captures its transport, token and institution pins when the reader is created", async () => {
+  const source = fixture((args) => paged(0, args));
+  const env = {
+    JIAOWUBAO_SCHEDULE_SOURCE: "rest", INSIDERLEADS_JWB_MCP_TOKEN: TOKEN,
+    JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "Synthetic Institution", JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "7",
+  };
+  const reader = createJiaowubaoCompletedLessonReader({
+    env, fetchImpl: source.fetchImpl, beforeRequest: async () => undefined, deadlineAt: Date.now() + 60_000,
+  });
+  Object.assign(env, {
+    JIAOWUBAO_SCHEDULE_SOURCE: "", INSIDERLEADS_JWB_MCP_TOKEN: "",
+    JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE: "", JIAOWUBAO_MCP_EXPECTED_BRANCH_ID: "",
+  });
+  assert.equal(reader.source, "mcp");
+  assert.deepEqual(await reader.readPage(QUERY), { list: [], total: 0 });
+  assert.deepEqual(source.names, ["get_branch_detail", "query_lesson_list"]);
 });
 
 test("logical pages preserve the persisted hundred-row cursor and reserve every physical request", async () => {
@@ -158,15 +252,33 @@ for (const [label, mutate] of [
 }
 
 test("semantic supplier rate limiting stays retryable and never switches transport", async () => {
-  const source = fixture(() => ({ error: true }));
-  await assert.rejects(provider(source).readPage(QUERY), (error: unknown) => {
-    assert.ok(error instanceof JiaowubaoOpenApiError);
-    assert.equal(error.code, "rate_limited");
-    assert.equal(error.retryAfterSeconds, 60);
-    return true;
-  });
-  assert.equal(source.calls.length, 1);
+  for (const scheduleSource of ["mcp", "rest"]) {
+    const source = fixture(() => ({ error: true }));
+    await assert.rejects(provider(source, undefined, { JIAOWUBAO_SCHEDULE_SOURCE: scheduleSource }).readPage(QUERY), (error: unknown) => {
+      assert.ok(error instanceof JiaowubaoOpenApiError);
+      assert.equal(error.code, "rate_limited");
+      assert.equal(error.retryAfterSeconds, 60);
+      return true;
+    });
+    assert.equal(source.calls.length, 1);
+  }
 });
+
+for (const httpStatus of [401, 403] as const) {
+  test(`automatically selected monthly MCP HTTP ${httpStatus} never switches to REST`, async () => {
+    const source = fixture((args) => paged(0, args));
+    let calls = 0;
+    const fetchImpl: typeof fetch = async (url, init) => {
+      if (++calls === 4) return new Response(null, { status: httpStatus });
+      return source.fetchImpl(url, init);
+    };
+    const reader = provider({ ...source, fetchImpl }, undefined, { JIAOWUBAO_SCHEDULE_SOURCE: "rest" });
+    await assert.rejects(reader.readPage(QUERY), errorCode("not_authorized"));
+    assert.equal(calls, 4);
+    assert.deepEqual(source.names, ["get_branch_detail"]);
+    assert.deepEqual(source.calls, []);
+  });
+}
 
 for (const httpStatus of [401, 403] as const) {
   for (const [stage, requestIndex] of [
