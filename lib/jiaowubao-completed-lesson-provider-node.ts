@@ -46,12 +46,16 @@ async function readNativePage(
 
 export function createJiaowubaoCompletedLessonReader(config: Config) {
   const env = config.env ?? process.env;
-  const useMcp = env.JIAOWUBAO_SCHEDULE_SOURCE === "mcp";
+  const token = env.INSIDERLEADS_JWB_MCP_TOKEN ?? "";
+  const expectedBranchId = env.JIAOWUBAO_MCP_EXPECTED_BRANCH_ID || undefined;
+  const expectedBranchTitle = env.JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE || undefined;
+  const useMcp = env.JIAOWUBAO_SCHEDULE_SOURCE === "mcp"
+    || Boolean(token && (expectedBranchId || expectedBranchTitle));
   const native = useMcp ? createJiaowubaoMcpCompletedLessonReader({
-    token: env.INSIDERLEADS_JWB_MCP_TOKEN ?? "",
+    token,
     fetchImpl: config.fetchImpl,
-    expectedBranchId: env.JIAOWUBAO_MCP_EXPECTED_BRANCH_ID || undefined,
-    expectedBranchTitle: env.JIAOWUBAO_MCP_EXPECTED_BRANCH_TITLE || undefined,
+    expectedBranchId,
+    expectedBranchTitle,
     beforeRequest: config.beforeRequest,
   }) : null;
   return Object.freeze({
