@@ -2439,9 +2439,9 @@ function AuthPasswordChangeScreen({ user, onChanged, onLogout, logoutBusy, logou
   </main>;
 }
 
-async function fetchSupabaseSnapshot() {
-  const response = await fetch("/api/app-snapshot", { cache: "no-store" });
-  const body = await response.json().catch(() => ({}));
+async function fetchSupabaseSnapshot(signal?: AbortSignal) {
+  const { response, body: receivedBody } = await fetchJsonWithTimeout(fetch, "/api/app-snapshot", { cache: "no-store", signal }, 30_000);
+  const body = receivedBody ?? {};
   if (!response.ok) throw new Error(body.error || "真实资料读取失败。");
   const payload = body as ImportPayload;
   const managedExamSnapshot = parseManagedExamProjectionSnapshot(
@@ -2671,14 +2671,16 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
   const [passwordLogoutBusy, setPasswordLogoutBusy] = useState(false);
   const [passwordLogoutError, setPasswordLogoutError] = useState("");
   const [dataError, setDataError] = useState("");
+  const [dataAttempt, setDataAttempt] = useState(0);
 
   useEffect(() => {
     if (sessionMustChangePassword) return;
 
     let active = true;
+    const controller = new AbortController();
     Promise.all([
-      fetchSupabaseSnapshot(),
-      fetch("/api/nixon-session", { cache: "no-store" }).then((response) => response.json()).catch(() => ({ ok: false })),
+      fetchSupabaseSnapshot(controller.signal),
+      fetchJsonWithTimeout(fetch, "/api/nixon-session", { cache: "no-store", signal: controller.signal }).then(({ body }) => body ?? { ok: false }).catch(() => ({ ok: false })),
     ])
       .then(([payload, nixonSession]) => {
         if (!active) return;
@@ -2688,14 +2690,15 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setDataError(error instanceof Error ? error.message : "Supabase 数据读取失败。");
+        setDataError(error instanceof Error && error.name !== "AbortError" ? error.message : "资料读取超时，请重试。");
         setInitialData(null);
       });
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [sessionMustChangePassword]);
+  }, [sessionMustChangePassword, dataAttempt]);
 
   const logoutFromPasswordChange = async () => {
     if (passwordLogoutBusy) return;
@@ -2724,7 +2727,9 @@ export default function OperationsApp({ initialSession }: { initialSession: Oper
   };
 
   if (sessionMustChangePassword) return <AuthPasswordChangeScreen user={initialSession.user} onChanged={() => setSessionMustChangePassword(false)} onLogout={() => void logoutFromPasswordChange()} logoutBusy={passwordLogoutBusy} logoutError={passwordLogoutError} />;
-  if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError} />;
+  if (dataError) return <AuthStatusScreen title="无法读取真实资料" detail={dataError}>
+    <button type="button" onClick={() => { setDataError(""); setDataAttempt((attempt) => attempt + 1); }}>重试读取资料</button>
+  </AuthStatusScreen>;
   if (!initialData) return <AuthStatusScreen title="正在加载资料" detail="已通过验证，正在读取学生和老师数据。" />;
 
   return <OperationsWorkspace key={`${initialSession.role}:${initialSession.user}`} initialData={initialData} initialNixonUnlocked={nixonAuthenticated} initialOperator={initialSession.user} initialRole={workspaceSessionRole(initialSession.role)} />;
@@ -5633,8 +5638,9 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           if (nextManagedTrialPaymentSnapshot) {
             replaceManagedTrialPaymentProjection(nextManagedTrialPaymentSnapshot);
           }
-        } else if (!stopped && navigator.onLine) {
-          reportSharedSync("synced", "已同步");
+        }
+        if (!stopped && navigator.onLine) {
+          setSharedSyncState((state) => state === "error" || state === "offline" ? "synced" : state);
         }
       },
     });
