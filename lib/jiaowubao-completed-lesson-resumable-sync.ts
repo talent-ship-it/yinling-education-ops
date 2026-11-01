@@ -1,4 +1,5 @@
 import { monthlyHourCollectionPeriod, monthlyHourCoverage, monthlyHourRefreshDue } from "@/lib/monthly-hour-period";
+import { createJiaowubaoCompletedLessonReader } from "@/lib/jiaowubao-completed-lesson-provider-node";
 import {
   JIAOWUBAO_COMPLETED_LESSON_SNAPSHOT_SOURCE_KEY,
   JIAOWUBAO_COMPLETED_LESSON_COLLECTION_FORMAT,
@@ -50,6 +51,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 const MEMBER_SOURCE_CALL_BUDGET = 50;
 const WORKER_TIME_BUDGET_MS = 220_000;
+
+class CompletedLessonReadBudgetError extends Error {}
 
 export type JiaowubaoCompletedLessonSyncOutcome = "applied" | "no_change" | "already_running" | "in_progress" | "blocked";
 
@@ -407,7 +410,8 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
   if (forceIfBlockedOnly && !force) {
     throw new Error("jiaowubao_completed_lesson_blocked_force_invalid");
   }
-  let period = monthlyHourCollectionPeriod(input.month, new Date(now));
+  const desiredPeriod = monthlyHourCollectionPeriod(input.month, new Date(now));
+  let period = desiredPeriod;
   const runKey = `jwb-completed-lessons-sync:${now}:${period.month}`;
   const workerStartedAt = Date.now();
   let acquired = false;
@@ -513,18 +517,44 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
         }
         throw new Error("jiaowubao_completed_lesson_member_current_pointer_conflict");
       }
+      if (period.end < desiredPeriod.end && collection.completedMemberCount === 0 && collection.rowCount === 0) {
+        const rechecked = await collectCompletedScheduleWithMemberIds(period);
+        if (rechecked.snapshot.manifest.revision !== collection.scheduleRevision
+          || rechecked.memberSetSha256 !== collection.scheduleMemberSetSha256
+          || rechecked.memberIds.length !== collection.scheduleMemberCount) {
+          await abortJiaowubaoCompletedLessonMemberCollection({
+            runId: collection.runId, runKey, reason: "schedule_changed", actor: ACTOR,
+          });
+          return progressResult(collection);
+        }
+      }
       let sourcePageCount = 0;
+      const reader = createJiaowubaoCompletedLessonReader({
+        deadlineAt: workerStartedAt + WORKER_TIME_BUDGET_MS,
+        beforeRequest: async () => {
+          if (sourcePageCount >= MEMBER_SOURCE_CALL_BUDGET || Date.now() - workerStartedAt >= WORKER_TIME_BUDGET_MS) {
+            throw new CompletedLessonReadBudgetError();
+          }
+          await reserveSourceRequest(period.month, runKey);
+          if (Date.now() - workerStartedAt >= WORKER_TIME_BUDGET_MS) throw new CompletedLessonReadBudgetError();
+          sourcePageCount += 1;
+        },
+      });
       while (collection.state === "collecting"
         && sourcePageCount < MEMBER_SOURCE_CALL_BUDGET
         && Date.now() - workerStartedAt < WORKER_TIME_BUDGET_MS) {
         const memberId = collection.nextMemberId!;
         const page = collection.nextPage!;
         const targetVersion = collection.targetVersion!;
-        await reserveSourceRequest(period.month, runKey);
         let sourcePage;
         try {
-          sourcePage = await collectJiaowubaoCompletedLessonMemberPage(period, memberId, page, collection.expectedTotal);
+          sourcePage = await collectJiaowubaoCompletedLessonMemberPage(period, memberId, page, collection.expectedTotal, reader.readPage);
         } catch (error) {
+          if (error instanceof CompletedLessonReadBudgetError
+            || (error instanceof JiaowubaoOpenApiError && error.code === "request_timeout"
+              && Date.now() - workerStartedAt >= WORKER_TIME_BUDGET_MS)) {
+            return progressResult(collection, sourcePageCount);
+          }
           if (deterministicMemberSourceFailure(error)) {
             await abortJiaowubaoCompletedLessonMemberCollection({
               runId: collection.runId, runKey, reason: "caller_failure", actor: ACTOR,
@@ -567,7 +597,6 @@ export async function syncJiaowubaoCompletedLessonMonth(input: Readonly<{
           }
         }
         if (!collection) throw new Error("jiaowubao_completed_lesson_member_stage_invalid");
-        sourcePageCount += 1;
       }
       // Completing the final member can happen near the end of this worker's
       // source-call budget. Start the ready/publication phase in a fresh

@@ -1,5 +1,7 @@
 import {
   JiaowubaoOpenApiError,
+  type JiaowubaoCompletedLessonListQuery,
+  type JiaowubaoCompletedLessonListResponse,
   type JiaowubaoScheduleListQuery,
   type JiaowubaoScheduleListResponse,
   type JiaowubaoScheduleRequestOptions,
@@ -44,7 +46,14 @@ function assertToolSuccess(result: JsonRecord) {
 
 function toolData(result: JsonRecord) {
   assertToolSuccess(result);
-  const data: unknown = JSON.parse(toolText(result.content));
+  const text = toolText(result.content);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (text.length >= 20_000) oversize();
+    invalidResponse();
+  }
   if (!record(data)) invalidResponse();
   if ("ret" in data && data.ret !== "1" && data.ret !== 1) upstreamRejected();
   return data;
@@ -183,7 +192,13 @@ function assertHttpStatus(response: Response, expected: number) {
 
 function rpcResult(payload: unknown, id: number) {
   if (!record(payload) || payload.jsonrpc !== "2.0" || payload.id !== id) invalidResponse();
-  if ("error" in payload) upstreamRejected();
+  if ("error" in payload) {
+    if (record(payload.error) && payload.error.code === -32000
+      && payload.error.message === "请求过于频繁，请稍后再试") {
+      throw new JiaowubaoOpenApiError("rate_limited", "教务宝 MCP 读取被限流。", 60);
+    }
+    upstreamRejected();
+  }
   if (!record(payload.result)) invalidResponse();
   return payload.result;
 }
@@ -204,12 +219,17 @@ function boundedInteger(value: unknown, maximum: number) {
   return value as number;
 }
 
-function scheduleArguments(query: JiaowubaoScheduleListQuery) {
-  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "order"].includes(key))) invalidRequest();
+function queryWindow(query: Readonly<{ start: string; end: string }>) {
   const start = exactDate(query.start);
   const end = exactDate(query.end);
   const span = Date.parse(end) - Date.parse(start);
-  if (![span >= 0, span <= 30 * 86_400_000].every(Boolean)) invalidRequest();
+  if (span < 0 || span > 30 * 86_400_000) invalidRequest();
+  return { start, end };
+}
+
+function scheduleArguments(query: JiaowubaoScheduleListQuery) {
+  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "order"].includes(key))) invalidRequest();
+  const { start, end } = queryWindow(query);
   const page = boundedInteger(query.page ?? 1, 500);
   const limit = boundedInteger(query.limit ?? 100, 100);
   const order = query.order ?? "asc";
@@ -351,7 +371,7 @@ async function fetchMcpResponse(fetchImpl: typeof fetch, init: RequestInit, sign
   }
 }
 
-export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
+function createMcpToolReader(config: ReaderConfig) {
   if (typeof config.token !== "string" || config.token.length > 4096 || !/^[A-Za-z0-9._~+/-]+=*$/u.test(config.token)) {
     throw new JiaowubaoOpenApiError("not_configured", "教务宝 MCP 尚未安全配置。");
   }
@@ -386,8 +406,7 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
     }
   }
 
-  return async (query: JiaowubaoScheduleListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoScheduleListResponse> => {
-    const args = scheduleArguments(query);
+  return async (name: "query_schedule_list" | "query_lesson_list", args: JsonRecord, options: JiaowubaoScheduleRequestOptions = {}) => {
     const timeout = readTimeout(options);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -400,8 +419,7 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
         }
         initialized = true;
       }
-      const data = toolData(await post("tools/call", controller.signal, { name: "query_schedule_list", arguments: args }));
-      return schedulePage(data, args);
+      return toolData(await post("tools/call", controller.signal, { name, arguments: args }));
     } catch (error) {
       if (controller.signal.aborted) requestTimeout();
       if (error instanceof JiaowubaoOpenApiError) throw error;
@@ -409,5 +427,45 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
     } finally {
       clearTimeout(timer);
     }
+  };
+}
+
+export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
+  const read = createMcpToolReader(config);
+  return async (query: JiaowubaoScheduleListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoScheduleListResponse> => {
+    const args = scheduleArguments(query);
+    return schedulePage(await read("query_schedule_list", args, options), args);
+  };
+}
+
+function completedLessonArguments(query: JiaowubaoCompletedLessonListQuery) {
+  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "sign", "mem_id"].includes(key))) invalidRequest();
+  const { start, end } = queryWindow(query);
+  if ((query.sign ?? -1) !== -1) invalidRequest();
+  return {
+    start,
+    end,
+    mem_id: boundedInteger(query.mem_id, Number.MAX_SAFE_INTEGER),
+    page: boundedInteger(query.page ?? 1, 6_000),
+    limit: boundedInteger(query.limit ?? 10, 10),
+    sign: -1,
+    over: 1,
+    order: "asc",
+  };
+}
+
+export function createJiaowubaoMcpCompletedLessonReader(config: ReaderConfig) {
+  const read = createMcpToolReader(config);
+  return async (query: JiaowubaoCompletedLessonListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoCompletedLessonListResponse> => {
+    const args = completedLessonArguments(query);
+    const data = await read("query_lesson_list", args, options);
+    const total = scheduleTotal(data.total);
+    const rows = data.lists;
+    const offset = (args.page - 1) * args.limit;
+    const expected = Math.max(0, Math.min(args.limit, total - offset));
+    if (!Array.isArray(rows) || rows.length !== expected || (total > 0 && offset >= total)
+      || (total === 0 && offset !== 0)
+      || rows.some((row) => !record(row) || String(row.mem_id) !== String(args.mem_id) || String(row.over) !== "1")) invalidResponse();
+    return Object.freeze({ list: Object.freeze([...rows]) as readonly JsonRecord[], total });
   };
 }
