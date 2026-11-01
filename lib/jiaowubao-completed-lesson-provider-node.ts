@@ -72,7 +72,10 @@ export function createJiaowubaoCompletedLessonReader(config: Config) {
         const response = next.response;
         nativeLimit = next.limit;
         if (total !== null && response.total !== total) {
-          throw new JiaowubaoOpenApiError("invalid_response", "教务宝已消课学员总数在分页期间发生变化。");
+          throw new JiaowubaoOpenApiError(
+            logical.page === 1 ? "upstream_unavailable" : "invalid_response",
+            "教务宝已消课学员总数在分页期间发生变化。",
+          );
         }
         total = response.total;
         records.push(...response.list);

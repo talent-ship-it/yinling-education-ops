@@ -168,6 +168,25 @@ test("semantic supplier rate limiting stays retryable and never switches transpo
   assert.equal(source.calls.length, 1);
 });
 
+test("valid native total drift before the first durable page is retryable without returning partial rows", async () => {
+  let drift = true;
+  const source = fixture((args) => paged(drift && Number(args.page) === 2 ? 21 : 20, args));
+  const reader = provider(source);
+  await assert.rejects(reader.readPage(QUERY), errorCode("upstream_unavailable"));
+  assert.equal(source.calls.length, 2);
+  drift = false;
+  const result = await reader.readPage(QUERY);
+  assert.equal(result.total, 20);
+  assert.equal(result.list.length, 20);
+  assert.equal(source.calls[2].page, 1);
+});
+
+test("valid native total drift on a later durable page stays a deterministic validation failure", async () => {
+  const source = fixture((args) => paged(Number(args.page) === 12 ? 129 : 130, args));
+  await assert.rejects(provider(source).readPage({ ...QUERY, page: 2 }), errorCode("invalid_response"));
+  assert.deepEqual(source.calls.map(({ page }) => page), [11, 12]);
+});
+
 test("MCP configuration, deadline and native query constraints fail before business reads", async () => {
   assert.throws(() => createJiaowubaoCompletedLessonReader({
     env: { JIAOWUBAO_SCHEDULE_SOURCE: "mcp" }, beforeRequest: async () => undefined, deadlineAt: Date.now() + 1_000,
