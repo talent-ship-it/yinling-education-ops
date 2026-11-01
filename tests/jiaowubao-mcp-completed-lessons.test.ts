@@ -168,6 +168,34 @@ test("semantic supplier rate limiting stays retryable and never switches transpo
   assert.equal(source.calls.length, 1);
 });
 
+for (const httpStatus of [401, 403] as const) {
+  for (const [stage, requestIndex] of [
+    ["initialize", 1], ["notification", 2], ["institution", 3], ["lesson", 4],
+  ] as const) {
+    test(`lesson MCP HTTP ${httpStatus} identifies only the fixed ${stage} stage`, async () => {
+      const source = fixture((args) => paged(0, args));
+      let calls = 0;
+      let reservations = 0;
+      const fetchImpl: typeof fetch = async (url, init) => {
+        if (++calls === requestIndex) return new Response(`private response ${TOKEN}`, { status: httpStatus });
+        return source.fetchImpl(url, init);
+      };
+      const reader = provider({ ...source, fetchImpl }, async () => { reservations += 1; });
+      await assert.rejects(reader.readPage(QUERY), (error: unknown) => {
+        assert.ok(error instanceof JiaowubaoOpenApiError);
+        assert.equal(error.code, "not_authorized");
+        assert.deepEqual(error.authFailure, { provider: "mcp", stage, httpStatus });
+        assert.equal(`${error.stack}${JSON.stringify(error)}`.includes(TOKEN), false);
+        assert.equal(JSON.stringify(error).includes("private response"), false);
+        return true;
+      });
+      assert.equal(calls, requestIndex);
+      assert.equal(reservations, stage === "lesson" ? 1 : 0);
+      assert.equal(source.calls.length, 0);
+    });
+  }
+}
+
 test("valid native total drift before the first durable page is retryable without returning partial rows", async () => {
   let drift = true;
   const source = fixture((args) => paged(drift && Number(args.page) === 2 ? 21 : 20, args));
