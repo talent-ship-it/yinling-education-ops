@@ -16,6 +16,7 @@ import {
 } from "@/lib/jiaowubao-authority-status";
 import { projectOperationalAuditEntry } from "@/lib/operational-audit";
 import { getOperationalAudit, getOpsSources, getOpsState } from "@/lib/ops-store";
+import { privateJsonResponse } from "@/lib/private-json-response";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ function noStore(payload: unknown, status = 200) {
   });
 }
 
-export async function GET() {
+export async function GET(request?: Request) {
   const cookieStore = await cookies();
   const resolved = await getCurrentDemoSession(cookieStore.get(DEMO_COOKIE_NAME)?.value);
   if (!("session" in resolved)) {
@@ -53,7 +54,7 @@ export async function GET() {
       const sanitized = sanitizeJiaowubaoAuthoritySourceForBrowser(source);
       return sanitized ? [sanitized] : [];
     });
-    return noStore({
+    return privateJsonResponse({
       ...payload,
       ...(sourceAccess ? { audit: operationalAudit.map(projectOperationalAuditEntry) } : {}),
       versions,
@@ -61,7 +62,7 @@ export async function GET() {
       managedExamStudents: managedExamSnapshot.students,
       managedExamSnapshot,
       managedTrialPaymentSnapshot,
-    });
+    }, request);
   } catch {
     const message = "Supabase 真实资料读取失败。";
     return noStore({ error: message }, 503);
