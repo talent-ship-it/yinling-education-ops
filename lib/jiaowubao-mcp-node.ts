@@ -2,6 +2,7 @@ import {
   JiaowubaoOpenApiError,
   type JiaowubaoCompletedLessonListQuery,
   type JiaowubaoCompletedLessonListResponse,
+  type JiaowubaoMcpRequestStage,
   type JiaowubaoScheduleListQuery,
   type JiaowubaoScheduleListResponse,
   type JiaowubaoScheduleRequestOptions,
@@ -183,10 +184,12 @@ function retryAfter(response: Response) {
   return Number(retry);
 }
 
-function assertHttpStatus(response: Response, expected: number) {
+function assertHttpStatus(response: Response, expected: number, stage: JiaowubaoMcpRequestStage) {
   if (response.status >= 300 && response.status < 400) upstreamRejected();
   if (response.status === 401 || response.status === 403) {
-    throw new JiaowubaoOpenApiError("not_authorized", "教务宝 MCP 授权不可用。");
+    throw new JiaowubaoOpenApiError("not_authorized", "教务宝 MCP 授权不可用。", undefined, undefined, {
+      provider: "mcp", stage, httpStatus: response.status,
+    });
   }
   if (response.status === 429) {
     throw new JiaowubaoOpenApiError("rate_limited", "教务宝 MCP 读取被限流。", retryAfter(response));
@@ -387,7 +390,7 @@ function createMcpToolReader(config: ReaderConfig) {
   let version = "2025-11-25";
   let nextId = 1;
 
-  async function post(method: string, signal: AbortSignal, params?: JsonRecord): Promise<JsonRecord> {
+  async function post(method: string, stage: JiaowubaoMcpRequestStage, signal: AbortSignal, params?: JsonRecord): Promise<JsonRecord> {
     const id = method === "notifications/initialized" ? undefined : nextId++;
     const response = await fetchMcpResponse(fetchImpl, {
         headers: {
@@ -398,7 +401,7 @@ function createMcpToolReader(config: ReaderConfig) {
         body: JSON.stringify({ jsonrpc: "2.0", ...(id === undefined ? {} : { id }), method, ...(params === undefined ? {} : { params }) }),
     }, signal);
     try {
-      assertHttpStatus(response, id === undefined ? 202 : 200);
+      assertHttpStatus(response, id === undefined ? 202 : 200, stage);
       const encoding = response.headers.get("Content-Encoding");
       if (encoding !== null && encoding.toLowerCase() !== "identity") invalidResponse();
       session = responseSession(response, session, method === "initialize");
@@ -432,10 +435,10 @@ function createMcpToolReader(config: ReaderConfig) {
 
   async function initialize(signal: AbortSignal) {
     if (!initialized) {
-      version = initializedVersion(await post("initialize", signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
-      await post("notifications/initialized", signal);
+      version = initializedVersion(await post("initialize", "initialize", signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
+      await post("notifications/initialized", "notification", signal);
       if (config.expectedBranchId !== undefined || config.expectedBranchTitle !== undefined) {
-        assertInstitution(toolData(await post("tools/call", signal, { name: "get_branch_detail", arguments: {} })), config);
+        assertInstitution(toolData(await post("tools/call", "institution", signal, { name: "get_branch_detail", arguments: {} })), config);
       }
       initialized = true;
     }
@@ -443,7 +446,7 @@ function createMcpToolReader(config: ReaderConfig) {
   }
 
   return async (name: "query_schedule_list" | "query_lesson_list", args: JsonRecord, options: JiaowubaoScheduleRequestOptions = {}) => {
-    const query = (signal: AbortSignal) => post("tools/call", signal, { name, arguments: args }).then(toolData);
+    const query = (signal: AbortSignal) => post("tools/call", name === "query_lesson_list" ? "lesson" : "schedule", signal, { name, arguments: args }).then(toolData);
     if (!config.beforeRequest) {
       return withTimeout(options, async (signal) => {
         await initialize(signal);

@@ -2,6 +2,20 @@ import { safeJiaowubaoCompletedLessonDatabaseFailure } from "@/lib/jiaowubao-com
 import { JiaowubaoOpenApiError } from "@/lib/jiaowubao-open-api-node";
 import { OpsStoreError } from "@/lib/ops-store";
 
+function safeAuthFailure(error: JiaowubaoOpenApiError) {
+  const auth = error.authFailure;
+  if (error.code !== "not_authorized" || !auth) return {};
+  const { provider, httpStatus, stage } = auth;
+  if (httpStatus !== 401 && httpStatus !== 403) return {};
+  if (provider === "rest") return { provider: "rest" as const, httpStatus };
+  if (provider !== "mcp") return {};
+  return {
+    provider: "mcp" as const,
+    httpStatus,
+    ...(["initialize", "notification", "institution", "lesson", "schedule"].includes(stage ?? "") ? { stage } : {}),
+  };
+}
+
 /**
  * Reduces a completed-lesson sync failure to fixed, non-sensitive diagnostics.
  * Database messages/details can contain implementation metadata and must never
@@ -16,6 +30,7 @@ export function safeJiaowubaoCompletedLessonSyncFailure(error: unknown) {
       kind: "open_api" as const,
       code: error.code,
       ...(source ? { source } : {}),
+      ...safeAuthFailure(error),
     });
   }
   if (error instanceof OpsStoreError) {

@@ -103,6 +103,37 @@ test("gateway rejections expose only the fixed tool discriminator", async () => 
   }
 });
 
+test("gateway authorization failures identify REST and HTTP status without source data", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousSecret = process.env.JIAOWUBAO_OPEN_API_SK;
+  const privateBody = "synthetic-private-response";
+  process.env.JIAOWUBAO_OPEN_API_SK = "test-only-jwb-secret";
+  try {
+    for (const httpStatus of [401, 403]) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(`${privateBody} ${process.env.JIAOWUBAO_OPEN_API_SK}`, { status: httpStatus });
+      };
+      await assert.rejects(queryJiaowubaoCompletedLessonList({
+        start: "2026-07-01", end: "2026-07-01", mem_id: 12,
+      }), (error) => {
+        assert.ok(error instanceof JiaowubaoOpenApiError);
+        assert.equal(error.code, "not_authorized");
+        assert.deepEqual(error.authFailure, { provider: "rest", httpStatus });
+        assert.equal(JSON.stringify(error).includes(privateBody), false);
+        assert.equal(JSON.stringify(error).includes(process.env.JIAOWUBAO_OPEN_API_SK), false);
+        return true;
+      });
+      assert.equal(calls, 1);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousSecret === undefined) delete process.env.JIAOWUBAO_OPEN_API_SK;
+    else process.env.JIAOWUBAO_OPEN_API_SK = previousSecret;
+  }
+});
+
 test("database-gated schedule reads are bounded by the route deadline", async () => {
   const previousFetch = globalThis.fetch;
   const previousSecret = process.env.JIAOWUBAO_OPEN_API_SK;
