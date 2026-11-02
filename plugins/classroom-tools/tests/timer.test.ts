@@ -146,3 +146,33 @@ test("an expired restart still fails when BBB never confirms a running non-expir
   assert.equal(controller.busy, false);
   controller.dispose();
 });
+
+test("reset clears BBB's expired latch for every participant and restores the configured duration", () => {
+  const commands: TimerAction[] = [];
+  const progress: unknown[] = [];
+  const controller = new NativeTimerController((action) => commands.push(action), (value) => progress.push(value));
+  let state = { ...initial, active: true, stopwatch: false, elapsed: true, time: 20000, timePassed: 20000 };
+  try {
+    controller.observe(state);
+    controller.reset();
+    assert.deepEqual(commands, ["start"]);
+    assert.equal(controller.busy, true);
+    controller.observe({ ...state, running: true });
+    assert.deepEqual(commands, ["start"]);
+    state = { ...state, running: true, elapsed: false };
+    controller.observe(state);
+    assert.deepEqual(commands, ["start", "stop"]);
+    state = { ...state, running: false, accumulated: 11, timePassed: 19989 };
+    controller.observe(state);
+    assert.deepEqual(commands, ["start", "stop", "reset"]);
+    assert.equal(controller.busy, true);
+    state = { ...state, accumulated: 0, timePassed: state.time };
+    controller.observe(state);
+    assert.equal(controller.busy, false);
+    assert.equal(state.elapsed, false);
+    assert.equal(state.timePassed, 20000);
+    assert.deepEqual(progress.at(-1), { busy: false, error: "" });
+  } finally {
+    controller.dispose();
+  }
+});

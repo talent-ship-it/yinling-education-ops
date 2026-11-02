@@ -69,8 +69,13 @@ export class NativeTimerController {
   }
 
   reset() {
+    const clearElapsed: Step[] = this.state?.elapsed && !this.state.stopwatch ? [
+      { action: "start", variables: {}, confirmed: (state) => state.running && !state.elapsed },
+      { action: "stop", variables: {}, confirmed: (state) => !state.running },
+    ] : [];
     this.begin([
       { action: "stop", variables: {}, confirmed: (state) => !state.running },
+      ...clearElapsed,
       { action: "reset", variables: {}, confirmed: (state) => !state.running && state.accumulated === 0 },
     ]);
   }
