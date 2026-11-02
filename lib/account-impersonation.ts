@@ -8,7 +8,7 @@ import { parseServerSessionToken, type DemoSessionIdentity } from "@/lib/demo-se
 import { getAccountSession, getOpsState, revokeCurrentAccountSession, type OpsRpcOptions } from "@/lib/ops-store";
 
 export const IMPERSONATION_COOKIE_NAME = "yinling_account_identity";
-export const IMPERSONATION_MAX_AGE = 60 * 60;
+const IMPERSONATION_MAX_AGE = 60 * 60;
 
 type IdentityClaim = Readonly<{
   v: 1;
