@@ -132,9 +132,9 @@ test("binds demo identities to profiles and protects Admin payroll access", asyn
   assert.match(client, /initialOperator/);
   assert.match(client, /isAdminSession/);
   assert.match(client, /DEMO_LIMITED_ADMIN_USER/);
-  assert.match(client, /canUseAdminScope \? Array\.from\(new Set\(\[sessionOperator, DEMO_LIMITED_ADMIN_USER, \.\.\.DEMO_STAFF_USERS/);
-  assert.match(client, /\.\.\.recordTeachers\.map\(\(teacher\) => teacher\.name\)/);
-  assert.match(client, /!canUseAdminScope && operator !== sessionOperator/);
+  assert.match(client, /const currentOperator = sessionOperator/);
+  assert.match(client, /canSwitchIdentity && .*<AccountIdentityPicker user=\{currentOperator\} role=\{initialRole\}/);
+  assert.doesNotMatch(client, /function switchOperator|const operatorOptions =|setOperator\(/);
   assert.match(client, /operator === "Nixon" \? "Admin" : operator/);
   assert.match(client, /operatorLabel\(entry\.actor\)/);
   assert.match(client, /const canViewPayroll = isFullAdminSession && currentOperator === "Nixon"/);

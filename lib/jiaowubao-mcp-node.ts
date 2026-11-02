@@ -1,5 +1,8 @@
 import {
   JiaowubaoOpenApiError,
+  type JiaowubaoCompletedLessonListQuery,
+  type JiaowubaoCompletedLessonListResponse,
+  type JiaowubaoMcpRequestStage,
   type JiaowubaoScheduleListQuery,
   type JiaowubaoScheduleListResponse,
   type JiaowubaoScheduleRequestOptions,
@@ -9,7 +12,13 @@ const MCP_URL = "https://card.jwbpro.com/open/jwb/mcp";
 const MAX_RESPONSE_BYTES = 1_048_576;
 const REQUEST_TIMEOUT_MS = 12_000;
 type JsonRecord = Record<string, unknown>;
-type ReaderConfig = Readonly<{ token: string; fetchImpl?: typeof fetch; expectedBranchId?: string; expectedBranchTitle?: string }>;
+type ReaderConfig = Readonly<{
+  token: string;
+  fetchImpl?: typeof fetch;
+  expectedBranchId?: string;
+  expectedBranchTitle?: string;
+  beforeRequest?: () => Promise<void>;
+}>;
 
 function record(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -44,7 +53,14 @@ function assertToolSuccess(result: JsonRecord) {
 
 function toolData(result: JsonRecord) {
   assertToolSuccess(result);
-  const data: unknown = JSON.parse(toolText(result.content));
+  const text = toolText(result.content);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    if (text.length >= 20_000) oversize();
+    invalidResponse();
+  }
   if (!record(data)) invalidResponse();
   if ("ret" in data && data.ret !== "1" && data.ret !== 1) upstreamRejected();
   return data;
@@ -168,10 +184,12 @@ function retryAfter(response: Response) {
   return Number(retry);
 }
 
-function assertHttpStatus(response: Response, expected: number) {
+function assertHttpStatus(response: Response, expected: number, stage: JiaowubaoMcpRequestStage) {
   if (response.status >= 300 && response.status < 400) upstreamRejected();
   if (response.status === 401 || response.status === 403) {
-    throw new JiaowubaoOpenApiError("not_authorized", "教务宝 MCP 授权不可用。");
+    throw new JiaowubaoOpenApiError("not_authorized", "教务宝 MCP 授权不可用。", undefined, undefined, {
+      provider: "mcp", stage, httpStatus: response.status,
+    });
   }
   if (response.status === 429) {
     throw new JiaowubaoOpenApiError("rate_limited", "教务宝 MCP 读取被限流。", retryAfter(response));
@@ -183,7 +201,13 @@ function assertHttpStatus(response: Response, expected: number) {
 
 function rpcResult(payload: unknown, id: number) {
   if (!record(payload) || payload.jsonrpc !== "2.0" || payload.id !== id) invalidResponse();
-  if ("error" in payload) upstreamRejected();
+  if ("error" in payload) {
+    if (record(payload.error) && payload.error.code === -32000
+      && payload.error.message === "请求过于频繁，请稍后再试") {
+      throw new JiaowubaoOpenApiError("rate_limited", "教务宝 MCP 读取被限流。", 60);
+    }
+    upstreamRejected();
+  }
   if (!record(payload.result)) invalidResponse();
   return payload.result;
 }
@@ -204,12 +228,17 @@ function boundedInteger(value: unknown, maximum: number) {
   return value as number;
 }
 
-function scheduleArguments(query: JiaowubaoScheduleListQuery) {
-  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "order"].includes(key))) invalidRequest();
+function queryWindow(query: Readonly<{ start: string; end: string }>) {
   const start = exactDate(query.start);
   const end = exactDate(query.end);
   const span = Date.parse(end) - Date.parse(start);
-  if (![span >= 0, span <= 30 * 86_400_000].every(Boolean)) invalidRequest();
+  if (span < 0 || span > 30 * 86_400_000) invalidRequest();
+  return { start, end };
+}
+
+function scheduleArguments(query: JiaowubaoScheduleListQuery) {
+  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "order"].includes(key))) invalidRequest();
+  const { start, end } = queryWindow(query);
   const page = boundedInteger(query.page ?? 1, 500);
   const limit = boundedInteger(query.limit ?? 100, 100);
   const order = query.order ?? "asc";
@@ -351,7 +380,7 @@ async function fetchMcpResponse(fetchImpl: typeof fetch, init: RequestInit, sign
   }
 }
 
-export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
+function createMcpToolReader(config: ReaderConfig) {
   if (typeof config.token !== "string" || config.token.length > 4096 || !/^[A-Za-z0-9._~+/-]+=*$/u.test(config.token)) {
     throw new JiaowubaoOpenApiError("not_configured", "教务宝 MCP 尚未安全配置。");
   }
@@ -361,7 +390,7 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
   let version = "2025-11-25";
   let nextId = 1;
 
-  async function post(method: string, signal: AbortSignal, params?: JsonRecord): Promise<JsonRecord> {
+  async function post(method: string, stage: JiaowubaoMcpRequestStage, signal: AbortSignal, params?: JsonRecord): Promise<JsonRecord> {
     const id = method === "notifications/initialized" ? undefined : nextId++;
     const response = await fetchMcpResponse(fetchImpl, {
         headers: {
@@ -372,7 +401,7 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
         body: JSON.stringify({ jsonrpc: "2.0", ...(id === undefined ? {} : { id }), method, ...(params === undefined ? {} : { params }) }),
     }, signal);
     try {
-      assertHttpStatus(response, id === undefined ? 202 : 200);
+      assertHttpStatus(response, id === undefined ? 202 : 200, stage);
       const encoding = response.headers.get("Content-Encoding");
       if (encoding !== null && encoding.toLowerCase() !== "identity") invalidResponse();
       session = responseSession(response, session, method === "initialize");
@@ -386,22 +415,15 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
     }
   }
 
-  return async (query: JiaowubaoScheduleListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoScheduleListResponse> => {
-    const args = scheduleArguments(query);
+  async function withTimeout(
+    options: JiaowubaoScheduleRequestOptions,
+    operation: (signal: AbortSignal) => Promise<JsonRecord>,
+  ) {
     const timeout = readTimeout(options);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      if (!initialized) {
-        version = initializedVersion(await post("initialize", controller.signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
-        await post("notifications/initialized", controller.signal);
-        if (config.expectedBranchId !== undefined || config.expectedBranchTitle !== undefined) {
-          assertInstitution(toolData(await post("tools/call", controller.signal, { name: "get_branch_detail", arguments: {} })), config);
-        }
-        initialized = true;
-      }
-      const data = toolData(await post("tools/call", controller.signal, { name: "query_schedule_list", arguments: args }));
-      return schedulePage(data, args);
+      return await operation(controller.signal);
     } catch (error) {
       if (controller.signal.aborted) requestTimeout();
       if (error instanceof JiaowubaoOpenApiError) throw error;
@@ -409,5 +431,70 @@ export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async function initialize(signal: AbortSignal) {
+    if (!initialized) {
+      version = initializedVersion(await post("initialize", "initialize", signal, { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "insiderleads-schedule-sync", version: "1.0" } }));
+      await post("notifications/initialized", "notification", signal);
+      if (config.expectedBranchId !== undefined || config.expectedBranchTitle !== undefined) {
+        assertInstitution(toolData(await post("tools/call", "institution", signal, { name: "get_branch_detail", arguments: {} })), config);
+      }
+      initialized = true;
+    }
+    return {};
+  }
+
+  return async (name: "query_schedule_list" | "query_lesson_list", args: JsonRecord, options: JiaowubaoScheduleRequestOptions = {}) => {
+    const query = (signal: AbortSignal) => post("tools/call", name === "query_lesson_list" ? "lesson" : "schedule", signal, { name, arguments: args }).then(toolData);
+    if (!config.beforeRequest) {
+      return withTimeout(options, async (signal) => {
+        await initialize(signal);
+        return query(signal);
+      });
+    }
+    if (!initialized) await withTimeout(options, initialize);
+    await config.beforeRequest();
+    return withTimeout(options, query);
+  };
+}
+
+export function createJiaowubaoMcpScheduleReader(config: ReaderConfig) {
+  const read = createMcpToolReader(config);
+  return async (query: JiaowubaoScheduleListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoScheduleListResponse> => {
+    const args = scheduleArguments(query);
+    return schedulePage(await read("query_schedule_list", args, options), args);
+  };
+}
+
+function completedLessonArguments(query: JiaowubaoCompletedLessonListQuery) {
+  if (!record(query) || Object.keys(query).some((key) => !["start", "end", "page", "limit", "sign", "mem_id"].includes(key))) invalidRequest();
+  const { start, end } = queryWindow(query);
+  if ((query.sign ?? -1) !== -1) invalidRequest();
+  return {
+    start,
+    end,
+    mem_id: boundedInteger(query.mem_id, Number.MAX_SAFE_INTEGER),
+    page: boundedInteger(query.page ?? 1, 6_000),
+    limit: boundedInteger(query.limit ?? 10, 10),
+    sign: -1,
+    over: 1,
+    order: "asc",
+  };
+}
+
+export function createJiaowubaoMcpCompletedLessonReader(config: ReaderConfig) {
+  const read = createMcpToolReader(config);
+  return async (query: JiaowubaoCompletedLessonListQuery, options: JiaowubaoScheduleRequestOptions = {}): Promise<JiaowubaoCompletedLessonListResponse> => {
+    const args = completedLessonArguments(query);
+    const data = await read("query_lesson_list", args, options);
+    const total = scheduleTotal(data.total);
+    const rows = data.lists;
+    const offset = (args.page - 1) * args.limit;
+    const expected = Math.max(0, Math.min(args.limit, total - offset));
+    if (!Array.isArray(rows) || rows.length !== expected || (total > 0 && offset >= total)
+      || (total === 0 && offset !== 0)
+      || rows.some((row) => !record(row) || String(row.mem_id) !== String(args.mem_id) || String(row.over) !== "1")) invalidResponse();
+    return Object.freeze({ list: Object.freeze([...rows]) as readonly JsonRecord[], total });
   };
 }

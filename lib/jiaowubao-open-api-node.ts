@@ -98,6 +98,14 @@ export type JiaowubaoOpenApiTool =
   | "query_lesson_list"
   | "query_member_simple_list";
 
+export type JiaowubaoMcpRequestStage = "initialize" | "notification" | "institution" | "lesson" | "schedule";
+
+export type JiaowubaoOpenApiAuthFailure = Readonly<{
+  provider: "rest" | "mcp";
+  httpStatus: 401 | 403;
+  stage?: JiaowubaoMcpRequestStage;
+}>;
+
 /** This error intentionally never contains the endpoint, response body, or sk. */
 export class JiaowubaoOpenApiError extends Error {
   constructor(
@@ -105,6 +113,7 @@ export class JiaowubaoOpenApiError extends Error {
     message: string,
     readonly retryAfterSeconds?: number,
     readonly tool?: JiaowubaoOpenApiTool,
+    readonly authFailure?: JiaowubaoOpenApiAuthFailure,
   ) {
     super(message);
     this.name = "JiaowubaoOpenApiError";
@@ -506,7 +515,9 @@ async function assertGatewayHttpSuccess(response: Response, label: string) {
     throw new JiaowubaoOpenApiError("rate_limited", `教务宝${label}读取正被限流，请稍后再试。`, retryAfter);
   }
   if (GATEWAY_AUTH_FAILURE_STATUSES.has(response.status)) {
-    throw new JiaowubaoOpenApiError("not_authorized", "教务宝开放 API 授权不可用。");
+    throw new JiaowubaoOpenApiError("not_authorized", "教务宝开放 API 授权不可用。", undefined, undefined, {
+      provider: "rest", httpStatus: response.status as 401 | 403,
+    });
   }
   throw new JiaowubaoOpenApiError("upstream_unavailable", `教务宝${label}服务暂时不可用。`);
 }

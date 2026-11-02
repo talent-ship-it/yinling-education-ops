@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useRef, useState, type ReactNode } from "react";
 import { AuthStatusScreen } from "@/app/auth-status-screen";
+import { AccountIdentityRecovery } from "@/app/account-identity-picker";
 import type { DemoSessionRole } from "@/lib/demo-session-token";
 import { fetchJsonWithTimeout, type SharedStateFetch } from "@/lib/shared-state-recovery";
 
@@ -10,10 +11,14 @@ export type InitialSession = Readonly<{
   user: string;
   role: DemoSessionRole | "";
   mustChangePassword: boolean;
+  canSwitchIdentity?: boolean;
+  impersonator?: string | null;
 }>;
 
 const LOGOUT_RETRY_NOTICE_KEY = "yinling:logout-retry-notice";
 const AUTH_SESSION_TIMEOUT_MS = 10_000;
+
+export class IdentitySessionError extends Error {}
 
 export async function readInitialSession(
   fetchImpl: SharedStateFetch,
@@ -25,12 +30,21 @@ export async function readInitialSession(
     user?: unknown;
     role?: unknown;
     mustChangePassword?: unknown;
+    canSwitchIdentity?: unknown;
+    impersonator?: unknown;
+    canReturnAdministrator?: unknown;
+    error?: unknown;
   }>(fetchImpl, "/api/demo-session", { cache: "no-store", signal }, timeoutMs);
+  if (!response.ok && body?.canReturnAdministrator === true) {
+    throw new IdentitySessionError(typeof body.error === "string" ? body.error : "切换的账号已失效，请返回管理员。");
+  }
   if (!response.ok || body?.ok !== true) return null;
   return {
     user: typeof body.user === "string" ? body.user : "",
     role: typeof body.role === "string" ? body.role as DemoSessionRole : "",
     mustChangePassword: body.mustChangePassword === true,
+    canSwitchIdentity: body.canSwitchIdentity === true,
+    impersonator: typeof body.impersonator === "string" ? body.impersonator : null,
   };
 }
 
@@ -92,6 +106,7 @@ export default function AuthClient({ authenticatedContent }: { authenticatedCont
   const [loginError, setLoginError] = useState("");
   const [loginMfaRequired, setLoginMfaRequired] = useState(false);
   const [session, setSession] = useState<InitialSession | null>(null);
+  const [identityError, setIdentityError] = useState("");
 
   useEffect(() => {
     const pendingNotice = window.sessionStorage.getItem(LOGOUT_RETRY_NOTICE_KEY);
@@ -135,8 +150,11 @@ export default function AuthClient({ authenticatedContent }: { authenticatedCont
         if (controller.signal.aborted) return;
         setSession(nextSession);
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setSession(null);
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setSession(null);
+          if (error instanceof IdentitySessionError) setIdentityError(error.message);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setAuthLoading(false);
@@ -161,11 +179,7 @@ export default function AuthClient({ authenticatedContent }: { authenticatedCont
         return;
       }
       setLoginMfaRequired(false);
-      setSession({
-        user: typeof body.user === "string" ? body.user : "",
-        role: typeof body.role === "string" ? body.role as DemoSessionRole : "",
-        mustChangePassword: body.mustChangePassword === true,
-      });
+      window.location.reload();
     } catch {
       setLoginError("网络暂时不可用，请稍后重试。");
     } finally {
@@ -174,6 +188,7 @@ export default function AuthClient({ authenticatedContent }: { authenticatedCont
   };
 
   if (authLoading) return <AuthStatusScreen title="正在检查访问状态" detail="系统正在确认当前登录身份。" />;
+  if (identityError) return <AccountIdentityRecovery message={identityError} />;
   if (!session) return <AuthLoginScreen onSubmit={submitPassword} loading={loginLoading} error={loginError} mfaRequired={loginMfaRequired} />;
   if (!session.mustChangePassword && authenticatedContent) return authenticatedContent;
   return <OperationsApp initialSession={session} />;

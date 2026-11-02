@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { IMPERSONATION_COOKIE_NAME } from "@/lib/account-impersonation";
 
 import { accountIdentityKey, verifyAccountPassword } from "@/lib/account-credentials";
 import {
@@ -32,14 +33,18 @@ function noStore(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { "Cache-Control": "private, no-store" } });
 }
 
-function expireAuthCookies(response: NextResponse) {
+function expireAuthCookies(response: NextResponse, impersonated = false) {
+  if (impersonated) {
+    response.cookies.set(IMPERSONATION_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+    return;
+  }
   response.cookies.set("yinling_demo_auth", "", { path: "/", maxAge: 0 });
   response.cookies.set("yinling_nixon_auth", "", { path: "/", maxAge: 0 });
 }
 
-function staleSecuritySession() {
+function staleSecuritySession(impersonated = false) {
   const response = noStore({ error: "账号安全状态刚刚已更新，请重新登录。", code: "stale_session" }, 401);
-  expireAuthCookies(response);
+  expireAuthCookies(response, impersonated);
   return response;
 }
 
@@ -80,7 +85,7 @@ export async function POST(request: Request) {
       || (session.credentialVersion ?? 0) <= 0
       || !Number.isSafeInteger(session.accessVersion)
       || (session.accessVersion ?? 0) <= 0) {
-    return staleSecuritySession();
+    return staleSecuritySession(Boolean(session.impersonator));
   }
   const securitySnapshot = {
     sessionId: session.sessionId,
@@ -171,7 +176,7 @@ export async function POST(request: Request) {
       });
       if (!confirmed) throw new OpsStoreError("MFA 启用未返回结果。", "invalid_commit_result");
       const response = noStore({ ok: true, enabled: true, reauthRequired: true });
-      expireAuthCookies(response);
+      expireAuthCookies(response, Boolean(session.impersonator));
       return response;
     }
 
@@ -184,14 +189,14 @@ export async function POST(request: Request) {
     });
     if (!disabled) throw new OpsStoreError("MFA 停用未返回结果。", "invalid_commit_result");
     const response = noStore({ ok: true, enabled: false, reauthRequired: true });
-    expireAuthCookies(response);
+    expireAuthCookies(response, Boolean(session.impersonator));
     return response;
   } catch (error) {
     if (error instanceof MfaConfigurationError) {
       return noStore({ error: "MFA 服务器加密密钥尚未配置。", code: "mfa_unconfigured" }, 503);
     }
     if (error instanceof OpsStoreError && error.message === "account_security_session_stale") {
-      return staleSecuritySession();
+      return staleSecuritySession(Boolean(session.impersonator));
     }
     if (error instanceof OpsStoreError && (error.code === "40001" || error.message.includes("version_conflict"))) {
       return noStore({ error: "MFA 状态刚刚已更新，请刷新后重试。", code: "version_conflict" }, 409);

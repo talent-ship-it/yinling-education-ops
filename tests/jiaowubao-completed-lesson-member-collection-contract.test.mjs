@@ -115,7 +115,7 @@ test("each lesson page is total-pinned, CAS-staged, globally unique, and rate li
   assert.match(migration, /for update;[\s\S]*now_at := clock_timestamp\(\);[\s\S]*greatest\(now_at, saved\.next_allowed_at\)/);
   assert.match(sync, /MEMBER_SOURCE_CALL_BUDGET = 50/);
   assert.match(sync, /WORKER_TIME_BUDGET_MS = 220_000/);
-  assert.match(sync, /collectJiaowubaoCompletedLessonMemberPage\(period, memberId, page, collection\.expectedTotal\)/);
+  assert.match(sync, /collectJiaowubaoCompletedLessonMemberPage\(period, memberId, page, collection\.expectedTotal, reader\.readPage\)/);
 });
 
 test("the published lesson revision binds the non-PII frozen roster proof", () => {

@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { IMPERSONATION_COOKIE_NAME } from "@/lib/account-impersonation";
 
 import {
   accountIdentityKey,
@@ -148,6 +149,12 @@ export async function POST(request: Request) {
     });
     if (!result || result.identity_key !== identityKey || !result.enabled) {
       throw new OpsStoreError("账号密码已提交但未返回有效结果。", "invalid_commit_result");
+    }
+    if (session.impersonator) {
+      const response = noStore({ ok: true, changed: true, reauthRequired: true,
+        message: "目标账号密码已更新，已返回原管理员。" });
+      response.cookies.set(IMPERSONATION_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+      return response;
     }
     const currentDirectory = await getAccountByIdentity(identityKey).catch(() => null);
     if (!currentDirectory

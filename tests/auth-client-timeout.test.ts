@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readInitialSession } from "@/app/auth-client";
+import { IdentitySessionError, readInitialSession } from "@/app/auth-client";
 import type { SharedStateFetch } from "@/lib/shared-state-recovery";
 
 test("initial session headers timeout aborts instead of leaving authentication pending", async () => {
@@ -14,6 +14,13 @@ test("initial session headers timeout aborts instead of leaving authentication p
 
   await assert.rejects(readInitialSession(fetchImpl, new AbortController().signal, 5), { name: "AbortError" });
   assert.equal(aborted, true);
+});
+
+test("expired switched identities provide a return path instead of ordinary login", async () => {
+  const fetchImpl: SharedStateFetch = async () => new Response(JSON.stringify({
+    ok: false, error: "目标账号已停用，请返回管理员。", canReturnAdministrator: true,
+  }), { status: 403, headers: { "Content-Type": "application/json" } });
+  await assert.rejects(readInitialSession(fetchImpl, new AbortController().signal), IdentitySessionError);
 });
 
 test("initial session body timeout aborts and a later check can recover", async () => {
@@ -39,5 +46,7 @@ test("initial session body timeout aborts and a later check can recover", async 
     user: "Synthetic Teacher",
     role: "teacher",
     mustChangePassword: false,
+    canSwitchIdentity: false,
+    impersonator: null,
   });
 });
