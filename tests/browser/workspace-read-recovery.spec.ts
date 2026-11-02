@@ -1,11 +1,22 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { DEMO_ADMIN_USER } from "../../lib/demo-users";
+import { defaultDisplayPreferences, displayPreferencesStorageKey } from "../../lib/display-preferences";
 
-async function fixture(page: Page, failSnapshot: boolean) {
+async function fixture(page: Page, failSnapshot: boolean, teacher = false) {
   const entities: Record<string, unknown[]> = Object.fromEntries(
     ["students", "teachers", "tasks", "bookings", "courses", "lpItems", "operations", "renewals", "payroll", "messages", "files", "audit"]
       .map((entity) => [entity, []]),
   );
+  if (teacher) {
+    for (const entity of ["lpItems", "operations", "renewals", "payroll", "audit"]) delete entities[entity];
+    entities.teachers = [{
+      id: "SYNTH-TEACHER", name: "Synthetic Teacher", initials: "ST", subjects: [],
+      availability: "", load: 0, capacity: 0, acceptsStudents: false, note: "",
+    }];
+    await page.addInitScript(({ key, value }) => localStorage.setItem(key, value), {
+      key: displayPreferencesStorageKey("Synthetic Teacher"), value: JSON.stringify(defaultDisplayPreferences()),
+    });
+  }
   let snapshotReads = 0;
   let versionReads = 0;
   let taskVersion = 1;
@@ -13,11 +24,12 @@ async function fixture(page: Page, failSnapshot: boolean) {
   let failedRefreshReads = 0;
   const writes: string[] = [];
   const errors: string[] = [];
+  const stateReads: URL[] = [];
   const versions = () => Object.fromEntries(Object.keys(entities).map((entity) => [entity, entity === "tasks" ? taskVersion : 1]));
   const row = (entity: string) => ({ entity, payload: entities[entity], version: versions()[entity], updated_at: "2026-11-01T00:00:00.000Z", updated_by: "synthetic" });
   const projections = () => ({
     managedExamSnapshot: { versions: { students: 1, tasks: taskVersion }, students: [] },
-    managedTrialPaymentSnapshot: { versions: { students: 1, tasks: taskVersion, bookings: 1, lpItems: 1 }, students: [] },
+    managedTrialPaymentSnapshot: teacher ? null : { versions: { students: 1, tasks: taskVersion, bookings: 1, lpItems: 1 }, students: [] },
   });
   page.on("pageerror", (error) => errors.push(error.message));
   function readSnapshot(route: Route) {
@@ -27,6 +39,7 @@ async function fixture(page: Page, failSnapshot: boolean) {
       : route.fulfill({ json: { ...entities, versions: versions(), ...projections() } });
   }
   function readState(route: Route, url: URL) {
+    stateReads.push(url);
     if (url.searchParams.get("mode") !== "versions") return route.fulfill({
       json: { rows: (url.searchParams.get("entities") ?? "").split(",").filter((entity) => entity in entities).map(row), ...projections() },
     });
@@ -38,8 +51,8 @@ async function fixture(page: Page, failSnapshot: boolean) {
     return route.fulfill({ json: { versions: Object.keys(entities).map(row) } });
   }
   const readReplies: Record<string, (route: Route, url: URL) => Promise<void>> = {
-    "/api/demo-session": (route) => route.fulfill({ json: { ok: true, user: DEMO_ADMIN_USER, role: "admin", mustChangePassword: false } }),
-    "/api/nixon-session": (route) => route.fulfill({ json: { ok: true } }),
+    "/api/demo-session": (route) => route.fulfill({ json: { ok: true, user: teacher ? "Synthetic Teacher" : DEMO_ADMIN_USER, role: teacher ? "teacher" : "admin", mustChangePassword: false } }),
+    "/api/nixon-session": (route) => route.fulfill({ json: { ok: !teacher } }),
     "/api/app-snapshot": readSnapshot,
     "/api/app-state": readState,
     "/api/classroom/materials": (route) => route.fulfill({ json: { configured: true, canManage: false, canPresent: false, folders: [], materials: [], breadcrumbs: [], nextOffset: null } }),
@@ -57,7 +70,7 @@ async function fixture(page: Page, failSnapshot: boolean) {
     return readReplies[url.pathname]?.(route, url) ?? route.fulfill({ status: 403, json: { error: "Unbound synthetic read" } });
   });
   return {
-    writes, errors,
+    writes, errors, stateReads,
     snapshotReads: () => snapshotReads,
     versionReads: () => versionReads,
     failedRefreshReads: () => failedRefreshReads,
@@ -74,6 +87,38 @@ test("an initial data read failure can be retried without logging in or writing"
   await page.getByRole("button", { name: "重试读取资料", exact: true }).click();
   await expect(page.getByRole("heading", { name: "资源", exact: true })).toBeVisible();
   expect(f.snapshotReads()).toBe(2);
+  expect(f.writes).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
+
+test("a teacher can read and refresh resources without LP or payroll authority", async ({ page }) => {
+  const f = await fixture(page, false, true);
+  await page.goto("/#section=resources");
+  await expect(page.getByRole("heading", { name: "资源", exact: true })).toBeVisible();
+  await expect.poll(f.versionReads).toBeGreaterThan(0);
+  f.advanceTasks();
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect.poll(() => f.stateReads.filter((url) => url.searchParams.has("entities")).length).toBeGreaterThan(0);
+  await expect(page.getByRole("heading", { name: "资源", exact: true })).toBeVisible();
+  await expect(page.locator(".live-sync")).toHaveCount(0);
+  for (const url of f.stateReads) {
+    expect(url.searchParams.get("entities") ?? "").not.toMatch(/lpItems|payroll/);
+    expect(url.searchParams.has("includeManagedTrialPaymentSnapshot")).toBe(false);
+  }
+  expect(f.writes).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
+
+test("an account with LP authority still rejects a missing payment snapshot", async ({ page }) => {
+  const f = await fixture(page, false);
+  await page.route("**/api/app-snapshot", (route) => route.fulfill({ json: {
+    versions: { students: 1, tasks: 1, bookings: 1, lpItems: 1 },
+    managedExamSnapshot: { versions: { students: 1, tasks: 1 }, students: [] },
+    managedTrialPaymentSnapshot: null,
+  } }));
+  await page.goto("/#section=resources");
+  await expect(page.getByRole("heading", { name: "无法读取真实资料", exact: true })).toBeVisible();
+  await expect(page.getByText("managed trial payment snapshot is invalid", { exact: true })).toBeVisible();
   expect(f.writes).toEqual([]);
   expect(f.errors).toEqual([]);
 });
