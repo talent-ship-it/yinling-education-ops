@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { createImpersonationToken, IMPERSONATION_COOKIE_NAME, IMPERSONATION_MAX_AGE, resolveImpersonatedSession, revokeImpersonationSession } from "@/lib/account-impersonation";
+import { createImpersonationToken, IMPERSONATION_COOKIE_NAME, resolveImpersonatedSession, revokeImpersonationSession } from "@/lib/account-impersonation";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import { createAccountImpersonationSession, getAccountDirectory } from "@/lib/ops-store";
@@ -114,7 +114,7 @@ async function finishIdentitySession(actor: Administrator, token: string) {
   const store = await cookies();
   await revokeImpersonationSession(store.get(IMPERSONATION_COOKIE_NAME)?.value).catch(() => null);
   const response = noStore({ ok: true, user: resolved.session.user, role: resolved.session.role });
-  response.cookies.set(IMPERSONATION_COOKIE_NAME, token, { ...cookieOptions, maxAge: IMPERSONATION_MAX_AGE });
+  response.cookies.set(IMPERSONATION_COOKIE_NAME, token, cookieOptions);
   return response;
 }
 

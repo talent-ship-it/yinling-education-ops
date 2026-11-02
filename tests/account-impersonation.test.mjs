@@ -101,8 +101,63 @@ test("identity route enforces administrator, active target and same origin and s
   assert.equal(created[0].actorAccountId, actor.accountId);
   assert.equal(created[0].targetAccountId, target.account_id);
   assert.match(response.headers.get("set-cookie"), /yinling_account_identity=.*HttpOnly.*SameSite=strict/i);
+  assert.doesNotMatch(response.headers.get("set-cookie"), /Max-Age|Expires=/i);
   assert.equal(response.cookies.get("auth"), undefined);
   const restored = await route.DELETE(new Request("https://fixture.test/api/account/identity", { method: "DELETE", headers: { origin: "https://fixture.test" } }));
   assert.equal(restored.status, 200);
   assert.equal(restored.cookies.get("yinling_account_identity").value, "");
+});
+
+test("an expired delegated claim keeps the original administrator blocked until explicit return", async () => {
+  const f = fixture();
+  const expired = f.module.createImpersonationToken({
+    actorAccountId: actor.accountId, actorSessionId: actor.sessionId,
+    targetAccountId: target.account_id, identityKey: credentials.accountIdentityKey(target.account_name, target.account_role),
+    targetSessionToken: targetToken.token,
+  }, Date.now() - 3_600_001);
+  let marker = expired;
+  const auth = load("../lib/demo-auth.ts", {
+    "next/headers": { cookies: async () => ({ get: (name) => name === f.module.IMPERSONATION_COOKIE_NAME && marker ? { value: marker } : name === "elevation" ? { value: "elevated" } : undefined }) },
+    "@/lib/account-impersonation": f.module,
+    "@/lib/nixon-auth": { NIXON_COOKIE_NAME: "elevation" },
+    "@/lib/demo-users": users, "@/lib/demo-session-token": tokens,
+    "@/lib/demo-teacher-login": teacherLogin, "@/lib/account-credentials": credentials,
+    "@/lib/ops-store": { getAccountSession: async () => ({
+      ...target, session_id: actor.sessionId, account_id: actor.accountId,
+      account_name: actor.user, account_role: actor.role, permissions: actor.permissions,
+      scope_members: actor.scopeMembers,
+    }) },
+  });
+  const denied = await auth.getCurrentDemoSession(actorToken.token);
+  assert.equal(denied.status, 403);
+  assert.equal(denied.session, undefined);
+  assert.equal(f.calls.length, 0);
+  marker = null;
+  const restored = await auth.getCurrentDemoSession(actorToken.token);
+  assert.equal(restored.session.accountId, actor.accountId);
+});
+
+test("stale MFA attempts preserve a delegated identity marker without clearing the administrator", async () => {
+  let impersonated = true;
+  const route = load("../app/api/account/mfa/route.ts", {
+    "@/lib/account-impersonation": { IMPERSONATION_COOKIE_NAME: "yinling_account_identity" },
+    "@/lib/account-credentials": credentials, "@/lib/account-mfa": {},
+    "@/lib/account-rate-limit": {}, "@/lib/demo-session-token": tokens,
+    "@/lib/account-request-context": { resolveAccountRequestContext: async () => ({
+      context: { session: { ...actor, credentialVersion: undefined,
+        ...(impersonated ? { impersonator: { accountId: actor.accountId } } : {}) } },
+    }) },
+    "@/lib/ops-store": {},
+  });
+  const request = () => new Request("https://fixture.test/api/account/mfa", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "begin" }),
+  });
+  const denied = await route.POST(request());
+  assert.equal(denied.status, 401);
+  assert.equal((await denied.json()).code, "stale_session");
+  assert.equal(denied.headers.get("set-cookie"), null);
+  impersonated = false;
+  const originalDenied = await route.POST(request());
+  assert.equal(originalDenied.status, 401);
+  assert.match(originalDenied.headers.get("set-cookie"), /yinling_demo_auth=;.*Max-Age=0/i);
 });

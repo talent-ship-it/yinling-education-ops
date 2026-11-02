@@ -44,7 +44,7 @@ function expireAuthCookies(response: NextResponse, impersonated = false) {
 
 function staleSecuritySession(impersonated = false) {
   const response = noStore({ error: "账号安全状态刚刚已更新，请重新登录。", code: "stale_session" }, 401);
-  expireAuthCookies(response, impersonated);
+  if (!impersonated) expireAuthCookies(response);
   return response;
 }
 
