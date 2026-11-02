@@ -2449,10 +2449,13 @@ async function fetchSupabaseSnapshot(signal?: AbortSignal) {
     body.managedExamSnapshot,
     body.versions ?? {},
   );
-  const managedTrialPaymentSnapshot = parseManagedTrialPaymentProjectionSnapshot(
-    body.managedTrialPaymentSnapshot,
-    body.versions ?? {},
-  );
+  const managedTrialPaymentSnapshot = body.managedTrialPaymentSnapshot === null
+    && !MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES.every((entity) => Object.hasOwn(body.versions ?? {}, entity))
+    ? undefined
+    : parseManagedTrialPaymentProjectionSnapshot(
+      body.managedTrialPaymentSnapshot,
+      body.versions ?? {},
+    );
   return {
     ...payload,
     managedExamSnapshot,
@@ -2829,6 +2832,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     managedExamProjectionRef.current = cleared;
     setManagedExamProjectionSnapshot(cleared);
   }, []);
+  const canReadManagedTrialPayment = Boolean(initialData?.managedTrialPaymentSnapshot);
   const [managedTrialPaymentProjectionSnapshot, setManagedTrialPaymentProjectionSnapshot] = useState<ManagedTrialPaymentProjectionSnapshot>(() => initialData?.managedTrialPaymentSnapshot ?? {
     versions: {
       bookings: versionFor("bookings"),
@@ -5503,14 +5507,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           { versions: advertisedManagedExamVersions, students: [] },
           currentManagedExamVersions,
         )) throw new Error("考试提醒权威版本发生回退");
-        const advertisedManagedTrialPaymentVersions = parseManagedTrialPaymentAuthorityVersions(versionRows);
+        const advertisedManagedTrialPaymentVersions = canReadManagedTrialPayment
+          ? parseManagedTrialPaymentAuthorityVersions(versionRows)
+          : null;
         const currentManagedTrialPaymentVersions = {
           bookings: getCurrentBookingsVersion(),
           students: getCurrentStudentsVersion(),
           lpItems: getCurrentLpItemsVersion(),
           tasks: getCurrentTasksVersion(),
         };
-        if (!managedTrialPaymentSnapshotCanReplace(
+        if (advertisedManagedTrialPaymentVersions && !managedTrialPaymentSnapshotCanReplace(
           { versions: advertisedManagedTrialPaymentVersions, students: [] },
           currentManagedTrialPaymentVersions,
         )) throw new Error("试听收费提醒权威版本发生回退");
@@ -5526,7 +5532,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           || !managedExamSnapshotIsCurrent(managedExamProjectionRef.current, advertisedManagedExamVersions);
         const trialPaymentAuthorityChanged = changed.some((entity) =>
           (MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES as readonly string[]).includes(entity));
-        const refreshManagedTrialPaymentSnapshot = managedTrialPaymentRefreshRequiredRef.current
+        const refreshManagedTrialPaymentSnapshot = advertisedManagedTrialPaymentVersions !== null && (managedTrialPaymentRefreshRequiredRef.current
           || trialPaymentAuthorityChanged
           || !managedTrialPaymentSnapshotIsCurrent(
             managedTrialPaymentProjectionRef.current,
@@ -5535,7 +5541,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           || !managedTrialPaymentSnapshotIsCurrent(
             managedTrialPaymentProjectionRef.current,
             advertisedManagedTrialPaymentVersions,
-          );
+          ));
         const requestedEntities = new Set(changed);
         if (refreshManagedExamSnapshot) {
           MANAGED_EXAM_AUTHORITY_ENTITIES.forEach((entity) => requestedEntities.add(entity));
@@ -5572,7 +5578,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
               throw new Error("考试提醒刷新快照已过期");
             }
           }
-          if (refreshManagedTrialPaymentSnapshot) {
+          if (refreshManagedTrialPaymentSnapshot && advertisedManagedTrialPaymentVersions) {
             const authorityVersions = parseManagedTrialPaymentAuthorityVersions(responseRows);
             nextManagedTrialPaymentSnapshot = parseManagedTrialPaymentProjectionSnapshot(
               stateBody.managedTrialPaymentSnapshot,
@@ -5619,6 +5625,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
       window.removeEventListener("online", wake);
     };
   }, [
+    canReadManagedTrialPayment,
     clearManagedExamProjection,
     clearManagedTrialPaymentProjection,
     getCurrentBookingsVersion,

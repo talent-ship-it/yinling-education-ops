@@ -4,11 +4,13 @@ import { NextResponse } from "next/server";
 import { DEMO_COOKIE_NAME, getCurrentDemoSession } from "@/lib/demo-auth";
 import {
   buildOpsAccessContext,
+  canReadOpsEntity,
   canReadUnrestrictedOpsData,
   filterOpsStateRows,
   managedExamStudentProjectionSnapshot,
   managedTrialPaymentStudentProjectionSnapshot,
 } from "@/lib/ops-access";
+import { MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES } from "@/lib/managed-trial-payment";
 import { hasFullAdminAccess, NIXON_COOKIE_NAME } from "@/lib/nixon-auth";
 import {
   JIAOWUBAO_AUTHORITY_SOURCE_ID,
@@ -42,7 +44,9 @@ export async function GET(request?: Request) {
     const access = buildOpsAccessContext(rows, actor, fullAdmin, session);
     const visibleRows = filterOpsStateRows(rows, access);
     const managedExamSnapshot = managedExamStudentProjectionSnapshot(rows, access);
-    const managedTrialPaymentSnapshot = managedTrialPaymentStudentProjectionSnapshot(rows, access);
+    const managedTrialPaymentSnapshot = MANAGED_TRIAL_PAYMENT_AUTHORITY_ENTITIES.every((entity) => canReadOpsEntity(access, entity))
+      ? managedTrialPaymentStudentProjectionSnapshot(rows, access)
+      : null;
     const sourceAccess = canReadUnrestrictedOpsData(access);
     const payload = Object.fromEntries(visibleRows.map((row) => [row.entity, row.payload]));
     const versions = Object.fromEntries(visibleRows.map((row) => [row.entity, row.version]));
