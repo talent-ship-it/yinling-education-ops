@@ -370,7 +370,8 @@ test("authentication attempts are HMAC-keyed, database-throttled and logout repo
   assert.match(logoutRoute, /maxAge: SERVER_SESSION_MAX_AGE_SECONDS/);
   assert.match(logoutRoute, /path: "\/api\/demo-logout"/);
   assert.match(logoutRoute, /if \(!retryRequested\) \{[\s\S]*response\.cookies\.set\(DEMO_COOKIE_NAME/);
-  assert.match(logoutRoute, /retryRequested[\s\S]*\? pendingRetryTokens[\s\S]*:\s*\[\.\.\.retryTokens\(primaryCookieValue\), \.\.\.pendingRetryTokens\]/);
+  assert.match(logoutRoute, /retryRequested[\s\S]*\? pendingRetryTokens[\s\S]*:\s*\[\.\.\.retryTokens\(primaryCookieValue\), \.\.\.switchedTokens, \.\.\.pendingRetryTokens\]/);
+  assert.match(logoutRoute, /const switchedTokens = targetSessionTokens\(cookieStore\.get\(IMPERSONATION_COOKIE_NAME\)\?\.value\)/);
   assert.match(logoutRoute, /Promise\.all\(candidateTokens\.map\(\(token\) => revokeServerSession\(token\)\)\)/);
   assert.match(logoutRoute, /const unresolvedTokens = candidateTokens\.filter/);
   assert.match(logoutRoute, /serialiseRetryTokens\(unresolvedTokens\)/);

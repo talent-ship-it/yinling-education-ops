@@ -853,7 +853,7 @@
     },
     "app/operations-client.tsx": {
       "complexity_critical": {
-        "count": 50
+        "count": 49
       },
       "complexity_high": {
         "count": 9
@@ -862,7 +862,7 @@
         "count": 4
       },
       "crap_critical": {
-        "count": 51
+        "count": 50
       },
       "crap_high": {
         "count": 30
@@ -1274,9 +1274,12 @@
     },
     "lib/jiaowubao-trial-source-window.ts": {
       "complexity_critical": {
-        "count": 2
+        "count": 1
       },
       "crap_critical": {
+        "count": 1
+      },
+      "complexity_moderate": {
         "count": 1
       }
     },
@@ -4034,14 +4037,6 @@
         "count": 1
       }
     },
-    "app/operations-client.tsx\u0000switchOperator": {
-      "complexity_critical": {
-        "count": 1
-      },
-      "crap_critical": {
-        "count": 1
-      }
-    },
     "app/operations-client.tsx\u0000syncJiaowubaoCompletedLessons": {
       "complexity_critical": {
         "count": 1
@@ -4815,7 +4810,7 @@
       }
     },
     "lib/jiaowubao-trial-source-window.ts\u0000readJiaowubaoTrialSourceWindow": {
-      "complexity_critical": {
+      "complexity_moderate": {
         "count": 1
       }
     },
