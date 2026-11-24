@@ -52,7 +52,8 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
 
   sql-runtime:
-    runs-on: ubuntu-latest
+    # ubuntu-latest no longer exposes postgresql-client-16 in its apt sources.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     services:
       postgres:
