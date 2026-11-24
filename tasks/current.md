@@ -1,4 +1,20 @@
-# Classroom resource library sample release
+# Vercel CPU recovery
+
+Goal: reduce repeated server work, release through GitHub, and restore browser access to app.insiderleadsedu.com.
+
+Scope: metadata-only version probes; one-minute visible workspace polling; pause the two task feeds when hidden. Reuse getOpsVersions, signed authorization, shared-state poller and request deadlines. No database migration, business-data changes, new dependencies or permission expansion.
+
+Workspace: /Users/nixon/.codex/worktrees/vercel-cpu-recovery-20261124/feedback-20260812; branch codex/vercel-cpu-recovery-20261124; base d2285b445099b50bfdce897d338147df7908f4dc. Shared main and earlier worktree modifications are protected.
+
+Decided: current user explicitly authorizes optimization and release. Standing application-release authorization applies. Vercel Hobby team is soft-blocked for fluidCpuDuration; purchasing Pro changes billing and still needs an exact cost decision. Source inspection confirms entity-version filtering uses signed role/permissions/scope, not payload-derived record relationships; full data/projection reads must retain their single-snapshot behavior.
+
+Status: company GitHub/profile and current main verified. Focused regressions reproduced full-payload version reads, hidden-page feed requests and the original 15-second interval, then passed 37/37 after the changes. Initial Fallow failure traced to a namespace import in the new test; replaced it with the exact used symbol. Fallow then detected duplicated event wiring; extracted the shared watcher into the existing poller. Unfiltered base/candidate comparison confirms clone groups decreased 361 to 360 with zero new token-count/file-instance sets. Remove only two obsolete normalized duplicate exemptions (r264:2 and r249:2); no new exemptions, threshold/config changes or baseline regeneration. Include this exact reduction in the single candidate review. All failed receipts are retained in profile scratch. Production still returns HTTP 402 DEPLOYMENT_DISABLED; Vercel confirms Hobby fluidCpuDuration soft block. User asked about free restoration instead of approving Pro; no purchase is authorized. No production data write or release yet.
+
+Next: complete unchanged release gates on a credential-free, network-denied source snapshot; one independent production candidate review; required CI and GitHub merge; resolve Vercel billing block and perform real company-session browser acceptance. Browser acceptance Space 4/p1 currently displays Deployment Paused. No subagents dispatched.
+
+## Previous release notes
+
+### Classroom resource library sample release
 
 Goal: expose Resources in the existing platform, load the user's eight scanned Writing Workbooks, authorize suitable teachers, and verify classroom reuse plus board PNG/timer tools.
 

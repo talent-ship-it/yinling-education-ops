@@ -5487,6 +5487,7 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     let stopped = false;
     const poller = createSharedStatePoller({
       canRun: () => !document.hidden,
+      successDelayMs: 60_000,
       onError: (error) => {
         clearManagedExamProjection();
         clearManagedTrialPaymentProjection();

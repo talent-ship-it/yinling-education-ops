@@ -9,7 +9,7 @@ const [client, stateRoute, snapshotRoute, toDoList] = await Promise.all([
   readFile(new URL("../app/to-do-list.tsx", import.meta.url), "utf8"),
 ]);
 
-test("the 15-second poll refreshes both authority rows and their one-snapshot projection", () => {
+test("the workspace poll refreshes both authority rows and their one-snapshot projection", () => {
   const poll = client.slice(
     client.indexOf("const poller = createSharedStatePoller"),
     client.indexOf("const onKeyDown", client.indexOf("const poller = createSharedStatePoller")),
@@ -29,8 +29,8 @@ test("the 15-second poll refreshes both authority rows and their one-snapshot pr
   assert.match(poll, /cache: "no-store"/);
 });
 
-test("the state reader derives versions, scoped rows, and projection from one ops_state read", () => {
-  const get = stateRoute.slice(stateRoute.indexOf("export async function GET"), stateRoute.indexOf("export async function PUT"));
+test("the data reader derives scoped rows and projection from one ops_state read", () => {
+  const get = stateRoute.slice(stateRoute.indexOf("const entities = request.nextUrl.searchParams"), stateRoute.indexOf("export async function PUT"));
   assert.doesNotMatch(get, /getOpsVersions/);
   assert.match(get, /const rows = await getOpsState\(\)/);
   assert.match(get, /managedExamStudentProjectionSnapshot\(rows, access\)/);

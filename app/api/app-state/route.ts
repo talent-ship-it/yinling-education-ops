@@ -23,6 +23,7 @@ import { assertJiaowubaoPayrollAuthority, JiaowubaoPayrollAuthorityError } from 
 import {
   getOpsSources,
   getOpsState,
+  getOpsVersions,
   OpsStoreError,
   putOpsState,
 } from "@/lib/ops-store";
@@ -62,17 +63,11 @@ export async function GET(request: NextRequest) {
 
   try {
     if (request.nextUrl.searchParams.get("mode") === "versions") {
-      // Scope and versions must come from the same ops_state statement. A
-      // separate versions RPC can race an ownership/archive change and make a
-      // client believe its managed-exam projection is current when it is not.
-      const rows = await getOpsState();
-      const access = buildOpsAccessContext(rows, context.actor, context.fullAdmin, context.identity);
-      const versions = rows.map((row) => ({
-        entity: row.entity,
-        version: row.version,
-        updated_at: row.updated_at,
-        updated_by: row.updated_by,
-      }));
+      // Entity visibility uses the freshly resolved signed identity, not record
+      // relationships. The metadata RPC reads all versions in one statement;
+      // actual scoped data and managed projections still share one read below.
+      const versions = await getOpsVersions();
+      const access = buildOpsAccessContext([], context.actor, context.fullAdmin, context.identity);
       return noStore({ versions: filterOpsVersions(versions, access) });
     }
 
