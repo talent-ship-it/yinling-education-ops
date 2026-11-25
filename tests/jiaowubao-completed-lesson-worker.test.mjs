@@ -238,48 +238,48 @@ function fixture(totals = [1]) {
   return f;
 }
 
-test("monthly worker begins, resumes after fifty physical calls and publishes complete evidence in a fresh invocation", async () => {
-  const f = fixture(Array.from({ length: 51 }, () => 1));
+test("monthly worker begins, resumes after sixty physical calls and publishes complete evidence in a fresh invocation", async () => {
+  const f = fixture(Array.from({ length: 61 }, () => 1));
   assert.equal((await f.run()).outcome, "in_progress");
   assert.equal(f.sourceReads.length, 0);
   const first = await f.run();
-  assert.equal(first.completedMemberCount, 50);
-  assert.equal(first.sourcePageCount, 50);
+  assert.equal(first.completedMemberCount, 60);
+  assert.equal(first.sourcePageCount, 60);
   assert.equal(f.current, null);
   const next = await f.run();
-  assert.equal(next.completedMemberCount, 51);
+  assert.equal(next.completedMemberCount, 61);
   assert.equal(next.sourcePageCount, 1);
   assert.equal(f.collection.state, "ready");
   assert.equal(f.current, null);
   const published = await f.run();
   assert.equal(published.outcome, "applied");
-  assert.equal(published.rowCount, 51);
+  assert.equal(published.rowCount, 61);
   assert.equal(published.scheduleRowCount, 1);
   assert.equal(f.collection.state, "published");
   assert.equal(f.confirmations.length, 2);
   assert.equal((await f.run()).outcome, "no_change");
-  assert.equal(new Set(f.sourceReads.map((query) => query.mem_id)).size, 51);
-  assert.equal(f.reservations.length, 51);
+  assert.equal(new Set(f.sourceReads.map((query) => query.mem_id)).size, 61);
+  assert.equal(f.reservations.length, 61);
   assert.equal(f.releases.length, 5);
   assert.deepEqual(f.aborts, []);
 });
 
 test("physical-call exhaustion inside a logical page preserves the exact durable member cursor", async () => {
-  const f = fixture([450, 100]);
+  const f = fixture([550, 100]);
   await f.run();
   const result = await f.run();
-  assert.equal(result.sourcePageCount, 50);
-  assert.equal(result.rowCount, 450);
+  assert.equal(result.sourcePageCount, 60);
+  assert.equal(result.rowCount, 550);
   assert.equal(result.completedMemberCount, 1);
-  assert.equal(f.staged.length, 5);
+  assert.equal(f.staged.length, 6);
   assert.equal(f.collection.nextMemberId, 18);
   assert.equal(f.collection.nextPage, 1);
   assert.equal(f.collection.targetVersion, 0);
   assert.equal(f.sourceReads.at(-1).page, 5);
   await f.run();
-  assert.equal(f.sourceReads[50].page, 1);
+  assert.equal(f.sourceReads[60].page, 1);
   assert.equal(f.collection.state, "ready");
-  assert.equal(f.collection.rowCount, 550);
+  assert.equal(f.collection.rowCount, 650);
   assert.equal((await f.run()).outcome, "applied");
   assert.deepEqual(f.aborts, []);
 });

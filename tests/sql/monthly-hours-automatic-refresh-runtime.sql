@@ -144,9 +144,53 @@ begin
  receipt := internal.fixture_begin_month(older_month,(older_month+interval '1 month - 1 day')::date,
    (select revision from internal.jiaowubao_completed_lesson_snapshot_current where period_month=older_month));
  chosen := public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Ops Admin')->>'month';
- if chosen <> to_char(older_month,'YYYY-MM') then raise exception 'active work was restarted behind overdue work'; end if;
+ if chosen <> to_char(previous_month,'YYYY-MM') then raise exception 'previous month starved behind historical work'; end if;
+ update internal.jiaowubao_completed_lesson_snapshot_current set published_at=clock_timestamp() where period_month=previous_month;
+ chosen := public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Ops Admin')->>'month';
+ if chosen <> to_char(older_month,'YYYY-MM') then raise exception 'historical cursor was not resumed after recent work'; end if;
+ if receipt->>'runId' is distinct from (
+   select id::text from internal.jiaowubao_completed_lesson_member_runs
+   where period_month=older_month and state='collecting'
+ ) then raise exception 'queue selection replaced the historical run'; end if;
 end;
 $fairness$;
+rollback;
+
+begin;
+do $current_priority$
+declare
+ today date := cast(timezone('Australia/Melbourne',clock_timestamp()) as date);
+ current_month date := cast(date_trunc('month',today) as date);
+ previous_month date := cast(current_month-interval '1 month' as date);
+ receipt jsonb; chosen text;
+begin
+ receipt := internal.fixture_begin_month(previous_month,cast(current_month-interval '1 day' as date));
+ chosen := public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Ops Admin')->>'month';
+ if today > current_month and chosen <> to_char(current_month,'YYYY-MM') then
+   raise exception 'missing current month starved behind an active previous month: %',chosen;
+ end if;
+ if today = current_month and chosen <> to_char(previous_month,'YYYY-MM') then
+   raise exception 'first day selected a current month without completed days: %',chosen;
+ end if;
+ if exists(select 1 from internal.jiaowubao_completed_lesson_snapshot_current) then
+   raise exception 'queue selection exposed incomplete source data';
+ end if;
+ if today > current_month then
+   perform internal.fixture_begin_month(current_month,today-1);
+   chosen := public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Ops Admin')->>'month';
+   if chosen <> to_char(current_month,'YYYY-MM') then raise exception 'current collection lost priority'; end if;
+ end if;
+ receipt := public.stage_jiaowubao_completed_lesson_member_page('synthetic-hour-secret',cast(receipt->>'runId' as uuid),
+   'jwb-completed-lessons-sync:1000000000000:'||to_char(previous_month,'YYYY-MM'),1,1,0,0,'[]','Ops Admin');
+ if receipt->>'state' <> 'ready' then raise exception 'fixture did not reach ready'; end if;
+ chosen := public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Ops Admin')->>'month';
+ if chosen <> to_char(previous_month,'YYYY-MM') then raise exception 'ready publication was left behind collection'; end if;
+ perform internal.expect_monthly_failure(
+   $$select public.get_jiaowubao_completed_lesson_pending_month('invalid-secret','Ops Admin')$$,'invalid_ops_secret');
+ perform internal.expect_monthly_failure(
+   $$select public.get_jiaowubao_completed_lesson_pending_month('synthetic-hour-secret','Teacher')$$,'pending_month_forbidden');
+end;
+$current_priority$;
 rollback;
 
 begin;
