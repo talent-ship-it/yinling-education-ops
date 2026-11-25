@@ -1,4 +1,24 @@
-# Classroom resource library sample release
+# Vercel CPU recovery
+
+Goal: reduce repeated server work, release through GitHub, and restore browser access to app.insiderleadsedu.com.
+
+Scope: metadata-only version probes; one-minute visible workspace polling; pause the two task feeds when hidden. Reuse getOpsVersions, signed authorization, shared-state poller and request deadlines. No database migration, business-data changes, new dependencies or permission expansion.
+
+Workspace: /Users/nixon/.codex/worktrees/vercel-cpu-recovery-20261124/feedback-20260812; branch codex/vercel-cpu-recovery-20261124; base d2285b445099b50bfdce897d338147df7908f4dc. Shared main and earlier worktree modifications are protected.
+
+Decided: current user explicitly authorizes optimization and release. Standing application-release authorization applies. User purchased Pro and requested release again; fresh isolated Vercel read confirmed Pro/active and no soft block. No agent billing change is authorized or needed. Source inspection confirms entity-version filtering uses signed role/permissions/scope, not payload-derived record relationships; full data/projection reads must retain their single-snapshot behavior.
+
+Status: company GitHub/profile and current main verified. Focused regressions reproduced full-payload version reads, hidden-page feed requests and the original 15-second interval, then passed 37/37 after the changes. Initial Fallow failure traced to a namespace import in the new test; replaced it with the exact used symbol. Fallow then detected duplicated event wiring; extracted the shared watcher into the existing poller. Unfiltered base/candidate comparison confirms clone groups decreased 361 to 360 with zero new token-count/file-instance sets. Remove only two obsolete normalized duplicate exemptions (r264:2 and r249:2); no new exemptions, threshold/config changes or baseline regeneration. Include this exact reduction in the single candidate review. All failed receipts are retained in profile scratch. Production still returns HTTP 402 DEPLOYMENT_DISABLED; Vercel confirms Hobby fluidCpuDuration soft block. User asked about free restoration instead of approving Pro; no purchase is authorized. No production data write or release yet.
+
+Latest milestone: PR161 head deb10b2464d18f926767ea0a3994c70c2f66c056; company main remains d2285b445099b50bfdce897d338147df7908f4dc. Existing production-code review passed; all 10 reviewed path hashes, sizes and modes verified unchanged before this follow-up. Prior local full gates and remote verify/browser-smoke/wecom-receiver passed. SQL runtime never reached its fixtures because apt could not locate postgresql-client-16, including on Ubuntu 22.04. Official Ubuntu package metadata confirms the distro postgresql-client package exists; use it while preserving the postgres:16 service and the existing runtime server-version assertion. Preserve prior failure receipts.
+
+Production baseline acceptance: company user completed login in Ego Space5/p1; resumed the same handed-off space. HTTP domain is restored. First authenticated sync exceeded the existing 10-second browser deadline; one refresh succeeded with no alert. Default Today filter had no matching tasks; All displays 160 real To Do rows and the tabs show 22 All Done. Student archive opens with real data. These observations validate the unchanged baseline, not the unmerged optimization. No explicit business edit was made.
+
+Next: commit/push only the scoped CI repair and this task record, require every exact-head remote check including Vercel to pass, merge PR161 through GitHub, then verify the production alias SHA/READY and repeat real-session acceptance plus polling timing. Reuse the existing production-code review while app/test blobs remain identical. No new subagents dispatched; prior review is complete.
+
+## Previous release notes
+
+### Classroom resource library sample release
 
 Goal: expose Resources in the existing platform, load the user's eight scanned Writing Workbooks, authorize suitable teachers, and verify classroom reuse plus board PNG/timer tools.
 

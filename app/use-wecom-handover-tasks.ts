@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { isCanonicalTaskDueAt, type OpsTask } from "@/lib/ops-tasks";
 import type { TaskTrialSchedule } from "@/lib/task-trial-schedule";
+import { createSharedStatePoller, watchVisibleSharedStatePoller } from "@/lib/shared-state-poller";
+import { fetchJsonWithTimeout } from "@/lib/shared-state-recovery";
 
 type Feed = { tasks: OpsTask[]; students: { id: string; name: string }[]; schedules: (TaskTrialSchedule & { taskId: string })[] };
 const EMPTY: Feed = { tasks: [], students: [], schedules: [] };
@@ -15,22 +17,18 @@ export function useWecomHandoverTasks(active: boolean, operator: string, allOwne
   const [state, setState] = useState<{ operator: string; feed: Feed; error: boolean }>({ operator: "", feed: EMPTY, error: false });
   useEffect(() => {
     if (!active) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      try {
-        const response = await fetch("/api/operations/wecom-handover-tasks", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("handover_tasks_unavailable");
-        const feed = readFeed(await response.json());
-        if (!controller.signal.aborted) setState({ operator, feed, error: false });
-      } catch {
-        if (!controller.signal.aborted) setState((prior) => ({ operator, feed: prior.operator === operator ? prior.feed : EMPTY, error: true }));
-      } finally {
-        if (!controller.signal.aborted) timer = setTimeout(() => void read(), 60_000);
-      }
-    };
-    void read();
-    return () => { controller.abort(); clearTimeout(timer); };
+    const poller = createSharedStatePoller({
+      canRun: () => !document.hidden,
+      successDelayMs: 60_000,
+      onError: () => setState((prior) => ({ operator, feed: prior.operator === operator ? prior.feed : EMPTY, error: true })),
+      run: async (signal) => {
+        const { response, body } = await fetchJsonWithTimeout<Feed>(fetch, "/api/operations/wecom-handover-tasks", { cache: "no-store", signal });
+        if (!response.ok || !body) throw new Error("handover_tasks_unavailable");
+        const feed = readFeed(body);
+        if (!signal.aborted) setState({ operator, feed, error: false });
+      },
+    });
+    return watchVisibleSharedStatePoller(poller, document, window);
   }, [active, operator]);
   const mutate = async (taskId: string, action: "complete" | "reopen" | "cannot" | "note", note?: string) => {
     const response = await fetch("/api/operations/wecom-handover-tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId, action, ...(note === undefined ? {} : { note }) }) });

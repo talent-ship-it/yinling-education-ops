@@ -52,7 +52,8 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
 
   sql-runtime:
-    runs-on: ubuntu-latest
+    # Use the distro client; fixtures independently require the PostgreSQL 16 server.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     services:
       postgres:
@@ -81,7 +82,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: sudo apt-get update
-      - run: sudo apt-get install --yes postgresql-client-16
+      - run: sudo apt-get install --yes postgresql-client
+      - run: psql --version
       - run: npm ci --ignore-scripts
       - run: npm run test:sql-runtime
 

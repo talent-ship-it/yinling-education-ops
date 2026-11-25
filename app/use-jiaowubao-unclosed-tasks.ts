@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { isCanonicalTaskDueAt, type OpsTask } from "@/lib/ops-tasks";
+import { createSharedStatePoller, watchVisibleSharedStatePoller } from "@/lib/shared-state-poller";
+import { fetchJsonWithTimeout } from "@/lib/shared-state-recovery";
 
 function readTasks(value: unknown): OpsTask[] {
   if (!Array.isArray(value) || value.length > 7) throw new Error("invalid_unclosed_tasks");
@@ -18,23 +20,18 @@ export function useJiaowubaoUnclosedTasks(active: boolean, operator: string, all
   const [feed, setFeed] = useState<{ operator: string; tasks: OpsTask[]; error: boolean }>({ operator: "", tasks: [], error: false });
   useEffect(() => {
     if (!active) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const read = async () => {
-      try {
-        const response = await fetch("/api/jiaowubao-open-api/unclosed-tasks", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("unclosed_tasks_unavailable");
-        const body = await response.json();
+    const poller = createSharedStatePoller({
+      canRun: () => !document.hidden,
+      successDelayMs: 60_000,
+      onError: () => setFeed((current) => ({ operator, tasks: current.operator === operator ? current.tasks : [], error: true })),
+      run: async (signal) => {
+        const { response, body } = await fetchJsonWithTimeout<{ tasks: unknown }>(fetch, "/api/jiaowubao-open-api/unclosed-tasks", { cache: "no-store", signal });
+        if (!response.ok || !body) throw new Error("unclosed_tasks_unavailable");
         const tasks = readTasks(body.tasks);
-        if (!controller.signal.aborted) setFeed({ operator, tasks, error: false });
-      } catch {
-        if (!controller.signal.aborted) setFeed((current) => ({ operator, tasks: current.operator === operator ? current.tasks : [], error: true }));
-      } finally {
-        if (!controller.signal.aborted) timer = setTimeout(() => void read(), 60_000);
-      }
-    };
-    void read();
-    return () => { controller.abort(); clearTimeout(timer); };
+        if (!signal.aborted) setFeed({ operator, tasks, error: false });
+      },
+    });
+    return watchVisibleSharedStatePoller(poller, document, window);
   }, [active, operator]);
   const tasks = feed.operator === operator ? feed.tasks : [];
   return { tasks: allOwners ? tasks : tasks.filter((task) => task.owner === operator), error: feed.operator === operator && feed.error };

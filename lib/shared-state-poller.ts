@@ -1,3 +1,18 @@
+export function watchVisibleSharedStatePoller(
+  poller: ReturnType<typeof createSharedStatePoller>,
+  visibilityTarget: EventTarget,
+  activityTarget: EventTarget,
+) {
+  const wake = () => { void poller.wake(); };
+  const listeners = [[visibilityTarget, "visibilitychange"], [activityTarget, "focus"], [activityTarget, "online"]] as const;
+  for (const [target, event] of listeners) target.addEventListener(event, wake);
+  wake();
+  return () => {
+    poller.stop();
+    for (const [target, event] of listeners) target.removeEventListener(event, wake);
+  };
+}
+
 export function createSharedStatePoller(input: {
   run: (signal: AbortSignal) => Promise<void>;
   canRun: () => boolean;
