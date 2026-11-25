@@ -49,7 +49,7 @@ import {
 const ACTOR = "Ops Admin" as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
-const MEMBER_SOURCE_CALL_BUDGET = 50;
+const MEMBER_SOURCE_CALL_BUDGET = 60;
 const WORKER_TIME_BUDGET_MS = 220_000;
 
 class CompletedLessonReadBudgetError extends Error {}

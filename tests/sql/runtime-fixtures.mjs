@@ -229,6 +229,7 @@ export const sqlRuntimeFixtures = Object.freeze([
     { kind: "sql", file: "supabase/migrations/20260905000100_resume_blocked_jiaowubao_completed_lesson_members.sql" },
     { kind: "sql", file: "supabase/migrations/20261001000200_completed_hour_review_evidence.sql" },
     { kind: "sql", file: "supabase/migrations/20261007000200_monthly_hours_automatic_refresh.sql" },
+    { kind: "sql", file: "supabase/migrations/20261125000100_prioritize_current_completed_lessons.sql" },
     { kind: "sql", file: "tests/sql/monthly-hours-automatic-refresh-runtime.sql" },
   ] },
   { id: "jiaowubao-authority-projection-performance", source: "tests/sql/jiaowubao-authority-projection-performance-runtime.sql", steps: [
