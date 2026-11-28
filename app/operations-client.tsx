@@ -1205,6 +1205,8 @@ function navigationFor(language: InterfaceLanguage) {
 const staffSectionIds = new Set<Section>(["dashboard", "students", "teachers", "schedule", "ava-calendar", "courses", "lp", "operations", "renewals", "messages", "files", "accounts"]);
 const teacherSectionIds = new Set<Section>(["dashboard", "students", "schedule", "ava-calendar", "classroom", "accounts"]);
 const noPayrollAdminSectionIds = new Set<Section>(navigationDefinitions.filter((item) => item.id !== "payroll").map((item) => item.id));
+// Temporary product scope. Add the saved sections back here when they are needed again.
+const TEMPORARY_VISIBLE_SECTION_IDS = new Set<Section>(["payroll"]);
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "yinling.sidebar-collapsed";
 
 const baseStudents: Student[] = [
@@ -3910,8 +3912,16 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const teacherBookingStudentIds = useMemo(() => new Set(currentTeacher
     ? bookings.filter((booking) => bookingHasEffectiveTeacher(booking, currentTeacherIds)).map((booking) => booking.studentId)
     : []), [bookings, currentTeacher, currentTeacherIds]);
-  const visibleNavigation = useMemo(() => isAdminView ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id)) : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)), [canViewPayroll, isAdminView, isTeacherView, navigation]);
-  const visibleMobileNavigation = useMemo(() => visibleNavigation.filter((item) => isTeacherView ? ["dashboard", "students", "schedule", "classroom"].includes(item.id) : ["dashboard", "students", "schedule", "messages"].includes(item.id)), [isTeacherView, visibleNavigation]);
+  const visibleNavigation = useMemo(() => {
+    const authorizedNavigation = isAdminView
+      ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id))
+      : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id));
+    return authorizedNavigation.filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id));
+  }, [canViewPayroll, isAdminView, isTeacherView, navigation]);
+  const visibleMobileNavigation = useMemo(() => visibleNavigation, [visibleNavigation]);
+  useEffect(() => {
+    if (visibleNavigation.length && !visibleNavigation.some((item) => item.id === active)) setActive(visibleNavigation[0].id);
+  }, [active, setActive, visibleNavigation]);
   const canOpenAvaCalendar = visibleNavigation.some((item) => item.id === "schedule");
   const avaCalendarLabel = displayPreferences.language === "en-AU" ? "AVA calendar" : "AVA日历";
   const scopedStudents = useMemo(() => {
@@ -14317,12 +14327,12 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
           <button className="sidebar-toggle" data-sidebar-toggle type="button" aria-label={sidebarToggleLabel} aria-pressed={sidebarCollapsed} title={sidebarToggleLabel} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>{sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
         </div>
         <nav id="primary-navigation" aria-label="主要导航">
-          <p>{displayTerm("学生与教务", displayPreferences.language)}</p>
+          {visibleNavigation.some((item) => item.group === "work") && <p>{displayTerm("学生与教务", displayPreferences.language)}</p>}
           {visibleNavigation.filter((item) => item.group === "work").map((item) => {
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "dashboard" && <b>{scopedTasks.filter((task) => task.status !== "done").length}</b>}</button>;
           })}
-          <p>{displayTerm("运营与系统", displayPreferences.language)}</p>
+          {visibleNavigation.some((item) => item.group === "support") && <p>{displayTerm("运营与系统", displayPreferences.language)}</p>}
           {visibleNavigation.filter((item) => item.group === "support").map((item) => {
             const Icon = item.icon;
             return <button className={active === item.id ? "nav-item active" : "nav-item"} type="button" aria-label={item.label} title={item.label} aria-current={active === item.id ? "page" : undefined} key={item.id} onClick={() => setActive(item.id)}><Icon size={18} /><span>{item.label}</span></button>;
