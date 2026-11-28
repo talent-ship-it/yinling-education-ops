@@ -3912,13 +3912,11 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
   const teacherBookingStudentIds = useMemo(() => new Set(currentTeacher
     ? bookings.filter((booking) => bookingHasEffectiveTeacher(booking, currentTeacherIds)).map((booking) => booking.studentId)
     : []), [bookings, currentTeacher, currentTeacherIds]);
-  const visibleNavigation = useMemo(() => {
-    const authorizedNavigation = isAdminView
-      ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id))
-      : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id));
-    return authorizedNavigation.filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id));
-  }, [canViewPayroll, isAdminView, isTeacherView, navigation]);
-  const visibleMobileNavigation = useMemo(() => visibleNavigation, [visibleNavigation]);
+  const visibleNavigation = useMemo(() => isAdminView
+    ? navigation.filter((item) => canViewPayroll || noPayrollAdminSectionIds.has(item.id)).filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id))
+    : navigation.filter((item) => isTeacherView ? teacherSectionIds.has(item.id) : staffSectionIds.has(item.id)).filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id)),
+  [canViewPayroll, isAdminView, isTeacherView, navigation]);
+  const visibleMobileNavigation = useMemo(() => visibleNavigation.filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id)), [visibleNavigation]);
   const canOpenAvaCalendar = visibleNavigation.some((item) => item.id === "schedule");
   const avaCalendarLabel = displayPreferences.language === "en-AU" ? "AVA calendar" : "AVA日历";
   const scopedStudents = useMemo(() => {
