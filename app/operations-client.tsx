@@ -3919,9 +3919,6 @@ function OperationsWorkspace({ initialData, initialNixonUnlocked, initialOperato
     return authorizedNavigation.filter((item) => TEMPORARY_VISIBLE_SECTION_IDS.has(item.id));
   }, [canViewPayroll, isAdminView, isTeacherView, navigation]);
   const visibleMobileNavigation = useMemo(() => visibleNavigation, [visibleNavigation]);
-  useEffect(() => {
-    if (visibleNavigation.length && !visibleNavigation.some((item) => item.id === active)) setActive(visibleNavigation[0].id);
-  }, [active, setActive, visibleNavigation]);
   const canOpenAvaCalendar = visibleNavigation.some((item) => item.id === "schedule");
   const avaCalendarLabel = displayPreferences.language === "en-AU" ? "AVA calendar" : "AVA日历";
   const scopedStudents = useMemo(() => {
